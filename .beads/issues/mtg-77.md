@@ -30,20 +30,21 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ### High Priority (Core AI Strength):
 
 0. **Multi-phase blocking strategy (partial implementation - 2025-11-01)**
-   - ✅ Basic gang blocking implemented (2-blocker combinations)
+   - ✅ Good blocks (safe kills, safe survives, favorable trades)
+   - ✅ Basic gang blocking (2-blocker combinations)
    - ✅ First strike gang blocking logic
-   - ✅ Value-based gang block selection
-   - Current: Single-pass with gang blocks → single blocks → life-in-danger chump blocks
+   - ✅ Value-based block selection
+   - ✅ Safe blockers vs killing blockers distinction
+   - Current: Single-pass with good blocks → gang blocks → trade blocks → life-in-danger chump blocks
    - Missing: Java's sophisticated 3-phase strategy (AiBlockController.java:1075-1148)
-     - Phase 1: Good blocks → Gang blocks → Trade blocks → Chump blocks → Reinforce
+     - Phase 1: Good → Gang → Trade → Chump → Reinforce (partially implemented)
      - Phase 2: If still in danger, reset and reorder: Trade → Good → Chump → Reinforce
      - Phase 3: If serious danger: Chump → Trade → Reinforce → Good
-   - Missing: Safe blockers vs killing blockers distinction (for makeGoodBlocks)
    - Missing: 3-blocker gang combinations
    - Missing: Reinforce against trample
    - Missing: Planeswalker defense
    - Missing: Multi-phase danger reassessment and block reordering
-   - Impact: Better but still suboptimal blocking compared to Java AI
+   - Impact: Good blocking but missing adaptive reassessment
    - Reference: AiBlockController.java:187-950 (block type methods)
 
 1. **Attack logic improvements (✅ COMPLETED - mtg-84, mtg-85)**
@@ -117,6 +118,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Prioritizes first strike gang blocks against non-first-strike attackers
   - Uses value-based evaluation to minimize losses while maximizing kills
   - Reference: AiBlockController.makeGangBlocks() lines 368-598
+- ✅ Good blocks implementation (2025-11-01):
+  - Implemented `get_safe_blockers()` to identify blockers that survive
+  - Implemented `get_killing_blockers()` to identify blockers that kill attacker
+  - Implemented `make_good_blocks()` with priority-based selection:
+    1. Safe blockers that kill attacker (best case)
+    2. Safe blockers that survive without killing (if not trample)
+    3. Killing blockers worth less than attacker (favorable trades)
+  - Integrated into blocking phase before gang blocks
+  - Reference: AiBlockController.makeGoodBlocks() lines 187-362
 
 ## Test Coverage Expansion (2025-10-26)
 
