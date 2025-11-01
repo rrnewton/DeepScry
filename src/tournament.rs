@@ -26,6 +26,28 @@ pub enum ControllerType {
     Heuristic,
 }
 
+/// Matchup statistics for A vs B
+#[derive(Debug, Default)]
+struct MatchupStats {
+    /// Total wins for deck A (regardless of player position)
+    a_wins: usize,
+    /// Total wins for deck B (regardless of player position)
+    b_wins: usize,
+    /// Wins when deck A is played by P1
+    p1_as_a_wins: usize,
+    /// Wins when deck B is played by P2 (while A is P1)
+    p2_as_b_wins: usize,
+    /// Wins when deck B is played by P1
+    p1_as_b_wins: usize,
+    /// Wins when deck A is played by P2 (while B is P1)
+    p2_as_a_wins: usize,
+    /// Games where A was P1
+    games_a_as_p1: usize,
+    /// Games where B was P1
+    games_b_as_p1: usize,
+    draws: usize,
+}
+
 /// Statistics collected during tournament
 #[derive(Debug, Default)]
 struct TournamentStats {
@@ -34,7 +56,7 @@ struct TournamentStats {
     draws: usize,
     deck_wins: HashMap<String, usize>,
     deck_games: HashMap<String, usize>,
-    matchup_results: HashMap<(String, String), (usize, usize, usize)>, // (p1_wins, p2_wins, draws)
+    matchup_results: HashMap<(String, String), MatchupStats>,
 }
 
 /// Run tournament mode - play multiple games in parallel and collect statistics
@@ -211,10 +233,10 @@ pub async fn run_tourney(
                     *stats.deck_games.entry(deck2_name.clone()).or_insert(0) += 1;
 
                     // Update matchup results
-                    let matchup_key = if deck1_name <= deck2_name {
-                        (deck1_name.clone(), deck2_name.clone())
+                    let (matchup_key, deck1_is_a) = if deck1_name <= deck2_name {
+                        ((deck1_name.clone(), deck2_name.clone()), true)
                     } else {
-                        (deck2_name.clone(), deck1_name.clone())
+                        ((deck2_name.clone(), deck1_name.clone()), false)
                     };
 
                     // Update wins
@@ -223,16 +245,53 @@ pub async fn run_tourney(
                             if winner_id == p1_id {
                                 stats.p1_wins += 1;
                                 *stats.deck_wins.entry(deck1_name.clone()).or_insert(0) += 1;
-                                stats.matchup_results.entry(matchup_key).or_insert((0, 0, 0)).0 += 1;
+
+                                // P1 won - update matchup stats
+                                let matchup = stats
+                                    .matchup_results
+                                    .entry(matchup_key)
+                                    .or_insert_with(MatchupStats::default);
+                                if deck1_is_a {
+                                    matchup.games_a_as_p1 += 1;
+                                    matchup.a_wins += 1;
+                                    matchup.p1_as_a_wins += 1;
+                                } else {
+                                    matchup.games_b_as_p1 += 1;
+                                    matchup.b_wins += 1;
+                                    matchup.p1_as_b_wins += 1;
+                                }
                             } else {
                                 stats.p2_wins += 1;
                                 *stats.deck_wins.entry(deck2_name.clone()).or_insert(0) += 1;
-                                stats.matchup_results.entry(matchup_key).or_insert((0, 0, 0)).1 += 1;
+
+                                // P2 won - update matchup stats
+                                let matchup = stats
+                                    .matchup_results
+                                    .entry(matchup_key)
+                                    .or_insert_with(MatchupStats::default);
+                                if deck1_is_a {
+                                    matchup.games_a_as_p1 += 1;
+                                    matchup.b_wins += 1;
+                                    matchup.p2_as_b_wins += 1;
+                                } else {
+                                    matchup.games_b_as_p1 += 1;
+                                    matchup.a_wins += 1;
+                                    matchup.p2_as_a_wins += 1;
+                                }
                             }
                         }
                         None => {
                             stats.draws += 1;
-                            stats.matchup_results.entry(matchup_key).or_insert((0, 0, 0)).2 += 1;
+                            let matchup = stats
+                                .matchup_results
+                                .entry(matchup_key)
+                                .or_insert_with(MatchupStats::default);
+                            if deck1_is_a {
+                                matchup.games_a_as_p1 += 1;
+                            } else {
+                                matchup.games_b_as_p1 += 1;
+                            }
+                            matchup.draws += 1;
                         }
                     }
                 }
@@ -299,53 +358,42 @@ pub async fn run_tourney(
     println!("\n=== Matchup Results ===");
     let mut matchups: Vec<_> = stats.matchup_results.iter().collect();
     matchups.sort_by_key(|&(key, _)| key);
-    for ((deck1, deck2), (p1_wins, p2_wins, draws)) in matchups {
-        let total_matchup = p1_wins + p2_wins + draws;
-        if deck1 == deck2 {
+    for ((deck_a, deck_b), matchup) in matchups {
+        let total_games = matchup.games_a_as_p1 + matchup.games_b_as_p1;
+
+        if deck_a == deck_b {
             // Mirror match
-            println!("  {} (mirror): {} games", deck1, total_matchup);
-            if total_matchup > 0 {
-                println!(
-                    "    Player 1: {} ({:.1}%)",
-                    p1_wins,
-                    100.0 * *p1_wins as f64 / total_matchup as f64
-                );
-                println!(
-                    "    Player 2: {} ({:.1}%)",
-                    p2_wins,
-                    100.0 * *p2_wins as f64 / total_matchup as f64
-                );
-                if *draws > 0 {
-                    println!(
-                        "    Draws: {} ({:.1}%)",
-                        draws,
-                        100.0 * *draws as f64 / total_matchup as f64
-                    );
-                }
-            }
+            println!("  {} (mirror):", deck_a);
+            println!(
+                "     total P1 wins: {}  |  total P2 wins: {}  |  {} games",
+                matchup.p1_as_a_wins + matchup.p1_as_b_wins,
+                matchup.p2_as_a_wins + matchup.p2_as_b_wins,
+                total_games
+            );
         } else {
-            println!("  {} vs {}: {} games", deck1, deck2, total_matchup);
-            if total_matchup > 0 {
+            println!("  {} vs {}:", deck_a, deck_b);
+            println!(
+                "     total {} wins: {}  |  total {} wins: {}  |  {} games",
+                deck_a, matchup.a_wins, deck_b, matchup.b_wins, total_games
+            );
+
+            if matchup.games_a_as_p1 > 0 {
                 println!(
-                    "    {} wins: {} ({:.1}%)",
-                    deck1,
-                    p1_wins,
-                    100.0 * *p1_wins as f64 / total_matchup as f64
+                    "        P1={} wins: {}  |  P2={} wins: {}  |  {} games",
+                    deck_a, matchup.p1_as_a_wins, deck_b, matchup.p2_as_b_wins, matchup.games_a_as_p1
                 );
-                println!(
-                    "    {} wins: {} ({:.1}%)",
-                    deck2,
-                    p2_wins,
-                    100.0 * *p2_wins as f64 / total_matchup as f64
-                );
-                if *draws > 0 {
-                    println!(
-                        "    Draws: {} ({:.1}%)",
-                        draws,
-                        100.0 * *draws as f64 / total_matchup as f64
-                    );
-                }
             }
+
+            if matchup.games_b_as_p1 > 0 {
+                println!(
+                    "        P1={} wins: {}  |  P2={} wins: {}  |  {} games",
+                    deck_b, matchup.p1_as_b_wins, deck_a, matchup.p2_as_a_wins, matchup.games_b_as_p1
+                );
+            }
+        }
+
+        if matchup.draws > 0 {
+            println!("     draws: {}", matchup.draws);
         }
     }
 
