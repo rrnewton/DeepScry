@@ -879,6 +879,255 @@ impl HeuristicController {
 
         false
     }
+
+    /// Calculate total damage dealt by a group of blockers
+    ///
+    /// Reference: ComputerUtilCombat.totalFirstStrikeDamageOfBlockers()
+    fn total_damage_of_blockers(&self, blockers: &[&Card], attacker: &Card) -> i32 {
+        let mut total = 0;
+        let attacker_has_first_strike = attacker.has_first_strike() || attacker.has_double_strike();
+
+        for blocker in blockers {
+            // Only count damage from blockers with first strike if attacker doesn't have it
+            let blocker_has_first_strike = blocker.has_first_strike() || blocker.has_double_strike();
+            
+            // In first strike phase, only first strikers deal damage
+            // In normal phase, everyone deals damage
+            // For simplicity, if we're checking for gang block effectiveness, 
+            // we count all damage that would be dealt
+            if !attacker_has_first_strike || blocker_has_first_strike {
+                total += blocker.power.unwrap_or(0) as i32;
+            }
+        }
+
+        total
+    }
+
+    /// Check if attacker can be killed by a gang of blockers
+    ///
+    /// Reference: AiBlockController.makeGangBlocks()
+    fn can_gang_kill(&self, attacker: &Card, blockers: &[&Card]) -> bool {
+        let damage_needed = attacker.toughness.unwrap_or(0) as i32;
+        let total_damage = self.total_damage_of_blockers(blockers, attacker);
+        
+        // Deathtouch: any one blocker with deathtouch kills the attacker
+        if blockers.iter().any(|b| b.has_deathtouch()) {
+            return true;
+        }
+
+        total_damage >= damage_needed
+    }
+
+    /// Find potential gang block combinations for an attacker
+    ///
+    /// Returns the best gang block if one exists: (blockers, value_saved)
+    /// Reference: AiBlockController.makeGangBlocks() lines 368-598
+    fn find_gang_block<'a>(
+        &self,
+        attacker: &Card,
+        available_blockers: &[&'a Card],
+        _view: &GameStateView,
+    ) -> Option<Vec<&'a Card>> {
+        // Don't gang block indestructible or regenerating creatures
+        if attacker.has_indestructible() {
+            return None;
+        }
+
+        let attacker_value = self.evaluate_creature(attacker);
+        let attacker_power = attacker.power.unwrap_or(0) as i32;
+
+        // Try to find 2-3 blockers that can kill the attacker with minimal losses
+        // Strategy: Use first strikers if attacker doesn't have first strike
+        let attacker_has_first_strike = attacker.has_first_strike() || attacker.has_double_strike();
+        
+        if !attacker_has_first_strike && available_blockers.len() >= 2 {
+            // Look for first strike gang
+            let first_strikers: Vec<&Card> = available_blockers
+                .iter()
+                .filter(|b| b.has_first_strike() || b.has_double_strike())
+                .copied()
+                .collect();
+
+            if first_strikers.len() >= 2 {
+                // Try to kill with 2 first strikers
+                for i in 0..first_strikers.len() {
+                    for j in (i + 1)..first_strikers.len() {
+                        let gang = vec![first_strikers[i], first_strikers[j]];
+                        if self.can_gang_kill(attacker, &gang) {
+                            // Check if this is a good trade
+                            let total_blocker_value: i32 = gang.iter().map(|b| self.evaluate_creature(b)).sum();
+                            
+                            // Gang block if we save value or are in danger
+                            if total_blocker_value < attacker_value * 2 {
+                                return Some(gang);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try double block with any blockers (not just first strike)
+        if available_blockers.len() >= 2 {
+            let mut usable_blockers: Vec<&Card> = available_blockers
+                .iter()
+                .filter(|b| {
+                    let blocker_value = self.evaluate_creature(b);
+                    // Use blockers worth less than the attacker
+                    blocker_value < attacker_value
+                })
+                .copied()
+                .collect();
+
+            // Sort by value (cheapest first) to minimize losses
+            usable_blockers.sort_by_key(|b| self.evaluate_creature(b));
+
+            // Try combinations of 2 blockers
+            for i in 0..usable_blockers.len().min(3) {
+                for j in (i + 1)..usable_blockers.len().min(4) {
+                    let blocker1 = usable_blockers[i];
+                    let blocker2 = usable_blockers[j];
+                    let gang = vec![blocker1, blocker2];
+
+                    if !self.can_gang_kill(attacker, &gang) {
+                        continue;
+                    }
+
+                    // Calculate how many blockers would die
+                    let blocker1_dies = blocker1.toughness.unwrap_or(0) as i32 <= attacker_power;
+                    let blocker2_dies = blocker2.toughness.unwrap_or(0) as i32 <= attacker_power;
+
+                    let blocker1_value = self.evaluate_creature(blocker1);
+                    let blocker2_value = self.evaluate_creature(blocker2);
+
+                    // Good gang block scenarios:
+                    // 1. Kill attacker and only one blocker dies
+                    // 2. Both die but total value < attacker value
+                    if !blocker1_dies || !blocker2_dies {
+                        // At least one survives - good trade
+                        return Some(gang);
+                    } else if blocker1_value + blocker2_value < attacker_value {
+                        // Both die but we save value
+                        return Some(gang);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Improved blocking with gang blocking support
+    ///
+    /// Reference: AiBlockController.assignBlockersForCombat() lines 1070-1160
+    ///
+    /// Java's multi-phase strategy:
+    /// Phase 1: Good blocks -> Gang blocks -> Trade blocks -> (if danger) Chump blocks
+    /// Phase 2: If still in danger, reset and try: Trade -> Good -> Chump
+    /// Phase 3: If serious danger: Chump -> Trade -> Reinforce -> Good -> Gang
+    fn assign_blocks_with_gang(
+        &self,
+        view: &GameStateView,
+        available_blockers: &[CardId],
+        attackers: &[CardId],
+    ) -> SmallVec<[(CardId, CardId); 8]> {
+        let mut blocks = SmallVec::new();
+
+        if attackers.is_empty() || available_blockers.is_empty() {
+            return blocks;
+        }
+
+        // Track which blockers are still available
+        let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
+
+        // Get card references
+        let mut attacker_cards: Vec<&Card> = attackers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+
+        // Sort attackers by threat level (highest value first)
+        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
+
+        // Phase 1: Try gang blocks for high-value attackers
+        let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        let mut gang_blocked_attacker_ids = Vec::new();
+
+        for &attacker in &attacker_cards {
+            if remaining_blockers.is_empty() {
+                break;
+            }
+
+            let available_blocker_cards: Vec<&Card> = remaining_blockers
+                .iter()
+                .filter_map(|&id| view.get_card(id))
+                .collect();
+
+            if let Some(gang) = self.find_gang_block(attacker, &available_blocker_cards, view) {
+                // Assign this gang block
+                for blocker in gang {
+                    blocks.push((blocker.id, attacker.id));
+                    // Remove blocker from available pool
+                    remaining_blockers.retain(|&id| id != blocker.id);
+                }
+                gang_blocked_attacker_ids.push(attacker.id);
+            }
+        }
+
+        // Remove gang-blocked attackers from consideration
+        attackers_left.retain(|a| !gang_blocked_attacker_ids.contains(&a.id));
+
+        // Phase 2: Single blocker assignments for remaining attackers
+        for attacker in &attackers_left {
+            if remaining_blockers.is_empty() {
+                break;
+            }
+
+            let mut best_blocker: Option<&Card> = None;
+            let mut best_score = i32::MIN;
+
+            let blocker_cards: Vec<&Card> = remaining_blockers
+                .iter()
+                .filter_map(|&id| view.get_card(id))
+                .collect();
+
+            for &blocker in &blocker_cards {
+                // Check if this is a good block
+                if self.should_block(blocker, attacker, view, attackers, &blocks) {
+                    let blocker_power = blocker.power.unwrap_or(0) as i32;
+                    let blocker_toughness = blocker.toughness.unwrap_or(0) as i32;
+                    let attacker_power = attacker.power.unwrap_or(0) as i32;
+                    let attacker_toughness = attacker.toughness.unwrap_or(0) as i32;
+
+                    let can_kill = blocker_power >= attacker_toughness || blocker.has_deathtouch();
+                    let will_survive = blocker_toughness > attacker_power;
+
+                    let score = if can_kill && will_survive {
+                        1000
+                    } else if can_kill {
+                        500 - self.evaluate_creature(blocker)
+                    } else if will_survive {
+                        100
+                    } else {
+                        -1000
+                    };
+
+                    if score > best_score {
+                        best_score = score;
+                        best_blocker = Some(blocker);
+                    }
+                }
+            }
+
+            // Assign the best blocker if found
+            if let Some(blocker) = best_blocker {
+                blocks.push((blocker.id, attacker.id));
+                remaining_blockers.retain(|&id| id != blocker.id);
+            }
+        }
+
+        blocks
+    }
 }
 
 impl PlayerController for HeuristicController {
@@ -1069,74 +1318,9 @@ impl PlayerController for HeuristicController {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> SmallVec<[(CardId, CardId); 8]> {
-        // Port of Java's AiBlockController.assignBlockersForCombat()
-        // Reference: AiBlockController.java:998
-
-        let mut blocks = SmallVec::new();
-
-        if attackers.is_empty() || available_blockers.is_empty() {
-            return blocks;
-        }
-
-        // Get card references
-        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
-
-        let blocker_cards: Vec<&Card> = available_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
-
-        // Sort attackers by threat level (evaluation score descending)
-        // Block the most threatening creatures first
-        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
-
-        // For each attacker (most threatening first), try to find a blocker
-        for attacker in &attacker_cards {
-            // Find best blocker for this attacker
-            let mut best_blocker: Option<&Card> = None;
-            let mut best_score = i32::MIN;
-
-            for &blocker in &blocker_cards {
-                // Skip if this blocker is already assigned
-                if blocks.iter().any(|(b_id, _)| *b_id == blocker.id) {
-                    continue;
-                }
-
-                // Check if this is a good block
-                if self.should_block(blocker, attacker, view, attackers, &blocks) {
-                    // Score this blocking assignment
-                    // Prefer blockers that:
-                    // 1. Kill the attacker and survive (best)
-                    // 2. Trade favorably (kill high-value attacker with low-value blocker)
-                    // 3. Minimize damage taken
-
-                    let blocker_power = blocker.power.unwrap_or(0) as i32;
-                    let blocker_toughness = blocker.toughness.unwrap_or(0) as i32;
-                    let attacker_power = attacker.power.unwrap_or(0) as i32;
-                    let attacker_toughness = attacker.toughness.unwrap_or(0) as i32;
-
-                    let can_kill = blocker_power >= attacker_toughness || blocker.has_deathtouch();
-                    let will_survive = blocker_toughness > attacker_power;
-
-                    let score = if can_kill && will_survive {
-                        1000 // Best case: kill and survive
-                    } else if can_kill {
-                        500 - self.evaluate_creature(blocker) // Trade, prefer cheaper blocker
-                    } else if will_survive {
-                        100 // Survive without killing (chump block)
-                    } else {
-                        -1000 // Both die - bad unless necessary
-                    };
-
-                    if score > best_score {
-                        best_score = score;
-                        best_blocker = Some(blocker);
-                    }
-                }
-            }
-
-            // Assign the best blocker if we found one
-            if let Some(blocker) = best_blocker {
-                blocks.push((blocker.id, attacker.id));
-            }
-        }
+        // Use improved blocking with gang block support
+        // Reference: AiBlockController.assignBlockersForCombat() lines 1070-1160
+        let blocks = self.assign_blocks_with_gang(view, available_blockers, attackers);
 
         if !blocks.is_empty() {
             view.logger().controller_choice(

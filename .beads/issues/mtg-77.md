@@ -29,25 +29,30 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ### High Priority (Core AI Strength):
 
-0. **Multi-phase blocking strategy (incomplete)**
-   - Current: Simple single-pass blocking with life-in-danger chump blocks
+0. **Multi-phase blocking strategy (partial implementation - 2025-11-01)**
+   - ✅ Basic gang blocking implemented (2-blocker combinations)
+   - ✅ First strike gang blocking logic
+   - ✅ Value-based gang block selection
+   - Current: Single-pass with gang blocks → single blocks → life-in-danger chump blocks
    - Missing: Java's sophisticated 3-phase strategy (AiBlockController.java:1075-1148)
      - Phase 1: Good blocks → Gang blocks → Trade blocks → Chump blocks → Reinforce
      - Phase 2: If still in danger, reset and reorder: Trade → Good → Chump → Reinforce
      - Phase 3: If serious danger: Chump → Trade → Reinforce → Good
-   - Missing: Safe blockers vs killing blockers distinction
-   - Missing: Gang blocking (multi-blocker combat math)
+   - Missing: Safe blockers vs killing blockers distinction (for makeGoodBlocks)
+   - Missing: 3-blocker gang combinations
    - Missing: Reinforce against trample
    - Missing: Planeswalker defense
-   - Impact: Suboptimal blocking, doesn't maximize damage prevention
+   - Missing: Multi-phase danger reassessment and block reordering
+   - Impact: Better but still suboptimal blocking compared to Java AI
    - Reference: AiBlockController.java:187-950 (block type methods)
 
-1. **Attack logic improvements (mtg-85)**
-   - Current: Only evaluates attacker stats in isolation
-   - Missing: Board state evaluation, combat math, blockability checks
+1. **Attack logic improvements (✅ COMPLETED - mtg-84, mtg-85)**
+   - ✅ Board state evaluation implemented
+   - ✅ Combat math (can_kill_all, can_be_killed, etc.)
+   - ✅ Blockability checks
+   - ✅ CombatFactors struct mirrors Java's SpellAbilityFactors
+   - ✅ All 7 aggression levels faithfully ported
    - Reference: Java's SpellAbilityFactors class in AiAttackController.java:1350-1562
-   - Impact: 2/2 vanilla creatures never attack even with no blockers
-   - Impact: Shivan Dragon (5/5 flyer) doesn't attack Grizzly Bears (2/2 ground)
 
 2. **GameStateEvaluator improvements:**
    - mtg-78: Port evalManaBase() - mana base quality scoring
@@ -103,6 +108,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Ported `lifeInSeriousDanger()` from ComputerUtilCombat.java:477-508
   - Integrated into `should_block()` for chump blocking when life < 5
   - Tournament results: Heuristic 51.4% vs Random 48.6% (improved from 49.5/50.5)
+- ✅ Gang blocking implementation (2025-11-01):
+  - Implemented basic 2-blocker gang blocking
+  - Added `total_damage_of_blockers()` to calculate combined blocker damage
+  - Added `can_gang_kill()` to determine if gang can destroy attacker
+  - Added `find_gang_block()` to search for optimal gang block combinations
+  - Added `assign_blocks_with_gang()` for improved block assignment
+  - Prioritizes first strike gang blocks against non-first-strike attackers
+  - Uses value-based evaluation to minimize losses while maximizing kills
+  - Reference: AiBlockController.makeGangBlocks() lines 368-598
 
 ## Test Coverage Expansion (2025-10-26)
 
