@@ -7,7 +7,7 @@ pub mod entity;
 pub mod mana;
 pub mod player;
 pub mod spell_ability;
-pub mod types;
+pub mod targeting;
 
 pub use card::{Card, CardType};
 pub use costs::Cost;

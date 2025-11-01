@@ -1050,7 +1050,7 @@ impl<'a> GameLoop<'a> {
         use crate::core::{Effect, TargetRef};
 
         match effect {
-            Effect::DealDamage { target, amount } => match target {
+            Effect::DealDamage { target, amount, .. } => match target {
                 TargetRef::Player(target_player_id) => {
                     let target_name = self.get_player_name(*target_player_id);
                     println!("  {source_name} ({source_id}) deals {amount} damage to {target_name}");
@@ -1072,15 +1072,15 @@ impl<'a> GameLoop<'a> {
                     }
                 }
             },
-            Effect::DrawCards { player, count } => {
+            Effect::DrawCards { player, count, .. } => {
                 let player_name = self.get_player_name(*player);
                 println!("  {source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
             }
-            Effect::GainLife { player, amount } => {
+            Effect::GainLife { player, amount, .. } => {
                 let player_name = self.get_player_name(*player);
                 println!("  {source_name} ({source_id}) causes {player_name} to gain {amount} life");
             }
-            Effect::DestroyPermanent { target } => {
+            Effect::DestroyPermanent { target, .. } => {
                 let target_name = self
                     .game
                     .cards
@@ -1089,7 +1089,7 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 println!("  {source_name} ({source_id}) destroys {target_name} ({target})");
             }
-            Effect::TapPermanent { target } => {
+            Effect::TapPermanent { target, .. } => {
                 let target_name = self
                     .game
                     .cards
@@ -1098,7 +1098,7 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 println!("  {source_name} ({source_id}) taps {target_name} ({target})");
             }
-            Effect::UntapPermanent { target } => {
+            Effect::UntapPermanent { target, .. } => {
                 let target_name = self
                     .game
                     .cards
@@ -1111,6 +1111,7 @@ impl<'a> GameLoop<'a> {
                 target,
                 power_bonus,
                 toughness_bonus,
+                ..
             } => {
                 let target_name = self
                     .game
@@ -1122,11 +1123,11 @@ impl<'a> GameLoop<'a> {
                     "  {source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
                 );
             }
-            Effect::Mill { player, count } => {
+            Effect::Mill { player, count, .. } => {
                 let player_name = self.get_player_name(*player);
                 println!("  {source_name} ({source_id}) causes {player_name} to mill {count} card(s)");
             }
-            Effect::CounterSpell { target } => {
+            Effect::CounterSpell { target, .. } => {
                 let target_name = self
                     .game
                     .cards
@@ -1135,7 +1136,7 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 println!("  {source_name} ({source_id}) counters {target_name} ({target})");
             }
-            Effect::AddMana { player, mana } => {
+            Effect::AddMana { player, mana, .. } => {
                 let player_name = self.get_player_name(*player);
                 println!("  {source_name} ({source_id}) adds {mana} to {player_name}'s mana pool");
             }
@@ -1143,6 +1144,7 @@ impl<'a> GameLoop<'a> {
                 target,
                 counter_type,
                 amount,
+                ..
             } => {
                 let target_name = self
                     .game
@@ -1158,6 +1160,7 @@ impl<'a> GameLoop<'a> {
                 target,
                 counter_type,
                 amount,
+                ..
             } => {
                 let target_name = self
                     .game
@@ -1169,7 +1172,7 @@ impl<'a> GameLoop<'a> {
                     "  {source_name} ({source_id}) removes {amount} {counter_type:?} counter(s) from {target_name} ({target})"
                 );
             }
-            Effect::ExilePermanent { target } => {
+            Effect::ExilePermanent { target, .. } => {
                 let target_name = self
                     .game
                     .cards
@@ -1949,30 +1952,34 @@ impl<'a> GameLoop<'a> {
             for effect in &card_effects {
                 // Replace placeholder targets with chosen targets for logging
                 let effect_to_log = match effect {
-                    Effect::CounterSpell { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::CounterSpell { target, .. } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
+                            svar_name: None,
                         };
                         target_index += 1;
                         replaced
                     }
-                    Effect::DestroyPermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::DestroyPermanent {
                             target: targets[target_index],
+                            svar_name: None,
                         };
                         target_index += 1;
                         replaced
                     }
-                    Effect::TapPermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::TapPermanent { target, .. } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::TapPermanent {
                             target: targets[target_index],
+                            svar_name: None,
                         };
                         target_index += 1;
                         replaced
                     }
-                    Effect::UntapPermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::UntapPermanent { target, .. } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::UntapPermanent {
                             target: targets[target_index],
+                            svar_name: None,
                         };
                         target_index += 1;
                         replaced
@@ -1981,11 +1988,13 @@ impl<'a> GameLoop<'a> {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        ..
                     } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::PumpCreature {
                             target: targets[target_index],
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
+                            svar_name: None,
                         };
                         target_index += 1;
                         replaced

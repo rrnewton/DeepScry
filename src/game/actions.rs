@@ -127,18 +127,21 @@ impl GameState {
                 Effect::DealDamage {
                     target: TargetRef::None,
                     amount,
+                    ..
                 } if target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::DealDamage {
                         target: TargetRef::Permanent(chosen_targets[target_index]),
                         amount: *amount,
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
-                Effect::DestroyPermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::DestroyPermanent {
                         target: chosen_targets[target_index],
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
@@ -146,40 +149,46 @@ impl GameState {
                     target,
                     power_bonus,
                     toughness_bonus,
+                    ..
                 } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::PumpCreature {
                         target: chosen_targets[target_index],
                         power_bonus: *power_bonus,
                         toughness_bonus: *toughness_bonus,
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
-                Effect::TapPermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                Effect::TapPermanent { target, .. } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::TapPermanent {
                         target: chosen_targets[target_index],
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
-                Effect::UntapPermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                Effect::UntapPermanent { target, .. } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::UntapPermanent {
                         target: chosen_targets[target_index],
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
-                Effect::CounterSpell { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                Effect::CounterSpell { target, .. } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::CounterSpell {
                         target: chosen_targets[target_index],
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
-                Effect::ExilePermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                Effect::ExilePermanent { target, .. } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
                     // Use the chosen target
                     *effect = Effect::ExilePermanent {
                         target: chosen_targets[target_index],
+                        svar_name: None,
                     };
                     target_index += 1;
                 }
@@ -194,30 +203,34 @@ impl GameState {
         // "Draw a card" or "You gain 3 life"
         for effect in &mut effects {
             match effect {
-                Effect::DrawCards { player, count } if player.as_u32() == 0 => {
+                Effect::DrawCards { player, count, .. } if player.as_u32() == 0 => {
                     // Placeholder player ID 0 means "controller"
                     *effect = Effect::DrawCards {
                         player: card_owner,
                         count: *count,
+                        svar_name: None,
                     };
                 }
-                Effect::GainLife { player, amount } if player.as_u32() == 0 => {
+                Effect::GainLife { player, amount, .. } if player.as_u32() == 0 => {
                     // Placeholder player ID 0 means "controller"
                     *effect = Effect::GainLife {
                         player: card_owner,
                         amount: *amount,
+                        svar_name: None,
                     };
                 }
-                Effect::Mill { player, count } if player.as_u32() == 0 => {
+                Effect::Mill { player, count, .. } if player.as_u32() == 0 => {
                     // Placeholder player ID 0 means "controller"
                     *effect = Effect::Mill {
                         player: card_owner,
                         count: *count,
+                        svar_name: None,
                     };
                 }
                 Effect::DealDamage {
                     target: TargetRef::None,
                     amount,
+                    ..
                 } => {
                     // If no target was chosen, default to opponent for damage
                     // This handles untargeted damage like "deals 1 damage to each opponent"
@@ -225,6 +238,7 @@ impl GameState {
                         *effect = Effect::DealDamage {
                             target: TargetRef::Player(opponent_id),
                             amount: *amount,
+                            svar_name: None,
                         };
                     }
                 }
@@ -336,7 +350,7 @@ impl GameState {
                     // Note: Players are also valid targets, but we handle them separately
                     // via TargetRef::Player since they don't have CardIds
                 }
-                Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
+                Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 => {
                     // Destroy can target any permanent (typically creatures)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -362,7 +376,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::TapPermanent { target } if target.as_u32() == 0 => {
+                Effect::TapPermanent { target, .. } if target.as_u32() == 0 => {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -375,7 +389,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                Effect::UntapPermanent { target, .. } if target.as_u32() == 0 => {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -388,7 +402,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::CounterSpell { target } if target.as_u32() == 0 => {
+                Effect::CounterSpell { target, .. } if target.as_u32() == 0 => {
                     // Counter can target spells on the stack (except self)
                     for &card_id in &self.stack.cards {
                         if card_id != spell_card_id {
@@ -396,7 +410,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                Effect::ExilePermanent { target, .. } if target.as_u32() == 0 => {
                     // Exile can target any permanent (typically creatures, like Swords to Plowshares)
                     // In Swords to Plowshares: ValidTgts$ Creature
                     for &card_id in &self.battlefield.cards {
@@ -480,109 +494,106 @@ impl GameState {
         // Check each effect to determine valid targets
         for effect in &ability.effects {
             match effect {
-                Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
-                    // Destroy effect needs targets
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(card) = self.cards.get(card_id) {
-                            // Check targeting restrictions
-                            let mut is_valid = true;
-
-                            // Cannot target the source card if it will be sacrificed as part of the cost
-                            // (e.g., Strip Mine sacrifices itself, so it can't be the target)
-                            if sacrifices_self && card_id == source_card_id {
-                                is_valid = false;
-                            }
-
-                            // Must be creature if ability says "creature"
-                            if targets_creature && !card.is_creature() {
-                                is_valid = false;
-                            }
-
-                            // Must be land if ability says "land"
-                            if targets_land && !card.is_land() {
-                                is_valid = false;
-                            }
-
-                            // Must be tapped if ability says "tapped"
-                            if requires_tapped && !card.tapped {
-                                is_valid = false;
-                            }
-
-                            // Must be untapped if ability says "untapped"
-                            if requires_untapped && card.tapped {
-                                is_valid = false;
-                            }
-
-                            // Check shroud/hexproof
-                            if card.has_shroud() {
-                                is_valid = false;
-                            }
-
-                            // Hexproof only protects from opponent's abilities
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
-
-                            if is_valid {
-                                valid_targets.push(card_id);
-                            }
-                        }
-                    }
-                }
-                Effect::TapPermanent { target } if target.as_u32() == 0 => {
-                    // Tap can target untapped permanents
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(card) = self.cards.get(card_id) {
-                            let mut is_valid = !card.tapped && !card.has_shroud();
-
-                            // Check hexproof
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
-
-                            if is_valid {
-                                valid_targets.push(card_id);
-                            }
-                        }
-                    }
-                }
-                Effect::UntapPermanent { target } if target.as_u32() == 0 => {
-                    // Untap can target tapped permanents
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(card) = self.cards.get(card_id) {
-                            let mut is_valid = card.tapped && !card.has_shroud();
-
-                            // Check hexproof
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
-
-                            if is_valid {
-                                valid_targets.push(card_id);
-                            }
-                        }
-                    }
-                }
-                Effect::DealDamage {
-                    target: TargetRef::None,
-                    ..
-                } => {
-                    // Damage can target creatures
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(card) = self.cards.get(card_id) {
-                            let mut is_valid = card.is_creature() && !card.has_shroud();
-
-                            // Check hexproof
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
-
-                            if is_valid {
-                                valid_targets.push(card_id);
-                            }
-                        }
-                    }
-                }
+                                Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 => {
+                                    // Destroy effect needs targets
+                                    for &card_id in &self.battlefield.cards {
+                                        if let Ok(card) = self.cards.get(card_id) {
+                                            // Check targeting restrictions
+                                            let mut is_valid = true;
+                
+                                            // Cannot target the source card if it will be sacrificed as part of the cost
+                                            // (e.g., Strip Mine sacrifices itself, so it can't be the target)
+                                            if sacrifices_self && card_id == source_card_id {
+                                                is_valid = false;
+                                            }
+                
+                                            // Must be creature if ability says "creature"
+                                            if targets_creature && !card.is_creature() {
+                                                is_valid = false;
+                                            }
+                
+                                            // Must be land if ability says "land"
+                                            if targets_land && !card.is_land() {
+                                                is_valid = false;
+                                            }
+                
+                                            // Must be tapped if ability says "tapped"
+                                            if requires_tapped && !card.tapped {
+                                                is_valid = false;
+                                            }
+                
+                                            // Must be untapped if ability says "untapped"
+                                            if requires_untapped && card.tapped {
+                                                is_valid = false;
+                                            }
+                
+                                            // Check shroud/hexproof
+                                            if card.has_shroud() {
+                                                is_valid = false;
+                                            }
+                
+                                            // Hexproof only protects from opponent's abilities
+                                            if card.has_hexproof() && card.owner != ability_controller {
+                                                is_valid = false;
+                                            }
+                
+                                            if is_valid {
+                                                valid_targets.push(card_id);
+                                            }
+                                        }
+                                    }
+                                }
+                                Effect::TapPermanent { target, .. } if target.as_u32() == 0 => {
+                                    // Tap can target untapped permanents
+                                    for &card_id in &self.battlefield.cards {
+                                        if let Ok(card) = self.cards.get(card_id) {
+                                            let mut is_valid = !card.tapped && !card.has_shroud();
+                
+                                            // Check hexproof
+                                            if card.has_hexproof() && card.owner != ability_controller {
+                                                is_valid = false;
+                                            }
+                
+                                            if is_valid {
+                                                valid_targets.push(card_id);
+                                            }
+                                        }
+                                    }
+                                }
+                                Effect::UntapPermanent { target, .. } if target.as_u32() == 0 => {
+                                    // Untap can target tapped permanents
+                                    for &card_id in &self.battlefield.cards {
+                                        if let Ok(card) = self.cards.get(card_id) {
+                                            let mut is_valid = card.tapped && !card.has_shroud();
+                
+                                            // Check hexproof
+                                            if card.has_hexproof() && card.owner != ability_controller {
+                                                is_valid = false;
+                                            }
+                
+                                            if is_valid {
+                                                valid_targets.push(card_id);
+                                            }
+                                        }
+                                    }
+                                }
+                                Effect::DealDamage { target: TargetRef::None, .. } => {
+                                    // Damage can target creatures
+                                    for &card_id in &self.battlefield.cards {
+                                        if let Ok(card) = self.cards.get(card_id) {
+                                            let mut is_valid = card.is_creature() && !card.has_shroud();
+                
+                                            // Check hexproof
+                                            if card.has_hexproof() && card.owner != ability_controller {
+                                                is_valid = false;
+                                            }
+                
+                                            if is_valid {
+                                                valid_targets.push(card_id);
+                                            }
+                                        }
+                                    }
+                                }
                 _ => {
                     // Other effects either don't need targets or already have them specified
                 }
@@ -703,7 +714,7 @@ impl GameState {
     /// Execute a single effect
     pub fn execute_effect(&mut self, effect: &Effect) -> Result<()> {
         match effect {
-            Effect::DealDamage { target, amount } => match target {
+            Effect::DealDamage { target, amount, .. } => match target {
                 TargetRef::Player(player_id) => {
                     self.deal_damage(*player_id, *amount)?;
                 }
@@ -716,12 +727,12 @@ impl GameState {
                     ));
                 }
             },
-            Effect::DrawCards { player, count } => {
+            Effect::DrawCards { player, count, .. } => {
                 for _ in 0..*count {
                     self.draw_card(*player)?;
                 }
             }
-            Effect::GainLife { player, amount } => {
+            Effect::GainLife { player, amount, .. } => {
                 let p = self.get_player_mut(*player)?;
                 p.gain_life(*amount);
 
@@ -731,7 +742,7 @@ impl GameState {
                     delta: *amount,
                 });
             }
-            Effect::DestroyPermanent { target } => {
+            Effect::DestroyPermanent { target, .. } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
                     // Spell fizzles - no valid targets
@@ -746,7 +757,7 @@ impl GameState {
                     self.move_card(*target, Zone::Battlefield, Zone::Graveyard, owner)?;
                 }
             }
-            Effect::TapPermanent { target } => {
+            Effect::TapPermanent { target, .. } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
                     // Spell fizzles - no valid targets
@@ -761,7 +772,7 @@ impl GameState {
                     tapped: true,
                 });
             }
-            Effect::UntapPermanent { target } => {
+            Effect::UntapPermanent { target, .. } => {
                 let card = self.cards.get_mut(*target)?;
                 card.untap();
 
@@ -775,6 +786,7 @@ impl GameState {
                 target,
                 power_bonus,
                 toughness_bonus,
+                ..
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
@@ -792,15 +804,15 @@ impl GameState {
                     toughness_delta: *toughness_bonus,
                 });
             }
-            Effect::Mill { player, count } => {
+            Effect::Mill { player, count, .. } => {
                 // Mill cards from library to graveyard
                 self.mill_cards(*player, *count)?;
             }
-            Effect::CounterSpell { target } => {
+            Effect::CounterSpell { target, .. } => {
                 // Counter a spell on the stack
                 self.counter_spell(*target)?;
             }
-            Effect::AddMana { player, mana } => {
+            Effect::AddMana { player, mana, .. } => {
                 // Add mana to player's mana pool
                 let p = self.get_player_mut(*player)?;
 
@@ -834,6 +846,7 @@ impl GameState {
                 target,
                 counter_type,
                 amount,
+                ..
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
@@ -847,6 +860,7 @@ impl GameState {
                 target,
                 counter_type,
                 amount,
+                ..
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
@@ -856,7 +870,7 @@ impl GameState {
                 // Remove counters using the GameState method (which logs for undo)
                 self.remove_counters(*target, *counter_type, *amount)?;
             }
-            Effect::ExilePermanent { target } => {
+            Effect::ExilePermanent { target, .. } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
                     // Spell fizzles - no valid targets
@@ -909,20 +923,22 @@ impl GameState {
             for mut effect in effects {
                 // Fill in placeholder values in trigger effects
                 // Similar to resolve_spell, we need to fill in targets
-                match &mut effect {
+                match &mut new_effect {
                     Effect::DrawCards { player, .. } if player.as_u32() == 0 => {
                         // Placeholder player ID 0 means the controller of the trigger source
                         let controller = self.cards.get(source_card_id)?.controller;
-                        if let Effect::DrawCards { player: _, count } = effect {
-                            effect = Effect::DrawCards {
+                        if let Effect::DrawCards { player: _, count, .. } = new_effect {
+                            new_effect = Effect::DrawCards {
                                 player: controller,
                                 count,
+                                svar_name: None,
                             };
                         }
                     }
                     Effect::DealDamage {
                         target: TargetRef::None,
                         amount,
+                        ..
                     } => {
                         // Find a valid target (opponent's creature)
                         let controller = self.cards.get(source_card_id)?.controller;
@@ -942,21 +958,23 @@ impl GameState {
                             })
                             .copied()
                         {
-                            effect = Effect::DealDamage {
+                            new_effect = Effect::DealDamage {
                                 target: TargetRef::Permanent(target_id),
                                 amount: *amount,
+                                svar_name: None,
                             };
                         }
                     }
-                    Effect::GainLife { player, amount } if player.as_u32() == 0 => {
+                    Effect::GainLife { player, amount, .. } if player.as_u32() == 0 => {
                         // Placeholder player ID 0 means the controller of the trigger source
                         let controller = self.cards.get(source_card_id)?.controller;
-                        effect = Effect::GainLife {
+                        new_effect = Effect::GainLife {
                             player: controller,
                             amount: *amount,
+                            svar_name: None,
                         };
                     }
-                    Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
+                    Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 => {
                         // Find a valid target (opponent's creature)
                         let controller = self.cards.get(source_card_id)?.controller;
                         if let Some(target_id) = self
@@ -975,13 +993,17 @@ impl GameState {
                             })
                             .copied()
                         {
-                            effect = Effect::DestroyPermanent { target: target_id };
+                            new_effect = Effect::DestroyPermanent {
+                                target: target_id,
+                                svar_name: None,
+                            };
                         }
                     }
                     Effect::PumpCreature {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        ..
                     } if target.as_u32() == 0 => {
                         // Find a valid target (any creature on battlefield)
                         if let Some(target_id) = self
@@ -997,10 +1019,11 @@ impl GameState {
                             })
                             .copied()
                         {
-                            effect = Effect::PumpCreature {
+                            new_effect = Effect::PumpCreature {
                                 target: target_id,
                                 power_bonus: *power_bonus,
                                 toughness_bonus: *toughness_bonus,
+                                svar_name: None,
                             };
                         }
                     }

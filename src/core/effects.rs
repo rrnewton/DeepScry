@@ -62,27 +62,27 @@ pub enum Keyword {
 pub enum Effect {
     /// Deal damage to a target
     /// Example: "Lightning Bolt deals 3 damage to any target"
-    DealDamage { target: TargetRef, amount: i32 },
+    DealDamage { target: TargetRef, amount: i32, svar_name: Option<String> },
 
     /// Draw cards
     /// Example: "Draw a card"
-    DrawCards { player: PlayerId, count: u8 },
+    DrawCards { player: PlayerId, count: u8, svar_name: Option<String> },
 
     /// Gain life
     /// Example: "You gain 3 life"
-    GainLife { player: PlayerId, amount: i32 },
+    GainLife { player: PlayerId, amount: i32, svar_name: Option<String> },
 
     /// Destroy a permanent
     /// Example: "Destroy target creature"
-    DestroyPermanent { target: CardId },
+    DestroyPermanent { target: CardId, svar_name: Option<String> },
 
     /// Tap a permanent
     /// Example: "Tap target creature"
-    TapPermanent { target: CardId },
+    TapPermanent { target: CardId, svar_name: Option<String> },
 
     /// Untap a permanent
     /// Example: "Untap target land"
-    UntapPermanent { target: CardId },
+    UntapPermanent { target: CardId, svar_name: Option<String> },
 
     /// Pump (temporary stat boost) until end of turn
     /// Example: "Target creature gets +3/+3 until end of turn"
@@ -90,21 +90,23 @@ pub enum Effect {
         target: CardId,
         power_bonus: i32,
         toughness_bonus: i32,
+        svar_name: Option<String>
     },
 
     /// Mill cards from library to graveyard
     /// Example: "Target player mills 3 cards"
-    Mill { player: PlayerId, count: u8 },
+    Mill { player: PlayerId, count: u8, svar_name: Option<String> },
 
     /// Counter a spell on the stack
     /// Example: "Counter target spell"
-    CounterSpell { target: CardId },
+    CounterSpell { target: CardId, svar_name: Option<String> },
 
     /// Add mana to a player's mana pool
     /// Example: "Add {G}" or "Add {C}{C}"
     AddMana {
         player: PlayerId,
         mana: crate::core::ManaCost,
+        svar_name: Option<String>
     },
 
     /// Put counters on a permanent
@@ -113,6 +115,7 @@ pub enum Effect {
         target: CardId,
         counter_type: crate::core::CounterType,
         amount: u8,
+        svar_name: Option<String>
     },
 
     /// Remove counters from a permanent
@@ -121,12 +124,13 @@ pub enum Effect {
         target: CardId,
         counter_type: crate::core::CounterType,
         amount: u8,
+        svar_name: Option<String>
     },
 
     /// Exile a permanent
     /// Example: "Exile target creature" (Swords to Plowshares)
     /// Moves a card from the battlefield to the exile zone
-    ExilePermanent { target: CardId },
+    ExilePermanent { target: CardId, svar_name: Option<String> },
 }
 
 /// Events that can trigger abilities
@@ -230,10 +234,11 @@ mod tests {
         let damage_effect = Effect::DealDamage {
             target: TargetRef::Player(player_id),
             amount: 3,
+            svar_name: None,
         };
 
         match damage_effect {
-            Effect::DealDamage { target, amount } => {
+            Effect::DealDamage { target, amount, .. } => {
                 assert_eq!(amount, 3);
                 assert_eq!(target, TargetRef::Player(player_id));
             }
@@ -243,20 +248,21 @@ mod tests {
         let draw_effect = Effect::DrawCards {
             player: player_id,
             count: 2,
+            svar_name: None,
         };
 
         match draw_effect {
-            Effect::DrawCards { player, count } => {
+            Effect::DrawCards { player, count, .. } => {
                 assert_eq!(player, player_id);
                 assert_eq!(count, 2);
             }
             _ => panic!("Wrong effect type"),
         }
 
-        let destroy_effect = Effect::DestroyPermanent { target: card_id };
+        let destroy_effect = Effect::DestroyPermanent { target: card_id, svar_name: None };
 
         match destroy_effect {
-            Effect::DestroyPermanent { target } => {
+            Effect::DestroyPermanent { target, .. } => {
                 assert_eq!(target, card_id);
             }
             _ => panic!("Wrong effect type"),

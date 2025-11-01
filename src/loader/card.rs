@@ -33,6 +33,7 @@ impl CardLoader {
         let mut oracle = String::new();
         let mut raw_abilities = Vec::new();
         let mut raw_keywords = Vec::new();
+        let mut svars = std::collections::HashMap::new();
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -87,6 +88,11 @@ impl CardLoader {
                     "A" | "S" | "T" => {
                         raw_abilities.push(format!("{key}:{value}"));
                     }
+                    "SVar" => {
+                        if let Some((svar_name, svar_value)) = value.split_once(':') {
+                            svars.insert(svar_name.to_string(), svar_value.to_string());
+                        }
+                    }
                     _ => {} // Ignore other fields for now
                 }
             } else {
@@ -133,6 +139,7 @@ impl CardLoader {
             oracle,
             raw_abilities,
             raw_keywords,
+            svars,
         })
     }
 }
@@ -153,6 +160,7 @@ pub struct CardDefinition {
     pub raw_abilities: Vec<String>,
     /// Raw keyword scripts from the card file (K: lines)
     pub raw_keywords: Vec<String>,
+    pub svars: std::collections::HashMap<String, String>,
 }
 
 impl CardDefinition {
@@ -288,6 +296,8 @@ impl CardDefinition {
         let mut effects = Vec::new();
 
         for ability in &self.raw_abilities {
+            let svar_name = ability.split("$").nth(1).and_then(|s| s.split("|").next()).map(|s| s.trim().to_string());
+
             // Parse DealDamage abilities
             // Format: "A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 3 | ..."
             if ability.contains("DealDamage") {
@@ -299,6 +309,7 @@ impl CardDefinition {
                             effects.push(Effect::DealDamage {
                                 target: TargetRef::None,
                                 amount,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -318,6 +329,7 @@ impl CardDefinition {
                             effects.push(Effect::DrawCards {
                                 player: PlayerId::new(0), // Placeholder, will be set during resolution
                                 count,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -333,6 +345,7 @@ impl CardDefinition {
                 use crate::core::CardId;
                 effects.push(Effect::DestroyPermanent {
                     target: CardId::new(0), // Placeholder, will be set during resolution
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -348,6 +361,7 @@ impl CardDefinition {
                             effects.push(Effect::GainLife {
                                 player: PlayerId::new(0), // Placeholder, will be set during resolution
                                 amount,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -389,6 +403,7 @@ impl CardDefinition {
                         target: CardId::new(0), // Placeholder, will be set during resolution
                         power_bonus,
                         toughness_bonus,
+                        svar_name: svar_name.clone(),
                     });
                 }
             }
@@ -399,6 +414,7 @@ impl CardDefinition {
                 use crate::core::CardId;
                 effects.push(Effect::TapPermanent {
                     target: CardId::new(0), // Placeholder, will be set during resolution
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -408,6 +424,7 @@ impl CardDefinition {
                 use crate::core::CardId;
                 effects.push(Effect::UntapPermanent {
                     target: CardId::new(0), // Placeholder, will be set during resolution
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -421,6 +438,7 @@ impl CardDefinition {
                             effects.push(Effect::Mill {
                                 player: PlayerId::new(0), // Placeholder, will be set during resolution
                                 count,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -433,6 +451,7 @@ impl CardDefinition {
                 use crate::core::CardId;
                 effects.push(Effect::CounterSpell {
                     target: CardId::new(0), // Placeholder, will be set during resolution
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -446,6 +465,7 @@ impl CardDefinition {
                 use crate::core::CardId;
                 effects.push(Effect::ExilePermanent {
                     target: CardId::new(0), // Placeholder, will be set during resolution
+                    svar_name: svar_name.clone(),
                 });
             }
         }
@@ -465,6 +485,8 @@ impl CardDefinition {
             if !ability.starts_with("T:") {
                 continue;
             }
+
+            let svar_name = ability.split("$").nth(1).and_then(|s| s.split('|').next()).map(|s| s.trim().to_string());
 
             // Parse ETB triggers
             // Format: "T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ When..."
@@ -493,6 +515,7 @@ impl CardDefinition {
                     effects.push(Effect::DrawCards {
                         player: PlayerId::new(0), // Placeholder - will be filled when triggered
                         count,
+                        svar_name: svar_name.clone(),
                     });
                 }
 
@@ -513,6 +536,7 @@ impl CardDefinition {
                     effects.push(Effect::DealDamage {
                         target: crate::core::TargetRef::None, // Will be filled when triggered
                         amount,
+                        svar_name: svar_name.clone(),
                     });
                 }
 
@@ -535,6 +559,7 @@ impl CardDefinition {
                     effects.push(Effect::GainLife {
                         player: PlayerId::new(0), // Placeholder - will be filled when triggered
                         amount,
+                        svar_name: svar_name.clone(),
                     });
                 }
 
@@ -543,6 +568,7 @@ impl CardDefinition {
                     use crate::core::CardId;
                     effects.push(Effect::DestroyPermanent {
                         target: CardId::new(0), // Placeholder - will be filled when triggered
+                        svar_name: svar_name.clone(),
                     });
                 }
 
@@ -577,6 +603,7 @@ impl CardDefinition {
                             target: CardId::new(0), // Placeholder - will be filled when triggered
                             power_bonus,
                             toughness_bonus,
+                            svar_name: svar_name.clone(),
                         });
                     }
                 }
@@ -639,6 +666,8 @@ impl CardDefinition {
             if !ability.starts_with("A:AB$") {
                 continue;
             }
+
+            let svar_name = ability.split("$").nth(1).and_then(|s| s.split('|').next()).map(|s| s.trim().to_string());
 
             // Extract cost from Cost$ parameter
             let cost = if let Some(cost_str) = ability.split("Cost$").nth(1) {
@@ -705,6 +734,7 @@ impl CardDefinition {
                         effects.push(Effect::AddMana {
                             player: crate::core::EntityId::new(0), // Placeholder
                             mana: final_mana,
+                            svar_name: svar_name.clone(),
                         });
                     }
                 }
@@ -738,6 +768,7 @@ impl CardDefinition {
                             effects.push(Effect::DealDamage {
                                 target: TargetRef::None, // Placeholder
                                 amount,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -752,6 +783,7 @@ impl CardDefinition {
                             effects.push(Effect::GainLife {
                                 player: crate::core::EntityId::new(0), // Placeholder
                                 amount,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -766,6 +798,7 @@ impl CardDefinition {
                             effects.push(Effect::DrawCards {
                                 player: crate::core::EntityId::new(0), // Placeholder
                                 count,
+                                svar_name: svar_name.clone(),
                             });
                         }
                     }
@@ -805,6 +838,7 @@ impl CardDefinition {
                     target: crate::core::EntityId::new(0), // Placeholder
                     power_bonus,
                     toughness_bonus,
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -812,6 +846,7 @@ impl CardDefinition {
             if ability.contains("AB$ Tap") {
                 effects.push(Effect::TapPermanent {
                     target: crate::core::EntityId::new(0), // Placeholder
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -819,6 +854,7 @@ impl CardDefinition {
             if ability.contains("AB$ Untap") {
                 effects.push(Effect::UntapPermanent {
                     target: crate::core::EntityId::new(0), // Placeholder
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -826,6 +862,7 @@ impl CardDefinition {
             if ability.contains("AB$ Destroy") {
                 effects.push(Effect::DestroyPermanent {
                     target: crate::core::EntityId::new(0), // Placeholder
+                    svar_name: svar_name.clone(),
                 });
             }
 
@@ -878,7 +915,7 @@ Oracle:Lightning Bolt deals 3 damage to any target.
 
         use crate::core::{Effect, TargetRef};
         match &effects[0] {
-            Effect::DealDamage { target, amount } => {
+            Effect::DealDamage { target, amount, .. } => {
                 assert_eq!(*amount, 3, "Should deal 3 damage");
                 assert!(matches!(target, TargetRef::None), "Target should be None initially");
             }
@@ -966,7 +1003,7 @@ Oracle:Target player draws three cards.
 
         use crate::core::Effect;
         match &effects[0] {
-            Effect::DrawCards { player: _, count } => {
+            Effect::DrawCards { player: _, count, .. } => {
                 assert_eq!(*count, 3, "Should draw 3 cards");
             }
             _ => panic!("Expected DrawCards effect, got {:?}", effects[0]),
@@ -996,7 +1033,7 @@ Oracle:Destroy target nonartifact, nonblack creature. It can't be regenerated.
 
         use crate::core::Effect;
         match &effects[0] {
-            Effect::DestroyPermanent { target: _ } => {
+            Effect::DestroyPermanent { target: _, .. } => {
                 // Success - correct effect type
             }
             _ => panic!("Expected DestroyPermanent effect, got {:?}", effects[0]),
@@ -1026,7 +1063,7 @@ Oracle:You gain 7 life.
 
         use crate::core::Effect;
         match &effects[0] {
-            Effect::GainLife { player: _, amount } => {
+            Effect::GainLife { player: _, amount, .. } => {
                 assert_eq!(*amount, 7, "Should gain 7 life");
             }
             _ => panic!("Expected GainLife effect, got {:?}", effects[0]),
@@ -1060,7 +1097,7 @@ Oracle:{T}: Prodigal Sorcerer deals 1 damage to any target.
 
         use crate::core::Effect;
         match &ability.effects[0] {
-            Effect::DealDamage { target: _, amount } => {
+            Effect::DealDamage { target: _, amount, .. } => {
                 assert_eq!(*amount, 1, "Should deal 1 damage");
             }
             _ => panic!("Expected DealDamage effect, got {:?}", ability.effects[0]),
