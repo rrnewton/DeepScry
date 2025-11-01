@@ -1017,6 +1017,100 @@ impl HeuristicController {
         None
     }
 
+    /// Get blockers that won't be destroyed by the attacker
+    ///
+    /// Reference: AiBlockController.getSafeBlockers() line 100
+    fn get_safe_blockers<'a>(&self, attacker: &Card, blockers: &[&'a Card]) -> Vec<&'a Card> {
+        blockers
+            .iter()
+            .filter(|b| !self.can_destroy_attacker(attacker, b))
+            .copied()
+            .collect()
+    }
+
+    /// Get blockers that can destroy the attacker
+    ///
+    /// Reference: AiBlockController.getKillingBlockers() line 114
+    fn get_killing_blockers<'a>(&self, attacker: &Card, blockers: &[&'a Card]) -> Vec<&'a Card> {
+        blockers
+            .iter()
+            .filter(|b| self.can_destroy_blocker(attacker, b))
+            .copied()
+            .collect()
+    }
+
+    /// Make good blocks: best blocker assignments
+    ///
+    /// Reference: AiBlockController.makeGoodBlocks() lines 187-362
+    ///
+    /// Priority order:
+    /// 1. Safe blockers that kill the attacker (best case)
+    /// 2. Safe blockers that survive (if not trample)
+    /// 3. Blockers with death triggers that kill the attacker
+    /// 4. Killing blockers worth less than attacker
+    fn make_good_blocks<'a>(
+        &self,
+        attackers: &[&'a Card],
+        available_blockers: &[&'a Card],
+    ) -> Vec<(&'a Card, &'a Card)> {
+        let mut assignments = Vec::new();
+        let mut remaining_blockers = available_blockers.to_vec();
+        let mut blocked_attackers = Vec::new();
+
+        for &attacker in attackers {
+            if remaining_blockers.is_empty() {
+                break;
+            }
+
+            let safe_blockers = self.get_safe_blockers(attacker, &remaining_blockers);
+            let mut chosen_blocker: Option<&Card> = None;
+
+            // 1. Safe blockers that kill the attacker
+            if !safe_blockers.is_empty() {
+                let killing_safe = self.get_killing_blockers(attacker, &safe_blockers);
+                if !killing_safe.is_empty() {
+                    // Choose the worst (lowest value) blocker that gets the job done
+                    chosen_blocker = killing_safe.iter().min_by_key(|b| self.evaluate_creature(b)).copied();
+                }
+                // 2. Safe blockers (survive but don't kill) - only if not trample
+                else if !attacker.has_trample() {
+                    // Choose the worst safe blocker
+                    chosen_blocker = safe_blockers.iter().min_by_key(|b| self.evaluate_creature(b)).copied();
+                }
+            }
+
+            // 3. If no safe blocker, look for killing blockers that trade favorably
+            if chosen_blocker.is_none() {
+                let killing_blockers = self.get_killing_blockers(attacker, &remaining_blockers);
+                let attacker_value = self.evaluate_creature(attacker);
+
+                // Find killing blockers worth less than the attacker
+                let favorable_killers: Vec<&Card> = killing_blockers
+                    .iter()
+                    .filter(|b| self.evaluate_creature(b) < attacker_value)
+                    .copied()
+                    .collect();
+
+                if !favorable_killers.is_empty() {
+                    // Choose the worst favorable killer
+                    chosen_blocker = favorable_killers
+                        .iter()
+                        .min_by_key(|b| self.evaluate_creature(b))
+                        .copied();
+                }
+            }
+
+            // Assign the chosen blocker
+            if let Some(blocker) = chosen_blocker {
+                assignments.push((blocker, attacker));
+                blocked_attackers.push(attacker);
+                remaining_blockers.retain(|b| b.id != blocker.id);
+            }
+        }
+
+        assignments
+    }
+
     /// Improved blocking with gang blocking support
     ///
     /// Reference: AiBlockController.assignBlockersForCombat() lines 1070-1160
@@ -1049,11 +1143,26 @@ impl HeuristicController {
         // Sort attackers by threat level (highest value first)
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
 
-        // Phase 1: Try gang blocks for high-value attackers
+        let blocker_cards: Vec<&Card> = remaining_blockers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+
+        // Phase 1a: Make good blocks (safe kills, safe blocks, favorable trades)
+        let good_blocks = self.make_good_blocks(&attacker_cards, &blocker_cards);
+        for (blocker, attacker) in good_blocks {
+            blocks.push((blocker.id, attacker.id));
+            remaining_blockers.retain(|&id| id != blocker.id);
+        }
+
+        // Update available blockers and attackers
         let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
+
+        // Phase 1b: Try gang blocks for remaining high-value attackers
         let mut gang_blocked_attacker_ids = Vec::new();
 
-        for &attacker in &attacker_cards {
+        for &attacker in &attackers_left {
             if remaining_blockers.is_empty() {
                 break;
             }
@@ -1077,7 +1186,7 @@ impl HeuristicController {
         // Remove gang-blocked attackers from consideration
         attackers_left.retain(|a| !gang_blocked_attacker_ids.contains(&a.id));
 
-        // Phase 2: Single blocker assignments for remaining attackers
+        // Phase 2: Single blocker assignments for remaining attackers (trade blocks)
         for attacker in &attackers_left {
             if remaining_blockers.is_empty() {
                 break;
