@@ -237,8 +237,8 @@ enum Commands {
 
     /// Tournament Mode - Run multiple games in parallel and collect statistics
     Tourney {
-        /// Deck files to include in tournament (at least 2 required)
-        #[arg(value_name = "DECKS", required = true, num_args = 2..)]
+        /// Deck files to include in tournament (at least 1 required)
+        #[arg(value_name = "DECKS", required = true, num_args = 1..)]
         decks: Vec<PathBuf>,
 
         /// Total number of games to run (mutually exclusive with --seconds)

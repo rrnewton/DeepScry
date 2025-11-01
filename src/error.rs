@@ -24,6 +24,9 @@ pub enum MtgError {
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
+
+    #[error("Task join error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = std::result::Result<T, MtgError>;
