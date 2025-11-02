@@ -108,6 +108,10 @@ Workflow: Commits and Version Control
 ================================================================================
 
 Commit to git as described in the PROJECT_VISION.
+Our submodules in this directory should stay pinned to the latest upstream branch:
+ - forge-java: master branch
+ - .claude_template: mtg-rs branch
+Resolve any conflicts by just always taking the upstream latest for these branches.
 
 Clean Start: Before beginning work on a task
 --------------------------------------------
