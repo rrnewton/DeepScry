@@ -442,17 +442,21 @@ impl HeuristicController {
         }
 
         // Phase 2b: Activated abilities (especially removal during combat)
-        // Check if any activated abilities are worth using
-        // For now, just activate any non-mana ability (like Royal Assassin)
-        // TODO(mtg-XX): Evaluate activated abilities intelligently
-        // - Prioritize removal abilities during opponent's combat
-        // - Check if there are valid targets
-        // - Evaluate value of using the ability now vs later
+        // Evaluate and use activated abilities intelligently
+        // Reference: Java Forge's ability AI in forge-ai/src/main/java/forge/ai/ability/
         for ability in available {
-            if matches!(ability, SpellAbility::ActivateAbility { .. }) {
-                // For now, always activate available abilities
-                // This will make Royal Assassin use its ability when available
-                return Some(ability.clone());
+            if let SpellAbility::ActivateAbility { card_id, .. } = ability {
+                if let Some(source_card) = view.get_card(*card_id) {
+                    // Skip mana abilities (let mana system handle those)
+                    if source_card.activated_abilities.iter().any(|ab| ab.is_mana_ability) {
+                        continue;
+                    }
+
+                    // Evaluate if we should use this ability now
+                    if self.should_activate_ability(source_card, view) {
+                        return Some(ability.clone());
+                    }
+                }
             }
         }
 
@@ -491,9 +495,31 @@ impl HeuristicController {
             }
         }
 
-        // Phase 4: Cast other spells
-        // TODO(mtg-XX): Evaluate removal, pump spells, card draw, etc.
-        // Java: Has separate logic for each spell type with evaluation functions
+        // Phase 4: Cast other spells (removal, damage, etc.)
+        for ability in available {
+            if let SpellAbility::CastSpell { card_id } = ability {
+                if let Some(spell_card) = view.get_card(*card_id) {
+                    // Skip creatures and pumps (already handled above)
+                    if spell_card.is_creature() {
+                        continue;
+                    }
+
+                    // Check if this is a pump spell (skip, already handled)
+                    let is_pump = spell_card
+                        .effects
+                        .iter()
+                        .any(|e| matches!(e, crate::core::Effect::PumpCreature { .. }));
+                    if is_pump {
+                        continue;
+                    }
+
+                    // Evaluate other spells (removal, damage, etc.)
+                    if self.should_cast_spell(spell_card, view) {
+                        return Some(ability.clone());
+                    }
+                }
+            }
+        }
 
         // Pass priority if nothing good to do
         None
@@ -1166,6 +1192,44 @@ impl HeuristicController {
         // Use simplified combat factors check
         // For now, just check if power > 0
         pumped_power > 0
+    }
+
+    /// Evaluate whether to activate an activated ability now
+    ///
+    /// Reference: Various ability AI classes in forge-ai/src/main/java/forge/ai/ability/
+    fn should_activate_ability(&self, _source: &Card, _view: &GameStateView) -> bool {
+        // For now, don't automatically activate abilities
+        // The current implementation doesn't have enough context to make good decisions
+        // (needs combat state tracking, better timing logic, etc.)
+        // TODO: Implement proper activated ability evaluation
+        // - Check if we're on opponent's turn (for removal abilities like Royal Assassin)
+        // - Evaluate if targets are valuable enough
+        // - Consider mana efficiency
+        false
+    }
+
+    /// Evaluate whether to cast a non-creature, non-pump spell
+    ///
+    /// Reference: Various spell AI classes in forge-ai/src/main/java/forge/ai/ability/
+    fn should_cast_spell(&self, spell: &Card, view: &GameStateView) -> bool {
+        // For now, don't cast removal or other spells automatically
+        // The targeting system needs to be improved first to avoid targeting wrong permanents
+        // TODO: Implement proper spell evaluation with correct targeting restrictions
+
+        // Only cast card draw if we're low on cards
+        let has_draw = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DrawCards { .. }));
+        if has_draw {
+            let hand_size = view.hand().len();
+            // Draw if we have 2 or fewer cards in hand
+            if hand_size <= 2 {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Determine if we should block an attacker with a specific blocker
