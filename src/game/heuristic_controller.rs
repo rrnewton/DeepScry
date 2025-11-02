@@ -1234,15 +1234,56 @@ impl HeuristicController {
         assignments
     }
 
-    /// Improved blocking with gang blocking support
+    /// Check if life is in serious danger (very low life threshold)
+    ///
+    /// Reference: ComputerUtilCombat.lifeInSeriousDanger() lines 477-508
+    fn life_in_serious_danger(&self, view: &GameStateView, attackers: &[CardId], current_blocks: &[(CardId, CardId)]) -> bool {
+        // Serious danger is a lower threshold than regular danger
+        const SERIOUS_DANGER_THRESHOLD: i32 = 3;
+        let remaining_life = self.life_that_would_remain(view, attackers, current_blocks);
+        remaining_life < SERIOUS_DANGER_THRESHOLD
+    }
+
+    /// Improved blocking with gang blocking support and multi-phase danger reassessment
     ///
     /// Reference: AiBlockController.assignBlockersForCombat() lines 1070-1160
     ///
     /// Java's multi-phase strategy:
     /// Phase 1: Good blocks -> Gang blocks -> Trade blocks -> (if danger) Chump blocks
     /// Phase 2: If still in danger, reset and try: Trade -> Good -> Chump
-    /// Phase 3: If serious danger: Chump -> Trade -> Reinforce -> Good -> Gang
+    /// Phase 3: If serious danger: Chump -> Trade -> Good -> Gang
     fn assign_blocks_with_gang(
+        &self,
+        view: &GameStateView,
+        available_blockers: &[CardId],
+        attackers: &[CardId],
+    ) -> SmallVec<[(CardId, CardId); 8]> {
+        // Try Phase 1 blocking strategy
+        let mut blocks = self.assign_blocks_phase1(view, available_blockers, attackers);
+        
+        // Check if life is still in danger after Phase 1
+        let life_in_danger = self.life_in_danger(view, attackers, &blocks);
+        
+        // Phase 2: If still in danger, reset and try safer approach
+        if life_in_danger {
+            blocks = self.assign_blocks_phase2(view, available_blockers, attackers);
+            
+            // Check if life is in SERIOUS danger after Phase 2
+            let serious_danger = self.life_in_serious_danger(view, attackers, &blocks);
+            
+            // Phase 3: If in serious danger, be extremely defensive
+            if serious_danger {
+                blocks = self.assign_blocks_phase3(view, available_blockers, attackers);
+            }
+        }
+        
+        blocks
+    }
+
+    /// Phase 1: Standard blocking strategy
+    ///
+    /// Good blocks -> Gang blocks -> Trade blocks -> Chump blocks
+    fn assign_blocks_phase1(
         &self,
         view: &GameStateView,
         available_blockers: &[CardId],
@@ -1348,6 +1389,134 @@ impl HeuristicController {
                         break;
                     }
                 }
+            }
+        }
+
+        blocks
+    }
+
+    /// Phase 2: Safer blocking when life is in danger
+    ///
+    /// Trade blocks -> Good blocks -> Chump blocks
+    /// Reference: AiBlockController line 1107-1120
+    fn assign_blocks_phase2(
+        &self,
+        view: &GameStateView,
+        available_blockers: &[CardId],
+        attackers: &[CardId],
+    ) -> SmallVec<[(CardId, CardId); 8]> {
+        let mut blocks = SmallVec::new();
+        let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
+
+        let mut attacker_cards: Vec<&Card> = attackers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
+
+        // Phase 2a: Trade blocks first (more willing to trade when in danger)
+        let blocker_cards: Vec<&Card> = remaining_blockers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+        
+        let trade_blocks = self.make_trade_blocks(&attacker_cards, &blocker_cards, true);
+        for (blocker, attacker) in trade_blocks {
+            blocks.push((blocker.id, attacker.id));
+            remaining_blockers.retain(|&id| id != blocker.id);
+        }
+
+        let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
+
+        // Phase 2b: Good blocks
+        let remaining_blocker_cards: Vec<&Card> = remaining_blockers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+        
+        let good_blocks = self.make_good_blocks(&attackers_left, &remaining_blocker_cards);
+        for (blocker, attacker) in good_blocks {
+            blocks.push((blocker.id, attacker.id));
+            remaining_blockers.retain(|&id| id != blocker.id);
+        }
+
+        attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
+
+        // Phase 2c: Chump blocks if still in danger
+        for attacker in &attackers_left {
+            if remaining_blockers.is_empty() {
+                break;
+            }
+
+            let blocker_cards: Vec<&Card> = remaining_blockers
+                .iter()
+                .filter_map(|&id| view.get_card(id))
+                .collect();
+
+            for &blocker in &blocker_cards {
+                if self.should_block(blocker, attacker, view, attackers, &blocks) {
+                    blocks.push((blocker.id, attacker.id));
+                    remaining_blockers.retain(|&id| id != blocker.id);
+                    break;
+                }
+            }
+        }
+
+        blocks
+    }
+
+    /// Phase 3: Emergency blocking when life is in serious danger
+    ///
+    /// Chump blocks -> Trade blocks -> Good blocks
+    /// Reference: AiBlockController line 1123-1149
+    fn assign_blocks_phase3(
+        &self,
+        view: &GameStateView,
+        available_blockers: &[CardId],
+        attackers: &[CardId],
+    ) -> SmallVec<[(CardId, CardId); 8]> {
+        let mut blocks = SmallVec::new();
+        let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
+
+        let mut attacker_cards: Vec<&Card> = attackers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
+
+        // Phase 3a: Chump blocks first - block everything we can
+        for attacker in &attacker_cards {
+            if remaining_blockers.is_empty() {
+                break;
+            }
+
+            let blocker_cards: Vec<&Card> = remaining_blockers
+                .iter()
+                .filter_map(|&id| view.get_card(id))
+                .collect();
+
+            // In serious danger, block with anything
+            if let Some(&blocker) = blocker_cards.first() {
+                blocks.push((blocker.id, attacker.id));
+                remaining_blockers.retain(|&id| id != blocker.id);
+            }
+        }
+
+        // Phase 3b: If we blocked everything and still have blockers, try trade blocks
+        let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
+
+        if !attackers_left.is_empty() && !remaining_blockers.is_empty() {
+            let remaining_blocker_cards: Vec<&Card> = remaining_blockers
+                .iter()
+                .filter_map(|&id| view.get_card(id))
+                .collect();
+            
+            let trade_blocks = self.make_trade_blocks(&attackers_left, &remaining_blocker_cards, true);
+            for (blocker, attacker) in trade_blocks {
+                blocks.push((blocker.id, attacker.id));
+                remaining_blockers.retain(|&id| id != blocker.id);
             }
         }
 
