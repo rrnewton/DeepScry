@@ -1,18 +1,19 @@
 ---
 title: Reduce allocations in ManaEngine::update() hot path
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - optimization
 - performance
 created_at: 2025-11-02T22:35:04.738643662+00:00
-updated_at: 2025-11-02T22:35:04.738643662+00:00
+updated_at: 2025-11-02T22:55:39.806336837+00:00
+closed_at: 2025-11-02T22:55:39.806336697+00:00
 ---
 
 # Description
 
-## Allocation Hotspot: ManaEngine::update()
+## Allocation Hotspot: ManaEngine::update() - RESOLVED
 
 ## Profile Data (2025-11-02_#584)
 
@@ -67,46 +68,73 @@ The `ManaEngine::update()` method:
 
 While `clear()` retains capacity, we still reallocate when growing beyond previous capacity in longer games.
 
-## Proposed Solution
+## Solution Implemented (Commit d071ccf)
 
-Pre-size vectors based on typical battlefield sizes:
+### Changes Made
 
-```rust
-pub fn update(&mut self, game: &GameState, player_id: PlayerId) {
-    self.simple_capacity = ManaCapacity::default();
-    self.simple_sources.clear();
-    self.simple_sources.reserve(10);  // Typical: 5-10 lands
-    self.conditional_sources.clear();
-    self.conditional_sources.reserve(5);  // Typical: 0-5 mana dorks/rocks
-    self.mana_sources.clear();
-    self.mana_sources.reserve(15);  // Combined
-    
-    // ... rest of update logic
-}
-```
+1. **Removed player_id from ManaEngine struct**
+   - Changed constructor: `new()` instead of `new(player_id)`
+   - Made `update()` take player_id as parameter
+   - Allows single engine to be reused for different players
 
-## Expected Impact
+2. **Stored reusable ManaEngine in GameLoop**
+   - Added `mana_engine: ManaEngine` field to `GameLoop` struct
+   - Initialized once in constructor
+   - Reused across all mana availability checks
 
-**Current allocation per turn**: 36-46 KB/turn (from benchmarks)
+3. **Pre-allocated vector capacity**
+   ```rust
+   self.simple_sources.reserve(10);      // Typical: 5-10 lands
+   self.complex_sources.reserve(5);      // Typical: 0-5 mana dorks/rocks
+   self.mana_sources.reserve(15);        // Combined capacity
+   ```
 
-**Potential savings**:
-- Reduce Vec reallocations in hot path
-- More stable memory usage
-- Better cache locality
+### Call Sites Updated
+- `get_castable_spells()`: Now uses `self.mana_engine`
+- `get_activatable_abilities()`: Now uses `self.mana_engine`
+- `get_available_spell_abilities()`: Changed to `&mut self`
 
-**Minimal downside**:
-- Small increase in minimum memory (~240 bytes reserved per update)
-- Negligible compared to per-turn allocation (36-46 KB)
+## Measured Impact (2025-11-02_#593)
 
-## Benchmarking Plan
+**Before (1f600d0) vs After (d071ccf):**
 
-1. Add capacity pre-allocation to `ManaEngine::update()`
-2. Re-run heaptrack profile
-3. Compare allocation counts and memory usage
-4. Measure impact on games/sec throughput
+### Simple Deck (simple_bolt.dck)
+- **Bytes/game**: 305,918 → 243,674 (**-20.3%**)
+- **Bytes/turn**: 43,702 → 34,810 (**-20.3%**)
+
+### Old School Decks (Complex Games)
+
+**Mono Black vs The Deck** (32 turns/game):
+- **Bytes/game**: 1,247,852 → 811,128 (**-35.0%**)
+- **Bytes/turn**: 38,995 → 25,347 (**-35.0%**)
+
+**White Weenie Mirror** (56 turns/game):
+- **Bytes/game**: 2,041,820 → 1,249,704 (**-38.8%**)
+- **Bytes/turn**: 36,461 → 22,316 (**-38.8%**)
+
+**Jeskai Aggro vs Troll Disk** (39 turns/game):
+- **Bytes/game**: 1,784,466 → 1,264,846 (**-29.1%**)
+- **Bytes/turn**: 45,755 → 32,431 (**-29.1%**)
+
+### Performance Improvements
+- **Speed**: Old school benchmarks showed **15-16% performance improvement**
+- **Throughput**: Jeskai benchmark went from 939 → 1,117 games/sec
+
+## Key Insights
+
+1. **Longer games benefit more**: 38.8% reduction for 56-turn games vs 20.3% for 7-turn games
+2. **Capacity retention works**: Single engine retains Vec capacity across multiple updates
+3. **Per-turn overhead reduced significantly**: 29-39% reduction in bytes/turn for complex games
+
+## Status
+
+✅ **RESOLVED** - Commit d071ccf implements the optimization with excellent results.
+
+**Test Results**: All 404 tests passed.
 
 ## References
 
 - Heaptrack profile: `/tmp/heaptrack_analysis.txt`
-- Benchmark results: commit 1f5f2e5
-- Related: mtg-2 (optimization tracking)
+- Implementation: commit d071ccf
+- Benchmark results: `experiment_results/perf_history.csv`
+- Tracking: mtg-2 (optimization tracking)
