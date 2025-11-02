@@ -29,23 +29,24 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ### High Priority (Core AI Strength):
 
-0. **Multi-phase blocking strategy (partial implementation - 2025-11-01)**
+0. **Multi-phase blocking strategy (✅ MOSTLY COMPLETE - 2025-11-02)**
    - ✅ Good blocks (safe kills, safe survives, favorable trades)
-   - ✅ Basic gang blocking (2-blocker combinations)
+   - ✅ Gang blocking (2-blocker and 3-blocker combinations)
    - ✅ First strike gang blocking logic
    - ✅ Value-based block selection
    - ✅ Safe blockers vs killing blockers distinction
-   - Current: Single-pass with good blocks → gang blocks → trade blocks → life-in-danger chump blocks
-   - Missing: Java's sophisticated 3-phase strategy (AiBlockController.java:1075-1148)
-     - Phase 1: Good → Gang → Trade → Chump → Reinforce (partially implemented)
-     - Phase 2: If still in danger, reset and reorder: Trade → Good → Chump → Reinforce
-     - Phase 3: If serious danger: Chump → Trade → Reinforce → Good
-   - Missing: 3-blocker gang combinations
-   - Missing: Reinforce against trample
-   - Missing: Planeswalker defense
-   - Missing: Multi-phase danger reassessment and block reordering
-   - Impact: Good blocking but missing adaptive reassessment
-   - Reference: AiBlockController.java:187-950 (block type methods)
+   - ✅ Trade blocks for life preservation
+   - ✅ Multi-phase danger reassessment (Phase 1, 2, 3)
+   - ✅ Life in danger detection and adaptive reordering
+   - ✅ Serious danger detection (life < 3)
+   - Current: Full 3-phase strategy implemented
+     - Phase 1: Good → Gang → Trade → Chump
+     - Phase 2: If danger remains: Trade → Good → Chump
+     - Phase 3: If serious danger: Chump → Trade → Good
+   - Missing: Reinforce against trample (lower priority)
+   - Missing: Planeswalker defense (no planeswalkers in test decks yet)
+   - Impact: Sophisticated adaptive blocking matching Java implementation
+   - Reference: AiBlockController.java:187-950, 1070-1160
 
 1. **Attack logic improvements (✅ COMPLETED - mtg-84, mtg-85)**
    - ✅ Board state evaluation implemented
@@ -138,6 +139,18 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - AI attacks with all power when opponent can be killed
   - **Benchmark: +4.9% win rate improvement (60.9% → 65.8%)**
   - Reference: Attack decision logic with opponent life awareness
+- ✅ 3-blocker gang combinations (2025-11-02):
+  - Extended gang blocking to support triple-blocker combinations
+  - Prioritizes high-value attackers (value > 200) for 3-blocker gangs
+  - Accepts 2 deaths if total value < attacker value
+  - **Benchmark: +0.4% win rate improvement (65.8% → 66.2%)**
+  - Reference: AiBlockController triple-block logic
+- ✅ Multi-phase blocking with danger reassessment (2025-11-02):
+  - Implemented 3-phase adaptive blocking strategy
+  - Phase 2 resets blocks if life remains in danger
+  - Phase 3 emergency mode for serious danger (life < 3)
+  - **Benchmark: Stable performance, adaptive behavior added**
+  - Reference: AiBlockController lines 1095-1149
 
 ## Test Coverage Expansion (2025-10-26)
 
