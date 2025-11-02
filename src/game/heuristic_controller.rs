@@ -1261,19 +1261,36 @@ impl HeuristicController {
         // Try Phase 1 blocking strategy
         let mut blocks = self.assign_blocks_phase1(view, available_blockers, attackers);
         
+        // Reinforce to kill blockers if not in danger (Phase 1 follow-up)
+        if !self.life_in_danger(view, attackers, &blocks) {
+            self.reinforce_blockers_to_kill(view, attackers, available_blockers, &mut blocks);
+        }
+        
         // Check if life is still in danger after Phase 1
-        let life_in_danger = self.life_in_danger(view, attackers, &blocks);
+        let mut life_in_danger = self.life_in_danger(view, attackers, &blocks);
         
         // Phase 2: If still in danger, reset and try safer approach
         if life_in_danger {
             blocks = self.assign_blocks_phase2(view, available_blockers, attackers);
             
+            // Reinforce against trample if life is still in danger
+            if self.life_in_danger(view, attackers, &blocks) {
+                self.reinforce_blockers_against_trample(view, attackers, available_blockers, &mut blocks);
+            } else {
+                life_in_danger = false;
+            }
+            
             // Check if life is in SERIOUS danger after Phase 2
-            let serious_danger = self.life_in_serious_danger(view, attackers, &blocks);
+            let serious_danger = life_in_danger && self.life_in_serious_danger(view, attackers, &blocks);
             
             // Phase 3: If in serious danger, be extremely defensive
             if serious_danger {
                 blocks = self.assign_blocks_phase3(view, available_blockers, attackers);
+                
+                // Reinforce against trample in emergency
+                if self.life_in_danger(view, attackers, &blocks) {
+                    self.reinforce_blockers_against_trample(view, attackers, available_blockers, &mut blocks);
+                }
             }
         }
         
@@ -1521,6 +1538,176 @@ impl HeuristicController {
         }
 
         blocks
+    }
+
+    /// Reinforce blockers against trample attackers
+    ///
+    /// Reference: AiBlockController.reinforceBlockersAgainstTrample() lines 737-792
+    ///
+    /// Adds additional blockers to trample attackers to absorb more damage
+    fn reinforce_blockers_against_trample(
+        &self,
+        view: &GameStateView,
+        attackers: &[CardId],
+        available_blockers: &[CardId],
+        current_blocks: &mut SmallVec<[(CardId, CardId); 8]>,
+    ) {
+        // Only reinforce if life is in danger
+        if !self.life_in_danger(view, attackers, current_blocks) {
+            return;
+        }
+
+        // Find trample attackers that are already blocked
+        let trample_attackers: Vec<CardId> = attackers
+            .iter()
+            .filter_map(|&id| {
+                let card = view.get_card(id)?;
+                if card.has_trample() {
+                    // Check if this attacker is already blocked
+                    if current_blocks.iter().any(|(_, aid)| *aid == id) {
+                        return Some(id);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for attacker_id in trample_attackers {
+            let attacker = match view.get_card(attacker_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let attacker_power = attacker.power.unwrap_or(0) as i32;
+
+            // Calculate current blocking damage absorption
+            let current_blockers: Vec<&Card> = current_blocks
+                .iter()
+                .filter_map(|(bid, aid)| if *aid == attacker_id { view.get_card(*bid) } else { None })
+                .collect();
+
+            let current_absorption: i32 = current_blockers
+                .iter()
+                .map(|b| b.toughness.unwrap_or(0) as i32)
+                .sum();
+
+            // If current blockers don't absorb all damage, add more
+            if attacker_power > current_absorption {
+                // Find available blockers that can block this attacker
+                for &blocker_id in available_blockers {
+                    // Skip if already blocking
+                    if current_blocks.iter().any(|(bid, _)| *bid == blocker_id) {
+                        continue;
+                    }
+
+                    if let Some(blocker) = view.get_card(blocker_id) {
+                        // Check if can block (basic check)
+                        if self.can_block(attacker, blocker) {
+                            let blocker_toughness = blocker.toughness.unwrap_or(0) as i32;
+                            // Add this blocker to help absorb trample damage
+                            if blocker_toughness > 0 {
+                                current_blocks.push((blocker_id, attacker_id));
+                                // Recalculate if we need more
+                                let new_absorption = current_absorption + blocker_toughness;
+                                if new_absorption >= attacker_power {
+                                    break; // Absorbed enough
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reinforce blockers to kill attacker
+    ///
+    /// Reference: AiBlockController.reinforceBlockersToKill() lines 793-857
+    ///
+    /// Adds additional blockers to ensure we kill the attacker
+    fn reinforce_blockers_to_kill(
+        &self,
+        view: &GameStateView,
+        attackers: &[CardId],
+        available_blockers: &[CardId],
+        current_blocks: &mut SmallVec<[(CardId, CardId); 8]>,
+    ) {
+        // Find attackers that are blocked but not killed
+        let mut blocked_but_unkilled: Vec<CardId> = Vec::new();
+
+        for &attacker_id in attackers {
+            let attacker = match view.get_card(attacker_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            // Get blockers for this attacker
+            let blockers: Vec<&Card> = current_blocks
+                .iter()
+                .filter_map(|(bid, aid)| if *aid == attacker_id { view.get_card(*bid) } else { None })
+                .collect();
+
+            if blockers.is_empty() {
+                continue; // Not blocked
+            }
+
+            // Check if blockers kill the attacker
+            let total_damage = self.total_damage_of_blockers(&blockers, attacker);
+            let attacker_toughness = attacker.toughness.unwrap_or(0) as i32;
+
+            if total_damage < attacker_toughness && !attacker.has_indestructible() {
+                blocked_but_unkilled.push(attacker_id);
+            }
+        }
+
+        // Try to add more blockers to kill these attackers
+        for attacker_id in blocked_but_unkilled {
+            let attacker = match view.get_card(attacker_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let attacker_value = self.evaluate_creature(attacker);
+            let attacker_toughness = attacker.toughness.unwrap_or(0) as i32;
+
+            // Calculate current damage
+            let current_blockers: Vec<&Card> = current_blocks
+                .iter()
+                .filter_map(|(bid, aid)| if *aid == attacker_id { view.get_card(*bid) } else { None })
+                .collect();
+
+            let current_damage = self.total_damage_of_blockers(&current_blockers, attacker);
+
+            // Try to add safe blockers first (that won't die)
+            for &blocker_id in available_blockers {
+                // Skip if already blocking
+                if current_blocks.iter().any(|(bid, _)| *bid == blocker_id) {
+                    continue;
+                }
+
+                if let Some(blocker) = view.get_card(blocker_id) {
+                    if !self.can_block(attacker, blocker) {
+                        continue;
+                    }
+
+                    let blocker_power = blocker.power.unwrap_or(0) as i32;
+                    let blocker_value = self.evaluate_creature(blocker);
+
+                    // Add blocker if:
+                    // 1. It contributes damage toward killing the attacker
+                    // 2. It's worth less than the attacker (favorable trade)
+                    if blocker_power > 0 && blocker_value < attacker_value {
+                        current_blocks.push((blocker_id, attacker_id));
+                        
+                        // Check if we've added enough damage
+                        let new_total = current_damage + blocker_power;
+                        if new_total >= attacker_toughness {
+                            break; // Successfully reinforced to kill
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
