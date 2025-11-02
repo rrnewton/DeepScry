@@ -12,11 +12,12 @@
 # Smart caching: treats documentation-only changes (*.md) as cache hits.
 #
 # Usage:
-#   ./validate.sh [--force] [--sequential]
+#   ./validate.sh [--force] [--sequential] [--wip-commit]
 #
 # Options:
 #   --force        Skip cache checks and always run validation
 #   --sequential   Run tests sequentially, failing on first failure (easier debugging)
+#   --wip-commit   Allow validation of dirty working copy by creating temporary WIP commit
 
 set -e  # Exit on error
 set -o pipefail  # Propagate pipeline errors
@@ -24,6 +25,7 @@ set -o pipefail  # Propagate pipeline errors
 # Parse command line arguments
 FORCE_VALIDATION=false
 SEQUENTIAL_MODE=false
+ALLOW_WIP_COMMIT=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --force)
@@ -34,9 +36,13 @@ while [[ $# -gt 0 ]]; do
             SEQUENTIAL_MODE=true
             shift
             ;;
+        --wip-commit)
+            ALLOW_WIP_COMMIT=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--force] [--sequential]"
+            echo "Usage: $0 [--force] [--sequential] [--wip-commit]"
             exit 1
             ;;
     esac
@@ -76,6 +82,20 @@ trap cleanup EXIT
 # Refresh the index to avoid false positives from stale stat information
 git update-index --refresh -q 2>/dev/null || true
 if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    if [ "$ALLOW_WIP_COMMIT" = false ]; then
+        echo ""
+        echo -e "${RED}✗ Error: Working copy has uncommitted changes${NC}"
+        echo ""
+        echo "You have uncommitted changes in your working copy."
+        echo "Please either:"
+        echo "  1. Commit or stash your changes before running validation"
+        echo "  2. Use the --wip-commit flag to create a temporary WIP commit"
+        echo ""
+        echo "Usage: $0 [--force] [--sequential] [--wip-commit]"
+        echo ""
+        exit 1
+    fi
+
     echo ""
     echo -e "${CYAN}Working copy is dirty - creating temporary WIP commit...${NC}"
     git add -A
