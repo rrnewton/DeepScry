@@ -12,7 +12,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
-    game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel},
+    game::{random_controller::RandomController, GameLoop, GameSnapshot, GameState, VerbosityLevel},
     loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer},
     Result,
 };
@@ -20,6 +20,7 @@ use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
 use std::path::PathBuf;
 use std::time::Duration;
+use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
 #[global_allocator]
@@ -782,12 +783,85 @@ fn bench_game_rewind(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: Save snapshot to file
+fn bench_save_snapshot(c: &mut Criterion) {
+    // Check if test resources exist and load once
+    let setup = match BenchmarkSetup::load() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping benchmark - failed to load resources: {e}");
+            return;
+        }
+    };
+
+    let mut group = c.benchmark_group("snapshot_serialization");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+
+    let seed = 42u64;
+
+    // Create a representative game state by running a game for a few turns
+    let mut game = {
+        let game_init = GameInitializer::new(&setup.card_db);
+        setup
+            .runtime
+            .block_on(async {
+                game_init
+                    .init_game(
+                        "Player 1".to_string(),
+                        &setup.deck,
+                        "Player 2".to_string(),
+                        &setup.deck,
+                        20,
+                    )
+                    .await
+            })
+            .expect("Failed to initialize game")
+    };
+    game.seed_rng(seed);
+
+    let (p1_id, p2_id) = {
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        (
+            players_iter.next().expect("Should have player 1"),
+            players_iter.next().expect("Should have player 2"),
+        )
+    };
+
+    let mut controller1 = RandomController::with_seed(p1_id, 42);
+    let mut controller2 = RandomController::with_seed(p2_id, 42);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+    game_loop
+        .run_turns(&mut controller1, &mut controller2, 10)
+        .expect("Game should complete successfully");
+
+    let snapshot = GameSnapshot::new(game.clone(), game.turn.turn_number, vec![]);
+
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let snapshot_path = temp_dir.path().join("benchmark.snapshot");
+
+    group.bench_function("save_to_file", |b| {
+        b.iter(|| {
+            snapshot
+                .save_to_file(
+                    black_box(&snapshot_path),
+                    mtg_forge_rs::game::snapshot::SnapshotFormat::Json,
+                )
+                .expect("Failed to save snapshot");
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_game_fresh,
     bench_game_fresh_with_logging,
     bench_game_fresh_with_stdout_logging,
     bench_game_snapshot,
-    bench_game_rewind
+    bench_game_rewind,
+    bench_save_snapshot
 );
 criterion_main!(benches);

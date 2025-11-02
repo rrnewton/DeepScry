@@ -196,6 +196,10 @@ enum Commands {
         #[arg(long, value_name = "FILE", default_value = "game.snapshot")]
         snapshot_output: PathBuf,
 
+        /// Use JSON format for snapshots (default is binary format)
+        #[arg(long)]
+        json: bool,
+
         /// Load and resume game from snapshot file
         #[arg(long, value_name = "FILE")]
         start_from: Option<PathBuf>,
@@ -330,6 +334,10 @@ enum Commands {
         #[arg(long, value_name = "FILE", default_value = "game.snapshot")]
         snapshot_output: PathBuf,
 
+        /// Use JSON format for snapshots (default is binary format)
+        #[arg(long)]
+        json: bool,
+
         /// Save final game state when game ends (for determinism testing)
         #[arg(long, value_name = "FILE")]
         save_final_gamestate: Option<PathBuf>,
@@ -366,12 +374,20 @@ async fn main() -> Result<()> {
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
+            json,
             start_from,
             save_final_gamestate,
             log_tail,
             p1_draw,
             p2_draw,
         } => {
+            // Convert json flag to SnapshotFormat
+            let snapshot_format = if json {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Json
+            } else {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
+            };
+
             run_tui(
                 deck1,
                 deck2,
@@ -392,6 +408,7 @@ async fn main() -> Result<()> {
                 stop_on_choice,
                 stop_when_fixed_exhausted,
                 snapshot_output,
+                snapshot_format,
                 start_from,
                 save_final_gamestate,
                 log_tail,
@@ -448,9 +465,17 @@ async fn main() -> Result<()> {
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
+            json,
             save_final_gamestate,
             log_tail,
         } => {
+            // Convert json flag to SnapshotFormat
+            let snapshot_format = if json {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Json
+            } else {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
+            };
+
             run_resume(
                 snapshot_file,
                 override_p1,
@@ -466,6 +491,7 @@ async fn main() -> Result<()> {
                 stop_on_choice,
                 stop_when_fixed_exhausted,
                 snapshot_output,
+                snapshot_format,
                 save_final_gamestate,
                 log_tail,
             )
@@ -519,6 +545,7 @@ async fn run_tui(
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
     snapshot_output: PathBuf,
+    snapshot_format: mtg_forge_rs::game::snapshot::SnapshotFormat,
     start_from: Option<PathBuf>,
     save_final_gamestate: Option<PathBuf>,
     log_tail: Option<usize>,
@@ -583,7 +610,7 @@ async fn run_tui(
 
     // Load snapshot early if resuming, so we can extract both game state and player-specific choices
     let loaded_snapshot: Option<GameSnapshot> = if let Some(ref snapshot_file) = start_from {
-        let snapshot = GameSnapshot::load_from_file(snapshot_file)
+        let snapshot = GameSnapshot::load_from_file(snapshot_file, snapshot_format)
             .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
         Some(snapshot)
     } else {
@@ -984,8 +1011,9 @@ async fn run_tui(
         game.logger.enable_capture();
     }
 
-    // Run the game loop (with or without snapshots)
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(verbosity);
+    let mut game_loop = GameLoop::new(&mut game)
+        .with_verbosity(verbosity)
+        .with_snapshot_format(snapshot_format);
 
     // If loading from snapshot, restore the turn counter
     // Note: snapshot.turn_number represents the turn we're STARTING,
@@ -1101,7 +1129,7 @@ async fn run_tui(
 
         // If either controller has state to preserve, update the snapshot
         if p1_state_json.is_some() || p2_state_json.is_some() {
-            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output) {
+            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output, snapshot_format) {
                 // Deserialize JSON back to ControllerState (Fixed or Random) if present
                 snapshot.p1_controller_state = p1_state_json.and_then(|json| {
                     serde_json::from_value(json.clone())
@@ -1126,7 +1154,7 @@ async fn run_tui(
                         .ok()
                 });
 
-                if let Err(e) = snapshot.save_to_file(&snapshot_output) {
+                if let Err(e) = snapshot.save_to_file(&snapshot_output, snapshot_format) {
                     eprintln!("Warning: Failed to update snapshot with controller state: {}", e);
                 } else if verbosity >= VerbosityLevel::Verbose {
                     println!("Snapshot updated with controller state");
@@ -1168,7 +1196,7 @@ async fn run_tui(
             );
 
             final_snapshot
-                .save_to_file(&final_state_path)
+                .save_to_file(&final_state_path, snapshot_format)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
@@ -1269,6 +1297,7 @@ async fn run_resume(
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
     snapshot_output: PathBuf,
+    snapshot_format: mtg_forge_rs::game::snapshot::SnapshotFormat,
     save_final_gamestate: Option<PathBuf>,
     log_tail: Option<usize>,
 ) -> Result<()> {
@@ -1302,7 +1331,7 @@ async fn run_resume(
         println!("Loading snapshot from: {}", snapshot_file.display());
     }
 
-    let snapshot = GameSnapshot::load_from_file(&snapshot_file)
+    let snapshot = GameSnapshot::load_from_file(&snapshot_file, snapshot_format)
         .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
 
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
@@ -1613,7 +1642,9 @@ async fn run_resume(
     }
 
     // Run the game loop
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(verbosity);
+    let mut game_loop = GameLoop::new(&mut game)
+        .with_verbosity(verbosity)
+        .with_snapshot_format(snapshot_format);
 
     // Restore the turn counter
     // Note: snapshot.turn_number represents the turn we're STARTING,
@@ -1715,7 +1746,7 @@ async fn run_resume(
 
         // If either controller has state to preserve, update the snapshot
         if p1_state_json.is_some() || p2_state_json.is_some() {
-            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output) {
+            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output, snapshot_format) {
                 // Deserialize JSON back to ControllerState (Fixed or Random) if present
                 snapshot.p1_controller_state = p1_state_json.and_then(|json| {
                     serde_json::from_value(json.clone())
@@ -1740,7 +1771,7 @@ async fn run_resume(
                         .ok()
                 });
 
-                if let Err(e) = snapshot.save_to_file(&snapshot_output) {
+                if let Err(e) = snapshot.save_to_file(&snapshot_output, snapshot_format) {
                     eprintln!("Warning: Failed to update snapshot with controller state: {}", e);
                 } else if verbosity >= VerbosityLevel::Verbose {
                     println!("Snapshot updated with controller state");
@@ -1782,7 +1813,7 @@ async fn run_resume(
             );
 
             final_snapshot
-                .save_to_file(&final_state_path)
+                .save_to_file(&final_state_path, snapshot_format)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {

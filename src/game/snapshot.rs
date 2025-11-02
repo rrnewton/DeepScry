@@ -10,6 +10,16 @@ use crate::undo::GameAction;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Serialization format for snapshots
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+pub enum SnapshotFormat {
+    /// JSON format (human-readable, slower)
+    Json,
+    /// Bincode format (binary, faster)
+    #[default]
+    Bincode,
+}
+
 /// Controller type identifier for snapshot persistence
 ///
 /// This enum identifies which controller was used, separate from its state.
@@ -166,22 +176,38 @@ impl GameSnapshot {
         }
     }
 
-    /// Save this snapshot to a JSON file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), SnapshotError> {
-        let json = serde_json::to_string_pretty(self).map_err(|e| SnapshotError::Serialization(e.to_string()))?;
-
-        std::fs::write(path.as_ref(), json).map_err(|e| SnapshotError::Io(e.to_string()))?;
-
+    /// Save this snapshot to a file
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P, format: SnapshotFormat) -> Result<(), SnapshotError> {
+        match format {
+            SnapshotFormat::Json => {
+                let json = serde_json::to_string(self).map_err(|e| SnapshotError::Serialization(e.to_string()))?;
+                std::fs::write(path.as_ref(), json).map_err(|e| SnapshotError::Io(e.to_string()))?;
+            }
+            SnapshotFormat::Bincode => {
+                let encoded: Vec<u8> =
+                    bincode::serialize(self).map_err(|e| SnapshotError::Serialization(e.to_string()))?;
+                std::fs::write(path.as_ref(), encoded).map_err(|e| SnapshotError::Io(e.to_string()))?;
+            }
+        }
         Ok(())
     }
 
-    /// Load a snapshot from a JSON file
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, SnapshotError> {
-        let json = std::fs::read_to_string(path.as_ref()).map_err(|e| SnapshotError::Io(e.to_string()))?;
-
-        let snapshot = serde_json::from_str(&json).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
-
-        Ok(snapshot)
+    /// Load a snapshot from a file
+    pub fn load_from_file<P: AsRef<Path>>(path: P, format: SnapshotFormat) -> Result<Self, SnapshotError> {
+        match format {
+            SnapshotFormat::Json => {
+                let json = std::fs::read_to_string(path.as_ref()).map_err(|e| SnapshotError::Io(e.to_string()))?;
+                let snapshot =
+                    serde_json::from_str(&json).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
+                Ok(snapshot)
+            }
+            SnapshotFormat::Bincode => {
+                let encoded = std::fs::read(path.as_ref()).map_err(|e| SnapshotError::Io(e.to_string()))?;
+                let decoded: GameSnapshot =
+                    bincode::deserialize(&encoded[..]).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
+                Ok(decoded)
+            }
+        }
     }
 
     /// Get the number of intra-turn choices in this snapshot

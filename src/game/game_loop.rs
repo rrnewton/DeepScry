@@ -109,6 +109,8 @@ pub struct GameLoop<'a> {
     stop_when_fixed_exhausted: bool,
     /// Snapshot path for fixed-exhausted snapshots
     snapshot_path_for_fixed: Option<std::path::PathBuf>,
+    /// Serialization format for snapshots
+    snapshot_format: crate::game::snapshot::SnapshotFormat,
     /// Stop condition tracking for --stop-on-choice (p1_id, stop_condition, snapshot_path)
     stop_condition_info: Option<(PlayerId, crate::game::StopCondition, std::path::PathBuf)>,
     /// Baseline choice count when resuming from snapshot (to avoid counting pre-snapshot choices)
@@ -144,6 +146,7 @@ impl<'a> GameLoop<'a> {
             choice_counter: 0,
             stop_when_fixed_exhausted: false,
             snapshot_path_for_fixed: None,
+            snapshot_format: crate::game::snapshot::SnapshotFormat::default(),
             stop_condition_info: None,
             baseline_choice_count: 0,
             replaying: false,
@@ -158,6 +161,12 @@ impl<'a> GameLoop<'a> {
     /// Set maximum turns before forcing a draw
     pub fn with_max_turns(mut self, max_turns: u32) -> Self {
         self.max_turns = max_turns;
+        self
+    }
+
+    /// Set the snapshot serialization format
+    pub fn with_snapshot_format(mut self, format: crate::game::snapshot::SnapshotFormat) -> Self {
+        self.snapshot_format = format;
         self
     }
 
@@ -416,7 +425,13 @@ impl<'a> GameLoop<'a> {
                             return Ok(result);
                         };
 
-                    return self.save_snapshot_and_exit(choice_count, &snapshot_path, controller1, controller2);
+                    return self.save_snapshot_and_exit(
+                        choice_count,
+                        &snapshot_path,
+                        self.snapshot_format,
+                        controller1,
+                        controller2,
+                    );
                 }
 
                 // Notify controllers of game end
@@ -615,6 +630,7 @@ impl<'a> GameLoop<'a> {
         &mut self,
         choice_limit: usize,
         snapshot_path: P,
+        format: crate::game::snapshot::SnapshotFormat,
         controller1: &dyn PlayerController,
         controller2: &dyn PlayerController,
     ) -> Result<GameResult> {
@@ -680,7 +696,7 @@ impl<'a> GameLoop<'a> {
 
         // Save to file
         snapshot
-            .save_to_file(&snapshot_path)
+            .save_to_file(&snapshot_path, format)
             .map_err(|e| MtgError::InvalidAction(format!("Failed to save snapshot: {}", e)))?;
 
         // Log snapshot info to stderr (meta-information, not game output)
