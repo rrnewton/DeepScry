@@ -789,6 +789,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         assert!(resolver.can_pay(&cost, &sources));
@@ -817,6 +818,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         assert!(!resolver.can_pay(&cost, &sources));
@@ -850,6 +852,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // SimpleManaResolver conservatively rejects when complex sources present
@@ -885,6 +888,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         assert!(resolver.can_pay(&cost, &sources));
@@ -917,6 +921,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         assert!(resolver.can_pay(&cost, &sources));
@@ -958,6 +963,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
@@ -1000,6 +1006,7 @@ mod tests {
             red: 1,
             green: 1,
             colorless: 0,
+            x_count: 0,
         };
 
         assert!(resolver.can_pay(&cost, &sources));
@@ -1027,6 +1034,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         assert!(!resolver.can_pay(&cost, &sources));
@@ -1053,7 +1061,6 @@ mod tests {
                 has_summoning_sickness: false,
             },
         ];
-
         let cost = ManaCost {
             generic: 1,
             white: 0,
@@ -1062,6 +1069,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // SimpleManaResolver returns Maybe when it encounters complex sources
@@ -1091,6 +1099,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         let result = resolver.check_payment(&cost, &sources);
@@ -1123,6 +1132,7 @@ mod tests {
             red: 2,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         let result = resolver.check_payment(&cost, &sources);
@@ -1159,6 +1169,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // Should return No - provably impossible
@@ -1185,6 +1196,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // quick_check never returns Yes, even when payment is possible
@@ -1255,6 +1267,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // The bounds check should not reject this (total delta = 2, needed = 2)
@@ -1296,6 +1309,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         let result = resolver.check_payment(&cost, &sources);
@@ -1324,6 +1338,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // The color bounds check should pass (we can produce red, ignoring cost)
@@ -1360,6 +1375,7 @@ mod tests {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
 
         // quick_check should return No (delta = 1, needed = 2)

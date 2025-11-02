@@ -1185,6 +1185,15 @@ impl<'a> GameLoop<'a> {
                     "  {source_name} ({source_id}) removes {amount} {counter_type:?} counter(s) from {target_name} ({target})"
                 );
             }
+            Effect::ExilePermanent { target } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                println!("  {source_name} ({source_id}) exiles {target_name} ({target})");
+            }
         }
     }
 
@@ -1271,14 +1280,63 @@ impl<'a> GameLoop<'a> {
         Ok(())
     }
 
+    /// Check and execute phase-triggered abilities
+    fn check_phase_triggers(&mut self, trigger_event: crate::core::TriggerEvent) -> Result<()> {
+        // Collect all permanents with triggers matching this event
+        // Also collect trigger descriptions for logging
+        let triggered_info: SmallVec<[(CardId, Vec<String>); 4]> = self
+            .game
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                if let Ok(card) = self.game.cards.get(card_id) {
+                    let matching_descriptions: Vec<String> = card
+                        .triggers
+                        .iter()
+                        .filter(|t| t.event == trigger_event)
+                        .map(|t| format!("Trigger: {} - {}", card.name, t.description))
+                        .collect();
+
+                    if !matching_descriptions.is_empty() {
+                        Some((card_id, matching_descriptions))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // For each card with a matching trigger, log and execute
+        // Note: In the future, this will need to handle optional triggers, conditions, etc.
+        for (card_id, descriptions) in triggered_info {
+            // Log trigger activation if verbose
+            if self.verbosity >= VerbosityLevel::Verbose {
+                for desc in descriptions {
+                    self.log_verbose(&desc);
+                }
+            }
+
+            // Use the existing check_triggers method to execute effects
+            // Pass the card_id as the source for filling in placeholders
+            self.game.check_triggers(trigger_event, card_id)?;
+        }
+
+        Ok(())
+    }
+
     /// Upkeep step - priority round for triggers and actions
     fn upkeep_step(
         &mut self,
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
-        // TODO: Handle triggered abilities
-        // For now, just pass priority
+        // Check for beginning of upkeep triggers
+        self.check_phase_triggers(crate::core::TriggerEvent::BeginningOfUpkeep)?;
+
+        // Pass priority
         if let Some(result) = self.priority_round(controller1, controller2)? {
             return Ok(Some(result));
         }
@@ -1741,6 +1799,9 @@ impl<'a> GameLoop<'a> {
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
+        // Check for beginning of end step triggers
+        self.check_phase_triggers(crate::core::TriggerEvent::BeginningOfEndStep)?;
+
         if let Some(result) = self.priority_round(controller1, controller2)? {
             return Ok(Some(result));
         }
@@ -2613,8 +2674,20 @@ impl<'a> GameLoop<'a> {
                     && !card.tapped
                     && !self.game.combat.is_attacking(card_id)
                 {
-                    // TODO: Check for summoning sickness
-                    creatures.push(card_id);
+                    // Check for summoning sickness
+                    // Creatures can't attack the turn they entered unless they have haste
+                    let has_summoning_sickness = if let Some(entered_turn) = card.turn_entered_battlefield {
+                        entered_turn == self.game.turn.turn_number && !card.has_keyword(&crate::core::Keyword::Haste)
+                    } else {
+                        false
+                    };
+
+                    // Check for defender keyword
+                    let has_defender = card.has_defender();
+
+                    if !has_summoning_sickness && !has_defender {
+                        creatures.push(card_id);
+                    }
                 }
             }
         }
@@ -2782,6 +2855,18 @@ impl<'a> GameLoop<'a> {
                     // Check mana cost
                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
                         if !mana_engine.can_pay(mana_cost) {
+                            can_activate = false;
+                        }
+                    }
+
+                    // Check life cost
+                    if let Some(life_cost) = ability.cost.get_life_cost() {
+                        if let Ok(player) = self.game.get_player(player_id) {
+                            if player.life <= life_cost {
+                                // Can't pay life cost (would go to 0 or below)
+                                can_activate = false;
+                            }
+                        } else {
                             can_activate = false;
                         }
                     }

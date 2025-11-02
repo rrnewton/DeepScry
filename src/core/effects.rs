@@ -122,10 +122,15 @@ pub enum Effect {
         counter_type: crate::core::CounterType,
         amount: u8,
     },
+
+    /// Exile a permanent
+    /// Example: "Exile target creature" (Swords to Plowshares)
+    /// Moves a card from the battlefield to the exile zone
+    ExilePermanent { target: CardId },
 }
 
 /// Events that can trigger abilities
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerEvent {
     /// When a card enters the battlefield
     /// Corresponds to: T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self

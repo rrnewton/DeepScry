@@ -1,6 +1,5 @@
 
-
-A high-performance Rust-port of MTG Forge suitable for MTG AI research
+A performant Magic The Gathering engine for AI research
 ================================================================================
 
 Forge and Xmage are two open source projects that have done the hard work of implementing the rules engine for the Magic The Gathering (MTG) game, plus curating a full card library (>30,000 cards) to capture the behavior of all existing MTG cards.

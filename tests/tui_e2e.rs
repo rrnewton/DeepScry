@@ -617,6 +617,7 @@ async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
         red: 0,
         green: 0,
         colorless: 0,
+        x_count: 0,
     };
     game.cards.insert(spell_id, spell_card);
 

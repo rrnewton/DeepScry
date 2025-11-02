@@ -27,8 +27,8 @@ impl fmt::Display for Color {
     }
 }
 
-/// Represents a mana cost (e.g., "2RR" = 2 generic + 2 red)
-/// Copy-eligible since it's just 7 u8 fields (7 bytes)
+/// Represents a mana cost (e.g., "2RR" = 2 generic + 2 red, "X R" = X + 1 red)
+/// Copy-eligible since it's just 8 u8 fields (8 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManaCost {
     pub generic: u8,
@@ -38,6 +38,9 @@ pub struct ManaCost {
     pub red: u8,
     pub green: u8,
     pub colorless: u8,
+    /// Number of X symbols in the cost (e.g., "X R" has x_count=1, "X X R R" has x_count=2)
+    /// The actual value of X is determined when the spell is cast
+    pub x_count: u8,
 }
 
 impl ManaCost {
@@ -50,10 +53,11 @@ impl ManaCost {
             red: 0,
             green: 0,
             colorless: 0,
+            x_count: 0,
         }
     }
 
-    /// Parse a mana cost string like "2RR" or "1UB"
+    /// Parse a mana cost string like "2RR", "1UB", or "X R"
     pub fn from_string(s: &str) -> Self {
         let mut cost = ManaCost::new();
         let mut generic_str = String::new();
@@ -66,8 +70,9 @@ impl ManaCost {
                 'R' => cost.red += 1,
                 'G' => cost.green += 1,
                 'C' => cost.colorless += 1,
+                'X' => cost.x_count += 1,
                 '0'..='9' => generic_str.push(c),
-                _ => {} // Ignore other characters
+                _ => {} // Ignore other characters (spaces, etc.)
             }
         }
 
@@ -85,6 +90,7 @@ impl ManaCost {
 
     /// Multiply all mana amounts by a factor
     /// Useful for abilities like Sol Ring that produce multiple mana (e.g., {C}{C})
+    /// Note: x_count is NOT multiplied since X is a placeholder
     pub fn multiply(&self, factor: u8) -> Self {
         ManaCost {
             generic: self.generic.saturating_mul(factor),
@@ -94,6 +100,7 @@ impl ManaCost {
             red: self.red.saturating_mul(factor),
             green: self.green.saturating_mul(factor),
             colorless: self.colorless.saturating_mul(factor),
+            x_count: self.x_count, // X is not multiplied
         }
     }
 }
@@ -106,6 +113,10 @@ impl Default for ManaCost {
 
 impl fmt::Display for ManaCost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // X comes first in mana cost notation
+        for _ in 0..self.x_count {
+            write!(f, "X")?;
+        }
         if self.generic > 0 {
             write!(f, "{}", self.generic)?;
         }

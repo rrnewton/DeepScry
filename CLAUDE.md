@@ -1,6 +1,10 @@
 
-A performant Magic The Gathering engine for AI research
+MTG Forge-rs: Devolpement Guidelines
 =======================================================
+
+This document contains the development guidelines and instructions for the project. This guide OVERRIDES any default behaviors and MUST be followed exactly.
+
+NEVER run `git clean -fxd` in this repo or any submodule, that would destroy valuable container configuration.
 
 Read the PROJECT_VISION.md document.
 
@@ -55,7 +59,7 @@ The beads database is our primary tracking mechanism, so if we lose conversation
 
 Do NOT read or modify files inside the `./.beads/` private database, except when fixing merge conflicts in markdown files that you can read.
 
-Prefer the MCP client to the CLI tool. ALWAYS `bd update` existing issues, never introduce duplicates with spurious `bd create`.
+Prefer the MCP client to the CLI tool if available. ALWAYS `bd update` existing issues, never introduce duplicates with spurious `bd create`.
 
 The issue prefix may be customized (`foobar-1`, `foobar-2`), but here we will refer `bd-1` as example issue names
 

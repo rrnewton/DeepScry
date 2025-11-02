@@ -4,9 +4,9 @@ status: open
 priority: 1
 issue_type: epic
 labels:
-  - tracking
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+- tracking
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2025-10-31T03:05:46.711014402+00:00
 ---
 
 # Description
@@ -46,6 +46,7 @@ do a piece of work that makes the test pass.
 - mtg-108: ✅ **Complex mana source handling** - Phases 1&2 complete (dual lands, City of Brass work!)
 - mtg-19: Advanced activated abilities (complex costs, stack interaction, player choice for "Any"/"Combo" mana)
 - Triggered abilities (T:): ✅ ETB triggers with multiple effect types
+- mtg-111: Phase triggered abilities (T:Mode$ Phase) - upkeep/end step triggers
 - mtg-20: Static abilities (S:) - continuous effects
 - mtg-21: SVar resolution (DB$ sub-abilities)
 

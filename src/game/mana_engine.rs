@@ -525,6 +525,7 @@ mod tests {
             red: 2,
             green: 1,
             colorless: 0,
+            x_count: 0,
         };
         assert!(capacity.can_pay_simple(&cost));
     }
@@ -549,6 +550,7 @@ mod tests {
             red: 2,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
         assert!(!capacity.can_pay_simple(&cost));
     }
@@ -575,6 +577,7 @@ mod tests {
             red: 1,
             green: 0,
             colorless: 0,
+            x_count: 0,
         };
         assert!(capacity.can_pay_simple(&cost));
     }

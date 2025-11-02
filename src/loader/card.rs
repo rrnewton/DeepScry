@@ -435,6 +435,19 @@ impl CardDefinition {
                     target: CardId::new(0), // Placeholder, will be set during resolution
                 });
             }
+
+            // Parse ChangeZone abilities (exile effects)
+            // Format: "A:SP$ ChangeZone | Origin$ Battlefield | Destination$ Exile | ValidTgts$ Creature | ..."
+            // Example: Swords to Plowshares
+            if ability.contains("SP$ ChangeZone")
+                && ability.contains("Destination$ Exile")
+                && ability.contains("Origin$ Battlefield")
+            {
+                use crate::core::CardId;
+                effects.push(Effect::ExilePermanent {
+                    target: CardId::new(0), // Placeholder, will be set during resolution
+                });
+            }
         }
 
         effects
@@ -577,6 +590,37 @@ impl CardDefinition {
                     };
 
                     triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
+                }
+            }
+
+            // Parse phase triggers
+            // Format: "T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | ..."
+            if ability.contains("Mode$ Phase") {
+                // Determine which phase/step this triggers on
+                let trigger_event = if ability.contains("Phase$ Upkeep") {
+                    Some(TriggerEvent::BeginningOfUpkeep)
+                } else if ability.contains("Phase$ EndOfTurn") || ability.contains("Phase$ End") {
+                    Some(TriggerEvent::BeginningOfEndStep)
+                } else {
+                    None // Other phases not supported yet
+                };
+
+                if let Some(event) = trigger_event {
+                    // For now, create a simple trigger without complex conditions
+                    // TODO(mtg-111): Support CheckSVar$, SVarCompare$, Execute$ sub-abilities
+                    // TODO(mtg-111): Support ValidPlayer$ filtering (You vs Opponent vs Each)
+                    // TODO(mtg-111): Support OptionalDecider$ for optional triggers
+
+                    let description = if let Some(desc_str) = ability.split("TriggerDescription$").nth(1) {
+                        desc_str.trim().to_string()
+                    } else {
+                        "At the beginning of upkeep".to_string()
+                    };
+
+                    // For now, don't add effects - phase triggers usually need complex parsing
+                    // This creates a placeholder trigger that can be detected in the game loop
+                    // Real implementation will need to parse Execute$ and SubAbility references
+                    triggers.push(Trigger::new(event, vec![], description));
                 }
             }
         }

@@ -176,6 +176,13 @@ impl GameState {
                     };
                     target_index += 1;
                 }
+                Effect::ExilePermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                    // Use the chosen target
+                    *effect = Effect::ExilePermanent {
+                        target: chosen_targets[target_index],
+                    };
+                    target_index += 1;
+                }
                 _ => {
                     // Effect doesn't need a target, or target is already specified
                 }
@@ -386,6 +393,22 @@ impl GameState {
                     for &card_id in &self.stack.cards {
                         if card_id != spell_card_id {
                             valid_targets.push(card_id);
+                        }
+                    }
+                }
+                Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                    // Exile can target any permanent (typically creatures, like Swords to Plowshares)
+                    // In Swords to Plowshares: ValidTgts$ Creature
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            // For now, target any permanent that doesn't have shroud
+                            // Swords to Plowshares specifically targets creatures
+                            if card.is_creature() && !card.has_shroud() {
+                                // Hexproof only protects from opponent's spells
+                                if card.owner == spell_owner || !card.has_hexproof() {
+                                    valid_targets.push(card_id);
+                                }
+                            }
                         }
                     }
                 }
@@ -832,6 +855,16 @@ impl GameState {
                 }
                 // Remove counters using the GameState method (which logs for undo)
                 self.remove_counters(*target, *counter_type, *amount)?;
+            }
+            Effect::ExilePermanent { target } => {
+                // Skip if target is still placeholder (0) - no valid targets found
+                if target.as_u32() == 0 {
+                    // Spell fizzles - no valid targets
+                    return Ok(());
+                }
+                // Exile the permanent by moving it from battlefield to exile
+                let owner = self.cards.get(*target)?.owner;
+                self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
             }
         }
         Ok(())

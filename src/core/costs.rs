@@ -224,6 +224,15 @@ impl Cost {
             _ => None,
         }
     }
+
+    /// Get the life cost component if present
+    pub fn get_life_cost(&self) -> Option<i32> {
+        match self {
+            Cost::PayLife { amount } => Some(*amount),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_life_cost()),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

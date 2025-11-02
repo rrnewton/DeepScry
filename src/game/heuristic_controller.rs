@@ -617,6 +617,49 @@ impl HeuristicController {
     /// - Combat math (can kill/be killed calculations)
     /// - Creature value comparisons
     /// - Aggression level settings
+    ///
+    /// Count the number of creatures opponent has that can block
+    fn count_opponent_blockers(&self, view: &GameStateView) -> usize {
+        view.battlefield()
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .filter(|c| c.owner != self.player_id && c.is_creature() && !c.tapped && !c.has_defender())
+            .count()
+    }
+
+    /// Wrapper around should_attack that adds context about numerical advantage
+    fn should_attack_with_context(
+        &self,
+        attacker: &Card,
+        view: &GameStateView,
+        has_numerical_advantage: bool,
+        opponent_blocker_count: usize,
+    ) -> bool {
+        // If we have significant numerical advantage (2+ more creatures), be more aggressive
+        // This helps avoid stalemates where both sides have equal creatures
+        if has_numerical_advantage {
+            // With numerical advantage, attack with power > 0 creatures
+            let power = attacker.power.unwrap_or(0) as i32;
+            if power > 0 {
+                // Still check basic combat factors for terrible situations
+                let factors = self.calculate_combat_factors(attacker, view);
+
+                // Don't attack if we'll definitely die for nothing
+                // But do attack if we can't be blocked or if opponent has few blockers
+                if factors.can_be_blocked && factors.can_be_killed_by_one && !factors.can_kill_all {
+                    // Only skip if it's a terrible trade (we die, kill nothing, no combat effect)
+                    if !factors.has_combat_effect && opponent_blocker_count > 0 {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        // Otherwise use standard heuristic logic
+        self.should_attack(attacker, view)
+    }
+
     fn should_attack(&self, attacker: &Card, view: &GameStateView) -> bool {
         let power = attacker.power.unwrap_or(0) as i32;
 
@@ -741,12 +784,7 @@ impl HeuristicController {
     /// 4. Life after combat < threshold -> true
     ///
     /// Simplified implementation for now (full port would require threshold config)
-    fn life_in_danger(
-        &self,
-        view: &GameStateView,
-        attackers: &[CardId],
-        current_blocks: &[(CardId, CardId)],
-    ) -> bool {
+    fn life_in_danger(&self, view: &GameStateView, attackers: &[CardId], current_blocks: &[(CardId, CardId)]) -> bool {
         // Java default threshold is around 3-5 life depending on AI profile
         // We'll use a simple threshold of 5 for now
         const DANGER_THRESHOLD: i32 = 5;
@@ -755,21 +793,6 @@ impl HeuristicController {
 
         // Life in danger if we'd drop below threshold
         remaining_life < DANGER_THRESHOLD
-    }
-
-    /// Determine if life is in SERIOUS danger (would die this combat)
-    ///
-    /// Reference: ComputerUtilCombat.lifeInSeriousDanger() (lines 477-508)
-    ///
-    /// Returns true if the player would die (life <= 0) after combat damage.
-    fn life_in_serious_danger(
-        &self,
-        view: &GameStateView,
-        attackers: &[CardId],
-        current_blocks: &[(CardId, CardId)],
-    ) -> bool {
-        let remaining_life = self.life_that_would_remain(view, attackers, current_blocks);
-        remaining_life < 1
     }
 
     /// Determine if we should block an attacker with a specific blocker
@@ -1000,9 +1023,16 @@ impl PlayerController for HeuristicController {
         // Get creature cards
         let creatures: Vec<&Card> = available_creatures.iter().filter_map(|&id| view.get_card(id)).collect();
 
+        // Count opponent's available blockers to assess numerical advantage
+        let opponent_blockers = self.count_opponent_blockers(view);
+        let our_attackers_count = creatures.len();
+
+        // Check if we have numerical advantage (more attackers than blockers)
+        let has_numerical_advantage = our_attackers_count > opponent_blockers;
+
         // Evaluate each creature for attacking
         for creature in creatures {
-            if self.should_attack(creature, view) {
+            if self.should_attack_with_context(creature, view, has_numerical_advantage, opponent_blockers) {
                 attackers.push(creature.id);
             }
         }
@@ -1011,19 +1041,21 @@ impl PlayerController for HeuristicController {
             view.logger().controller_choice(
                 "HEURISTIC",
                 &format!(
-                    "chose {} attackers from {} available creatures (aggression={})",
+                    "chose {} attackers from {} available creatures (aggression={}, opponent blockers={})",
                     attackers.len(),
                     available_creatures.len(),
-                    self.aggression_level
+                    self.aggression_level,
+                    opponent_blockers
                 ),
             );
         } else if !available_creatures.is_empty() {
             view.logger().controller_choice(
                 "HEURISTIC",
                 &format!(
-                    "chose not to attack with {} available creatures (aggression={})",
+                    "chose not to attack with {} available creatures (aggression={}, opponent blockers={})",
                     available_creatures.len(),
-                    self.aggression_level
+                    self.aggression_level,
+                    opponent_blockers
                 ),
             );
         }

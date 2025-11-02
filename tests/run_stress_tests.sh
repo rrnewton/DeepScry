@@ -131,6 +131,38 @@ echo ""
 # Make test script executable
 chmod +x scripts/snapshot_stress_test_single.py
 
+# Function to print summary and exit with appropriate status
+print_summary_and_exit() {
+    local passed="$1"
+    local total="$2"
+    local failed="$3"
+    # Optional 4th arg: failed tests list, may contain \n sequences
+    local failed_tests="${4-}"
+
+    echo ""
+    echo "========================================"
+    echo "Summary: $passed/$total tests passed"
+    echo "========================================"
+
+    if [ "$failed" -gt 0 ]; then
+        echo ""
+        if [ -n "$failed_tests" ]; then
+            echo "Failed tests:"
+            # Interpret any embedded \n sequences for readability
+            printf "%b\n" "$failed_tests"
+            echo ""
+            echo "❌ $failed test(s) failed!"
+        else
+            echo "❌ $failed test(s) failed! (see detailed output above)"
+        fi
+        exit 1
+    fi
+
+    echo ""
+    echo "✅ All stress tests passed!"
+    exit 0
+}
+
 # Function to run a single test case
 run_test() {
     local test_case="$1"
@@ -155,6 +187,8 @@ run_test() {
     if [ -n "$flags" ]; then
         cmd="$cmd $flags"
     fi
+
+    echo " > $cmd"
 
     # Run the test and capture output
     local output
@@ -217,7 +251,7 @@ if [ "$FORCE_SEQUENTIAL" = true ] || ! command -v parallel &> /dev/null; then
             FAILED=$((FAILED + 1))
             IFS=':' read -r deck_path p1 p2 flags <<< "$test_case"
             deck_name=$(basename "$deck_path" .dck)
-            local test_desc="$p1 vs $p2"
+            test_desc="$p1 vs $p2"
             if [ -n "$flags" ]; then
                 test_desc="$test_desc $flags"
             fi
@@ -225,22 +259,8 @@ if [ "$FORCE_SEQUENTIAL" = true ] || ! command -v parallel &> /dev/null; then
         fi
     done
 
-    echo ""
-    echo "========================================"
-    echo "Summary: $PASSED/$TOTAL tests passed"
-    echo "========================================"
-
-    if [ $FAILED -gt 0 ]; then
-        echo ""
-        echo "Failed tests:$FAILED_TESTS"
-        echo ""
-        echo "❌ $FAILED test(s) failed!"
-        exit 1  # Exit with failure - tests must pass
-    fi
-
-    echo ""
-    echo "✅ All stress tests passed!"
-    exit 0
+    # Print summary and exit appropriately
+    print_summary_and_exit "$PASSED" "$TOTAL" "$FAILED" "$FAILED_TESTS"
 fi
 
 # Parallel execution using GNU parallel
@@ -256,25 +276,12 @@ trap "rm -f $JOBLOG" EXIT
 # Run all tests and capture exit codes in joblog
 # Temporarily disable exit-on-error so we can process results even if tests fail
 set +e
-printf '%s\n' "${TEST_CASES[@]}" | parallel --jobs 2 --line-buffer --joblog "$JOBLOG" \
-    'run_test {}'
+printf '%s\n' "${TEST_CASES[@]}" | parallel --jobs=$TOTAL --line-buffer --joblog "$JOBLOG" 'run_test {}'
 set -e
 
 # Count results from joblog (skip header line)
 PASSED=$(awk 'NR>1 && $7==0 {count++} END {print count+0}' "$JOBLOG")
 FAILED=$(awk 'NR>1 && $7!=0 {count++} END {print count+0}' "$JOBLOG")
 
-echo ""
-echo "========================================"
-echo "Summary: $PASSED/$TOTAL tests passed"
-echo "========================================"
-
-if [ $FAILED -gt 0 ]; then
-    echo ""
-    echo "❌ $FAILED test(s) failed! (see detailed output above)"
-    exit 1  # Exit with failure - tests must pass
-fi
-
-echo ""
-echo "✅ All stress tests passed!"
-exit 0
+# Print summary and exit appropriately (no explicit list of failed tests in parallel mode)
+print_summary_and_exit "$PASSED" "$TOTAL" "$FAILED"
