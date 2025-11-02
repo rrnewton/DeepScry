@@ -1039,6 +1039,57 @@ impl HeuristicController {
             .collect()
     }
 
+    /// Make trade blocks: willing to trade creatures even if equal value
+    ///
+    /// Reference: AiBlockController.makeTradeBlocks() lines 599-640
+    ///
+    /// Trade blocks are used when:
+    /// - Life is in danger (must stop damage)
+    /// - Willing to trade equal-value creatures to prevent damage
+    fn make_trade_blocks<'a>(
+        &self,
+        attackers: &[&'a Card],
+        available_blockers: &[&'a Card],
+        life_in_danger: bool,
+    ) -> Vec<(&'a Card, &'a Card)> {
+        let mut assignments = Vec::new();
+        let mut remaining_blockers = available_blockers.to_vec();
+
+        for &attacker in attackers {
+            if remaining_blockers.is_empty() {
+                break;
+            }
+
+            let killing_blockers = self.get_killing_blockers(attacker, &remaining_blockers);
+            if killing_blockers.is_empty() {
+                continue;
+            }
+
+            // Choose the worst (lowest value) killing blocker
+            let worst_killer = killing_blockers
+                .iter()
+                .min_by_key(|b| self.evaluate_creature(b))
+                .copied();
+
+            if let Some(blocker) = worst_killer {
+                let blocker_value = self.evaluate_creature(blocker);
+                let attacker_value = self.evaluate_creature(attacker);
+
+                // Trade if:
+                // 1. Life is in danger (must stop damage)
+                // 2. Blocker is worth equal or less than attacker
+                let should_trade = life_in_danger || blocker_value <= attacker_value;
+
+                if should_trade {
+                    assignments.push((blocker, attacker));
+                    remaining_blockers.retain(|b| b.id != blocker.id);
+                }
+            }
+        }
+
+        assignments
+    }
+
     /// Make good blocks: best blocker assignments
     ///
     /// Reference: AiBlockController.makeGoodBlocks() lines 187-362
@@ -1186,52 +1237,45 @@ impl HeuristicController {
         // Remove gang-blocked attackers from consideration
         attackers_left.retain(|a| !gang_blocked_attacker_ids.contains(&a.id));
 
-        // Phase 2: Single blocker assignments for remaining attackers (trade blocks)
-        for attacker in &attackers_left {
-            if remaining_blockers.is_empty() {
-                break;
-            }
+        // Phase 1c: Trade blocks (willing to trade equal value if needed)
+        // Check if life is in danger to determine trade willingness
+        let life_in_danger = self.life_in_danger(view, attackers, &blocks);
+        
+        let remaining_blocker_cards: Vec<&Card> = remaining_blockers
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .collect();
+        
+        let trade_blocks = self.make_trade_blocks(&attackers_left, &remaining_blocker_cards, life_in_danger);
+        for (blocker, attacker) in trade_blocks {
+            blocks.push((blocker.id, attacker.id));
+            remaining_blockers.retain(|&id| id != blocker.id);
+        }
 
-            let mut best_blocker: Option<&Card> = None;
-            let mut best_score = i32::MIN;
+        // Update attackers list
+        attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
 
-            let blocker_cards: Vec<&Card> = remaining_blockers
-                .iter()
-                .filter_map(|&id| view.get_card(id))
-                .collect();
+        // Phase 2: Chump blocks if life is still in danger
+        // The should_block method already handles chump blocking when life is in danger
+        if life_in_danger && self.life_in_danger(view, attackers, &blocks) {
+            for attacker in &attackers_left {
+                if remaining_blockers.is_empty() {
+                    break;
+                }
 
-            for &blocker in &blocker_cards {
-                // Check if this is a good block
-                if self.should_block(blocker, attacker, view, attackers, &blocks) {
-                    let blocker_power = blocker.power.unwrap_or(0) as i32;
-                    let blocker_toughness = blocker.toughness.unwrap_or(0) as i32;
-                    let attacker_power = attacker.power.unwrap_or(0) as i32;
-                    let attacker_toughness = attacker.toughness.unwrap_or(0) as i32;
+                let blocker_cards: Vec<&Card> = remaining_blockers
+                    .iter()
+                    .filter_map(|&id| view.get_card(id))
+                    .collect();
 
-                    let can_kill = blocker_power >= attacker_toughness || blocker.has_deathtouch();
-                    let will_survive = blocker_toughness > attacker_power;
-
-                    let score = if can_kill && will_survive {
-                        1000
-                    } else if can_kill {
-                        500 - self.evaluate_creature(blocker)
-                    } else if will_survive {
-                        100
-                    } else {
-                        -1000
-                    };
-
-                    if score > best_score {
-                        best_score = score;
-                        best_blocker = Some(blocker);
+                // Find any blocker willing to chump
+                for &blocker in &blocker_cards {
+                    if self.should_block(blocker, attacker, view, attackers, &blocks) {
+                        blocks.push((blocker.id, attacker.id));
+                        remaining_blockers.retain(|&id| id != blocker.id);
+                        break;
                     }
                 }
-            }
-
-            // Assign the best blocker if found
-            if let Some(blocker) = best_blocker {
-                blocks.push((blocker.id, attacker.id));
-                remaining_blockers.retain(|&id| id != blocker.id);
             }
         }
 
