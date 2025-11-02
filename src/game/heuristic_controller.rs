@@ -627,6 +627,28 @@ impl HeuristicController {
             .count()
     }
 
+    /// Calculate potential lethal damage from attacking
+    ///
+    /// Returns the total damage we could deal if all our creatures attack and are unblocked
+    fn calculate_lethal_potential(&self, view: &GameStateView, available_creatures: &[CardId]) -> i32 {
+        available_creatures
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .map(|c| c.power.unwrap_or(0) as i32)
+            .sum()
+    }
+
+    /// Check if we should go for lethal damage
+    ///
+    /// Be very aggressive if we can potentially kill opponent
+    fn is_lethal_opportunity(&self, view: &GameStateView, available_creatures: &[CardId]) -> bool {
+        let opp_life = view.opponent_life();
+        let lethal_damage = self.calculate_lethal_potential(view, available_creatures);
+        // Consider lethal if we can deal damage >= opponent's life
+        // Even with some blocks, we might still kill them
+        lethal_damage >= opp_life
+    }
+
     /// Wrapper around should_attack that adds context about numerical advantage
     fn should_attack_with_context(
         &self,
@@ -634,12 +656,19 @@ impl HeuristicController {
         view: &GameStateView,
         has_numerical_advantage: bool,
         opponent_blocker_count: usize,
+        is_lethal_push: bool,
     ) -> bool {
+        let power = attacker.power.unwrap_or(0) as i32;
+        
+        // If we can go for lethal, attack with everything that has power
+        if is_lethal_push && power > 0 {
+            return true;
+        }
+
         // If we have significant numerical advantage (2+ more creatures), be more aggressive
         // This helps avoid stalemates where both sides have equal creatures
         if has_numerical_advantage {
             // With numerical advantage, attack with power > 0 creatures
-            let power = attacker.power.unwrap_or(0) as i32;
             if power > 0 {
                 // Still check basic combat factors for terrible situations
                 let factors = self.calculate_combat_factors(attacker, view);
@@ -1431,10 +1460,13 @@ impl PlayerController for HeuristicController {
 
         // Check if we have numerical advantage (more attackers than blockers)
         let has_numerical_advantage = our_attackers_count > opponent_blockers;
+        
+        // Check if we can go for lethal
+        let is_lethal_push = self.is_lethal_opportunity(view, available_creatures);
 
         // Evaluate each creature for attacking
         for creature in creatures {
-            if self.should_attack_with_context(creature, view, has_numerical_advantage, opponent_blockers) {
+            if self.should_attack_with_context(creature, view, has_numerical_advantage, opponent_blockers, is_lethal_push) {
                 attackers.push(creature.id);
             }
         }
