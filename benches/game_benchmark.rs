@@ -117,24 +117,32 @@ impl std::ops::AddAssign for GameMetrics {
 /// Setup data needed for benchmarking (loaded once, reused across iterations)
 struct BenchmarkSetup {
     card_db: CardDatabase,
-    deck: DeckList,
+    deck1: DeckList,
+    deck2: DeckList,
     runtime: Runtime,
 }
 
 impl BenchmarkSetup {
-    fn load() -> Result<Self> {
+    fn load(deck1_path: &str, deck2_path: &str) -> Result<Self> {
         let runtime = Runtime::new().expect("Failed to create tokio runtime");
 
         let cardsfolder = PathBuf::from("cardsfolder");
         let card_db = CardDatabase::new(cardsfolder);
 
-        let deck_path = PathBuf::from("decks/simple_bolt.dck");
-        let deck = DeckLoader::load_from_file(&deck_path)?;
+        let deck1 = DeckLoader::load_from_file(&PathBuf::from(deck1_path))?;
+        let deck2 = DeckLoader::load_from_file(&PathBuf::from(deck2_path))?;
 
         // Prefetch deck cards
-        runtime.block_on(async { prefetch_deck_cards(&card_db, &deck).await })?;
+        runtime.block_on(async {
+            prefetch_deck_cards(&card_db, &deck1).await?;
+            prefetch_deck_cards(&card_db, &deck2).await
+        })?;
 
-        Ok(BenchmarkSetup { card_db, deck, runtime })
+        Ok(BenchmarkSetup { card_db, deck1, deck2, runtime })
+    }
+
+    fn load_same_deck(deck_path: &str) -> Result<Self> {
+        Self::load(deck_path, deck_path)
     }
 }
 
@@ -366,7 +374,7 @@ fn print_aggregated_metrics(mode: &str, seed: u64, aggregated: &GameMetrics, ite
 /// Benchmark: Fresh mode - allocate new game each iteration
 fn bench_game_fresh(c: &mut Criterion) {
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load() {
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -400,9 +408,9 @@ fn bench_game_fresh(c: &mut Criterion) {
                     game_init
                         .init_game(
                             "Player 1".to_string(),
-                            &setup.deck,
+                            &setup.deck1,
                             "Player 2".to_string(),
-                            &setup.deck,
+                            &setup.deck2,
                             20,
                         )
                         .await
@@ -427,7 +435,7 @@ fn bench_game_fresh(c: &mut Criterion) {
 /// Measures allocation overhead of logging infrastructure
 fn bench_game_fresh_with_logging(c: &mut Criterion) {
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load() {
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -461,9 +469,9 @@ fn bench_game_fresh_with_logging(c: &mut Criterion) {
                     game_init
                         .init_game(
                             "Player 1".to_string(),
-                            &setup.deck,
+                            &setup.deck1,
                             "Player 2".to_string(),
-                            &setup.deck,
+                            &setup.deck2,
                             20,
                         )
                         .await
@@ -488,7 +496,7 @@ fn bench_game_fresh_with_logging(c: &mut Criterion) {
 /// Measures allocation overhead with reusable buffer optimization
 fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load() {
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -522,9 +530,9 @@ fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
                     game_init
                         .init_game(
                             "Player 1".to_string(),
-                            &setup.deck,
+                            &setup.deck1,
                             "Player 2".to_string(),
-                            &setup.deck,
+                            &setup.deck2,
                             20,
                         )
                         .await
@@ -579,7 +587,7 @@ fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
 /// Uses Clone to create a fresh copy of the initial game state
 fn bench_game_snapshot(c: &mut Criterion) {
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load() {
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -620,9 +628,9 @@ fn bench_game_snapshot(c: &mut Criterion) {
                         game_init
                             .init_game(
                                 "Player 1".to_string(),
-                                &setup.deck,
+                                &setup.deck1,
                                 "Player 2".to_string(),
-                                &setup.deck,
+                                &setup.deck2,
                                 20,
                             )
                             .await
@@ -652,7 +660,7 @@ fn bench_game_snapshot(c: &mut Criterion) {
 /// Measures the cost of rewinding using undo() for tree search
 fn bench_game_rewind(c: &mut Criterion) {
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load() {
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -690,9 +698,9 @@ fn bench_game_rewind(c: &mut Criterion) {
                         game_init
                             .init_game(
                                 "Player 1".to_string(),
-                                &setup.deck,
+                                &setup.deck1,
                                 "Player 2".to_string(),
-                                &setup.deck,
+                                &setup.deck2,
                                 20,
                             )
                             .await
@@ -786,7 +794,7 @@ fn bench_game_rewind(c: &mut Criterion) {
 /// Benchmark: Save snapshot to file
 fn bench_save_snapshot(c: &mut Criterion) {
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load() {
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -809,9 +817,9 @@ fn bench_save_snapshot(c: &mut Criterion) {
                 game_init
                     .init_game(
                         "Player 1".to_string(),
-                        &setup.deck,
+                        &setup.deck1,
                         "Player 2".to_string(),
-                        &setup.deck,
+                        &setup.deck2,
                         20,
                     )
                     .await
@@ -855,6 +863,177 @@ fn bench_save_snapshot(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: Old School deck matchup - Mono Black vs The Deck
+fn bench_game_old_school_mono_black_vs_the_deck(c: &mut Criterion) {
+    let setup = match BenchmarkSetup::load(
+        "decks/old_school/05_mono_black_rogerbrand.dck",
+        "decks/old_school/02_thedeck_peterschnidrig.dck",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping benchmark - failed to load resources: {e}");
+            return;
+        }
+    };
+
+    let mut group = c.benchmark_group("old_school_matchups");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+
+    let seed = 42u64;
+    let mut aggregated = GameMetrics {
+        turns: 0,
+        actions: 0,
+        duration: Duration::ZERO,
+        bytes_allocated: 0,
+        bytes_deallocated: 0,
+    };
+    let mut iteration_count = 0;
+
+    group.bench_function("mono_black_vs_the_deck", |b| {
+        b.iter(|| {
+            let game_init_fn = || {
+                let game_init = GameInitializer::new(&setup.card_db);
+                setup.runtime.block_on(async {
+                    game_init
+                        .init_game(
+                            "Mono Black".to_string(),
+                            &setup.deck1,
+                            "The Deck".to_string(),
+                            &setup.deck2,
+                            20,
+                        )
+                        .await
+                })
+            };
+
+            let metrics =
+                run_game_with_metrics(black_box(seed), game_init_fn).expect("Game should complete successfully");
+            aggregated += metrics.clone();
+            iteration_count += 1;
+        });
+    });
+
+    if iteration_count > 0 {
+        print_aggregated_metrics("Old School: Mono Black vs The Deck", seed, &aggregated, iteration_count);
+    }
+
+    group.finish();
+}
+
+/// Benchmark: Old School deck matchup - White Weenie mirror
+fn bench_game_old_school_white_weenie_mirror(c: &mut Criterion) {
+    let setup = match BenchmarkSetup::load_same_deck("decks/old_school2/white_weenie_classic.dck") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping benchmark - failed to load resources: {e}");
+            return;
+        }
+    };
+
+    let mut group = c.benchmark_group("old_school_matchups");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+
+    let seed = 42u64;
+    let mut aggregated = GameMetrics {
+        turns: 0,
+        actions: 0,
+        duration: Duration::ZERO,
+        bytes_allocated: 0,
+        bytes_deallocated: 0,
+    };
+    let mut iteration_count = 0;
+
+    group.bench_function("white_weenie_mirror", |b| {
+        b.iter(|| {
+            let game_init_fn = || {
+                let game_init = GameInitializer::new(&setup.card_db);
+                setup.runtime.block_on(async {
+                    game_init
+                        .init_game(
+                            "White Weenie 1".to_string(),
+                            &setup.deck1,
+                            "White Weenie 2".to_string(),
+                            &setup.deck2,
+                            20,
+                        )
+                        .await
+                })
+            };
+
+            let metrics =
+                run_game_with_metrics(black_box(seed), game_init_fn).expect("Game should complete successfully");
+            aggregated += metrics.clone();
+            iteration_count += 1;
+        });
+    });
+
+    if iteration_count > 0 {
+        print_aggregated_metrics("Old School: White Weenie Mirror", seed, &aggregated, iteration_count);
+    }
+
+    group.finish();
+}
+
+/// Benchmark: Old School deck matchup - Jeskai Aggro vs Troll Disk
+fn bench_game_old_school_jeskai_vs_troll_disk(c: &mut Criterion) {
+    let setup = match BenchmarkSetup::load(
+        "decks/old_school/06_jeskai_aggro_joseantonioprieto.dck",
+        "decks/old_school/06_troll_disk_daniellebrunazzo.dck",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping benchmark - failed to load resources: {e}");
+            return;
+        }
+    };
+
+    let mut group = c.benchmark_group("old_school_matchups");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+
+    let seed = 42u64;
+    let mut aggregated = GameMetrics {
+        turns: 0,
+        actions: 0,
+        duration: Duration::ZERO,
+        bytes_allocated: 0,
+        bytes_deallocated: 0,
+    };
+    let mut iteration_count = 0;
+
+    group.bench_function("jeskai_vs_troll_disk", |b| {
+        b.iter(|| {
+            let game_init_fn = || {
+                let game_init = GameInitializer::new(&setup.card_db);
+                setup.runtime.block_on(async {
+                    game_init
+                        .init_game(
+                            "Jeskai Aggro".to_string(),
+                            &setup.deck1,
+                            "Troll Disk".to_string(),
+                            &setup.deck2,
+                            20,
+                        )
+                        .await
+                })
+            };
+
+            let metrics =
+                run_game_with_metrics(black_box(seed), game_init_fn).expect("Game should complete successfully");
+            aggregated += metrics.clone();
+            iteration_count += 1;
+        });
+    });
+
+    if iteration_count > 0 {
+        print_aggregated_metrics("Old School: Jeskai Aggro vs Troll Disk", seed, &aggregated, iteration_count);
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_game_fresh,
@@ -862,6 +1041,9 @@ criterion_group!(
     bench_game_fresh_with_stdout_logging,
     bench_game_snapshot,
     bench_game_rewind,
-    bench_save_snapshot
+    bench_save_snapshot,
+    bench_game_old_school_mono_black_vs_the_deck,
+    bench_game_old_school_white_weenie_mirror,
+    bench_game_old_school_jeskai_vs_troll_disk
 );
 criterion_main!(benches);
