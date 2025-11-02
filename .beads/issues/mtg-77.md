@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-02T15:11:02.140820170+00:00
+updated_at: 2025-11-02T20:36:01.505774725+00:00
 ---
 
 # Description
@@ -24,11 +24,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
 - ✅ GameStateEvaluator (basic holistic board evaluation)
 - ✅ Opponent life access (bd-4 completed)
 - ✅ Life-in-danger detection for chump blocking (2025-10-31)
-- ✅ **Pump spell evaluation (2025-11-02_#556(889631a))**
+- ✅ **Pump spell evaluation with combat trick timing (2025-11-02_#586(4beac0b))**
   - Pre-combat evaluation: Makes non-attackers into attackers
   - Haste granting evaluation
   - Evasion granting evaluation (Flying, etc.)
+  - **Combat trick detection and timing** (NEW)
+  - Phase-based pump spell restrictions (instant pumps held for combat)
   - Reference: ComputerUtilCard.shouldPumpCard() lines 1291-1466
+  - Reference: PumpAi.checkPhaseRestrictions() lines 98-103
 
 **What's Missing:**
 
@@ -79,11 +82,12 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 6. **Spell evaluation - PARTIALLY COMPLETE**
    - ✅ Pump spell evaluation (pre-combat, 2025-11-02)
-   - ⏳ Combat trick timing (holding instant pumps until declare blockers)
-   - ⏳ During-combat pump evaluation (save creatures, kill blockers, lethal damage)
+   - ✅ Combat trick timing (phase restrictions implemented, 2025-11-02_#586)
+   - ⏳ During-combat pump evaluation (BLOCKED: needs combat state tracking in GameStateView)
    - ❌ Removal spell targeting (ComputerUtilCard)
    - ❌ Card draw value assessment
    - Reference: ComputerUtilCard.shouldPumpCard() lines 1291-1600+
+   - Reference: PumpAi.checkPhaseRestrictions() lines 98-103
 
 7. **Mana tapping order** - ComputerUtilMana
    - Leave up correct colors for instant responses
@@ -119,6 +123,18 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Integrated into `choose_best_spell()` spell selection priority
   - Added `should_cast_pump()` method to HeuristicController
   - Added `can_block_simple()` helper for evasion evaluation
+- ✅ **Combat trick timing logic (2025-11-02_#586(4beac0b))**:
+  - Ported phase restriction logic from PumpAi.checkPhaseRestrictions() (lines 98-103)
+  - Instant-speed pumps now held for combat instead of cast pre-combat
+  - Combat trick detection: pure buffs (or with Trample/FirstStrike/DoubleStrike only) are held
+  - Pre-combat exception: cast if makes non-attacker attack AND threat > 30%
+  - Phase-based evaluation in `should_cast_pump()`:
+    - Main1: Evaluate for making attackers, hold combat tricks
+    - DeclareBlockers: Placeholder for during-combat evaluation (needs combat state)
+    - Other phases: Don't cast pumps
+  - Added `would_attack_if_pumped()` helper method
+  - Reference: ComputerUtilCard.java:1416-1431 (combat trick detection)
+  - Reference: PumpAi.java:98-103 (phase restrictions)
 
 ## Test Coverage Expansion (2025-10-26)
 
@@ -136,8 +152,10 @@ These tests reveal areas for improvement:
 
 ## Next Steps (Priority Order)
 
-1. Combat trick timing (hold instant pumps until blockers declared)
-2. During-combat pump evaluation (save creatures, achieve lethal)
-3. Removal spell targeting logic
-4. Attack logic improvements (mtg-85)
-5. Multi-phase blocking strategy
+1. **During-combat pump evaluation** (BLOCKED: needs combat state tracking)
+   - Requires: GameStateView to expose attacking/blocking creatures
+   - Requires: Combat state (which creatures are attacking/blocking which)
+   - Once available, implement ComputerUtilCard.java:1468-1600 logic
+2. Removal spell targeting logic
+3. Attack logic improvements (mtg-85)
+4. Multi-phase blocking strategy
