@@ -61,8 +61,8 @@
 //! let alice_id = game.players[0].id;
 //!
 //! // Create and update the mana engine
-//! let mut engine = ManaEngine::new(alice_id);
-//! engine.update(&game);
+//! let mut engine = ManaEngine::new();
+//! engine.update(&game, alice_id);
 //!
 //! // Check if we can cast Lightning Bolt (R)
 //! let mut bolt_cost = ManaCost::new();
@@ -74,8 +74,8 @@
 //!
 //! ```ignore
 //! // In your controller's choose_spell_ability_to_play():
-//! let mut engine = ManaEngine::new(player_id);
-//! engine.update(&game);
+//! let mut engine = ManaEngine::new();
+//! engine.update(&game, player_id);
 //!
 //! // Filter available spells to only those we can afford
 //! let affordable_spells: Vec<_> = available_spells
@@ -95,11 +95,11 @@
 //! ```ignore
 //! impl MyController {
 //!     fn on_permanent_entered(&mut self, card_id: CardId, game: &GameState) {
-//!         self.mana_engine.update(game);  // Rebuild cache
+//!         self.mana_engine.update(game, self.player_id);  // Rebuild cache
 //!     }
 //!
 //!     fn on_permanent_tapped(&mut self, card_id: CardId, game: &GameState) {
-//!         self.mana_engine.update(game);  // Rebuild cache
+//!         self.mana_engine.update(game, self.player_id);  // Rebuild cache
 //!     }
 //! }
 //! ```
@@ -204,12 +204,11 @@ impl ManaCapacity {
 /// ## Usage
 ///
 /// ```ignore
-/// let mut engine = ManaEngine::new(player_id);
-/// engine.update(&game); // Scan battlefield and cache mana sources
+/// let mut engine = ManaEngine::new();
+/// engine.update(&game, player_id); // Scan battlefield and cache mana sources
 /// let can_cast = engine.can_pay(&mana_cost);
 /// ```
 pub struct ManaEngine {
-    player_id: PlayerId,
     /// Simple mana sources (lands producing a single color)
     simple_sources: Vec<CardId>,
     /// Complex mana sources (lands with choices or conditions)
@@ -223,10 +222,9 @@ pub struct ManaEngine {
 }
 
 impl ManaEngine {
-    /// Create a new mana engine for a player
-    pub fn new(player_id: PlayerId) -> Self {
+    /// Create a new mana engine
+    pub fn new() -> Self {
         Self {
-            player_id,
             simple_sources: Vec::new(),
             complex_sources: Vec::new(),
             simple_capacity: ManaCapacity::new(),
@@ -241,12 +239,17 @@ impl ManaEngine {
     /// - A new permanent enters the battlefield
     /// - A permanent leaves the battlefield
     /// - A permanent becomes tapped/untapped
-    pub fn update(&mut self, game: &GameState) {
-        // Clear previous state
+    ///
+    /// The player_id parameter specifies which player's mana sources to scan.
+    pub fn update(&mut self, game: &GameState, player_id: PlayerId) {
+        // Clear previous state (but retain capacity for reuse)
         self.simple_sources.clear();
+        self.simple_sources.reserve(10); // Typical: 5-10 lands
         self.complex_sources.clear();
+        self.complex_sources.reserve(5); // Typical: 0-5 mana dorks/rocks
         self.simple_capacity = ManaCapacity::new();
         self.mana_sources.clear();
+        self.mana_sources.reserve(15); // Combined capacity
 
         // Scan battlefield for mana-producing permanents owned by this player
         // This includes lands and creatures with mana abilities (e.g., Llanowar Elves)
@@ -254,7 +257,7 @@ impl ManaEngine {
             if let Ok(card) = game.cards.get(card_id) {
                 // Check if this is a mana-producing permanent owned by this player
                 let is_mana_source = card.is_land() || has_mana_ability(card);
-                if card.owner == self.player_id && is_mana_source {
+                if card.owner == player_id && is_mana_source {
                     // Determine if this source has summoning sickness (for creatures with mana abilities)
                     let has_summoning_sickness = if card.is_creature() {
                         if let Some(entered_turn) = card.turn_entered_battlefield {
@@ -615,8 +618,8 @@ mod tests {
         game.battlefield.add(island_id);
 
         // Create engine and update
-        let mut engine = ManaEngine::new(p1_id);
-        engine.update(&game);
+        let mut engine = ManaEngine::new();
+        engine.update(&game, p1_id);
 
         // Should have detected 2 simple sources
         assert_eq!(engine.simple_sources().len(), 2);
@@ -643,8 +646,8 @@ mod tests {
             game.battlefield.add(land_id);
         }
 
-        let mut engine = ManaEngine::new(p1_id);
-        engine.update(&game);
+        let mut engine = ManaEngine::new();
+        engine.update(&game, p1_id);
 
         // Should be able to pay for 2R (Lightning Bolt)
         let bolt_cost = ManaCost::from_string("2R");
@@ -714,8 +717,8 @@ mod tests {
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
 
-        let mut engine = ManaEngine::new(p1_id);
-        engine.update(&game);
+        let mut engine = ManaEngine::new();
+        engine.update(&game, p1_id);
 
         // Should have 1 simple source (Forest) and 1 complex source (Llanowar Elves)
         assert_eq!(engine.simple_sources().len(), 1);
@@ -753,8 +756,8 @@ mod tests {
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
 
-        let mut engine = ManaEngine::new(p1_id);
-        engine.update(&game);
+        let mut engine = ManaEngine::new();
+        engine.update(&game, p1_id);
 
         // Should detect the creature as complex source
         assert_eq!(engine.complex_sources().len(), 1);

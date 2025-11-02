@@ -105,6 +105,9 @@ pub struct GameLoop<'a> {
     /// Global choice counter for tracking all player choices
     /// Increments each time a controller makes any decision
     choice_counter: u32,
+    /// Reusable mana engine for checking mana availability
+    /// Updated per-player as needed, retains Vec capacity across calls
+    mana_engine: crate::game::mana_engine::ManaEngine,
     /// Stop and snapshot when fixed controller is exhausted
     stop_when_fixed_exhausted: bool,
     /// Snapshot path for fixed-exhausted snapshots
@@ -144,6 +147,7 @@ impl<'a> GameLoop<'a> {
             step_header_printed: false,
             spell_targets: Vec::new(),
             choice_counter: 0,
+            mana_engine: crate::game::mana_engine::ManaEngine::new(),
             stop_when_fixed_exhausted: false,
             snapshot_path_for_fixed: None,
             snapshot_format: crate::game::snapshot::SnapshotFormat::default(),
@@ -2293,10 +2297,10 @@ impl<'a> GameLoop<'a> {
 
                                 let mana_callback = |game: &GameState, cost: &crate::core::ManaCost| {
                                     // Use ManaEngine to compute proper color-aware tap order
+                                    // Note: Create temporary engine here since we're in a closure
                                     use crate::game::mana_engine::ManaEngine;
-
-                                    let mut mana_engine = ManaEngine::new(current_priority);
-                                    mana_engine.update(game);
+                                    let mut mana_engine = ManaEngine::new();
+                                    mana_engine.update(game, current_priority);
 
                                     // The mana engine already knows which sources to tap
                                     // It uses the GreedyManaResolver internally to compute tap order
@@ -2743,14 +2747,11 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Get castable spells in player's hand (v2 interface)
-    fn get_castable_spells(&self, player_id: PlayerId) -> Vec<CardId> {
-        use crate::game::mana_engine::ManaEngine;
-
+    fn get_castable_spells(&mut self, player_id: PlayerId) -> Vec<CardId> {
         let mut spells = Vec::new();
 
-        // Create a mana engine and scan battlefield for available mana
-        let mut mana_engine = ManaEngine::new(player_id);
-        mana_engine.update(self.game);
+        // Update the mana engine for this player
+        self.mana_engine.update(self.game, player_id);
 
         // Check if this is the active player (only active player can cast sorceries)
         let is_active_player = self.game.turn.active_player == player_id;
@@ -2781,7 +2782,7 @@ impl<'a> GameLoop<'a> {
 
                         if can_cast_now {
                             // Check if we can pay for this spell's mana cost
-                            if mana_engine.can_pay(&card.mana_cost) {
+                            if self.mana_engine.can_pay(&card.mana_cost) {
                                 // For Aura spells, check if there are valid targets
                                 // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
                                 if card.is_aura() {
@@ -2820,14 +2821,11 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Get activatable abilities on player's permanents (v2 interface)
-    fn get_activatable_abilities(&self, player_id: PlayerId) -> Vec<(CardId, usize)> {
-        use crate::game::mana_engine::ManaEngine;
-
+    fn get_activatable_abilities(&mut self, player_id: PlayerId) -> Vec<(CardId, usize)> {
         let mut abilities = Vec::new();
 
-        // Create a mana engine to check cost payability
-        let mut mana_engine = ManaEngine::new(player_id);
-        mana_engine.update(self.game);
+        // Update the mana engine for this player
+        self.mana_engine.update(self.game, player_id);
 
         // Check all permanents controlled by this player
         for &card_id in &self.game.battlefield.cards {
@@ -2854,7 +2852,7 @@ impl<'a> GameLoop<'a> {
 
                     // Check mana cost
                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
-                        if !mana_engine.can_pay(mana_cost) {
+                        if !self.mana_engine.can_pay(mana_cost) {
                             can_activate = false;
                         }
                     }
@@ -2923,7 +2921,7 @@ impl<'a> GameLoop<'a> {
     /// IMPORTANT: Results are sorted by card ID to ensure deterministic ordering.
     /// This is critical for snapshot/resume determinism where choice indices
     /// must map to the same logical cards across runs.
-    fn get_available_spell_abilities(&self, player_id: PlayerId) -> Vec<crate::core::SpellAbility> {
+    fn get_available_spell_abilities(&mut self, player_id: PlayerId) -> Vec<crate::core::SpellAbility> {
         use crate::core::SpellAbility;
         let mut abilities = Vec::new();
 
