@@ -393,6 +393,31 @@ pub async fn run_tourney(
     println!("\n=== Matchup Results ===");
     let mut matchups: Vec<_> = stats.matchup_results.iter().collect();
     matchups.sort_by_key(|&(key, _)| key);
+
+    // Calculate maximum number width for alignment
+    let max_games = matchups
+        .iter()
+        .map(|(_, m)| {
+            let total = m.games_a_as_p1 + m.games_b_as_p1;
+            vec![
+                m.a_wins,
+                m.b_wins,
+                m.p1_as_a_wins,
+                m.p2_as_b_wins,
+                m.p1_as_b_wins,
+                m.p2_as_a_wins,
+                m.games_a_as_p1,
+                m.games_b_as_p1,
+                total,
+            ]
+            .into_iter()
+            .max()
+            .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0);
+    let num_width = format!("{}", max_games).len().max(2);
+
     for ((deck_a, deck_b), matchup) in matchups {
         let total_games = matchup.games_a_as_p1 + matchup.games_b_as_p1;
 
@@ -400,35 +425,45 @@ pub async fn run_tourney(
             // Mirror match
             println!("  {} (mirror):", deck_a);
             println!(
-                "     total P1 wins: {}  |  total P2 wins: {}  |  {} games",
+                "     total P1 wins: {:width$}  |  total P2 wins: {:width$}  |  {:width$} games",
                 matchup.p1_as_a_wins + matchup.p1_as_b_wins,
                 matchup.p2_as_a_wins + matchup.p2_as_b_wins,
-                total_games
+                total_games,
+                width = num_width
             );
         } else {
-            println!("  {} vs {}:", deck_a, deck_b);
+            println!("  {} (A) vs {} (B):", deck_a, deck_b);
             println!(
-                "     total {} wins: {}  |  total {} wins: {}  |  {} games",
-                deck_a, matchup.a_wins, deck_b, matchup.b_wins, total_games
+                "     total A wins: {:width$}  |  total B wins: {:width$}  |  {:width$} games",
+                matchup.a_wins,
+                matchup.b_wins,
+                total_games,
+                width = num_width
             );
 
             if matchup.games_a_as_p1 > 0 {
                 println!(
-                    "        P1={} wins: {}  |  P2={} wins: {}  |  {} games",
-                    deck_a, matchup.p1_as_a_wins, deck_b, matchup.p2_as_b_wins, matchup.games_a_as_p1
+                    "        P1=A wins: {:width$}  |     P2=B wins: {:width$}  |  {:width$} games",
+                    matchup.p1_as_a_wins,
+                    matchup.p2_as_b_wins,
+                    matchup.games_a_as_p1,
+                    width = num_width
                 );
             }
 
             if matchup.games_b_as_p1 > 0 {
                 println!(
-                    "        P1={} wins: {}  |  P2={} wins: {}  |  {} games",
-                    deck_b, matchup.p1_as_b_wins, deck_a, matchup.p2_as_a_wins, matchup.games_b_as_p1
+                    "        P1=B wins: {:width$}  |     P2=A wins: {:width$}  |  {:width$} games",
+                    matchup.p1_as_b_wins,
+                    matchup.p2_as_a_wins,
+                    matchup.games_b_as_p1,
+                    width = num_width
                 );
             }
         }
 
         if matchup.draws > 0 {
-            println!("     draws: {}", matchup.draws);
+            println!("     draws: {:width$}", matchup.draws, width = num_width);
         }
     }
 
