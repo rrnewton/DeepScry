@@ -365,7 +365,12 @@ impl HeuristicController {
                 if let Some(spell_card) = view.get_card(*card_id) {
                     // Check if this is a pump spell (has PumpCreature effect)
                     for effect in &spell_card.effects {
-                        if let crate::core::Effect::PumpCreature { target: _, power_bonus, toughness_bonus } = effect {
+                        if let crate::core::Effect::PumpCreature {
+                            target: _,
+                            power_bonus,
+                            toughness_bonus,
+                        } = effect
+                        {
                             // This is a pump spell - evaluate whether we should cast it
                             // For pump spells, we need to determine the target
                             // For now, evaluate if pumping our best creature would be good
@@ -954,15 +959,15 @@ impl HeuristicController {
         // Case 3: Grant evasion (Flying, Unblockable, etc.)
         // Java: if (oppCreatures.stream().anyMatch(CardPredicates.possibleBlockers(c)))
         // Check if creature is currently blockable but would become unblockable
-        let currently_blockable = opponent_creatures.iter().any(|blocker| {
-            self.can_block_simple(target, blocker, &[])
-        });
+        let currently_blockable = opponent_creatures
+            .iter()
+            .any(|blocker| self.can_block_simple(target, blocker, &[]));
 
         if currently_blockable {
             // Would the pumped creature be unblockable?
-            let would_be_blockable = opponent_creatures.iter().any(|blocker| {
-                self.can_block_simple(target, blocker, keywords_granted)
-            });
+            let would_be_blockable = opponent_creatures
+                .iter()
+                .any(|blocker| self.can_block_simple(target, blocker, keywords_granted));
 
             if !would_be_blockable && pumped_power > 0 {
                 // Granting evasion is valuable - worth ~0.5 * damage potential
@@ -1449,7 +1454,7 @@ mod tests {
         use crate::core::{Card, CardType};
 
         let player_id = EntityId::new(1);
-        let controller = HeuristicController::new(player_id);
+        let _controller = HeuristicController::new(player_id);
 
         // Create a Grizzly Bears (2/2) creature
         let mut bears = Card::new(EntityId::new(10), "Grizzly Bears", player_id);
@@ -1461,7 +1466,7 @@ mod tests {
         // Should return true if it would enable attacking
         let power_bonus = 3;
         let toughness_bonus = 3;
-        let keywords: Vec<String> = vec![];
+        let _keywords: Vec<String> = vec![];
 
         // Note: This test would need a full GameStateView mock to work properly
         // For now, we're just testing that the method exists and compiles
@@ -1469,7 +1474,7 @@ mod tests {
 
         // Test Case 2: Pump that would kill the creature (-5/-5)
         // This should return false
-        let bad_power = 0;
+        let _bad_power = 0;
         let bad_toughness = -5; // Would make 2/2 into 2/-3 (dies)
 
         // The should_cast_pump method would return false for this case

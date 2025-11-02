@@ -12,7 +12,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
-    game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel, GameSnapshot},
+    game::{random_controller::RandomController, GameLoop, GameSnapshot, GameState, VerbosityLevel},
     loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer},
     Result,
 };
@@ -20,8 +20,8 @@ use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::runtime::Runtime;
 use tempfile::tempdir;
+use tokio::runtime::Runtime;
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -783,7 +783,6 @@ fn bench_game_rewind(c: &mut Criterion) {
     group.finish();
 }
 
-
 /// Benchmark: Save snapshot to file
 fn bench_save_snapshot(c: &mut Criterion) {
     // Check if test resources exist and load once
@@ -804,18 +803,20 @@ fn bench_save_snapshot(c: &mut Criterion) {
     // Create a representative game state by running a game for a few turns
     let mut game = {
         let game_init = GameInitializer::new(&setup.card_db);
-        setup.runtime.block_on(async {
-            game_init
-                .init_game(
-                    "Player 1".to_string(),
-                    &setup.deck,
-                    "Player 2".to_string(),
-                    &setup.deck,
-                    20,
-                )
-                .await
-        })
-        .expect("Failed to initialize game")
+        setup
+            .runtime
+            .block_on(async {
+                game_init
+                    .init_game(
+                        "Player 1".to_string(),
+                        &setup.deck,
+                        "Player 2".to_string(),
+                        &setup.deck,
+                        20,
+                    )
+                    .await
+            })
+            .expect("Failed to initialize game")
     };
     game.seed_rng(seed);
 
@@ -831,7 +832,9 @@ fn bench_save_snapshot(c: &mut Criterion) {
     let mut controller2 = RandomController::with_seed(p2_id, 42);
 
     let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    game_loop.run_turns(&mut controller1, &mut controller2, 10).expect("Game should complete successfully");
+    game_loop
+        .run_turns(&mut controller1, &mut controller2, 10)
+        .expect("Game should complete successfully");
 
     let snapshot = GameSnapshot::new(game.clone(), game.turn.turn_number, vec![]);
 
@@ -840,13 +843,17 @@ fn bench_save_snapshot(c: &mut Criterion) {
 
     group.bench_function("save_to_file", |b| {
         b.iter(|| {
-            snapshot.save_to_file(black_box(&snapshot_path)).expect("Failed to save snapshot");
+            snapshot
+                .save_to_file(
+                    black_box(&snapshot_path),
+                    mtg_forge_rs::game::snapshot::SnapshotFormat::Json,
+                )
+                .expect("Failed to save snapshot");
         });
     });
 
     group.finish();
 }
-
 
 criterion_group!(
     benches,

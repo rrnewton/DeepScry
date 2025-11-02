@@ -20,7 +20,6 @@ pub enum SnapshotFormat {
     Bincode,
 }
 
-
 /// Controller type identifier for snapshot persistence
 ///
 /// This enum identifies which controller was used, separate from its state.

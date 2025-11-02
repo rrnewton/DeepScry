@@ -997,7 +997,9 @@ async fn run_tui(
         game.logger.enable_capture();
     }
 
-let mut game_loop = GameLoop::new(&mut game).with_verbosity(verbosity).with_snapshot_format(snapshot_format);
+    let mut game_loop = GameLoop::new(&mut game)
+        .with_verbosity(verbosity)
+        .with_snapshot_format(snapshot_format);
 
     // If loading from snapshot, restore the turn counter
     // Note: snapshot.turn_number represents the turn we're STARTING,
@@ -1626,7 +1628,9 @@ async fn run_resume(
     }
 
     // Run the game loop
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(verbosity).with_snapshot_format(snapshot_format);
+    let mut game_loop = GameLoop::new(&mut game)
+        .with_verbosity(verbosity)
+        .with_snapshot_format(snapshot_format);
 
     // Restore the turn counter
     // Note: snapshot.turn_number represents the turn we're STARTING,
