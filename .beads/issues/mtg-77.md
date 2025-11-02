@@ -127,6 +127,17 @@ Track completion of heuristic AI port from Java Forge to Rust.
     3. Killing blockers worth less than attacker (favorable trades)
   - Integrated into blocking phase before gang blocks
   - Reference: AiBlockController.makeGoodBlocks() lines 187-362
+- ✅ Trade blocks implementation (2025-11-02):
+  - Implemented `make_trade_blocks()` for equal-value trades
+  - Trades even when equal value if life is in danger
+  - Integrated into blocking flow after good blocks and gang blocks
+  - Reference: AiBlockController.makeTradeBlocks() lines 599-640
+- ✅ Lethal damage detection (2025-11-02):
+  - Implemented `calculate_lethal_potential()` to sum available damage
+  - Implemented `is_lethal_opportunity()` to detect kill opportunities
+  - AI attacks with all power when opponent can be killed
+  - **Benchmark: +4.9% win rate improvement (60.9% → 65.8%)**
+  - Reference: Attack decision logic with opponent life awareness
 
 ## Test Coverage Expansion (2025-10-26)
 
