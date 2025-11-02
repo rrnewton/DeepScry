@@ -12,13 +12,15 @@
 # Smart caching: treats documentation-only changes (*.md) as cache hits.
 #
 # Usage:
-#   ./validate.sh [--force] [--sequential] [--no-wip-commit] [--force-wip-commit]
+#   ./validate.sh [OPTIONS]
 #
 # Options:
-#   --force              Skip cache checks and always run validation
-#   --sequential         Run tests sequentially, failing on first failure (easier debugging)
-#   --no-wip-commit      Completely suppress temporary WIP commit creation (fail if dirty)
-#   --force-wip-commit   Force WIP commit creation even if submodules have changes
+#   --force                    Skip cache checks and always run validation
+#   --sequential               Run tests sequentially, failing on first failure (easier debugging)
+#   --no-wip-commit            Completely suppress temporary WIP commit creation (fail if dirty)
+#   --force-wip-commit         Force WIP commit creation even if submodules have changes
+#   --validate-cmd <CMD>       Command to run for parallel validation (default: make validate-impl)
+#   --validate-cmd-seq <CMD>   Command to run for sequential validation (default: make validate-impl-sequential)
 
 set -e  # Exit on error
 set -o pipefail  # Propagate pipeline errors
@@ -46,9 +48,18 @@ while [[ $# -gt 0 ]]; do
             FORCE_WIP_COMMIT=true
             shift
             ;;
+        --validate-cmd)
+            VALIDATE_CMD="$2"
+            shift 2
+            ;;
+        --validate-cmd-seq)
+            VALIDATE_CMD_SEQUENTIAL="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--force] [--sequential] [--no-wip-commit] [--force-wip-commit]"
+            echo "Usage: $0 [OPTIONS]"
+            echo "Run '$0 --help' or see script header for full options"
             exit 1
             ;;
     esac
@@ -65,11 +76,18 @@ NC='\033[0m' # No Color
 LOG_DIR="validate_logs"
 LATEST_SYMLINK="$LOG_DIR/validate_latest.log"
 
+# Default validation commands (can be overridden via CLI flags)
+VALIDATE_CMD="make validate-impl"
+VALIDATE_CMD_SEQUENTIAL="make validate-impl-sequential"
+
 # Create log directory if it doesn't exist
 mkdir -p "$LOG_DIR"
 
 # Track whether we created a WIP commit (for cleanup)
 CREATED_WIP_COMMIT=false
+
+# Track whether caching should be disabled (dirty working copy with --no-wip-commit)
+DISABLE_CACHING=false
 
 # Cleanup function to uncommit WIP if needed
 cleanup() {
@@ -102,10 +120,10 @@ fi
 
 # Determine if we need to handle dirty working copy
 if [ "$HAS_REGULAR_CHANGES" = true ] || [ "$HAS_SUBMODULE_CHANGES" = true ]; then
-    # If --no-wip-commit is set, fail immediately
+    # If --no-wip-commit is set, skip WIP commit creation but continue with validation
     if [ "$NO_WIP_COMMIT" = true ]; then
         echo ""
-        echo -e "${RED}✗ Error: Working copy has uncommitted changes (--no-wip-commit specified)${NC}"
+        echo -e "${YELLOW}Warning: Working copy has uncommitted changes (--no-wip-commit specified)${NC}"
         echo ""
         if [ "$HAS_REGULAR_CHANGES" = true ]; then
             echo "Regular changes detected in working copy."
@@ -114,43 +132,46 @@ if [ "$HAS_REGULAR_CHANGES" = true ] || [ "$HAS_SUBMODULE_CHANGES" = true ]; the
             echo "Submodule changes detected."
         fi
         echo ""
-        echo "Please commit or stash your changes before running validation."
+        echo "Proceeding with validation WITHOUT creating WIP commit."
+        echo "Caching will be disabled for this run."
         echo ""
-        exit 1
-    fi
+        # Skip WIP commit creation and continue to validation
+        # Disable caching since working copy is dirty
+        DISABLE_CACHING=true
+    else
+        # If submodule changes exist and --force-wip-commit is NOT set, bail
+        if [ "$HAS_SUBMODULE_CHANGES" = true ] && [ "$FORCE_WIP_COMMIT" = false ]; then
+            echo ""
+            echo -e "${RED}✗ Error: Submodule changes detected${NC}"
+            echo ""
+            echo "The working copy has submodule changes, which typically should not"
+            echo "be included in temporary WIP commits."
+            echo ""
+            echo "Submodule status:"
+            git submodule status | grep '^+\|^-\|^U' || true
+            echo ""
+            echo "Please either:"
+            echo "  1. Commit or stash the submodule changes before validation"
+            echo "  2. Use --force-wip-commit to override this check (not recommended)"
+            echo "  3. Use --no-wip-commit to skip WIP commit and run validation anyway"
+            echo ""
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            exit 1
+        fi
 
-    # If submodule changes exist and --force-wip-commit is NOT set, bail
-    if [ "$HAS_SUBMODULE_CHANGES" = true ] && [ "$FORCE_WIP_COMMIT" = false ]; then
+        # Create temporary WIP commit
         echo ""
-        echo -e "${RED}✗ Error: Submodule changes detected${NC}"
+        echo -e "${CYAN}Working copy is dirty - creating temporary WIP commit...${NC}"
+        if [ "$HAS_SUBMODULE_CHANGES" = true ]; then
+            echo -e "${YELLOW}Warning: Including submodule changes in WIP commit (--force-wip-commit specified)${NC}"
+        fi
+        git add -A
+        git commit -m "wip" --no-verify
+        CREATED_WIP_COMMIT=true
+        echo -e "${CYAN}✓ Created temporary WIP commit${NC}"
         echo ""
-        echo "The working copy has submodule changes, which typically should not"
-        echo "be included in temporary WIP commits."
-        echo ""
-        echo "Submodule status:"
-        git submodule status | grep '^+\|^-\|^U' || true
-        echo ""
-        echo "Please either:"
-        echo "  1. Commit or stash the submodule changes before validation"
-        echo "  2. Use --force-wip-commit to override this check (not recommended)"
-        echo "  3. Use --no-wip-commit to completely suppress WIP commits"
-        echo ""
-        echo "Usage: $0 [--force] [--sequential] [--no-wip-commit] [--force-wip-commit]"
-        echo ""
-        exit 1
     fi
-
-    # Create temporary WIP commit
-    echo ""
-    echo -e "${CYAN}Working copy is dirty - creating temporary WIP commit...${NC}"
-    if [ "$HAS_SUBMODULE_CHANGES" = true ]; then
-        echo -e "${YELLOW}Warning: Including submodule changes in WIP commit (--force-wip-commit specified)${NC}"
-    fi
-    git add -A
-    git commit -m "wip" --no-verify
-    CREATED_WIP_COMMIT=true
-    echo -e "${CYAN}✓ Created temporary WIP commit${NC}"
-    echo ""
 fi
 
 # Get current commit hash (after potential WIP commit)
@@ -182,8 +203,8 @@ fi
 
 WIP_FILE="${LOG_FILE}.wip"
 
-# Skip cache checks if --force is specified
-if [ "$FORCE_VALIDATION" = false ]; then
+# Skip cache checks if --force is specified or caching is disabled
+if [ "$FORCE_VALIDATION" = false ] && [ "$DISABLE_CACHING" = false ]; then
     # Simple cache hit: exact match for this commit
     if [ -f "$LOG_FILE" ]; then
         echo ""
@@ -199,8 +220,8 @@ if [ "$FORCE_VALIDATION" = false ]; then
 fi
 
 # Smart cache hit: check if only *.md files changed compared to latest validation
-# (also skipped if --force is specified)
-if [ "$FORCE_VALIDATION" = false ] && [ -L "$LATEST_SYMLINK" ]; then
+# (also skipped if --force is specified or caching is disabled)
+if [ "$FORCE_VALIDATION" = false ] && [ "$DISABLE_CACHING" = false ] && [ -L "$LATEST_SYMLINK" ]; then
     # Extract the hash from the latest symlink target
     LATEST_LOG=$(readlink "$LATEST_SYMLINK")
     # Extract hash from filename: validate_HASH[_dirty].log
@@ -284,13 +305,12 @@ echo "Log file: ${LOG_FILE}"
 echo "==================================="
 echo ""
 
-# Run validation via make validate-impl
-# The actual validation logic stays in the Makefile
+# Run validation using configured commands
 run_validation() {
     if [ "$SEQUENTIAL_MODE" = true ]; then
-        make validate-impl-sequential
+        eval "$VALIDATE_CMD_SEQUENTIAL"
     else
-        make validate-impl
+        eval "$VALIDATE_CMD"
     fi
 }
 
