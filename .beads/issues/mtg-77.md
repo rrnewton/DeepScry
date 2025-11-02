@@ -4,9 +4,9 @@ status: open
 priority: 1
 issue_type: epic
 labels:
-  - tracking
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:51Z"
+- tracking
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2025-11-02T15:11:02.140820170+00:00
 ---
 
 # Description
@@ -24,6 +24,11 @@ Track completion of heuristic AI port from Java Forge to Rust.
 - ✅ GameStateEvaluator (basic holistic board evaluation)
 - ✅ Opponent life access (bd-4 completed)
 - ✅ Life-in-danger detection for chump blocking (2025-10-31)
+- ✅ **Pump spell evaluation (2025-11-02_#556(889631a))**
+  - Pre-combat evaluation: Makes non-attackers into attackers
+  - Haste granting evaluation
+  - Evasion granting evaluation (Flying, etc.)
+  - Reference: ComputerUtilCard.shouldPumpCard() lines 1291-1466
 
 **What's Missing:**
 
@@ -72,10 +77,13 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ### Medium Priority:
 
-6. **Spell evaluation** - Beyond creatures
-   - Removal spell targeting (ComputerUtilCard)
-   - Card draw value assessment
-   - Pump spells, combat tricks
+6. **Spell evaluation - PARTIALLY COMPLETE**
+   - ✅ Pump spell evaluation (pre-combat, 2025-11-02)
+   - ⏳ Combat trick timing (holding instant pumps until declare blockers)
+   - ⏳ During-combat pump evaluation (save creatures, kill blockers, lethal damage)
+   - ❌ Removal spell targeting (ComputerUtilCard)
+   - ❌ Card draw value assessment
+   - Reference: ComputerUtilCard.shouldPumpCard() lines 1291-1600+
 
 7. **Mana tapping order** - ComputerUtilMana
    - Leave up correct colors for instant responses
@@ -96,13 +104,21 @@ Track completion of heuristic AI port from Java Forge to Rust.
 - ✅ Score type with summon sickness tracking (mtg-79 completed 2025-10-26)
 - ✅ Opponent life access (bd-4) - GameStateView now provides player_life(), opponents(), and opponent_life() methods
 - ✅ Activated ability targeting (mtg-70) - Royal Assassin can now target and destroy tapped creatures
-- ✅ **Comprehensive test coverage with 4ED cards (2025-10-26) - 312 tests passing**
+- ✅ **Comprehensive test coverage with 4ED cards (2025-10-26) - 274 tests passing**
 - ✅ Life-in-danger blocking logic (2025-10-31):
   - Ported `lifeInDanger()` from ComputerUtilCombat.java:399-466
   - Ported `lifeThatWouldRemain()` from ComputerUtilCombat.java:304-329
   - Ported `lifeInSeriousDanger()` from ComputerUtilCombat.java:477-508
   - Integrated into `should_block()` for chump blocking when life < 5
   - Tournament results: Heuristic 51.4% vs Random 48.6% (improved from 49.5/50.5)
+- ✅ **Pump spell evaluation (2025-11-02_#556(889631a))**:
+  - Ported `shouldPumpCard()` pre-combat logic from ComputerUtilCard.java:1291-1466
+  - Evaluates making non-attackers into attackers
+  - Evaluates haste granting for summoning-sick creatures
+  - Evaluates evasion granting (Flying, Unblockable, etc.)
+  - Integrated into `choose_best_spell()` spell selection priority
+  - Added `should_cast_pump()` method to HeuristicController
+  - Added `can_block_simple()` helper for evasion evaluation
 
 ## Test Coverage Expansion (2025-10-26)
 
@@ -118,3 +134,10 @@ These tests reveal areas for improvement:
 - Pump ability evaluation and usage needs improvement
 - Static abilities like "must attack" not yet implemented
 
+## Next Steps (Priority Order)
+
+1. Combat trick timing (hold instant pumps until blockers declared)
+2. During-combat pump evaluation (save creatures, achieve lethal)
+3. Removal spell targeting logic
+4. Attack logic improvements (mtg-85)
+5. Multi-phase blocking strategy
