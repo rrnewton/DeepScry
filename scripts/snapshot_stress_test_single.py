@@ -143,7 +143,7 @@ def filter_game_actions(log: str) -> List[str]:
 
 def run_normal_game(mtg_bin: Path, deck1: str, deck2: str,
                     p1_controller: str, p2_controller: str, seed: int,
-                    save_gamestate: Optional[Path] = None) -> Tuple[str, List[int], List[int]]:
+                    save_gamestate: Optional[Path] = None, json_format: bool = False) -> Tuple[str, List[int], List[int]]:
     """Run a normal game and extract choices."""
     cmd = [
         str(mtg_bin), "tui",
@@ -157,6 +157,9 @@ def run_normal_game(mtg_bin: Path, deck1: str, deck2: str,
 
     if save_gamestate:
         cmd.append(f"--save-final-gamestate={save_gamestate}")
+
+    if json_format:
+        cmd.append("--json")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
@@ -180,7 +183,8 @@ def run_stop_and_go_game(mtg_bin: Path, deck1: str, deck2: str,
                          snapshot_dir: Optional[Path] = None,
                          test_name: str = "",
                          work_dir: Optional[Path] = None,
-                         use_fixed_controllers: bool = False) -> Tuple[str, List[Path]]:
+                         use_fixed_controllers: bool = False,
+                         json_format: bool = False) -> Tuple[str, List[Path]]:
     """Run a stop-and-go game with randomized stop points.
 
     If use_fixed_controllers is True, uses fixed controllers with the provided choice sequences
@@ -216,6 +220,8 @@ def run_stop_and_go_game(mtg_bin: Path, deck1: str, deck2: str,
             "--verbosity=3",
             "--debug-state-hash"
         ]
+        if json_format:
+            cmd.append("--json")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         return result.stdout, []  # No snapshots in fallback case
 
@@ -276,6 +282,10 @@ def run_stop_and_go_game(mtg_bin: Path, deck1: str, deck2: str,
                     f"--stop-every=both:choice:{stop_after}",
                     f"--snapshot-output={snapshot_file}",
                 ])
+
+            # Add json flag if requested
+            if json_format:
+                cmd.append("--json")
         else:
             # Resume from snapshot using 'mtg resume' subcommand
             # This restores controllers from snapshot (including RNG state) for proper determinism
@@ -298,6 +308,10 @@ def run_stop_and_go_game(mtg_bin: Path, deck1: str, deck2: str,
             elif save_gamestate:
                 # Final segment - save gamestate
                 cmd.append(f"--save-final-gamestate={save_gamestate}")
+
+            # Add json flag if requested
+            if json_format:
+                cmd.append("--json")
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
@@ -406,7 +420,7 @@ def run_test_for_deck(mtg_bin: Path, deck_path: str,
                       p1_controller: str, p2_controller: str, seed: int,
                       num_replays: int = 3, verbose: bool = False,
                       keep_artifacts: bool = False, artifact_dir: Optional[Path] = None,
-                      switch_fixed: bool = False) -> bool:
+                      switch_fixed: bool = False, json_format: bool = False) -> bool:
     """Run complete test for a specific deck with multiple replay runs.
 
     If switch_fixed is True, runs the stop-and-go game with fixed controllers
@@ -425,7 +439,7 @@ def run_test_for_deck(mtg_bin: Path, deck_path: str,
         # Run normal game and extract choices
         normal_log, p1_choices, p2_choices = run_normal_game(
             mtg_bin, deck_path, deck_path, p1_controller, p2_controller, seed,
-            save_gamestate=normal_state_file
+            save_gamestate=normal_state_file, json_format=json_format
         )
 
         # Extract deck name for test naming
@@ -451,7 +465,8 @@ def run_test_for_deck(mtg_bin: Path, deck_path: str,
                 snapshot_dir=artifact_dir,
                 test_name=test_name,
                 work_dir=work_dir,
-                use_fixed_controllers=switch_fixed
+                use_fixed_controllers=switch_fixed,
+                json_format=json_format
             )
 
             if not stopgo_log:
@@ -601,6 +616,12 @@ def parse_args():
         help='Run stop-go reproducer with fixed controllers using extracted choices from initial run'
     )
 
+    parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Use JSON format for snapshots (default is binary format)'
+    )
+
     return parser.parse_args()
 
 
@@ -633,7 +654,8 @@ def main():
         args.seed, num_replays=args.replays, verbose=args.verbose,
         keep_artifacts=args.keep_artifacts,
         artifact_dir=Path(args.artifact_dir) if args.keep_artifacts else None,
-        switch_fixed=args.switch_fixed
+        switch_fixed=args.switch_fixed,
+        json_format=args.json
     )
 
     if passed:

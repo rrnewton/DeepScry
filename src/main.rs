@@ -196,9 +196,9 @@ enum Commands {
         #[arg(long, value_name = "FILE", default_value = "game.snapshot")]
         snapshot_output: PathBuf,
 
-        /// Serialization format for snapshots
-        #[arg(long, value_enum, default_value = "bincode")]
-        snapshot_format: mtg_forge_rs::game::snapshot::SnapshotFormat,
+        /// Use JSON format for snapshots (default is binary format)
+        #[arg(long)]
+        json: bool,
 
         /// Load and resume game from snapshot file
         #[arg(long, value_name = "FILE")]
@@ -334,9 +334,9 @@ enum Commands {
         #[arg(long, value_name = "FILE", default_value = "game.snapshot")]
         snapshot_output: PathBuf,
 
-        /// Serialization format for snapshots
-        #[arg(long, value_enum, default_value = "bincode")]
-        snapshot_format: mtg_forge_rs::game::snapshot::SnapshotFormat,
+        /// Use JSON format for snapshots (default is binary format)
+        #[arg(long)]
+        json: bool,
 
         /// Save final game state when game ends (for determinism testing)
         #[arg(long, value_name = "FILE")]
@@ -374,13 +374,20 @@ async fn main() -> Result<()> {
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
-            snapshot_format,
+            json,
             start_from,
             save_final_gamestate,
             log_tail,
             p1_draw,
             p2_draw,
         } => {
+            // Convert json flag to SnapshotFormat
+            let snapshot_format = if json {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Json
+            } else {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
+            };
+
             run_tui(
                 deck1,
                 deck2,
@@ -458,10 +465,17 @@ async fn main() -> Result<()> {
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
-            snapshot_format,
+            json,
             save_final_gamestate,
             log_tail,
         } => {
+            // Convert json flag to SnapshotFormat
+            let snapshot_format = if json {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Json
+            } else {
+                mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
+            };
+
             run_resume(
                 snapshot_file,
                 override_p1,
