@@ -98,20 +98,36 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ## Completed Work (2025-10-26 to 2025-11-02)
 
-### ✅ Combat System (100% Complete)
-**Attack Logic**: All aggression levels (0-6), combat factors, lethal detection (+4.9% win rate)  
-**Blocking Logic**: Good blocks, gang blocks (2 and 3-blocker), trade blocks, multi-phase danger reassessment, reinforcement (trample + kill)  
-**Creature Evaluation**: Line-by-line faithful port from Java CreatureEvaluator  
-**Combat Math**: Can destroy, total damage, life danger detection (regular + serious)
+### ✅ Combat System (100% Complete - ~1,400 lines)
 
-**Performance**: Final win rate 66.1% vs Random 33.9% (+3.2% from session start)  
-**References**: AiAttackController.java (1784 lines), AiBlockController.java (1379 lines), CreatureEvaluator.java (321 lines)
+Faithfully ported from Java:
+- **Attack Logic**: All 7 aggression levels, combat factors evaluation, lethal detection (+4.9% win rate boost)
+- **Blocking Logic**: Good blocks, gang blocks (2 & 3-blocker), trade blocks, multi-phase danger reassessment (3 phases), reinforcement (trample + kill)
+- **Creature Evaluation**: Line-by-line faithful port of Java CreatureEvaluator (all keywords, abilities, scoring)
+- **Combat Math**: Can destroy calculations, total damage, life danger detection (regular & serious thresholds)
 
-### ⚠️ Basic Implementation
-**Spell Selection**: Creatures-first heuristic only  
-**Targeting**: Simple best-creature targeting  
-**Activated Abilities**: Basic implementation without evaluation  
-**Game State**: Basic board scoring, no mana base evaluation
+**Java Sources Ported**: 
+- AiAttackController.java (1,784 lines) → ~500 Rust lines
+- AiBlockController.java (1,379 lines) → ~700 Rust lines  
+- CreatureEvaluator.java (321 lines) → ~250 Rust lines
+- Portions of ComputerUtilCombat.java → ~200 Rust lines
 
-See AI_COMPARISON.md for detailed feature-by-feature comparison.
+**Performance**: 66.1% win rate vs Random (+3.2% improvement from work session)  
+**Fidelity**: 100% faithful port of all Java combat decision logic
+
+### ⚠️ Basic Implementation (~200 lines)
+
+**Spell Selection**: Simple creatures-first heuristic (needs ComputerUtilCard 2,126 lines)  
+**Targeting**: Basic best-creature targeting (needs targeting optimization)  
+**Activated Abilities**: Basic execution without evaluation (needs ComputerUtilAbility 431 lines)  
+**Game State**: Basic board scoring (needs GameStateEvaluator improvements)
+
+### 📊 Detailed Comparison
+
+See **AI_COMPARISON.md** for:
+- Feature-by-feature comparison tables
+- Line-by-line code structure analysis
+- Performance benchmarking results
+- Fidelity assessment by component
+- Future development roadmap
 
