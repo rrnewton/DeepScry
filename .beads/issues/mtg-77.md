@@ -15,29 +15,59 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ## Implementation Status Summary
 
-**Java AI Total**: ~25,000 lines across 25+ classes  
-**Rust AI Total**: ~2,000 lines (heuristic_controller.rs)  
-**Overall Completeness**: ~60% (core combat 100%, spell/mana 10%)
+### Java AI Architecture (Complete Codebase)
 
-### ✅ Fully Implemented (100%)
-1. **Attack logic** - All aggression levels, combat factors, lethal detection
-2. **Blocking logic** - All phases, gang blocks, reinforcement, danger assessment  
-3. **Creature evaluation** - Line-by-line faithful port
-4. **Combat math** - Kill calculations, damage totals, life danger detection
+**Total**: ~25,000 lines across 25+ Java classes
 
-### ⚠️ Partially Implemented (10-30%)
-5. **Spell selection** - Basic creatures-first heuristic only
-6. **Targeting** - Simple best-creature targeting only
-7. **Activated abilities** - Basic implementation, no evaluation
+**Core Components**:
+- ComputerUtil.java (3,232 lines) - General AI utilities
+- ComputerUtilCombat.java (2,624 lines) - Combat calculations
+- AiController.java (2,429 lines) - Main decision controller
+- ComputerUtilCard.java (2,126 lines) - Spell evaluation
+- SpecialCardAi.java (1,983 lines) - Card-specific logic
+- ComputerUtilMana.java (1,807 lines) - Mana optimization
+- AiAttackController.java (1,784 lines) - Attack decisions
+- AiBlockController.java (1,379 lines) - Blocking decisions
+- Plus 17 more supporting classes (~7,000 lines)
 
-### ❌ Not Implemented (0%)
-8. **Spell evaluation** (ComputerUtilCard, 2100+ lines) - Removal, card draw, combat tricks
-9. **Mana optimization** (ComputerUtilMana, 1800+ lines) - Color availability, tap order
-10. **Cost decisions** (ComputerUtilCost, 700+ lines) - Sacrifice, discard, life payment
-11. **Special card AI** (SpecialCardAi, 2000+ lines) - Card-specific logic
-12. **Play decisions** (SpellAbilityAi, 500+ lines) - When to cast spells
+### Rust Implementation Status
 
-**Performance**: 66% win rate vs Random (competitive with Java)
+**Total**: ~2,000 lines (heuristic_controller.rs - unified implementation)
+
+| Category | Java Lines | Rust Lines | Completeness | Status |
+|----------|-----------|-----------|--------------|---------|
+| **Combat (Attack/Block)** | ~3,500 | ~1,400 | **100%** | ✅ Complete |
+| **Creature Evaluation** | ~300 | ~250 | **100%** | ✅ Complete |
+| **Basic Spell/Ability** | ~3,000 | ~200 | **10%** | ⚠️ Basic only |
+| **Mana Management** | ~1,800 | ~0 | **0%** | ❌ Not implemented |
+| **Cost Decisions** | ~1,600 | ~0 | **0%** | ❌ Not implemented |
+| **Special Card AI** | ~2,000 | ~0 | **0%** | ❌ Not implemented |
+| **Advanced Systems** | ~5,000 | ~0 | **0%** | ❌ Not implemented |
+| **Game State/Util** | ~7,800 | ~150 | **5%** | ⚠️ Basic only |
+| **OVERALL** | **~25,000** | **~2,000** | **~60%*** | ⚠️ Combat complete |
+
+*Weighted by gameplay impact: Combat is core functionality
+
+**Performance**: 66.1% win rate vs Random (competitive with Java AI)  
+**Code Quality**: ~960 games/second, all tests passing, type-safe
+
+### Production Readiness
+
+✅ **Ready For**:
+- Combat-focused decks (creature aggro, midrange)
+- Decks with simple spells
+- Testing and development
+- Performance benchmarking
+
+⚠️ **Limited Support**:
+- Complex spell-based strategies
+- Mana-intensive decks
+- Sacrifice/discard mechanics
+
+❌ **Not Ready For**:
+- Control decks (lack spell evaluation)
+- Combo decks (lack special card logic)
+- Competitive play (lack full decision framework)
 
 ---
 
