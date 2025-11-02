@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-10-31T03:05:46.711014402+00:00
+updated_at: 2025-11-02T15:27:31.709497795+00:00
 ---
 
 # Description
@@ -62,6 +62,9 @@ do a piece of work that makes the test pass.
 - ✅ HeuristicController with creature evaluation
 - ✅ Combat decisions (attack/block)
 - mtg-77: Complete heuristic AI port from Java Forge
+
+**Known Issues:**
+- mtg-118: Old School deck tournament errors (4.1% failure rate) - card zone tracking and counterspell targeting bugs
 
 **Related Tracking Issues:**
 - mtg-108: Complex mana source handling (phased implementation)

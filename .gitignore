@@ -44,3 +44,4 @@ game.snapshot
 *.snapshot
 test_artifacts/
 __pycache__/
+tournament_errors.txt
