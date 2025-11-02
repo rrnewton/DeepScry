@@ -12,12 +12,13 @@
 # Smart caching: treats documentation-only changes (*.md) as cache hits.
 #
 # Usage:
-#   ./validate.sh [--force] [--sequential] [--wip-commit]
+#   ./validate.sh [--force] [--sequential] [--no-wip-commit] [--force-wip-commit]
 #
 # Options:
-#   --force        Skip cache checks and always run validation
-#   --sequential   Run tests sequentially, failing on first failure (easier debugging)
-#   --wip-commit   Allow validation of dirty working copy by creating temporary WIP commit
+#   --force              Skip cache checks and always run validation
+#   --sequential         Run tests sequentially, failing on first failure (easier debugging)
+#   --no-wip-commit      Completely suppress temporary WIP commit creation (fail if dirty)
+#   --force-wip-commit   Force WIP commit creation even if submodules have changes
 
 set -e  # Exit on error
 set -o pipefail  # Propagate pipeline errors
@@ -25,7 +26,8 @@ set -o pipefail  # Propagate pipeline errors
 # Parse command line arguments
 FORCE_VALIDATION=false
 SEQUENTIAL_MODE=false
-ALLOW_WIP_COMMIT=false
+NO_WIP_COMMIT=false
+FORCE_WIP_COMMIT=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --force)
@@ -36,13 +38,17 @@ while [[ $# -gt 0 ]]; do
             SEQUENTIAL_MODE=true
             shift
             ;;
-        --wip-commit)
-            ALLOW_WIP_COMMIT=true
+        --no-wip-commit)
+            NO_WIP_COMMIT=true
+            shift
+            ;;
+        --force-wip-commit)
+            FORCE_WIP_COMMIT=true
             shift
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--force] [--sequential] [--wip-commit]"
+            echo "Usage: $0 [--force] [--sequential] [--no-wip-commit] [--force-wip-commit]"
             exit 1
             ;;
     esac
@@ -78,26 +84,68 @@ cleanup() {
 # Register cleanup to run on exit (success or failure)
 trap cleanup EXIT
 
-# Check if working copy is dirty
+# Check if working copy is dirty (both regular changes and submodule changes)
 # Refresh the index to avoid false positives from stale stat information
 git update-index --refresh -q 2>/dev/null || true
+
+# Check for regular working copy changes
+HAS_REGULAR_CHANGES=false
 if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    if [ "$ALLOW_WIP_COMMIT" = false ]; then
+    HAS_REGULAR_CHANGES=true
+fi
+
+# Check for submodule changes (modified, untracked, etc.)
+HAS_SUBMODULE_CHANGES=false
+if git submodule status | grep -q '^+\|^-\|^U'; then
+    HAS_SUBMODULE_CHANGES=true
+fi
+
+# Determine if we need to handle dirty working copy
+if [ "$HAS_REGULAR_CHANGES" = true ] || [ "$HAS_SUBMODULE_CHANGES" = true ]; then
+    # If --no-wip-commit is set, fail immediately
+    if [ "$NO_WIP_COMMIT" = true ]; then
         echo ""
-        echo -e "${RED}✗ Error: Working copy has uncommitted changes${NC}"
+        echo -e "${RED}✗ Error: Working copy has uncommitted changes (--no-wip-commit specified)${NC}"
         echo ""
-        echo "You have uncommitted changes in your working copy."
-        echo "Please either:"
-        echo "  1. Commit or stash your changes before running validation"
-        echo "  2. Use the --wip-commit flag to create a temporary WIP commit"
+        if [ "$HAS_REGULAR_CHANGES" = true ]; then
+            echo "Regular changes detected in working copy."
+        fi
+        if [ "$HAS_SUBMODULE_CHANGES" = true ]; then
+            echo "Submodule changes detected."
+        fi
         echo ""
-        echo "Usage: $0 [--force] [--sequential] [--wip-commit]"
+        echo "Please commit or stash your changes before running validation."
         echo ""
         exit 1
     fi
 
+    # If submodule changes exist and --force-wip-commit is NOT set, bail
+    if [ "$HAS_SUBMODULE_CHANGES" = true ] && [ "$FORCE_WIP_COMMIT" = false ]; then
+        echo ""
+        echo -e "${RED}✗ Error: Submodule changes detected${NC}"
+        echo ""
+        echo "The working copy has submodule changes, which typically should not"
+        echo "be included in temporary WIP commits."
+        echo ""
+        echo "Submodule status:"
+        git submodule status | grep '^+\|^-\|^U' || true
+        echo ""
+        echo "Please either:"
+        echo "  1. Commit or stash the submodule changes before validation"
+        echo "  2. Use --force-wip-commit to override this check (not recommended)"
+        echo "  3. Use --no-wip-commit to completely suppress WIP commits"
+        echo ""
+        echo "Usage: $0 [--force] [--sequential] [--no-wip-commit] [--force-wip-commit]"
+        echo ""
+        exit 1
+    fi
+
+    # Create temporary WIP commit
     echo ""
     echo -e "${CYAN}Working copy is dirty - creating temporary WIP commit...${NC}"
+    if [ "$HAS_SUBMODULE_CHANGES" = true ]; then
+        echo -e "${YELLOW}Warning: Including submodule changes in WIP commit (--force-wip-commit specified)${NC}"
+    fi
     git add -A
     git commit -m "wip" --no-verify
     CREATED_WIP_COMMIT=true
