@@ -374,6 +374,7 @@ async fn main() -> Result<()> {
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
+            snapshot_format,
             start_from,
             save_final_gamestate,
             log_tail,
@@ -1112,7 +1113,7 @@ let mut game_loop = GameLoop::new(&mut game).with_verbosity(verbosity).with_snap
 
         // If either controller has state to preserve, update the snapshot
         if p1_state_json.is_some() || p2_state_json.is_some() {
-            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output) {
+            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output, snapshot_format) {
                 // Deserialize JSON back to ControllerState (Fixed or Random) if present
                 snapshot.p1_controller_state = p1_state_json.and_then(|json| {
                     serde_json::from_value(json.clone())
@@ -1179,7 +1180,7 @@ let mut game_loop = GameLoop::new(&mut game).with_verbosity(verbosity).with_snap
             );
 
             final_snapshot
-                .save_to_file(&final_state_path)
+                .save_to_file(&final_state_path, snapshot_format)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
@@ -1314,7 +1315,7 @@ async fn run_resume(
         println!("Loading snapshot from: {}", snapshot_file.display());
     }
 
-    let snapshot = GameSnapshot::load_from_file(&snapshot_file)
+    let snapshot = GameSnapshot::load_from_file(&snapshot_file, snapshot_format)
         .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
 
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
@@ -1727,7 +1728,7 @@ async fn run_resume(
 
         // If either controller has state to preserve, update the snapshot
         if p1_state_json.is_some() || p2_state_json.is_some() {
-            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output) {
+            if let Ok(mut snapshot) = GameSnapshot::load_from_file(&snapshot_output, snapshot_format) {
                 // Deserialize JSON back to ControllerState (Fixed or Random) if present
                 snapshot.p1_controller_state = p1_state_json.and_then(|json| {
                     serde_json::from_value(json.clone())
@@ -1752,7 +1753,7 @@ async fn run_resume(
                         .ok()
                 });
 
-                if let Err(e) = snapshot.save_to_file(&snapshot_output) {
+                if let Err(e) = snapshot.save_to_file(&snapshot_output, snapshot_format) {
                     eprintln!("Warning: Failed to update snapshot with controller state: {}", e);
                 } else if verbosity >= VerbosityLevel::Verbose {
                     println!("Snapshot updated with controller state");
@@ -1794,7 +1795,7 @@ async fn run_resume(
             );
 
             final_snapshot
-                .save_to_file(&final_state_path)
+                .save_to_file(&final_state_path, snapshot_format)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
