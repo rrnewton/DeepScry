@@ -1041,6 +1041,49 @@ impl HeuristicController {
                     }
                 }
             }
+
+            // Try 3-blocker combinations for high-value attackers
+            // Reference: Java's makeGangBlocks triple-block logic
+            if available_blockers.len() >= 3 && attacker_value > 200 {
+                for i in 0..usable_blockers.len().min(3) {
+                    for j in (i + 1)..usable_blockers.len().min(4) {
+                        for k in (j + 1)..usable_blockers.len().min(5) {
+                            let blocker1 = usable_blockers[i];
+                            let blocker2 = usable_blockers[j];
+                            let blocker3 = usable_blockers[k];
+                            let gang = vec![blocker1, blocker2, blocker3];
+
+                            if !self.can_gang_kill(attacker, &gang) {
+                                continue;
+                            }
+
+                            // Calculate survival for each blocker
+                            let blocker1_dies = blocker1.toughness.unwrap_or(0) as i32 <= attacker_power;
+                            let blocker2_dies = blocker2.toughness.unwrap_or(0) as i32 <= attacker_power;
+                            let blocker3_dies = blocker3.toughness.unwrap_or(0) as i32 <= attacker_power;
+
+                            let total_blocker_value: i32 = gang.iter().map(|b| self.evaluate_creature(b)).sum();
+
+                            // Good 3-blocker scenarios:
+                            // 1. At least 2 blockers survive
+                            // 2. Only 1 blocker dies and it's worth it
+                            // 3. Total value < attacker value even if 2 die
+                            let deaths = [blocker1_dies, blocker2_dies, blocker3_dies]
+                                .iter()
+                                .filter(|&&d| d)
+                                .count();
+
+                            if deaths <= 1 {
+                                // 2+ survive - excellent trade
+                                return Some(gang);
+                            } else if deaths == 2 && total_blocker_value < attacker_value {
+                                // 2 die but we still save value
+                                return Some(gang);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         None
