@@ -659,7 +659,7 @@ impl HeuristicController {
         is_lethal_push: bool,
     ) -> bool {
         let power = attacker.power.unwrap_or(0) as i32;
-        
+
         // If we can go for lethal, attack with everything that has power
         if is_lethal_push && power > 0 {
             return true;
@@ -919,10 +919,10 @@ impl HeuristicController {
         for blocker in blockers {
             // Only count damage from blockers with first strike if attacker doesn't have it
             let blocker_has_first_strike = blocker.has_first_strike() || blocker.has_double_strike();
-            
+
             // In first strike phase, only first strikers deal damage
             // In normal phase, everyone deals damage
-            // For simplicity, if we're checking for gang block effectiveness, 
+            // For simplicity, if we're checking for gang block effectiveness,
             // we count all damage that would be dealt
             if !attacker_has_first_strike || blocker_has_first_strike {
                 total += blocker.power.unwrap_or(0) as i32;
@@ -938,7 +938,7 @@ impl HeuristicController {
     fn can_gang_kill(&self, attacker: &Card, blockers: &[&Card]) -> bool {
         let damage_needed = attacker.toughness.unwrap_or(0) as i32;
         let total_damage = self.total_damage_of_blockers(blockers, attacker);
-        
+
         // Deathtouch: any one blocker with deathtouch kills the attacker
         if blockers.iter().any(|b| b.has_deathtouch()) {
             return true;
@@ -968,7 +968,7 @@ impl HeuristicController {
         // Try to find 2-3 blockers that can kill the attacker with minimal losses
         // Strategy: Use first strikers if attacker doesn't have first strike
         let attacker_has_first_strike = attacker.has_first_strike() || attacker.has_double_strike();
-        
+
         if !attacker_has_first_strike && available_blockers.len() >= 2 {
             // Look for first strike gang
             let first_strikers: Vec<&Card> = available_blockers
@@ -985,7 +985,7 @@ impl HeuristicController {
                         if self.can_gang_kill(attacker, &gang) {
                             // Check if this is a good trade
                             let total_blocker_value: i32 = gang.iter().map(|b| self.evaluate_creature(b)).sum();
-                            
+
                             // Gang block if we save value or are in danger
                             if total_blocker_value < attacker_value * 2 {
                                 return Some(gang);
@@ -1237,7 +1237,12 @@ impl HeuristicController {
     /// Check if life is in serious danger (very low life threshold)
     ///
     /// Reference: ComputerUtilCombat.lifeInSeriousDanger() lines 477-508
-    fn life_in_serious_danger(&self, view: &GameStateView, attackers: &[CardId], current_blocks: &[(CardId, CardId)]) -> bool {
+    fn life_in_serious_danger(
+        &self,
+        view: &GameStateView,
+        attackers: &[CardId],
+        current_blocks: &[(CardId, CardId)],
+    ) -> bool {
         // Serious danger is a lower threshold than regular danger
         const SERIOUS_DANGER_THRESHOLD: i32 = 3;
         let remaining_life = self.life_that_would_remain(view, attackers, current_blocks);
@@ -1260,40 +1265,40 @@ impl HeuristicController {
     ) -> SmallVec<[(CardId, CardId); 8]> {
         // Try Phase 1 blocking strategy
         let mut blocks = self.assign_blocks_phase1(view, available_blockers, attackers);
-        
+
         // Reinforce to kill blockers if not in danger (Phase 1 follow-up)
         if !self.life_in_danger(view, attackers, &blocks) {
             self.reinforce_blockers_to_kill(view, attackers, available_blockers, &mut blocks);
         }
-        
+
         // Check if life is still in danger after Phase 1
         let mut life_in_danger = self.life_in_danger(view, attackers, &blocks);
-        
+
         // Phase 2: If still in danger, reset and try safer approach
         if life_in_danger {
             blocks = self.assign_blocks_phase2(view, available_blockers, attackers);
-            
+
             // Reinforce against trample if life is still in danger
             if self.life_in_danger(view, attackers, &blocks) {
                 self.reinforce_blockers_against_trample(view, attackers, available_blockers, &mut blocks);
             } else {
                 life_in_danger = false;
             }
-            
+
             // Check if life is in SERIOUS danger after Phase 2
             let serious_danger = life_in_danger && self.life_in_serious_danger(view, attackers, &blocks);
-            
+
             // Phase 3: If in serious danger, be extremely defensive
             if serious_danger {
                 blocks = self.assign_blocks_phase3(view, available_blockers, attackers);
-                
+
                 // Reinforce against trample in emergency
                 if self.life_in_danger(view, attackers, &blocks) {
                     self.reinforce_blockers_against_trample(view, attackers, available_blockers, &mut blocks);
                 }
             }
         }
-        
+
         blocks
     }
 
@@ -1316,18 +1321,12 @@ impl HeuristicController {
         let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
 
         // Get card references
-        let mut attacker_cards: Vec<&Card> = attackers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
+        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         // Sort attackers by threat level (highest value first)
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
 
-        let blocker_cards: Vec<&Card> = remaining_blockers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
+        let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         // Phase 1a: Make good blocks (safe kills, safe blocks, favorable trades)
         let good_blocks = self.make_good_blocks(&attacker_cards, &blocker_cards);
@@ -1348,10 +1347,8 @@ impl HeuristicController {
                 break;
             }
 
-            let available_blocker_cards: Vec<&Card> = remaining_blockers
-                .iter()
-                .filter_map(|&id| view.get_card(id))
-                .collect();
+            let available_blocker_cards: Vec<&Card> =
+                remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             if let Some(gang) = self.find_gang_block(attacker, &available_blocker_cards, view) {
                 // Assign this gang block
@@ -1370,12 +1367,10 @@ impl HeuristicController {
         // Phase 1c: Trade blocks (willing to trade equal value if needed)
         // Check if life is in danger to determine trade willingness
         let life_in_danger = self.life_in_danger(view, attackers, &blocks);
-        
-        let remaining_blocker_cards: Vec<&Card> = remaining_blockers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
-        
+
+        let remaining_blocker_cards: Vec<&Card> =
+            remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+
         let trade_blocks = self.make_trade_blocks(&attackers_left, &remaining_blocker_cards, life_in_danger);
         for (blocker, attacker) in trade_blocks {
             blocks.push((blocker.id, attacker.id));
@@ -1393,10 +1388,7 @@ impl HeuristicController {
                     break;
                 }
 
-                let blocker_cards: Vec<&Card> = remaining_blockers
-                    .iter()
-                    .filter_map(|&id| view.get_card(id))
-                    .collect();
+                let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
                 // Find any blocker willing to chump
                 for &blocker in &blocker_cards {
@@ -1425,18 +1417,12 @@ impl HeuristicController {
         let mut blocks = SmallVec::new();
         let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
 
-        let mut attacker_cards: Vec<&Card> = attackers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
+        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
 
         // Phase 2a: Trade blocks first (more willing to trade when in danger)
-        let blocker_cards: Vec<&Card> = remaining_blockers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
-        
+        let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+
         let trade_blocks = self.make_trade_blocks(&attacker_cards, &blocker_cards, true);
         for (blocker, attacker) in trade_blocks {
             blocks.push((blocker.id, attacker.id));
@@ -1447,11 +1433,9 @@ impl HeuristicController {
         attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
 
         // Phase 2b: Good blocks
-        let remaining_blocker_cards: Vec<&Card> = remaining_blockers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
-        
+        let remaining_blocker_cards: Vec<&Card> =
+            remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+
         let good_blocks = self.make_good_blocks(&attackers_left, &remaining_blocker_cards);
         for (blocker, attacker) in good_blocks {
             blocks.push((blocker.id, attacker.id));
@@ -1466,10 +1450,7 @@ impl HeuristicController {
                 break;
             }
 
-            let blocker_cards: Vec<&Card> = remaining_blockers
-                .iter()
-                .filter_map(|&id| view.get_card(id))
-                .collect();
+            let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             for &blocker in &blocker_cards {
                 if self.should_block(blocker, attacker, view, attackers, &blocks) {
@@ -1496,10 +1477,7 @@ impl HeuristicController {
         let mut blocks = SmallVec::new();
         let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
 
-        let mut attacker_cards: Vec<&Card> = attackers
-            .iter()
-            .filter_map(|&id| view.get_card(id))
-            .collect();
+        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
 
         // Phase 3a: Chump blocks first - block everything we can
@@ -1508,10 +1486,7 @@ impl HeuristicController {
                 break;
             }
 
-            let blocker_cards: Vec<&Card> = remaining_blockers
-                .iter()
-                .filter_map(|&id| view.get_card(id))
-                .collect();
+            let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             // In serious danger, block with anything
             if let Some(&blocker) = blocker_cards.first() {
@@ -1525,11 +1500,9 @@ impl HeuristicController {
         attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
 
         if !attackers_left.is_empty() && !remaining_blockers.is_empty() {
-            let remaining_blocker_cards: Vec<&Card> = remaining_blockers
-                .iter()
-                .filter_map(|&id| view.get_card(id))
-                .collect();
-            
+            let remaining_blocker_cards: Vec<&Card> =
+                remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+
             let trade_blocks = self.make_trade_blocks(&attackers_left, &remaining_blocker_cards, true);
             for (blocker, attacker) in trade_blocks {
                 blocks.push((blocker.id, attacker.id));
@@ -1586,10 +1559,7 @@ impl HeuristicController {
                 .filter_map(|(bid, aid)| if *aid == attacker_id { view.get_card(*bid) } else { None })
                 .collect();
 
-            let current_absorption: i32 = current_blockers
-                .iter()
-                .map(|b| b.toughness.unwrap_or(0) as i32)
-                .sum();
+            let current_absorption: i32 = current_blockers.iter().map(|b| b.toughness.unwrap_or(0) as i32).sum();
 
             // If current blockers don't absorb all damage, add more
             if attacker_power > current_absorption {
@@ -1698,7 +1668,7 @@ impl HeuristicController {
                     // 2. It's worth less than the attacker (favorable trade)
                     if blocker_power > 0 && blocker_value < attacker_value {
                         current_blocks.push((blocker_id, attacker_id));
-                        
+
                         // Check if we've added enough damage
                         let new_total = current_damage + blocker_power;
                         if new_total >= attacker_toughness {
@@ -1859,13 +1829,19 @@ impl PlayerController for HeuristicController {
 
         // Check if we have numerical advantage (more attackers than blockers)
         let has_numerical_advantage = our_attackers_count > opponent_blockers;
-        
+
         // Check if we can go for lethal
         let is_lethal_push = self.is_lethal_opportunity(view, available_creatures);
 
         // Evaluate each creature for attacking
         for creature in creatures {
-            if self.should_attack_with_context(creature, view, has_numerical_advantage, opponent_blockers, is_lethal_push) {
+            if self.should_attack_with_context(
+                creature,
+                view,
+                has_numerical_advantage,
+                opponent_blockers,
+                is_lethal_push,
+            ) {
                 attackers.push(creature.id);
             }
         }

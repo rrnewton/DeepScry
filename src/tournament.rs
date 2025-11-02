@@ -13,6 +13,8 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -48,6 +50,18 @@ struct MatchupStats {
     draws: usize,
 }
 
+/// Error information for reproduction
+#[derive(Debug, Clone)]
+struct GameError {
+    game_idx: usize,
+    deck1_path: PathBuf,
+    deck2_path: PathBuf,
+    game_seed: u64,
+    p1_seed: u64,
+    p2_seed: u64,
+    error_msg: String,
+}
+
 /// Statistics collected during tournament
 #[derive(Debug, Default)]
 struct TournamentStats {
@@ -57,6 +71,7 @@ struct TournamentStats {
     deck_wins: HashMap<String, usize>,
     deck_games: HashMap<String, usize>,
     matchup_results: HashMap<(String, String), MatchupStats>,
+    errors: Vec<GameError>,
 }
 
 /// Run tournament mode - play multiple games in parallel and collect statistics
@@ -220,6 +235,13 @@ pub async fn run_tourney(
                     Ok::<_, crate::MtgError>((result.winner, p1_id, p2_id))
                 });
 
+            // Capture seeds for error reporting
+            let game_seed = seed_resolved
+                .unwrap_or(42)
+                .wrapping_add((game_idx as u64).wrapping_mul(0x9E3779B97F4A7C15));
+            let p1_seed = game_seed.wrapping_add(0x1234_5678_9ABC_DEF0);
+            let p2_seed = game_seed.wrapping_add(0xFEDC_BA98_7654_3210);
+
             // Update statistics
             match game_result {
                 Ok((winner, p1_id, _p2_id)) => {
@@ -296,7 +318,20 @@ pub async fn run_tourney(
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Game {} failed: {}", game_idx, e);
+                    let error_msg = format!("{}", e);
+                    eprintln!("Warning: Game {} failed: {}", game_idx, error_msg);
+
+                    // Save error for reproduction
+                    let mut stats = stats_clone.lock().unwrap();
+                    stats.errors.push(GameError {
+                        game_idx,
+                        deck1_path: deck1_path.clone(),
+                        deck2_path: deck2_path.clone(),
+                        game_seed,
+                        p1_seed,
+                        p2_seed,
+                        error_msg,
+                    });
                 }
             }
 
@@ -395,6 +430,102 @@ pub async fn run_tourney(
         if matchup.draws > 0 {
             println!("     draws: {}", matchup.draws);
         }
+    }
+
+    // Report errors and save reproduction commands
+    if !stats.errors.is_empty() {
+        println!("\n=== Errors Encountered ===");
+        println!("Total errors: {}\n", stats.errors.len());
+
+        // Write error reproduction commands to a file
+        let error_file_path = "tournament_errors.txt";
+        let mut error_file = File::create(error_file_path)?;
+
+        writeln!(error_file, "# Tournament Error Reproduction Commands")?;
+        writeln!(error_file, "# Total errors: {}\n", stats.errors.len())?;
+
+        // Show first 10 errors in console
+        let show_count = stats.errors.len().min(10);
+        for (i, error) in stats.errors.iter().take(show_count).enumerate() {
+            let p1_type_str = match p1_type {
+                ControllerType::Zero => "zero",
+                ControllerType::Random => "random",
+                ControllerType::Heuristic => "heuristic",
+            };
+            let p2_type_str = match p2_type {
+                ControllerType::Zero => "zero",
+                ControllerType::Random => "random",
+                ControllerType::Heuristic => "heuristic",
+            };
+
+            let repro_cmd = format!(
+                "cargo run --release --bin mtg -- tui --p1 {} --p2 {} --seed {} \"{}\" \"{}\"",
+                p1_type_str,
+                p2_type_str,
+                error.game_seed,
+                error.deck1_path.display(),
+                error.deck2_path.display()
+            );
+
+            println!("Error {}:", i + 1);
+            println!("  Game index: {}", error.game_idx);
+            println!("  Error: {}", error.error_msg);
+            println!("  Reproduce with:\n    {}\n", repro_cmd);
+
+            // Write all errors to file
+            writeln!(error_file, "## Error {} (Game {})", i + 1, error.game_idx)?;
+            writeln!(error_file, "Error: {}", error.error_msg)?;
+            writeln!(error_file, "Deck 1: {}", error.deck1_path.display())?;
+            writeln!(error_file, "Deck 2: {}", error.deck2_path.display())?;
+            writeln!(error_file, "Game seed: {}", error.game_seed)?;
+            writeln!(error_file, "P1 seed: {}", error.p1_seed)?;
+            writeln!(error_file, "P2 seed: {}", error.p2_seed)?;
+            writeln!(error_file, "\nReproduce with:")?;
+            writeln!(error_file, "{}\n", repro_cmd)?;
+        }
+
+        // Write remaining errors to file only
+        for (i, error) in stats.errors.iter().skip(show_count).enumerate() {
+            let p1_type_str = match p1_type {
+                ControllerType::Zero => "zero",
+                ControllerType::Random => "random",
+                ControllerType::Heuristic => "heuristic",
+            };
+            let p2_type_str = match p2_type {
+                ControllerType::Zero => "zero",
+                ControllerType::Random => "random",
+                ControllerType::Heuristic => "heuristic",
+            };
+
+            let repro_cmd = format!(
+                "cargo run --release --bin mtg -- tui --p1 {} --p2 {} --seed {} \"{}\" \"{}\"",
+                p1_type_str,
+                p2_type_str,
+                error.game_seed,
+                error.deck1_path.display(),
+                error.deck2_path.display()
+            );
+
+            writeln!(error_file, "## Error {} (Game {})", show_count + i + 1, error.game_idx)?;
+            writeln!(error_file, "Error: {}", error.error_msg)?;
+            writeln!(error_file, "Deck 1: {}", error.deck1_path.display())?;
+            writeln!(error_file, "Deck 2: {}", error.deck2_path.display())?;
+            writeln!(error_file, "Game seed: {}", error.game_seed)?;
+            writeln!(error_file, "P1 seed: {}", error.p1_seed)?;
+            writeln!(error_file, "P2 seed: {}", error.p2_seed)?;
+            writeln!(error_file, "\nReproduce with:")?;
+            writeln!(error_file, "{}\n", repro_cmd)?;
+        }
+
+        if stats.errors.len() > show_count {
+            println!(
+                "... and {} more errors (see {})",
+                stats.errors.len() - show_count,
+                error_file_path
+            );
+        }
+
+        println!("\nAll errors saved to: {}", error_file_path);
     }
 
     Ok(())
