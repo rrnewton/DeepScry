@@ -360,6 +360,8 @@ impl HeuristicController {
         // IMPORTANT: Cast spells BEFORE playing lands to ensure aggressive gameplay
 
         // 2a: Evaluate pump spells first (they can enable attacks)
+        // Reference: PumpAi.checkPhaseRestrictions() lines 98-103
+        // Instant-speed pumps should NOT be cast outside of combat (with exceptions)
         for ability in available {
             if let SpellAbility::CastSpell { card_id } = ability {
                 if let Some(spell_card) = view.get_card(*card_id) {
@@ -371,6 +373,26 @@ impl HeuristicController {
                             toughness_bonus,
                         } = effect
                         {
+                            // Check phase restrictions for instant pumps
+                            // Reference: PumpAi.java:98-103
+                            let current_step = view.current_step();
+                            let is_instant = spell_card.is_instant();
+
+                            // Instant pumps should only be cast during combat (or with good reason pre-combat)
+                            // Don't cast instant pumps if:
+                            // - We're before combat begins, OR
+                            // - We're after declare blockers
+                            // Exception: If the pump makes a non-attacker into an attacker (pre-combat only)
+                            let should_hold_for_combat = is_instant
+                                && (current_step < crate::game::phase::Step::BeginCombat
+                                    || current_step > crate::game::phase::Step::DeclareBlockers);
+
+                            if should_hold_for_combat && current_step < crate::game::phase::Step::BeginCombat {
+                                // Pre-combat: Only cast if it makes a non-attacker into an attacker
+                                // AND it's not a combat trick we should hold
+                                // This is evaluated in should_cast_pump with combat trick detection
+                            }
+
                             // This is a pump spell - evaluate whether we should cast it
                             // For pump spells, we need to determine the target
                             // For now, evaluate if pumping our best creature would be good
@@ -912,12 +934,25 @@ impl HeuristicController {
             return false;
         }
 
-        // For now, we only evaluate pre-combat pumps (Main Phase 1)
-        // TODO: Add combat-phase evaluation logic
+        let current_step = view.current_step();
+        let current_power = target.power.unwrap_or(0) as i32;
 
         // Create a hypothetical pumped creature to evaluate
-        let pumped_power = target.power.unwrap_or(0) as i32 + power_bonus;
+        let pumped_power = current_power + power_bonus;
         let _pumped_toughness = current_toughness + toughness_bonus;
+
+        // Combat trick detection (Reference: ComputerUtilCard.java:1416-1431)
+        // A spell is a "combat trick" if:
+        // 1. Target creature has power > 0 (not obvious)
+        // 2. Keywords are empty OR only contain Trample/FirstStrike/DoubleStrike
+        // 3. We're in pre-combat main phase
+        let is_combat_trick_candidate = current_power > 0
+            && keywords_granted
+                .iter()
+                .all(|kw| kw == "Trample" || kw == "First Strike" || kw == "Double Strike")
+            && current_step == crate::game::phase::Step::Main1;
+
+        // Phase-based evaluation
 
         // Get opponent info
         let opponent_life = view.opponent_life();
@@ -930,9 +965,75 @@ impl HeuristicController {
             .filter(|c| c.owner != self.player_id && c.is_creature())
             .collect();
 
-        // Case 1: Will this pump make a non-attacker into an attacker?
-        // Java: if (!doesCreatureAttackAI(ai, c) && doesSpecifiedCreatureAttackAI(ai, pumped))
-        // This is the most important case for pre-combat pumps
+        // PHASE 1: Pre-combat evaluation (Main1)
+        // Reference: ComputerUtilCard.java:1345-1431
+        if current_step == crate::game::phase::Step::Main1 {
+            // Case 1: Will this pump make a non-attacker into an attacker?
+            // Java: if (!doesCreatureAttackAI(ai, c) && doesSpecifiedCreatureAttackAI(ai, pumped))
+            // This is the most important case for pre-combat pumps
+            let would_attack_unpumped = self.should_attack(target, view);
+
+            if !would_attack_unpumped
+                && self.would_attack_if_pumped(target, power_bonus, toughness_bonus, keywords_granted, view)
+            {
+                // Calculate threat level if it attacked unblocked
+                // Java: float threat = 1.0f * ComputerUtilCombat.damageIfUnblocked(pumped, opp, combat, true) / opp.getLife();
+                let threat = pumped_power as f32 / opponent_life as f32;
+
+                // Check if creature would be unblockable
+                // Java: if (oppCreatures.stream().noneMatch(CardPredicates.possibleBlockers(pumped)))
+                let has_blockers = opponent_creatures.iter().any(|blocker| {
+                    // Simplified blocking check (would need to account for keywords granted)
+                    self.can_block_simple(target, blocker, keywords_granted)
+                });
+
+                let mut chance = threat;
+                if !has_blockers {
+                    // Unblockable = 2x more valuable
+                    chance *= 2.0;
+                }
+
+                // If 0-power creature self-pumps to get power, it's very valuable
+                // Java: if (c.getNetPower() == 0 && c == sa.getHostCard() && power > 0) { threat *= 4; }
+                if current_power == 0 && power_bonus > 0 {
+                    chance *= 4.0;
+                }
+
+                // Combat trick detection: if this is a combat trick, DON'T cast it now
+                // Wait until Declare Blockers to get more value
+                // Reference: ComputerUtilCard.java:1416-1431
+                if is_combat_trick_candidate && chance < 0.3 {
+                    // Hold the combat trick for later unless the threat is very high
+                    return false;
+                }
+
+                // Cast if threat is significant (>= 10% of opponent's life in damage)
+                if chance >= 0.1 {
+                    return true;
+                }
+            }
+        }
+
+        // PHASE 2: During combat evaluation (Declare Blockers)
+        // Reference: ComputerUtilCard.java:1468-1600
+        if current_step == crate::game::phase::Step::DeclareBlockers {
+            // TODO(mtg-77): Implement during-combat pump evaluation
+            // This requires combat state tracking to know:
+            // - Which creatures are attacking/blocking
+            // - Which creatures would die in combat
+            // - Whether pumping would save a creature or kill an opponent
+            // For now, return false (don't cast during combat until we have combat state)
+            return false;
+        }
+
+        // PHASE 3: Post-combat or other phases
+        // Generally don't cast pump spells outside of Main1 or Declare Blockers
+        if current_step != crate::game::phase::Step::Main1 && current_step != crate::game::phase::Step::DeclareBlockers
+        {
+            return false;
+        }
+
+        // Legacy evaluation for other cases (will be removed once combat logic is complete)
         let would_attack_unpumped = self.should_attack(target, view);
 
         if !would_attack_unpumped {
@@ -1028,6 +1129,43 @@ impl HeuristicController {
         // TODO: Add more evasion checks (Fear, Intimidate, Protection, etc.)
 
         true
+    }
+
+    /// Check if a creature would attack if pumped with the given bonuses
+    ///
+    /// This simulates pumping the creature and checking if it would attack
+    /// Reference: ComputerUtilCard.doesSpecifiedCreatureAttackAI()
+    fn would_attack_if_pumped(
+        &self,
+        creature: &Card,
+        power_bonus: i32,
+        _toughness_bonus: i32,
+        keywords_granted: &[String],
+        _view: &GameStateView,
+    ) -> bool {
+        // Simple heuristic: creature would attack if:
+        // 1. It has power > 0 after pump
+        // 2. It's not a terrible attack based on combat factors
+
+        let pumped_power = creature.power.unwrap_or(0) as i32 + power_bonus;
+
+        if pumped_power <= 0 {
+            return false;
+        }
+
+        // Check if pump grants evasion (unblockable)
+        let grants_evasion = keywords_granted
+            .iter()
+            .any(|kw| kw == "Flying" || kw.contains("unblockable") || kw == "Trample");
+
+        // If grants evasion or significant power, likely to attack
+        if grants_evasion || pumped_power >= 3 {
+            return true;
+        }
+
+        // Use simplified combat factors check
+        // For now, just check if power > 0
+        pumped_power > 0
     }
 
     /// Determine if we should block an attacker with a specific blocker
