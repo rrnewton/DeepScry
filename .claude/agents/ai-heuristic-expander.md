@@ -58,6 +58,44 @@ You must validate AI improvements through concrete gameplay scenarios:
 4. **Real Card Database**: Progress toward tests using actual cards loaded from the card database
 5. **Log-Based Verification**: Analyze game logs to verify correct behavior against MTG rules
 
+### **AI Validation Gold Standard: Tournament Win Rates**
+
+**The definitive measure of AI improvement is win rate against random strategy on Old School decks.**
+
+Before and after making AI improvements, you MUST run tournament testing:
+
+```bash
+./target/release/mtg tourney decks/old_school/*.dck --p1=heuristic --p2=random --seconds 10
+```
+
+Example baseline (what you should aim to improve):
+```
+P1 wins: 4327 (51.6%)
+P2 wins: 4054 (48.4%)
+```
+
+**Key Metrics:**
+1. **Overall Win Rate**: Heuristic AI should consistently beat random (target: >50%)
+2. **Per-Deck Win Rate**: Examine win rates on specific deck matchups
+   - Identify which decks the AI struggles with
+   - Focus improvements on weak matchups
+3. **Statistical Significance**: Run enough games (10+ seconds) for meaningful results
+
+**Workflow for AI Improvements:**
+1. Run tournament baseline before changes
+2. Implement AI improvement
+3. Run tournament again after changes
+4. Compare win rates - if they improved, the change is validated
+5. Document win rate changes in commit message
+6. If win rate decreased, investigate and adjust
+
+**When Win Rate Goes Down:**
+- The AI improvement may be flawed or too narrow
+- Look at specific deck matchups that got worse
+- Consider whether the heuristic is making bad trades or missing threats
+
+This tournament testing validates that your AI improvements actually make the AI play better, not just handle specific edge cases. A very dumb random strategy provides a clear baseline - if the heuristic AI can't beat random consistently, something is fundamentally wrong with the decision-making.
+
 ### Coding Standards (CRITICAL)
 
 **Strong Typing**: 
@@ -84,20 +122,26 @@ Before committing, you MUST:
 
 1. **Validation**: Run `make validate` and ensure it passes
 2. **Test Results**: Include a "Test Results Summary" section in commit message
-3. **Gameplay Justification**: Provide evidence from real `mtg tui` gameplay logs showing:
+3. **Tournament Win Rates (CRITICAL for AI changes)**: For any AI improvement, include:
+   - Baseline win rate before changes
+   - Win rate after changes
+   - Overall win rate change (e.g., "51.6% → 53.2%")
+   - Notable per-deck improvements or regressions
+   - Command used: `./target/release/mtg tourney decks/old_school/*.dck --p1=heuristic --p2=random --seconds 10`
+4. **Gameplay Justification**: Provide evidence from real `mtg tui` gameplay logs showing:
    - Log snippets demonstrating correct behavior
    - Runnable reproducer commands using actual `.dck` files in the repo
    - Citations to MTG rule numbers where applicable
    - Analysis of whether AI actions make strategic sense
 
-4. **Java Relationship**: Document how your implementation relates to Java Forge:
+5. **Java Relationship**: Document how your implementation relates to Java Forge:
    ```
    ## Relationship to Java Forge
    - this Rust reimplementation does X
    - the upstream Java version does Y
    ```
 
-5. **Issue Updates**: Update beads issues to reflect:
+6. **Issue Updates**: Update beads issues to reflect:
    - What was completed (check off items, close tasks)
    - What's next
    - Any new issues created
@@ -106,13 +150,15 @@ Before committing, you MUST:
 
 1. **Start Clean**: Verify clean state as described above
 2. **Review Context**: Read relevant issues, code, and documentation
-3. **Plan**: Identify specific heuristics to implement/improve
-4. **Implement**: Write code following strong typing and zero-copy principles
-5. **Test**: Create scenario-based tests with real gameplay validation
-6. **Validate**: Run `make validate` until it passes
-7. **Document**: Write comprehensive commit message with all required sections
-8. **Commit**: Commit changes with proper documentation
-9. **Push**: Push to origin main (pull and merge if needed)
+3. **Baseline Tournament**: Run tournament test to establish baseline win rate
+4. **Plan**: Identify specific heuristics to implement/improve
+5. **Implement**: Write code following strong typing and zero-copy principles
+6. **Test**: Create scenario-based tests with real gameplay validation
+7. **Validate**: Run `make validate` until it passes
+8. **Tournament Retest**: Run tournament test again and compare to baseline
+9. **Document**: Write comprehensive commit message with all required sections (including win rate data)
+10. **Commit**: Commit changes with proper documentation
+11. **Push**: Push to origin main (pull and merge if needed)
 
 ## Error Handling
 

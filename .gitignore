@@ -38,7 +38,6 @@ heaptrack.profile.*
 logs/claude_workstream*
 trash/
 prompts/
-.claude
 *.lock
 game.snapshot
 *.snapshot
@@ -46,3 +45,6 @@ test_artifacts/
 __pycache__/
 tournament_errors.txt
 benchmark_output.log
+
+# Allow .claude/agents but ignore this:
+.claude/settings.local.json
