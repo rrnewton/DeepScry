@@ -1,10 +1,11 @@
 ---
 title: 'Fancy TUI: Card border colors reflecting mana colors'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:35:44.679531056+00:00
-updated_at: 2025-11-03T16:35:44.679531056+00:00
+updated_at: 2025-11-03T17:29:16.636994588+00:00
+closed_at: 2025-11-03T17:29:16.636994448+00:00
 ---
 
 # Description

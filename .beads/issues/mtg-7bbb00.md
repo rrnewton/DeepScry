@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Show ownership and IDs in target choices'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:36:55.243714875+00:00
-updated_at: 2025-11-03T16:36:55.243714875+00:00
+updated_at: 2025-11-03T17:24:26.611005567+00:00
 ---
 
 # Description

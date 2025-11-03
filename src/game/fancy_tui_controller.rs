@@ -20,6 +20,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use smallvec::SmallVec;
+use std::collections::HashMap;
 use std::io;
 
 /// Input action result from user interaction
@@ -591,13 +592,36 @@ impl FancyTuiController {
             format!("{}{}", name, pt_text)
         };
 
-        let style = if is_tapped {
+        // Determine text style (dimmed if tapped)
+        let text_style = if is_tapped {
             Style::default().fg(Color::Gray)
         } else {
             Style::default().fg(Color::White)
         };
 
-        let block = Block::default().borders(Borders::ALL).style(style);
+        // Determine border color based on card colors
+        let border_color = if let Some(card) = card {
+            match card.colors.len() {
+                0 => Color::Gray, // Colorless
+                1 => match card.colors[0] {
+                    crate::core::Color::Red => Color::Red,
+                    crate::core::Color::Green => Color::Green,
+                    crate::core::Color::Blue => Color::Blue,
+                    crate::core::Color::White => Color::White,
+                    crate::core::Color::Black => Color::DarkGray,
+                    crate::core::Color::Colorless => Color::Gray,
+                },
+                _ => Color::Yellow, // Multicolor
+            }
+        } else {
+            Color::Gray // Fallback if card not found
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(text_style);
+
         let paragraph = Paragraph::new(card_text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
@@ -850,11 +874,34 @@ impl PlayerController for FancyTuiController {
         let spell_name = view.card_name(spell).unwrap_or_default();
         let prompt = format!("Choose target for: {}", spell_name);
 
+        // Count how many times each card name appears (to detect duplicates)
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for &card_id in valid_targets {
+            let name = view.card_name(card_id).unwrap_or_default();
+            *name_counts.entry(name).or_insert(0) += 1;
+        }
+
         let choices: Vec<String> = std::iter::once("No target".to_string())
             .chain(valid_targets.iter().map(|&card_id| {
                 let name = view.card_name(card_id).unwrap_or_default();
-                let tapped = if view.is_tapped(card_id) { " (T)" } else { "" };
-                format!("{}{}", name, tapped)
+
+                // Determine ownership
+                let controller = view.get_card(card_id).map(|c| c.controller);
+                let ownership = if controller == Some(self.player_id) {
+                    "(yours)"
+                } else {
+                    "(theirs)"
+                };
+
+                // Show ID only if there are duplicates of this card name
+                let id_part = if *name_counts.get(&name).unwrap_or(&0) > 1 {
+                    format!(" #{}", card_id.as_u32())
+                } else {
+                    String::new()
+                };
+
+                let tapped = if view.is_tapped(card_id) { " [T]" } else { "" };
+                format!("{}{}{} {}", name, id_part, tapped, ownership)
             }))
             .collect();
 
@@ -944,17 +991,31 @@ impl PlayerController for FancyTuiController {
 
         let mut blocks = SmallVec::new();
 
+        // Count how many times each attacker name appears (to detect duplicates)
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for &card_id in attackers {
+            let name = view.card_name(card_id).unwrap_or_default();
+            *name_counts.entry(name).or_insert(0) += 1;
+        }
+
         // For each blocker, ask which attacker to block
         for &blocker_id in available_blockers {
             let blocker_name = view.card_name(blocker_id).unwrap_or_default();
             let prompt = format!("{}: Block which attacker?", blocker_name);
 
             let choices: Vec<String> = std::iter::once("Skip".to_string())
-                .chain(
-                    attackers
-                        .iter()
-                        .map(|&attacker_id| view.card_name(attacker_id).unwrap_or_default()),
-                )
+                .chain(attackers.iter().map(|&attacker_id| {
+                    let name = view.card_name(attacker_id).unwrap_or_default();
+
+                    // Show ID only if there are duplicates of this card name
+                    let id_part = if *name_counts.get(&name).unwrap_or(&0) > 1 {
+                        format!(" #{}", attacker_id.as_u32())
+                    } else {
+                        String::new()
+                    };
+
+                    format!("{}{}", name, id_part)
+                }))
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
