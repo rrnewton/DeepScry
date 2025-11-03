@@ -1,19 +1,22 @@
 ---
 title: Smarter layout with variable sized cards
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T20:52:42.261713655+00:00
-updated_at: 2025-11-03T20:52:42.261713655+00:00
+updated_at: 2025-11-03T21:01:36.470327241+00:00
+closed_at: 2025-11-03T21:01:36.470327111+00:00
 ---
 
 # Description
+
+## Description
 
 ## Goal
 
 Implement smart card layout with variable sizing to maximize use of battlefield space.
 
-## Phase 1: Natural Card Tapping
+## Phase 1: Natural Card Tapping ✓ COMPLETED (commit 964113e)
 
 Support tapped cards by swapping width/height dimensions to simulate 90-degree rotation.
 
@@ -27,7 +30,7 @@ Support tapped cards by swapping width/height dimensions to simulate 90-degree r
 - No longer fixed grid layout
 - Dynamic row packing based on card widths (tapped vs untapped)
 
-## Phase 2: Grow Cards to Fill Battlefield
+## Phase 2: Grow Cards to Fill Battlefield ✓ COMPLETED (commit edd041f)
 
 Implement algorithm to maximize card size within battlefield constraints.
 
@@ -58,13 +61,12 @@ Implement algorithm to maximize card size within battlefield constraints.
 ## Location
 
 src/game/fancy_tui_controller.rs: 
-- render_card_group() method (lines 649-721)
+- render_card_group() method (now accepts card_width/card_height parameters)
 - render_card_box() method (lines 723-813)
+- calculate_optimal_card_size() method (new - greedy algorithm)
+- test_card_size_fits() method (new - simulation function)
+- get_card_dimensions_with_size() method (new - parameterized dimensions)
 
-## Implementation Notes
+## Status
 
-This is a multi-phase enhancement requiring:
-1. Dynamic layout engine (Phase 1)
-2. Size optimization algorithm (Phase 2)
-3. Testing with various battlefield states
-4. Performance optimization for size calculations
+✅ Both phases complete and validated (all 405 tests passing)

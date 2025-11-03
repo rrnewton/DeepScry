@@ -697,6 +697,8 @@ impl FancyTuiController {
     const MIN_CARD_WIDTH: u16 = 5;
     const MIN_CARD_HEIGHT: u16 = 4;
     const CARD_SPACING: u16 = 1;
+    /// Card aspect ratio (width/height) - based on MTG card proportions (roughly 3.5:2.5)
+    const ASPECT_RATIO: f32 = Self::DEFAULT_CARD_WIDTH as f32 / Self::DEFAULT_CARD_HEIGHT as f32;
 
     /// Get card dimensions based on tapped state and base size
     /// Tapped cards swap width and height to simulate 90-degree rotation
@@ -791,10 +793,17 @@ impl FancyTuiController {
             let mut width = Self::DEFAULT_CARD_WIDTH;
             let mut height = Self::DEFAULT_CARD_HEIGHT;
 
-            // Increment by 1 each time, maintaining aspect ratio
-            while Self::test_card_size_fits(area, card_groups, view, width + 1, height + 1) {
-                width += 1;
-                height += 1;
+            // Increment width, maintain aspect ratio for height
+            loop {
+                let next_width = width + 1;
+                let next_height = ((next_width as f32) / Self::ASPECT_RATIO).round() as u16;
+
+                if Self::test_card_size_fits(area, card_groups, view, next_width, next_height) {
+                    width = next_width;
+                    height = next_height;
+                } else {
+                    break;
+                }
             }
 
             (width, height)
@@ -805,8 +814,10 @@ impl FancyTuiController {
 
             while !Self::test_card_size_fits(area, card_groups, view, width, height) && width > Self::MIN_CARD_WIDTH {
                 width -= 1;
-                // Maintain aspect ratio (0.7)
-                height = ((width as f32) * 0.7).round().max(Self::MIN_CARD_HEIGHT as f32) as u16;
+                // Maintain aspect ratio
+                height = ((width as f32) / Self::ASPECT_RATIO)
+                    .round()
+                    .max(Self::MIN_CARD_HEIGHT as f32) as u16;
             }
 
             (width.max(Self::MIN_CARD_WIDTH), height.max(Self::MIN_CARD_HEIGHT))
@@ -890,67 +901,24 @@ impl FancyTuiController {
         rendered_height
     }
 
-    /// Render a single card as a box
+    /// Render a single card as a box with priority-based content layout
     fn render_card_box(&self, f: &mut Frame, area: Rect, view: &GameStateView, card_id: CardId) {
         let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
         let is_tapped = view.is_tapped(card_id);
-
         let card = view.get_card(card_id);
 
         // Check if this card is currently selected
         let is_selected =
             Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
 
-        // Build multiline content for the card
-        let mut lines = Vec::new();
+        // Calculate available content dimensions (excluding borders)
+        let content_width = area.width.saturating_sub(2) as usize;
+        let content_height = area.height.saturating_sub(2);
 
-        // Line 1: Card name (truncated to fit width)
-        let max_name_len = area.width.saturating_sub(4) as usize; // Account for borders + padding
-        let display_name = if name.len() > max_name_len {
-            format!("{}...", &name[..max_name_len.saturating_sub(3)])
-        } else {
-            name.clone()
-        };
-
-        // Apply bold and underline to card name if selected
-        if is_selected {
-            lines.push(Line::from(Span::styled(
-                display_name,
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::UNDERLINED),
-            )));
-        } else {
-            lines.push(Line::from(display_name));
-        }
-
-        // Line 2: Tapped status or empty line
-        if is_tapped {
-            lines.push(Line::from("[TAPPED]"));
-        } else {
-            lines.push(Line::from(""));
-        }
-
-        // Line 3-4: P/T for creatures, or mana cost for other spells
-        if let Some(card) = &card {
-            if card.is_creature() {
-                let pt_line = format!("{}/{}", card.power.unwrap_or(0), card.toughness.unwrap_or(0));
-                lines.push(Line::from(""));
-                lines.push(Line::from(pt_line));
-            }
-        }
-
-        // Determine text style (dimmed if tapped)
-        let text_style = if is_tapped {
-            Style::default().fg(Color::Gray)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        // Determine border color based on card colors
-        let border_color = if let Some(card) = card {
+        // Determine border color and text style
+        let border_color = if let Some(card) = card.as_ref() {
             match card.colors.len() {
-                0 => Color::Gray, // Colorless
+                0 => Color::Gray,
                 1 => match card.colors[0] {
                     crate::core::Color::Red => Color::Red,
                     crate::core::Color::Green => Color::Green,
@@ -959,18 +927,172 @@ impl FancyTuiController {
                     crate::core::Color::Black => Color::DarkGray,
                     crate::core::Color::Colorless => Color::Gray,
                 },
-                _ => Color::Yellow, // Multicolor
+                _ => Color::Yellow,
             }
         } else {
-            Color::Gray // Fallback if card not found
+            Color::Gray
         };
 
-        // Apply bold modifier to border if selected
         let border_style = if is_selected {
             Style::default().fg(border_color).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(border_color)
         };
+
+        let text_style = if is_tapped {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        // Build card content with priority-based layout
+        let mut lines = Vec::new();
+
+        // Priority 1: Title (always included, elided if too long)
+        let cost_str = card.as_ref().map(|c| c.mana_cost.to_string()).unwrap_or_default();
+        let cost_len = cost_str.len();
+
+        // Elide title based on available width
+        let title_max_width = if cost_len > 0 && content_width > cost_len + 1 {
+            // Reserve space for cost on same line
+            content_width.saturating_sub(cost_len + 1)
+        } else {
+            content_width
+        };
+
+        let (display_name, title_style) = if name.len() > title_max_width {
+            // Elide title (use ".." unless <= 5 chars)
+            let elided = if title_max_width <= 5 {
+                name.chars().take(title_max_width).collect::<String>()
+            } else {
+                format!(
+                    "{}..",
+                    name.chars().take(title_max_width.saturating_sub(2)).collect::<String>()
+                )
+            };
+            if is_selected {
+                (
+                    elided,
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::UNDERLINED),
+                )
+            } else {
+                (elided, Style::default())
+            }
+        } else {
+            let styled = if is_selected {
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::UNDERLINED)
+            } else {
+                Style::default()
+            };
+            (name.clone(), styled)
+        };
+
+        // Line 1: Title + Cost (if cost fits and title doesn't overflow)
+        if !cost_str.is_empty() && name.len() <= title_max_width && content_width > display_name.len() + cost_len {
+            let padding = content_width.saturating_sub(display_name.len() + cost_len);
+            lines.push(Line::from(vec![
+                Span::styled(display_name, title_style),
+                Span::raw(" ".repeat(padding)),
+                Span::raw(cost_str),
+            ]));
+        } else {
+            lines.push(Line::from(Span::styled(display_name, title_style)));
+        }
+
+        // Priority 2: Tapped indicator (only if tapped and room)
+        if is_tapped && lines.len() < content_height as usize {
+            let tapped_text = if content_width >= 8 { "[TAPPED]" } else { "[T]" };
+            lines.push(Line::from(tapped_text));
+        }
+
+        // Determine if we need to reserve last line for P/T
+        let is_creature = card.as_ref().map(|c| c.is_creature()).unwrap_or(false);
+        let pt_str = if is_creature {
+            card.as_ref()
+                .map(|c| format!("{}/{}", c.power.unwrap_or(0), c.toughness.unwrap_or(0)))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let reserve_last_line_for_pt = is_creature && !pt_str.is_empty() && pt_str.len() <= content_width;
+
+        // Calculate available lines for description/type
+        let max_total_lines = if reserve_last_line_for_pt {
+            content_height.saturating_sub(1) as usize
+        } else {
+            content_height as usize
+        };
+
+        // Priority 4: Description (fit as much as possible with "...")
+        if let Some(card) = card.as_ref() {
+            if !card.text.is_empty() && lines.len() < max_total_lines {
+                let available_lines = max_total_lines.saturating_sub(lines.len());
+                let desc_lines = card.text.split('\n').collect::<Vec<_>>();
+
+                for (i, desc_line) in desc_lines.iter().enumerate().take(available_lines) {
+                    if i == available_lines - 1 && (i < desc_lines.len() - 1 || desc_line.len() > content_width) {
+                        // Last line of available space - add elision if there's more
+                        let truncated = if desc_line.len() > content_width.saturating_sub(3) {
+                            format!(
+                                "{}...",
+                                desc_line
+                                    .chars()
+                                    .take(content_width.saturating_sub(3))
+                                    .collect::<String>()
+                            )
+                        } else if i < desc_lines.len() - 1 {
+                            format!("{}...", desc_line)
+                        } else {
+                            desc_line.to_string()
+                        };
+                        lines.push(Line::from(truncated));
+                    } else if desc_line.len() > content_width {
+                        // Line too long, truncate
+                        let truncated = format!(
+                            "{}...",
+                            desc_line
+                                .chars()
+                                .take(content_width.saturating_sub(3))
+                                .collect::<String>()
+                        );
+                        lines.push(Line::from(truncated));
+                    } else {
+                        lines.push(Line::from(*desc_line));
+                    }
+                }
+            }
+        }
+
+        // Priority 6: Type line (only if completely fits)
+        if let Some(card) = card.as_ref() {
+            if !card.types.is_empty() && lines.len() < max_total_lines {
+                let types_str = card
+                    .types
+                    .iter()
+                    .map(|t| format!("{:?}", t))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if types_str.len() <= content_width {
+                    lines.push(Line::from(types_str));
+                }
+            }
+        }
+
+        // Fill empty lines up to max_total_lines
+        while lines.len() < max_total_lines {
+            lines.push(Line::from(""));
+        }
+
+        // Priority 3: P/T (bottom right, only if room was reserved)
+        if reserve_last_line_for_pt {
+            let padding = content_width.saturating_sub(pt_str.len());
+            lines.push(Line::from(vec![Span::raw(" ".repeat(padding)), Span::raw(pt_str)]));
+        }
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -978,7 +1100,7 @@ impl FancyTuiController {
             .style(text_style);
 
         let text = Text::from(lines);
-        let paragraph = Paragraph::new(text).block(block).alignment(Alignment::Center);
+        let paragraph = Paragraph::new(text).block(block);
         f.render_widget(paragraph, area);
     }
 
