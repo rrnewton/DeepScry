@@ -77,12 +77,20 @@ impl CardDatabase {
         // Not in cache, try to load from disk
         let path = card_name_to_path(&self.cardsfolder, name);
 
-        if !path.exists() {
-            return Ok(None);
-        }
+        // Try exact match first
+        let actual_path = if path.exists() {
+            path
+        } else {
+            // Double faced cards file naming convention currently has both names - so try to prefix match.
+            // This matches Java Forge behavior in CardStorageReader.findFileForCard()
+            match Self::find_file_by_prefix(&path).await {
+                Some(p) => p,
+                None => return Ok(None),
+            }
+        };
 
         // Load asynchronously
-        match Self::load_card_async(path).await {
+        match Self::load_card_async(actual_path).await {
             Ok(card_def) => {
                 // Cache the loaded card in an Arc
                 let card_arc = Arc::new(card_def);
@@ -95,6 +103,27 @@ impl CardDatabase {
                 Err(e)
             }
         }
+    }
+
+    /// Find a card file by prefix matching (for double-faced cards)
+    /// Example: "ojer_axonil_deepest_might" matches "ojer_axonil_deepest_might_temple_of_power.txt"
+    async fn find_file_by_prefix(expected_path: &Path) -> Option<PathBuf> {
+        let parent = expected_path.parent()?;
+        let file_stem = expected_path.file_stem()?.to_str()?;
+
+        // Read directory entries
+        let mut read_dir = tokio::fs::read_dir(parent).await.ok()?;
+
+        while let Some(entry) = read_dir.next_entry().await.ok()? {
+            let entry_path = entry.path();
+            if let Some(entry_stem) = entry_path.file_stem().and_then(|s| s.to_str()) {
+                if entry_stem.starts_with(file_stem) && entry_path.extension().and_then(|s| s.to_str()) == Some("txt") {
+                    return Some(entry_path);
+                }
+            }
+        }
+
+        None
     }
 
     /// Load multiple cards in parallel

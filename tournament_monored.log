@@ -1,0 +1,15 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.21s
+     Running `target/release/mtg tourney --seconds 10 decks/monored.dck decks/old_school/01_rogue_rogerbrand.dck decks/old_school/02_thedeck_peterschnidrig.dck decks/old_school/03_robots_jesseisbak.dck decks/old_school/05_mono_black_rogerbrand.dck decks/old_school/06_jeskai_aggro_joseantonioprieto.dck decks/old_school/06_troll_disk_daniellebrunazzo.dck`
+=== MTG Forge Rust - Tournament Mode ===
+
+Loading decks...
+  decks/monored.dck: 60 cards
+  decks/old_school/01_rogue_rogerbrand.dck: 60 cards
+  decks/old_school/02_thedeck_peterschnidrig.dck: 60 cards
+  decks/old_school/03_robots_jesseisbak.dck: 62 cards
+  decks/old_school/05_mono_black_rogerbrand.dck: 60 cards
+  decks/old_school/06_jeskai_aggro_joseantonioprieto.dck: 60 cards
+  decks/old_school/06_troll_disk_daniellebrunazzo.dck: 60 cards
+
+Loading card database...
+Error: InvalidCardFormat("Card file not found: 'Ojer Axonil, Deepest Might' (expected path: cardsfolder/o/ojer_axonil_deepest_might.txt)")
