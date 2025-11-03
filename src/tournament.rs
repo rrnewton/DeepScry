@@ -393,42 +393,128 @@ pub async fn run_tourney(
     println!("\n=== Matchup Results ===");
     let mut matchups: Vec<_> = stats.matchup_results.iter().collect();
     matchups.sort_by_key(|&(key, _)| key);
+
+    // Calculate maximum number width for alignment
+    let max_games = matchups
+        .iter()
+        .map(|(_, m)| {
+            let total = m.games_a_as_p1 + m.games_b_as_p1;
+            vec![
+                m.a_wins,
+                m.b_wins,
+                m.p1_as_a_wins,
+                m.p2_as_b_wins,
+                m.p1_as_b_wins,
+                m.p2_as_a_wins,
+                m.games_a_as_p1,
+                m.games_b_as_p1,
+                total,
+            ]
+            .into_iter()
+            .max()
+            .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0);
+    let num_width = format!("{}", max_games).len().max(2);
+
     for ((deck_a, deck_b), matchup) in matchups {
         let total_games = matchup.games_a_as_p1 + matchup.games_b_as_p1;
 
         if deck_a == deck_b {
             // Mirror match
+            let p1_wins = matchup.p1_as_a_wins + matchup.p1_as_b_wins;
+            let p2_wins = matchup.p2_as_a_wins + matchup.p2_as_b_wins;
+            let p1_pct = if total_games > 0 {
+                100.0 * p1_wins as f64 / total_games as f64
+            } else {
+                0.0
+            };
+            let p2_pct = if total_games > 0 {
+                100.0 * p2_wins as f64 / total_games as f64
+            } else {
+                0.0
+            };
+
             println!("  {} (mirror):", deck_a);
             println!(
-                "     total P1 wins: {}  |  total P2 wins: {}  |  {} games",
-                matchup.p1_as_a_wins + matchup.p1_as_b_wins,
-                matchup.p2_as_a_wins + matchup.p2_as_b_wins,
-                total_games
+                "     total P1 wins: {:5.1}%  |  total P2 wins: {:5.1}%  |  {:width$} games",
+                p1_pct,
+                p2_pct,
+                total_games,
+                width = num_width
             );
         } else {
-            println!("  {} vs {}:", deck_a, deck_b);
+            let a_pct = if total_games > 0 {
+                100.0 * matchup.a_wins as f64 / total_games as f64
+            } else {
+                0.0
+            };
+            let b_pct = if total_games > 0 {
+                100.0 * matchup.b_wins as f64 / total_games as f64
+            } else {
+                0.0
+            };
+
+            println!("  {} (A) vs {} (B):", deck_a, deck_b);
             println!(
-                "     total {} wins: {}  |  total {} wins: {}  |  {} games",
-                deck_a, matchup.a_wins, deck_b, matchup.b_wins, total_games
+                "     total A wins: {:5.1}%  |  total B wins: {:5.1}%  |  {:width$} games",
+                a_pct,
+                b_pct,
+                total_games,
+                width = num_width
             );
 
             if matchup.games_a_as_p1 > 0 {
+                let p1_a_pct = if matchup.games_a_as_p1 > 0 {
+                    100.0 * matchup.p1_as_a_wins as f64 / matchup.games_a_as_p1 as f64
+                } else {
+                    0.0
+                };
+                let p2_b_pct = if matchup.games_a_as_p1 > 0 {
+                    100.0 * matchup.p2_as_b_wins as f64 / matchup.games_a_as_p1 as f64
+                } else {
+                    0.0
+                };
+
                 println!(
-                    "        P1={} wins: {}  |  P2={} wins: {}  |  {} games",
-                    deck_a, matchup.p1_as_a_wins, deck_b, matchup.p2_as_b_wins, matchup.games_a_as_p1
+                    "        P1=A wins: {:5.1}%  |     P2=B wins: {:5.1}%  |  {:width$} games",
+                    p1_a_pct,
+                    p2_b_pct,
+                    matchup.games_a_as_p1,
+                    width = num_width
                 );
             }
 
             if matchup.games_b_as_p1 > 0 {
+                let p1_b_pct = if matchup.games_b_as_p1 > 0 {
+                    100.0 * matchup.p1_as_b_wins as f64 / matchup.games_b_as_p1 as f64
+                } else {
+                    0.0
+                };
+                let p2_a_pct = if matchup.games_b_as_p1 > 0 {
+                    100.0 * matchup.p2_as_a_wins as f64 / matchup.games_b_as_p1 as f64
+                } else {
+                    0.0
+                };
+
                 println!(
-                    "        P1={} wins: {}  |  P2={} wins: {}  |  {} games",
-                    deck_b, matchup.p1_as_b_wins, deck_a, matchup.p2_as_a_wins, matchup.games_b_as_p1
+                    "        P1=B wins: {:5.1}%  |     P2=A wins: {:5.1}%  |  {:width$} games",
+                    p1_b_pct,
+                    p2_a_pct,
+                    matchup.games_b_as_p1,
+                    width = num_width
                 );
             }
         }
 
         if matchup.draws > 0 {
-            println!("     draws: {}", matchup.draws);
+            let draw_pct = if total_games > 0 {
+                100.0 * matchup.draws as f64 / total_games as f64
+            } else {
+                0.0
+            };
+            println!("     draws: {:5.1}%", draw_pct);
         }
     }
 

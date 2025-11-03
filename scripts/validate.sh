@@ -15,23 +15,67 @@
 #   ./validate.sh [OPTIONS]
 #
 # Options:
+#   --help                     Show this help message and exit
 #   --force                    Skip cache checks and always run validation
 #   --sequential               Run tests sequentially, failing on first failure (easier debugging)
 #   --no-wip-commit            Completely suppress temporary WIP commit creation (fail if dirty)
 #   --force-wip-commit         Force WIP commit creation even if submodules have changes
+#   --no-monitor-utilization   Disable CPU utilization monitoring during validation
 #   --validate-cmd <CMD>       Command to run for parallel validation (default: make validate-impl)
 #   --validate-cmd-seq <CMD>   Command to run for sequential validation (default: make validate-impl-sequential)
 
 set -e  # Exit on error
 set -o pipefail  # Propagate pipeline errors
 
+# Show help function
+show_help() {
+    cat << 'EOF'
+Validation script with caching and atomic log writes
+
+This script runs comprehensive pre-commit validation including:
+- Code formatting checks
+- Linting with clippy
+- Unit tests
+- Examples
+
+Results are cached based on commit hash to avoid redundant validation.
+Smart caching: treats documentation-only changes (*.md) as cache hits.
+
+Usage:
+  ./validate.sh [OPTIONS]
+
+Options:
+  --help                     Show this help message and exit
+  --force                    Skip cache checks and always run validation
+  --sequential               Run tests sequentially, failing on first failure (easier debugging)
+  --no-wip-commit            Completely suppress temporary WIP commit creation (fail if dirty)
+  --force-wip-commit         Force WIP commit creation even if submodules have changes
+  --no-monitor-utilization   Disable CPU utilization monitoring during validation
+  --validate-cmd <CMD>       Command to run for parallel validation (default: make validate-impl)
+  --validate-cmd-seq <CMD>   Command to run for sequential validation (default: make validate-impl-sequential)
+
+Examples:
+  ./validate.sh                              # Run validation with caching
+  ./validate.sh --force                      # Force validation even if cached
+  ./validate.sh --sequential                 # Run sequentially for easier debugging
+  ./validate.sh --no-monitor-utilization     # Skip CPU monitoring
+  ./validate.sh --no-wip-commit              # Don't create temporary commit if dirty
+
+EOF
+}
+
 # Parse command line arguments
 FORCE_VALIDATION=false
 SEQUENTIAL_MODE=false
 NO_WIP_COMMIT=false
 FORCE_WIP_COMMIT=false
+MONITOR_UTILIZATION=true
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --help|-h)
+            show_help
+            exit 0
+            ;;
         --force)
             FORCE_VALIDATION=true
             shift
@@ -46,6 +90,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-wip-commit)
             FORCE_WIP_COMMIT=true
+            shift
+            ;;
+        --no-monitor-utilization)
+            MONITOR_UTILIZATION=false
             shift
             ;;
         --validate-cmd)
@@ -305,6 +353,12 @@ echo "Log file: ${LOG_FILE}"
 echo "==================================="
 echo ""
 
+# Start system utilization monitoring (if enabled)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$MONITOR_UTILIZATION" = true ] && [ -f "$SCRIPT_DIR/utilization_prehook.sh" ]; then
+    source "$SCRIPT_DIR/utilization_prehook.sh"
+fi
+
 # Run validation using configured commands
 run_validation() {
     if [ "$SEQUENTIAL_MODE" = true ]; then
@@ -317,6 +371,11 @@ run_validation() {
 # Run validation and capture output to WIP file
 # The output goes both to the file and to stdout (via tee)
 if run_validation 2>&1 | tee "$WIP_FILE"; then
+    # Stop system utilization monitoring and display report (if enabled)
+    if [ "$MONITOR_UTILIZATION" = true ] && [ -f "$SCRIPT_DIR/utilization_posthook.sh" ]; then
+        source "$SCRIPT_DIR/utilization_posthook.sh"
+    fi
+
     # Validation succeeded - atomically move WIP to final log file
     mv "$WIP_FILE" "$LOG_FILE"
 
@@ -334,6 +393,11 @@ if run_validation 2>&1 | tee "$WIP_FILE"; then
     echo ""
     exit 0
 else
+    # Stop system utilization monitoring and display report (even on failure, if enabled)
+    if [ "$MONITOR_UTILIZATION" = true ] && [ -f "$SCRIPT_DIR/utilization_posthook.sh" ]; then
+        source "$SCRIPT_DIR/utilization_posthook.sh"
+    fi
+
     # Validation failed - remove WIP file (don't cache failures)
     rm -f "$WIP_FILE"
 

@@ -138,7 +138,12 @@ impl BenchmarkSetup {
             prefetch_deck_cards(&card_db, &deck2).await
         })?;
 
-        Ok(BenchmarkSetup { card_db, deck1, deck2, runtime })
+        Ok(BenchmarkSetup {
+            card_db,
+            deck1,
+            deck2,
+            runtime,
+        })
     }
 
     fn load_same_deck(deck_path: &str) -> Result<Self> {
@@ -1025,7 +1030,12 @@ fn bench_game_old_school_jeskai_vs_troll_disk(c: &mut Criterion) {
     });
 
     if iteration_count > 0 {
-        print_aggregated_metrics("Old School: Jeskai Aggro vs Troll Disk", seed, &aggregated, iteration_count);
+        print_aggregated_metrics(
+            "Old School: Jeskai Aggro vs Troll Disk",
+            seed,
+            &aggregated,
+            iteration_count,
+        );
     }
 
     group.finish();
