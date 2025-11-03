@@ -2402,6 +2402,60 @@ impl<'a> GameLoop<'a> {
                                         chosen_targets.into_iter().collect()
                                     };
 
+                                    // Auto-tap lands for mana costs (if the ability has a mana cost)
+                                    // This is the same logic as spell casting (step 6 of cast_spell_8_step)
+                                    if let Some(mana_cost) = ability.cost.get_mana_cost() {
+                                        // Use ManaEngine to compute proper color-aware tap order
+                                        use crate::game::mana_engine::ManaEngine;
+                                        use crate::game::mana_payment::{
+                                            GreedyManaResolver, ManaPaymentResolver, ManaSource,
+                                        };
+
+                                        let mut mana_engine = ManaEngine::new();
+                                        mana_engine.update(self.game, current_priority);
+
+                                        // Build ManaSource list for resolver
+                                        let mut mana_sources = Vec::new();
+                                        for &source_card_id in &self.game.battlefield.cards {
+                                            if let Ok(card) = self.game.cards.get(source_card_id) {
+                                                if card.owner == current_priority && card.is_land() && !card.tapped {
+                                                    // Determine mana production for this land
+                                                    let production = if let Some(prod) = Self::get_mana_production(card)
+                                                    {
+                                                        prod
+                                                    } else {
+                                                        continue; // Skip lands we don't know how to tap yet
+                                                    };
+
+                                                    mana_sources.push(ManaSource {
+                                                        card_id: source_card_id,
+                                                        production,
+                                                        is_tapped: card.tapped,
+                                                        has_summoning_sickness: false, // Lands don't have summoning sickness
+                                                    });
+                                                }
+                                            }
+                                        }
+
+                                        // Use GreedyManaResolver to compute proper tap order
+                                        let resolver = GreedyManaResolver::new();
+                                        let sources_to_tap = resolver
+                                            .compute_tap_order(mana_cost, &mana_sources)
+                                            .unwrap_or_else(Vec::new);
+
+                                        // Tap lands to add mana to pool
+                                        for &source_id in &sources_to_tap {
+                                            if let Err(e) =
+                                                self.game.tap_for_mana_for_cost(current_priority, source_id, mana_cost)
+                                            {
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    eprintln!("    Failed to tap land for mana: {e}");
+                                                }
+                                                // Continue to next source - partial payment might still work
+                                            }
+                                        }
+                                    }
+
                                     // Pay costs
                                     if let Err(e) = self.game.pay_ability_cost(current_priority, card_id, &ability.cost)
                                     {
