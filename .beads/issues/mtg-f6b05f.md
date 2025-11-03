@@ -1,10 +1,11 @@
 ---
 title: Fix max mana calculation for dual lands
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2025-11-03T20:12:30.062966344+00:00
-updated_at: 2025-11-03T20:12:38.589942495+00:00
+updated_at: 2025-11-03T20:19:57.967153138+00:00
+closed_at: 2025-11-03T20:19:57.967152927+00:00
 ---
 
 # Description

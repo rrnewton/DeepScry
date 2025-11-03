@@ -925,7 +925,7 @@ impl FancyTuiController {
         f.render_widget(paragraph, inner_area);
     }
 
-    /// Calculate maximum mana production from battlefield using ManaEngine logic
+    /// Calculate maximum mana production from battlefield
     ///
     /// Returns (total, W, U, B, R, G, C) where:
     /// - total = number of untapped mana sources
@@ -933,110 +933,10 @@ impl FancyTuiController {
     ///
     /// Note: For dual lands, this counts +1 for both colors but only +1 total.
     ///
-    /// TODO(mtg-f6b05f): This should use ManaEngine directly, but that requires
-    /// refactoring ManaEngine to work with GameStateView instead of GameState.
+    /// This now delegates to GameStateView::max_mana_capacity() which uses
+    /// the ManaEngine for correct calculation.
     fn calculate_max_mana(view: &GameStateView) -> (u8, u8, u8, u8, u8, u8, u8) {
-        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
-
-        let mut total = 0u8;
-        let mut max_white = 0u8;
-        let mut max_blue = 0u8;
-        let mut max_black = 0u8;
-        let mut max_red = 0u8;
-        let mut max_green = 0u8;
-        let mut max_colorless = 0u8;
-
-        // Helper to determine mana production (mirrors mana_engine.rs logic)
-        let get_production = |card: &crate::core::Card| -> Option<ManaProduction> {
-            if !card.is_land() {
-                return None;
-            }
-
-            // Check basic lands first
-            match card.name.as_str() {
-                "Plains" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White))),
-                "Island" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue))),
-                "Swamp" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black))),
-                "Mountain" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red))),
-                "Forest" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green))),
-                "Wastes" => return Some(ManaProduction::free(ManaProductionKind::Colorless)),
-                _ => {}
-            }
-
-            // Check for dual lands by subtypes
-            let mut colors = Vec::new();
-            for subtype in &card.subtypes {
-                let color = match subtype.as_str() {
-                    "Plains" => Some(ManaColor::White),
-                    "Island" => Some(ManaColor::Blue),
-                    "Swamp" => Some(ManaColor::Black),
-                    "Mountain" => Some(ManaColor::Red),
-                    "Forest" => Some(ManaColor::Green),
-                    _ => None,
-                };
-                if let Some(c) = color {
-                    colors.push(c);
-                }
-            }
-
-            if colors.len() == 2 {
-                return Some(ManaProduction::free(ManaProductionKind::Choice(colors)));
-            }
-
-            // Check for any-color lands
-            if card.text.to_lowercase().contains("any color") {
-                return Some(ManaProduction::free(ManaProductionKind::AnyColor));
-            }
-
-            None
-        };
-
-        // Count untapped mana sources controlled by the player
-        for &card_id in view.battlefield() {
-            if let Some(card) = view.get_card(card_id) {
-                // Only count our untapped lands
-                if card.controller != view.player_id() || card.tapped || !card.is_land() {
-                    continue;
-                }
-
-                total += 1;
-
-                if let Some(production) = get_production(card) {
-                    match production.kind {
-                        ManaProductionKind::Fixed(color) => match color {
-                            ManaColor::White => max_white += 1,
-                            ManaColor::Blue => max_blue += 1,
-                            ManaColor::Black => max_black += 1,
-                            ManaColor::Red => max_red += 1,
-                            ManaColor::Green => max_green += 1,
-                        },
-                        ManaProductionKind::Choice(colors) => {
-                            for color in colors {
-                                match color {
-                                    ManaColor::White => max_white += 1,
-                                    ManaColor::Blue => max_blue += 1,
-                                    ManaColor::Black => max_black += 1,
-                                    ManaColor::Red => max_red += 1,
-                                    ManaColor::Green => max_green += 1,
-                                }
-                            }
-                        }
-                        ManaProductionKind::AnyColor => {
-                            max_white += 1;
-                            max_blue += 1;
-                            max_black += 1;
-                            max_red += 1;
-                            max_green += 1;
-                        }
-                        ManaProductionKind::Colorless => {
-                            max_colorless += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        (total, max_white, max_blue, max_black, max_red, max_green, max_colorless)
+        view.max_mana_capacity()
     }
 
     /// Draw the hand panel

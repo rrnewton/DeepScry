@@ -401,6 +401,40 @@ impl<'a> GameStateView<'a> {
             .unwrap_or((0, 0, 0, 0, 0, 0))
     }
 
+    /// Get maximum mana capacity for this player
+    ///
+    /// Returns the maximum amount of mana of each color that could be produced
+    /// if all untapped mana sources were tapped. This accounts for:
+    /// - Basic lands (produce one specific color)
+    /// - Dual lands (produce choice of X or Y, counted in both colors)
+    /// - Any-color lands (counted in all colors)
+    /// - Mana creatures like Llanowar Elves (if not summoning sick)
+    ///
+    /// The return value is (total_sources, W, U, B, R, G, C) where total_sources
+    /// is the count of untapped sources, and each color is the max of that color
+    /// we could produce.
+    ///
+    /// Note: For dual lands, they count +1 for both colors but only +1 to total.
+    pub fn max_mana_capacity(&self) -> (u8, u8, u8, u8, u8, u8, u8) {
+        use crate::game::ManaEngine;
+
+        let mut engine = ManaEngine::new();
+        engine.update(self.game, self.player_id);
+
+        let capacity = engine.max_mana_capacity();
+        let total = engine.simple_sources().len() + engine.complex_sources().len();
+
+        (
+            total as u8,
+            capacity.white,
+            capacity.blue,
+            capacity.black,
+            capacity.red,
+            capacity.green,
+            capacity.colorless,
+        )
+    }
+
     /// Check if player can play lands this turn
     pub fn can_play_land(&self) -> bool {
         self.game
