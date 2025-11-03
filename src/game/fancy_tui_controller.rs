@@ -500,11 +500,19 @@ impl FancyTuiController {
             Step::End,
         ];
 
-        let mut phase_spans = vec![Span::raw(format!("Turn: {}({}) | ", player_turn, turn_number))];
+        // Display player turn or "_" if inactive
+        let turn_display = if is_active {
+            player_turn.to_string()
+        } else {
+            "_".to_string()
+        };
+
+        let mut phase_spans = vec![Span::raw(format!("Turn: {} ({}) | ", turn_display, turn_number))];
 
         for (i, step) in all_steps.iter().enumerate() {
             let abbrev = Self::step_abbrev(*step);
-            let span = if *step == current_step {
+            // Only underline current step if this is the active player
+            let span = if is_active && *step == current_step {
                 Span::styled(abbrev, Style::default().add_modifier(Modifier::UNDERLINED))
             } else {
                 Span::raw(abbrev)
@@ -519,10 +527,10 @@ impl FancyTuiController {
         // Calculate spacing for right alignment
         let inner_width = area.width.saturating_sub(4); // Account for borders and padding
         let stats_len = stats_text.len() as u16;
-        // Phase text without underline formatting for length calc
+        // Phase text without underline formatting for length calc (use max width with turn number)
         let phase_text_plain = format!(
-            "Turn: {}({}) | UP UK DR M1 BC DA DB CD EC M2 ET",
-            player_turn, turn_number
+            "Turn: {} ({}) | UP UK DR M1 BC DA DB CD EC M2 ET",
+            turn_display, turn_number
         );
         let phase_len = phase_text_plain.len() as u16;
         let padding = inner_width.saturating_sub(stats_len + phase_len);
@@ -1143,7 +1151,10 @@ impl FancyTuiController {
 
                 if !card.text.is_empty() {
                     lines.push(Line::from(""));
-                    lines.push(Line::from(card.text.clone()));
+                    // Split card text on newlines for natural multi-paragraph display
+                    for text_line in card.text.split('\n') {
+                        lines.push(Line::from(text_line));
+                    }
                 }
 
                 let text = Text::from(lines);
