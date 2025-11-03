@@ -645,7 +645,22 @@ impl FancyTuiController {
         }
     }
 
-    /// Render a group of cards (lands, creatures, others)
+    /// Get card dimensions based on tapped state
+    /// Tapped cards swap width and height to simulate 90-degree rotation
+    fn get_card_dimensions(view: &GameStateView, card_id: CardId) -> (u16, u16) {
+        const DEFAULT_WIDTH: u16 = 10;
+        const DEFAULT_HEIGHT: u16 = 7;
+
+        let is_tapped = view.is_tapped(card_id);
+        if is_tapped {
+            // Swap dimensions for tapped cards (simulate rotation)
+            (DEFAULT_HEIGHT, DEFAULT_WIDTH)
+        } else {
+            (DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        }
+    }
+
+    /// Render a group of cards (lands, creatures, others) with dynamic packing
     #[allow(clippy::too_many_arguments)]
     fn render_card_group(
         &self,
@@ -674,47 +689,49 @@ impl FancyTuiController {
         ));
         f.render_widget(Paragraph::new(label_text), label_area);
 
-        // Card dimensions for 2D layout
-        const CARD_WIDTH: u16 = 10;
-        const CARD_HEIGHT: u16 = 7;
         const CARD_SPACING: u16 = 1;
-
         let mut rendered_height = 1; // Start after label
 
-        // Calculate how many cards fit per row
-        let cards_per_row = ((area.width + CARD_SPACING) / (CARD_WIDTH + CARD_SPACING)).max(1);
+        // Dynamic packing: pack cards left-to-right, wrapping when needed
+        let mut current_x = area.x;
+        let mut current_y = area.y + y_offset + rendered_height;
+        let mut row_height = 0u16;
 
-        // Calculate how many rows we need
-        let num_cards = cards.len();
-        let num_rows = (num_cards as u16).div_ceil(cards_per_row).max(1);
+        for &card_id in cards {
+            let (card_width, card_height) = Self::get_card_dimensions(view, card_id);
 
-        // Render cards in 2D grid
-        for (card_index, &card_id) in cards.iter().enumerate() {
-            let row = (card_index as u16) / cards_per_row;
-            let col = (card_index as u16) % cards_per_row;
-
-            let card_x = area.x + col * (CARD_WIDTH + CARD_SPACING);
-            let card_y = area.y + y_offset + rendered_height + row * (CARD_HEIGHT + CARD_SPACING);
-
-            // Check if this card fits in the available space
-            if card_y + CARD_HEIGHT > area.y + area.height {
-                break;
+            // Check if card fits on current row
+            if current_x + card_width > area.x + area.width && current_x > area.x {
+                // Wrap to next row
+                current_x = area.x;
+                current_y += row_height + CARD_SPACING;
+                row_height = 0;
             }
 
-            let card_area = Rect {
-                x: card_x,
-                y: card_y,
-                width: CARD_WIDTH,
-                height: CARD_HEIGHT,
-            };
+            // Check if we have vertical space
+            if current_y + card_height > area.y + area.height {
+                break; // No more vertical space
+            }
 
+            // Render this card
+            let card_area = Rect {
+                x: current_x,
+                y: current_y,
+                width: card_width,
+                height: card_height,
+            };
             self.render_card_box(f, card_area, view, card_id);
+
+            // Update position for next card
+            current_x += card_width + CARD_SPACING;
+            row_height = row_height.max(card_height);
         }
 
         // Total height used by this group
-        let rows_rendered =
-            num_rows.min(((area.height - y_offset - rendered_height) + CARD_SPACING) / (CARD_HEIGHT + CARD_SPACING));
-        rendered_height += rows_rendered * (CARD_HEIGHT + CARD_SPACING);
+        if current_x > area.x {
+            // We rendered at least one card on the last row
+            rendered_height = (current_y - (area.y + y_offset)) + row_height;
+        }
 
         rendered_height
     }

@@ -1,10 +1,10 @@
 ---
 title: Respect \n in card text display
 status: open
-priority: 3
+priority: 2
 issue_type: task
 created_at: 2025-11-03T20:40:42.970638894+00:00
-updated_at: 2025-11-03T20:40:42.970638894+00:00
+updated_at: 2025-11-03T20:52:21.669131812+00:00
 ---
 
 # Description
