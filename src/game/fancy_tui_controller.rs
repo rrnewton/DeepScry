@@ -912,6 +912,71 @@ impl FancyTuiController {
         f.render_widget(paragraph, inner_area);
     }
 
+    /// Calculate maximum mana production from battlefield
+    ///
+    /// Returns (total, W, U, B, R, G, C) where:
+    /// - total = number of mana sources we have
+    /// - W/U/B/R/G/C = max of each color we could produce
+    ///
+    /// Note: For dual lands, this counts +1 for both colors but only +1 total.
+    fn calculate_max_mana(view: &GameStateView) -> (u8, u8, u8, u8, u8, u8, u8) {
+        let mut total = 0u8;
+        let mut max_white = 0u8;
+        let mut max_blue = 0u8;
+        let mut max_black = 0u8;
+        let mut max_red = 0u8;
+        let mut max_green = 0u8;
+        let mut max_colorless = 0u8;
+
+        // Count untapped lands controlled by the player
+        for &card_id in view.battlefield() {
+            if let Some(card) = view.get_card(card_id) {
+                // Only count our untapped lands
+                if card.controller != view.player_id() || card.tapped || !card.is_land() {
+                    continue;
+                }
+
+                total += 1;
+
+                // Check mana production abilities
+                // For now, we do a simple check based on card name patterns
+                let name = card.name.as_str();
+
+                // Basic lands
+                if name == "Plains" {
+                    max_white += 1;
+                } else if name == "Island" {
+                    max_blue += 1;
+                } else if name == "Swamp" {
+                    max_black += 1;
+                } else if name == "Mountain" {
+                    max_red += 1;
+                } else if name == "Forest" {
+                    max_green += 1;
+                } else {
+                    // Non-basic lands - conservatively add to all colors
+                    // This handles dual lands, tri-lands, any-color lands, etc.
+                    max_white += 1;
+                    max_blue += 1;
+                    max_black += 1;
+                    max_red += 1;
+                    max_green += 1;
+                    max_colorless += 1;
+                }
+            }
+        }
+
+        (
+            total,
+            max_white,
+            max_blue,
+            max_black,
+            max_red,
+            max_green,
+            max_colorless,
+        )
+    }
+
     /// Draw the hand panel
     fn draw_hand(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let hand = view.hand();
@@ -944,46 +1009,67 @@ impl FancyTuiController {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
+        // Reserve bottom line for mana display
+        let mana_line_height = 1;
+        let hand_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y,
+            width: inner_area.width,
+            height: inner_area.height.saturating_sub(mana_line_height),
+        };
+        let mana_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y + hand_area.height,
+            width: inner_area.width,
+            height: mana_line_height,
+        };
+
         if hand.is_empty() {
             let text = Text::from("(Empty)");
             let paragraph = Paragraph::new(text)
                 .style(Style::default().fg(Color::DarkGray))
                 .alignment(Alignment::Center);
-            f.render_widget(paragraph, inner_area);
-            return;
+            f.render_widget(paragraph, hand_area);
+        } else {
+            // Display cards vertically as list
+            let items: Vec<ListItem> = hand
+                .iter()
+                .enumerate()
+                .map(|(idx, &card_id)| {
+                    let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+
+                    let cost = view
+                        .get_card(card_id)
+                        .map(|c| format!(" ({})", c.mana_cost))
+                        .unwrap_or_default();
+
+                    let text = format!("[{}] {}{}", idx, name, cost);
+
+                    // Highlight selected card if Hand pane is focused
+                    let is_selected = is_focused && self.state.selected_card_in_hand == Some(idx);
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+
+                    ListItem::new(text).style(style)
+                })
+                .collect();
+
+            let list = List::new(items);
+            f.render_widget(list, hand_area);
         }
 
-        // Display cards vertically as list
-        let items: Vec<ListItem> = hand
-            .iter()
-            .enumerate()
-            .map(|(idx, &card_id)| {
-                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-
-                let cost = view
-                    .get_card(card_id)
-                    .map(|c| format!(" ({})", c.mana_cost))
-                    .unwrap_or_default();
-
-                let text = format!("[{}] {}{}", idx, name, cost);
-
-                // Highlight selected card if Hand pane is focused
-                let is_selected = is_focused && self.state.selected_card_in_hand == Some(idx);
-                let style = if is_selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
-                ListItem::new(text).style(style)
-            })
-            .collect();
-
-        let list = List::new(items);
-        f.render_widget(list, inner_area);
+        // Draw max mana line at bottom
+        let (total, w, u, b, r, g, c) = Self::calculate_max_mana(view);
+        let mana_text = format!("Max Mana: {} ~= {}W {}U {}B {}R {}G {}C", total, w, u, b, r, g, c);
+        let mana_paragraph = Paragraph::new(mana_text)
+            .style(Style::default().fg(Color::Cyan));
+        f.render_widget(mana_paragraph, mana_area);
     }
 
     /// Wait for user input and update highlighted choice

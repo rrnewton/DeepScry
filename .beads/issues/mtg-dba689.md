@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T18:06:57.016794581+00:00
+updated_at: 2025-11-03T18:56:43.868866735+00:00
 ---
 
 # Description
@@ -26,9 +26,10 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-b72100: Dim pane borders (grey instead of white)
 
 **Interactive focus system:**
-- ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O)
+- ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A)
+- ✓ Card navigation: Hand and Battlefield panes with arrow keys (commit c4d0e5c)
+- ✓ mtg-fa42e3: Populate Card Details pane on selection
 - mtg-1a7bae: Mouse support for card selection
-- mtg-fa42e3: Populate Card Details pane on selection
 
 **Choice presentation:**
 - ✓ mtg-7bbb00: Show ownership and IDs in target choices
@@ -36,6 +37,9 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 
 **Infrastructure:**
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
+
+**Deferred improvements:**
+- mtg-6326b9: Card rendering improvements with intelligent space usage
 
 ## Status
 
@@ -45,7 +49,9 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Logging infrastructure (memory-only mode)
 - [x] 2D battlefield layout (mtg-fa9417) - major refactor
 - [x] Pane focus system (mtg-b3f1fe)
-- [ ] Remaining interactive features (mtg-1a7bae, mtg-fa42e3)
+- [x] Card navigation in Hand and Battlefield (commit c4d0e5c)
+- [x] Card Details population on selection (mtg-fa42e3)
+- [ ] Remaining interactive features (mtg-1a7bae: mouse support)
 - [ ] Advanced choice presentation (mtg-8a3ffb)
 
 ## Implementation order
@@ -64,12 +70,16 @@ Updated order based on user priority:
 2. **COMPLETED - Visual foundation:**
    - ✓ mtg-fa9417: 2D battlefield layout (major refactor)
 
-3. **COMPLETED - Pane focus:**
+3. **COMPLETED - Pane focus and navigation:**
    - ✓ mtg-b3f1fe: Pane focus system
+   - ✓ Card navigation in Hand and Battlefield (c4d0e5c)
+   - ✓ mtg-fa42e3: Card Details population
 
 4. **NEXT - Remaining interactive features:**
    - mtg-1a7bae: Mouse support ← NEXT
-   - mtg-fa42e3: Card Details population
 
 5. **Choice improvements:**
    - mtg-8a3ffb: Enhanced choice highlighting
+
+6. **Polish (deferred):**
+   - mtg-6326b9: Improved card rendering

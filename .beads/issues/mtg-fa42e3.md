@@ -1,10 +1,11 @@
 ---
 title: 'Fancy TUI: Populate Card Details pane on selection'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T18:06:09.550540390+00:00
-updated_at: 2025-11-03T18:06:29.714670508+00:00
+updated_at: 2025-11-03T18:56:50.132012338+00:00
+closed_at: 2025-11-03T18:56:50.132012207+00:00
 ---
 
 # Description
