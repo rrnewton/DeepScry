@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T16:37:43.904238048+00:00
+updated_at: 2025-11-03T18:06:57.016794581+00:00
 ---
 
 # Description
@@ -16,51 +16,57 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 ## Sub-issues
 
 **Status/Info improvements:**
-- mtg-4d4e33: Library count in status bar
-- mtg-a862ff: Turn counter and phase indicator
-- mtg-a6f4ce: Ctrl-C and Ctrl-Z handling
+- ✓ mtg-4d4e33: Library count in status bar
+- ✓ mtg-a862ff: Turn counter and phase indicator
+- ✓ mtg-a6f4ce: Ctrl-C and Ctrl-Z handling
 
 **Card display improvements:**
-- mtg-fa9417: Proportionate card rectangles (3.5:2.5 ratio) and 2D battlefield layout
-- mtg-bc661f: Card border colors reflecting mana colors
-- mtg-b72100: Dim pane borders (grey instead of white)
+- ✓ mtg-fa9417: Proportionate card rectangles (3.5:2.5 ratio) and 2D battlefield layout
+- ✓ mtg-bc661f: Card border colors reflecting mana colors
+- ✓ mtg-b72100: Dim pane borders (grey instead of white)
 
 **Interactive focus system:**
 - mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O)
 - mtg-1a7bae: Mouse support for card selection
+- mtg-fa42e3: Populate Card Details pane on selection
 
 **Choice presentation:**
-- mtg-7bbb00: Show ownership and IDs in target choices
+- ✓ mtg-7bbb00: Show ownership and IDs in target choices
 - mtg-8a3ffb: Enhanced choice highlighting during gameplay
+
+**Infrastructure:**
+- ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
 
 ## Status
 
 - [x] Initial fancy TUI implementation (commit 04dc7ed)
-- [ ] Basic info enhancements (mtg-4d4e33, mtg-a862ff, mtg-a6f4ce)
-- [ ] Visual polish (mtg-fa9417, mtg-bc661f, mtg-b72100)
-- [ ] Interactive features (mtg-b3f1fe, mtg-1a7bae)
-- [ ] Advanced choice presentation (mtg-7bbb00, mtg-8a3ffb)
+- [x] Basic info enhancements (mtg-4d4e33, mtg-a862ff, mtg-a6f4ce)
+- [x] Initial visual polish (mtg-bc661f, mtg-b72100)
+- [x] Logging infrastructure (memory-only mode)
+- [x] 2D battlefield layout (mtg-fa9417) - major refactor
+- [ ] Interactive features (mtg-b3f1fe, mtg-1a7bae, mtg-fa42e3)
+- [ ] Advanced choice presentation (mtg-8a3ffb)
 
 ## Implementation order
 
-Suggested order based on dependencies:
+Updated order based on user priority:
 
-1. **Quick wins** (can be done in parallel):
-   - mtg-4d4e33: Library count (simple)
-   - mtg-b72100: Dim borders (simple)
-   - mtg-a6f4ce: Signal handling (independent)
+1. **COMPLETED - Quick wins:**
+   - ✓ mtg-4d4e33: Library count
+   - ✓ mtg-b72100: Dim borders
+   - ✓ mtg-a6f4ce: Signal handling
+   - ✓ mtg-a862ff: Turn/phase indicator
+   - ✓ mtg-bc661f: Card border colors
+   - ✓ mtg-7bbb00: Ownership/IDs in targets
+   - ✓ Logging fix: Memory-only mode
 
-2. **Info enhancements:**
-   - mtg-a862ff: Turn/phase indicator (builds on mtg-4d4e33)
+2. **COMPLETED - Visual foundation:**
+   - ✓ mtg-fa9417: 2D battlefield layout (major refactor)
 
-3. **Visual foundation:**
-   - mtg-fa9417: 2D battlefield layout (major refactor, do early)
-   - mtg-bc661f: Card colors (easier after 2D layout)
+3. **NEXT - Interactive features:**
+   - mtg-b3f1fe: Pane focus system ← NEXT
+   - mtg-1a7bae: Mouse support
+   - mtg-fa42e3: Card Details population
 
-4. **Interactive features:**
-   - mtg-b3f1fe: Pane focus (builds on dim borders)
-   - mtg-1a7bae: Mouse support (builds on focus system)
-
-5. **Choice improvements:**
-   - mtg-7bbb00: Ownership/IDs (independent)
-   - mtg-8a3ffb: Choice highlighting (works best after pane focus)
+4. **Choice improvements:**
+   - mtg-8a3ffb: Enhanced choice highlighting

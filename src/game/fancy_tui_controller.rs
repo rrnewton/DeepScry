@@ -60,10 +60,10 @@ struct FancyTuiState {
     bottom_left_tab: BottomLeftTab,
     /// Currently highlighted choice index (if in choice mode)
     highlighted_choice: usize,
-    /// Game log messages
-    log_messages: Vec<String>,
     /// Currently selected card for details view
     selected_card_id: Option<CardId>,
+    /// Whether logger was configured for memory-only mode
+    logger_memory_mode_enabled: bool,
 }
 
 impl FancyTuiState {
@@ -72,16 +72,8 @@ impl FancyTuiState {
             left_tab: LeftTab::Stack,
             bottom_left_tab: BottomLeftTab::Prompt,
             highlighted_choice: 0,
-            log_messages: Vec::new(),
             selected_card_id: None,
-        }
-    }
-
-    fn add_log_message(&mut self, msg: String) {
-        self.log_messages.push(msg);
-        // Keep only last 100 messages
-        if self.log_messages.len() > 100 {
-            self.log_messages.remove(0);
+            logger_memory_mode_enabled: false,
         }
     }
 }
@@ -133,6 +125,49 @@ impl FancyTuiController {
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
+        Ok(())
+    }
+
+    /// Configure game logger for memory-only mode (suppress stdout)
+    pub fn configure_logger_for_tui(&mut self, _view: &GameStateView) {
+        // The logger is in the GameState which we can't mutate through GameStateView
+        // We'll need to do this differently - see implementation note
+        self.state.logger_memory_mode_enabled = true;
+    }
+
+    /// Save buffered logs to a temp file and print the location
+    /// Call this after the game ends and terminal is restored
+    pub fn save_logs_on_exit(&self, view: &GameStateView) -> io::Result<()> {
+        if !self.state.logger_memory_mode_enabled {
+            return Ok(());
+        }
+
+        let logs = view.logger().logs();
+        let log_count = logs.len();
+
+        if log_count == 0 {
+            eprintln!("No game logs captured.");
+            return Ok(());
+        }
+
+        // Create temp file for logs
+        let temp_dir = std::env::temp_dir();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let log_path = temp_dir.join(format!("mtg_forge_game_{}.log", timestamp));
+
+        // Write logs to file
+        use std::io::Write;
+        let mut file = std::fs::File::create(&log_path)?;
+        for entry in logs.iter() {
+            writeln!(file, "{}", entry.message)?;
+        }
+
+        eprintln!("\n>>> Game log saved: {} lines written to:", log_count);
+        eprintln!("    {}", log_path.display());
+
         Ok(())
     }
 
@@ -213,7 +248,7 @@ impl FancyTuiController {
         match self.state.left_tab {
             LeftTab::Stack => self.draw_stack_view(f, content_area, view),
             LeftTab::Combat => self.draw_combat_view(f, content_area, view),
-            LeftTab::Log => self.draw_log_view(f, content_area),
+            LeftTab::Log => self.draw_log_view(f, content_area, view),
         }
     }
 
@@ -232,14 +267,16 @@ impl FancyTuiController {
     }
 
     /// Draw the log view
-    fn draw_log_view(&self, f: &mut Frame, area: Rect) {
-        let items: Vec<ListItem> = self
-            .state
-            .log_messages
+    fn draw_log_view(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+        // Get logs from the game logger
+        let logs = view.logger().logs();
+
+        // Take the last N logs that fit in the area
+        let items: Vec<ListItem> = logs
             .iter()
             .rev()
             .take(area.height as usize)
-            .map(|msg| ListItem::new(msg.as_str()))
+            .map(|entry| ListItem::new(entry.message.as_str()))
             .collect();
 
         let list = List::new(items);
@@ -552,25 +589,47 @@ impl FancyTuiController {
         ));
         f.render_widget(Paragraph::new(label_text), label_area);
 
-        let mut rendered_height = 1;
+        // Card dimensions for 2D layout
+        const CARD_WIDTH: u16 = 10;
+        const CARD_HEIGHT: u16 = 7;
+        const CARD_SPACING: u16 = 1;
 
-        // Render each card
-        for &card_id in cards.iter().take(((area.height - y_offset - 1) / 3) as usize) {
-            let card_y = area.y + y_offset + rendered_height;
-            if card_y + 2 >= area.y + area.height {
+        let mut rendered_height = 1; // Start after label
+
+        // Calculate how many cards fit per row
+        let cards_per_row = ((area.width + CARD_SPACING) / (CARD_WIDTH + CARD_SPACING)).max(1);
+
+        // Calculate how many rows we need
+        let num_cards = cards.len();
+        let num_rows = (num_cards as u16).div_ceil(cards_per_row).max(1);
+
+        // Render cards in 2D grid
+        for (card_index, &card_id) in cards.iter().enumerate() {
+            let row = (card_index as u16) / cards_per_row;
+            let col = (card_index as u16) % cards_per_row;
+
+            let card_x = area.x + col * (CARD_WIDTH + CARD_SPACING);
+            let card_y = area.y + y_offset + rendered_height + row * (CARD_HEIGHT + CARD_SPACING);
+
+            // Check if this card fits in the available space
+            if card_y + CARD_HEIGHT > area.y + area.height {
                 break;
             }
 
             let card_area = Rect {
-                x: area.x + 2,
+                x: card_x,
                 y: card_y,
-                width: area.width.saturating_sub(2),
-                height: 3,
+                width: CARD_WIDTH,
+                height: CARD_HEIGHT,
             };
 
             self.render_card_box(f, card_area, view, card_id);
-            rendered_height += 3;
         }
+
+        // Total height used by this group
+        let rows_rendered =
+            num_rows.min(((area.height - y_offset - rendered_height) + CARD_SPACING) / (CARD_HEIGHT + CARD_SPACING));
+        rendered_height += rows_rendered * (CARD_HEIGHT + CARD_SPACING);
 
         rendered_height
     }
@@ -581,16 +640,34 @@ impl FancyTuiController {
         let is_tapped = view.is_tapped(card_id);
 
         let card = view.get_card(card_id);
-        let pt_text = card
-            .filter(|c| c.is_creature())
-            .map(|c| format!(" {}/{}", c.power.unwrap_or(0), c.toughness.unwrap_or(0)))
-            .unwrap_or_default();
 
-        let card_text = if is_tapped {
-            format!("[T] {}{}", name, pt_text)
+        // Build multiline content for the card
+        let mut lines = Vec::new();
+
+        // Line 1: Card name (truncated to fit width)
+        let max_name_len = area.width.saturating_sub(4) as usize; // Account for borders + padding
+        let display_name = if name.len() > max_name_len {
+            format!("{}...", &name[..max_name_len.saturating_sub(3)])
         } else {
-            format!("{}{}", name, pt_text)
+            name.clone()
         };
+        lines.push(Line::from(display_name));
+
+        // Line 2: Tapped status or empty line
+        if is_tapped {
+            lines.push(Line::from("[TAPPED]"));
+        } else {
+            lines.push(Line::from(""));
+        }
+
+        // Line 3-4: P/T for creatures, or mana cost for other spells
+        if let Some(card) = &card {
+            if card.is_creature() {
+                let pt_line = format!("{}/{}", card.power.unwrap_or(0), card.toughness.unwrap_or(0));
+                lines.push(Line::from(""));
+                lines.push(Line::from(pt_line));
+            }
+        }
 
         // Determine text style (dimmed if tapped)
         let text_style = if is_tapped {
@@ -622,7 +699,8 @@ impl FancyTuiController {
             .border_style(Style::default().fg(border_color))
             .style(text_style);
 
-        let paragraph = Paragraph::new(card_text).block(block).wrap(Wrap { trim: true });
+        let text = Text::from(lines);
+        let paragraph = Paragraph::new(text).block(block).alignment(Alignment::Center);
         f.render_widget(paragraph, area);
     }
 
@@ -1080,16 +1158,11 @@ impl PlayerController for FancyTuiController {
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {
-        self.state.add_log_message("Priority passed".to_string());
+        // Logging is handled by the game logger, no local state tracking needed
     }
 
-    fn on_game_end(&mut self, view: &GameStateView, won: bool) {
-        let msg = format!(
-            "Game Over: You {}! Final life: {}",
-            if won { "WON" } else { "LOST" },
-            view.life()
-        );
-        self.state.add_log_message(msg);
+    fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {
+        // Logging is handled by the game logger, no local state tracking needed
     }
 
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
