@@ -32,6 +32,18 @@ struct CombatFactors {
     number_of_blockers: usize,            // Count of valid blockers
 }
 
+/// Classification of activated ability types for evaluation
+enum ActivatedAbilityType {
+    /// Ping ability - deals damage to target
+    /// Example: Prodigal Sorcerer "{T}: Deal 1 damage to any target"
+    Ping { damage: i32 },
+    /// Pump ability - boosts creature stats
+    /// Example: Shivan Dragon "{R}: +1/+0 until end of turn"
+    Pump { power: i32, toughness: i32 },
+    /// Other abilities not yet categorized
+    Other,
+}
+
 /// Heuristic AI controller that makes decisions using evaluation functions
 /// rather than simulation. Aims to faithfully reproduce Java Forge AI behavior.
 ///
@@ -1197,15 +1209,182 @@ impl HeuristicController {
     /// Evaluate whether to activate an activated ability now
     ///
     /// Reference: Various ability AI classes in forge-ai/src/main/java/forge/ai/ability/
-    fn should_activate_ability(&self, _source: &Card, _view: &GameStateView) -> bool {
-        // For now, don't automatically activate abilities
-        // The current implementation doesn't have enough context to make good decisions
-        // (needs combat state tracking, better timing logic, etc.)
-        // TODO: Implement proper activated ability evaluation
-        // - Check if we're on opponent's turn (for removal abilities like Royal Assassin)
-        // - Evaluate if targets are valuable enough
-        // - Consider mana efficiency
+    ///
+    /// Implements evaluation for:
+    /// 1. Ping abilities (Prodigal Sorcerer) - DamageDealAi.java:196-200, 682-703
+    /// 2. Pump abilities (Shivan Dragon) - PumpAi.java
+    fn should_activate_ability(&self, source: &Card, view: &GameStateView) -> bool {
+        // Iterate through all activated abilities on this source
+        for ability in &source.activated_abilities {
+            // Skip mana abilities - let mana system handle those
+            if ability.is_mana_ability {
+                continue;
+            }
+
+            // Detect ability type from effects
+            let ability_type = self.classify_activated_ability(ability);
+
+            match ability_type {
+                ActivatedAbilityType::Ping { damage } => {
+                    // Ping abilities: Only use when stack is clear
+                    // Reference: DamageDealAi.java:196-200 (Triskelion logic)
+                    if !self.is_stack_empty(view) {
+                        continue; // Don't use pings when stack is not empty
+                    }
+
+                    // Check timing - ping at end of turn if reusable, or when can kill valuable creature
+                    let current_step = view.current_step();
+                    let is_end_phase = current_step == crate::game::Step::End;
+                    let is_main2 = current_step == crate::game::Step::Main2;
+
+                    // End of turn timing (if reusable and our turn is next)
+                    // Reference: DamageDealAi.java:686-689
+                    if is_end_phase {
+                        // Check if ability cost is reusable (doesn't sacrifice the creature)
+                        if !ability.cost.requires_sacrifice() {
+                            // Can ping at end of turn
+                            if self.has_valuable_ping_target(view, damage) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // Main 2 timing (for abilities that need immediate use)
+                    // Reference: DamageDealAi.java:691-694
+                    if is_main2 && self.has_valuable_ping_target(view, damage) {
+                        return true;
+                    }
+
+                    // When can kill a valuable creature
+                    // Reference: DamageDealAi.java:682-703
+                    if self.can_kill_valuable_creature(view, damage) {
+                        return true;
+                    }
+                }
+                ActivatedAbilityType::Pump { power, toughness } => {
+                    // Pump abilities: Use before combat in Main1
+                    // Reference: PumpAi.java:98-105
+                    let current_step = view.current_step();
+                    let is_main1 = current_step == crate::game::Step::Main1;
+
+                    if is_main1 {
+                        // Check if pumping would enable better attacks
+                        if self.would_pump_enable_attack(source, view, power, toughness) {
+                            return true;
+                        }
+                    }
+                }
+                ActivatedAbilityType::Other => {
+                    // For now, don't activate other types
+                    // Will expand as we implement more ability types
+                    continue;
+                }
+            }
+        }
+
         false
+    }
+
+    /// Classify the type of activated ability based on its effects
+    fn classify_activated_ability(&self, ability: &crate::core::ActivatedAbility) -> ActivatedAbilityType {
+        // Check for damage-dealing effects (ping abilities)
+        for effect in &ability.effects {
+            if let crate::core::Effect::DealDamage { amount, .. } = effect {
+                return ActivatedAbilityType::Ping { damage: *amount };
+            }
+        }
+
+        // Check for pump effects
+        for effect in &ability.effects {
+            if let crate::core::Effect::PumpCreature {
+                power_bonus,
+                toughness_bonus,
+                ..
+            } = effect
+            {
+                return ActivatedAbilityType::Pump {
+                    power: *power_bonus,
+                    toughness: *toughness_bonus,
+                };
+            }
+        }
+
+        ActivatedAbilityType::Other
+    }
+
+    /// Check if the stack is empty
+    /// Reference: DamageDealAi.java:196 (stack.isEmpty())
+    fn is_stack_empty(&self, _view: &GameStateView) -> bool {
+        // TODO: Fix this - need to check game.stack through GameStateView
+        // For now, return true as a placeholder until we expose stack in GameStateView
+        true
+    }
+
+    /// Check if there's a valuable target we can ping
+    /// Reference: DamageDealAi.java:697 (canTarget(enemy))
+    fn has_valuable_ping_target(&self, view: &GameStateView, damage: i32) -> bool {
+        // Look for opponent creatures we can kill with this damage
+        for opponent_id in view.opponents() {
+            for &card_id in view.battlefield() {
+                if let Some(card) = view.get_card(card_id) {
+                    if card.controller == opponent_id && card.is_creature() {
+                        // Check if this creature would die from the damage
+                        if let Some(toughness) = card.toughness {
+                            // Convert to i32 to match damage type
+                            let effective_toughness = i32::from(toughness) + card.toughness_bonus;
+                            if effective_toughness <= damage {
+                                // We can kill this creature
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if we can kill a valuable opponent creature with this ping
+    /// Reference: DamageDealAi.java:682-703 (freePing logic)
+    fn can_kill_valuable_creature(&self, view: &GameStateView, damage: i32) -> bool {
+        // For now, use same logic as has_valuable_ping_target
+        // In Java Forge, this checks for "best opponent creature we can kill"
+        self.has_valuable_ping_target(view, damage)
+    }
+
+    /// Check if pumping this creature would enable better attacks
+    /// Reference: PumpAi.java lines 88-105, 481-490
+    fn would_pump_enable_attack(&self, source: &Card, view: &GameStateView, power: i32, toughness: i32) -> bool {
+        // Only pump creatures
+        if !source.is_creature() {
+            return false;
+        }
+
+        // Check if creature can attack (not tapped, not summoning sick)
+        if source.tapped {
+            return false;
+        }
+
+        // Check summon sickness - need turn_entered_battlefield
+        if let Some(turn_entered) = source.turn_entered_battlefield {
+            let current_turn = view.turn_number();
+            if turn_entered == current_turn {
+                // Has summon sickness unless it has haste
+                let has_haste = source.keywords.iter().any(|k| matches!(k, Keyword::Haste));
+                if !has_haste {
+                    return false;
+                }
+            }
+        }
+
+        // If the pump gives significant power boost (3+), likely worth it
+        if power >= 3 {
+            return true;
+        }
+
+        // Check if pump grants useful keywords
+        // For now, just check if there's a significant stat boost
+        power > 0 && toughness >= 0
     }
 
     /// Evaluate whether to cast a non-creature, non-pump spell

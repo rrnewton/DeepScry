@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-03T01:38:04.812546709+00:00
+updated_at: 2025-11-03T16:43:31.758896478+00:00
 ---
 
 # Description
@@ -31,27 +31,32 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Filters indestructible and dying creatures
   - Damage amount validation for burn spells
   - Reference: DestroyAi.java:152-247
+- ✅ **Activated ability evaluation and timing (2025-11-03 - mtg-119 COMPLETED)**
+  - Ping abilities (Prodigal Sorcerer pattern)
+  - Pump abilities (Shivan Dragon pattern)
+  - Timing logic for end of turn and Main2 pings
+  - Main1 timing for pump abilities
+  - Skips mana abilities correctly
+  - Reference: DamageDealAi.java:196-200, 682-703; PumpAi.java
 
 **What's Missing:**
 
 ### High Priority (Core AI Strength):
 
-1. **Activated ability evaluation and timing (NEXT PRIORITY)**
-   - Current: `should_activate_ability()` returns false to prevent infinite loops
-   - Needed: Value assessment, timing optimization, mana efficiency
-   - Example: Prodigal Sorcerer should ping opponents when valuable
-   - Example: Pump abilities (Shivan Dragon) before combat damage
-   - Reference: forge-ai/src/main/java/forge/ai/ability/ classes
-
-2. **Mana ability recognition from creatures**
+1. **Mana ability recognition from creatures (NEXT PRIORITY)**
    - Need to recognize Llanowar Elves and similar mana dorks
    - Should use them to cast bigger threats earlier
    - Mana engine needs to see creature mana abilities
 
-3. **Combat outcome prediction**
+2. **Combat outcome prediction**
    - Simulate combat before making decisions
    - Critical for knowing if attacks will be lethal
    - Reference: GameStateEvaluator.java:40-67, 91-100
+
+3. **Activated ability improvements**
+   - Expose game.stack through GameStateView for proper stack-empty checks
+   - Better ping targeting (choose "best" killable creature, not just any)
+   - Enhanced pump evaluation with combat simulation
 
 ### Medium Priority:
 
@@ -107,13 +112,16 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Validates damage amount for burn spells
   - Targets best (highest-value) opponent creature
   - Reference: DestroyAi.java:152-247, ComputerUtilCard.getBestCreatureAI
+- ✅ **Activated ability evaluation (2025-11-03 - mtg-119)**
+  - Ping ability timing and targeting
+  - Pump ability evaluation for combat
+  - Mana ability skipping
+  - Reference: DamageDealAi.java, PumpAi.java
 
 ## Next Steps (Priority Order)
 
-1. **Activated ability evaluation and timing** (CURRENT PRIORITY)
-   - Port ability AI logic from forge-ai/src/main/java/forge/ai/ability/
-   - Implement ping ability timing (Prodigal Sorcerer)
-   - Implement pump ability usage (Shivan Dragon)
-2. Mana ability recognition from creatures
+1. **Mana ability recognition from creatures** (CURRENT PRIORITY)
+   - Detect and use Llanowar Elves, Llanowar Elf
+2. Improve activated ability stack-empty checks
 3. Combat outcome prediction
 4. During-combat pump evaluation (BLOCKED)

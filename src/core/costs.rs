@@ -233,6 +233,15 @@ impl Cost {
             _ => None,
         }
     }
+
+    /// Check if this cost includes sacrificing a permanent
+    pub fn requires_sacrifice(&self) -> bool {
+        match self {
+            Cost::Sacrifice { .. } | Cost::SacrificePattern { .. } => true,
+            Cost::Composite(costs) => costs.iter().any(|c| c.requires_sacrifice()),
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
