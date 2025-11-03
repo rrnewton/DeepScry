@@ -373,6 +373,63 @@ impl ManaEngine {
         self.simple_capacity
     }
 
+    /// Get the maximum mana capacity considering all sources (simple and complex)
+    ///
+    /// This computes the maximum of each color that could be produced if all
+    /// untapped sources were tapped optimistically:
+    /// - Fixed(R) sources add 1 to R
+    /// - Choice([R, B]) sources add 1 to both R and B
+    /// - AnyColor sources add 1 to all colors
+    ///
+    /// Note: The total returned is the count of untapped sources, not the sum
+    /// of all colors (since dual lands contribute to multiple colors but only
+    /// count as 1 source).
+    pub fn max_mana_capacity(&self) -> ManaCapacity {
+        let mut capacity = ManaCapacity::new();
+
+        for source in &self.mana_sources {
+            // Skip tapped sources and sources with summoning sickness
+            if source.is_tapped || source.has_summoning_sickness {
+                continue;
+            }
+
+            match &source.production.kind {
+                ManaProductionKind::Fixed(color) => match color {
+                    ManaColor::White => capacity.white += 1,
+                    ManaColor::Blue => capacity.blue += 1,
+                    ManaColor::Black => capacity.black += 1,
+                    ManaColor::Red => capacity.red += 1,
+                    ManaColor::Green => capacity.green += 1,
+                },
+                ManaProductionKind::Choice(colors) => {
+                    // Dual lands: add 1 to each color in the choice
+                    for color in colors {
+                        match color {
+                            ManaColor::White => capacity.white += 1,
+                            ManaColor::Blue => capacity.blue += 1,
+                            ManaColor::Black => capacity.black += 1,
+                            ManaColor::Red => capacity.red += 1,
+                            ManaColor::Green => capacity.green += 1,
+                        }
+                    }
+                }
+                ManaProductionKind::AnyColor => {
+                    // Any-color lands: add 1 to all colors
+                    capacity.white += 1;
+                    capacity.blue += 1;
+                    capacity.black += 1;
+                    capacity.red += 1;
+                    capacity.green += 1;
+                }
+                ManaProductionKind::Colorless => {
+                    capacity.colorless += 1;
+                }
+            }
+        }
+
+        capacity
+    }
+
     /// Get the list of simple mana sources
     pub fn simple_sources(&self) -> &[CardId] {
         &self.simple_sources

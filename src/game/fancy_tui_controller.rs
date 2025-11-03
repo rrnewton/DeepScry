@@ -925,14 +925,19 @@ impl FancyTuiController {
         f.render_widget(paragraph, inner_area);
     }
 
-    /// Calculate maximum mana production from battlefield
+    /// Calculate maximum mana production from battlefield using ManaEngine logic
     ///
     /// Returns (total, W, U, B, R, G, C) where:
-    /// - total = number of mana sources we have
+    /// - total = number of untapped mana sources
     /// - W/U/B/R/G/C = max of each color we could produce
     ///
     /// Note: For dual lands, this counts +1 for both colors but only +1 total.
+    ///
+    /// TODO(mtg-f6b05f): This should use ManaEngine directly, but that requires
+    /// refactoring ManaEngine to work with GameStateView instead of GameState.
     fn calculate_max_mana(view: &GameStateView) -> (u8, u8, u8, u8, u8, u8, u8) {
+        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
+
         let mut total = 0u8;
         let mut max_white = 0u8;
         let mut max_blue = 0u8;
@@ -941,7 +946,52 @@ impl FancyTuiController {
         let mut max_green = 0u8;
         let mut max_colorless = 0u8;
 
-        // Count untapped lands controlled by the player
+        // Helper to determine mana production (mirrors mana_engine.rs logic)
+        let get_production = |card: &crate::core::Card| -> Option<ManaProduction> {
+            if !card.is_land() {
+                return None;
+            }
+
+            // Check basic lands first
+            match card.name.as_str() {
+                "Plains" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White))),
+                "Island" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue))),
+                "Swamp" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black))),
+                "Mountain" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red))),
+                "Forest" => return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green))),
+                "Wastes" => return Some(ManaProduction::free(ManaProductionKind::Colorless)),
+                _ => {}
+            }
+
+            // Check for dual lands by subtypes
+            let mut colors = Vec::new();
+            for subtype in &card.subtypes {
+                let color = match subtype.as_str() {
+                    "Plains" => Some(ManaColor::White),
+                    "Island" => Some(ManaColor::Blue),
+                    "Swamp" => Some(ManaColor::Black),
+                    "Mountain" => Some(ManaColor::Red),
+                    "Forest" => Some(ManaColor::Green),
+                    _ => None,
+                };
+                if let Some(c) = color {
+                    colors.push(c);
+                }
+            }
+
+            if colors.len() == 2 {
+                return Some(ManaProduction::free(ManaProductionKind::Choice(colors)));
+            }
+
+            // Check for any-color lands
+            if card.text.to_lowercase().contains("any color") {
+                return Some(ManaProduction::free(ManaProductionKind::AnyColor));
+            }
+
+            None
+        };
+
+        // Count untapped mana sources controlled by the player
         for &card_id in view.battlefield() {
             if let Some(card) = view.get_card(card_id) {
                 // Only count our untapped lands
@@ -951,30 +1001,37 @@ impl FancyTuiController {
 
                 total += 1;
 
-                // Check mana production abilities
-                // For now, we do a simple check based on card name patterns
-                let name = card.name.as_str();
-
-                // Basic lands
-                if name == "Plains" {
-                    max_white += 1;
-                } else if name == "Island" {
-                    max_blue += 1;
-                } else if name == "Swamp" {
-                    max_black += 1;
-                } else if name == "Mountain" {
-                    max_red += 1;
-                } else if name == "Forest" {
-                    max_green += 1;
-                } else {
-                    // Non-basic lands - conservatively add to all colors
-                    // This handles dual lands, tri-lands, any-color lands, etc.
-                    max_white += 1;
-                    max_blue += 1;
-                    max_black += 1;
-                    max_red += 1;
-                    max_green += 1;
-                    max_colorless += 1;
+                if let Some(production) = get_production(card) {
+                    match production.kind {
+                        ManaProductionKind::Fixed(color) => match color {
+                            ManaColor::White => max_white += 1,
+                            ManaColor::Blue => max_blue += 1,
+                            ManaColor::Black => max_black += 1,
+                            ManaColor::Red => max_red += 1,
+                            ManaColor::Green => max_green += 1,
+                        },
+                        ManaProductionKind::Choice(colors) => {
+                            for color in colors {
+                                match color {
+                                    ManaColor::White => max_white += 1,
+                                    ManaColor::Blue => max_blue += 1,
+                                    ManaColor::Black => max_black += 1,
+                                    ManaColor::Red => max_red += 1,
+                                    ManaColor::Green => max_green += 1,
+                                }
+                            }
+                        }
+                        ManaProductionKind::AnyColor => {
+                            max_white += 1;
+                            max_blue += 1;
+                            max_black += 1;
+                            max_red += 1;
+                            max_green += 1;
+                        }
+                        ManaProductionKind::Colorless => {
+                            max_colorless += 1;
+                        }
+                    }
                 }
             }
         }
