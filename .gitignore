@@ -52,6 +52,5 @@ benchmark_output.log
 # Agent play session files
 agentplay/*.snapshot
 agentplay/*.log
-agentplay/p1_choices.txt
-agentplay/p2_choices.txt
+agentplay/choices.txt
 agentplay/last_command.txt
