@@ -16,7 +16,7 @@
 # Benchmarking and Profiling:
 
 # All profiling output goes to experiment_results/
-experiment_results/
+experiment_results/plots
 
 # Validation logs
 validate_logs/

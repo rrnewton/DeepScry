@@ -247,7 +247,6 @@ where
 
     // Collect metrics
     let actions = game_loop.game.undo_log.len();
-    let log_entries = game_loop.game.logger.logs().len();
     let stats = reg.change();
 
     let metrics = GameMetrics {
@@ -258,10 +257,8 @@ where
         bytes_deallocated: stats.bytes_deallocated,
     };
 
-    // Report log entries captured
-    if log_entries > 0 {
-        eprintln!("  Log entries captured: {}", log_entries);
-    }
+    // Note: We don't report log entries per iteration to avoid spam during benchmarking
+    // Log verification happens in tests, not benchmarks
 
     Ok(metrics)
 }

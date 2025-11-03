@@ -132,6 +132,13 @@ If you validate some changes with a new manual or temporary test, that test shou
 
 NEVER add binary files or large serialized artifact to version control without explicit permission. Always carefully review what you are adding with `git add`, and update `.gitignore` as needed.
 
+If the commit is about optimization, refresh the benchmark results as well with `./scripts/run_benchmarks.sh`
+
+Post-commit: refreshing benchmark results
+----------------------------------------
+
+Run `./scripts/periodically_run_benchmarks.sh` and if it modifies the working copy (specifically, `experiment_results/perf_history.csv`), then make an extra git commit that describes the result.
+
 Branches and pushing
 ----------------------------------------
 

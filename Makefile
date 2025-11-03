@@ -178,7 +178,8 @@ info:
 # Run all performance benchmarks (takes a long time)
 full-benchmark:
 	@echo "=== Running all benchmarks ==="
-	cargo bench --bench game_benchmark
+	./scripts/run_benchmark.sh
+#	cargo bench --bench game_benchmark
 
 # Run snapshot benchmark only (fast)
 bench-snapshot:
