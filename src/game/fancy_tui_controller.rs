@@ -52,6 +52,21 @@ enum BottomLeftTab {
     Dock = 1,
 }
 
+/// Currently focused pane for keyboard navigation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusedPane {
+    /// (H)and pane
+    Hand,
+    /// (I)nfo pane (Stack/Combat/Log)
+    Info,
+    /// (Y)our battlefield
+    YourBattlefield,
+    /// (O)pponent battlefield
+    OpponentBattlefield,
+    /// Prompt pane (when making choices) - takes priority
+    Prompt,
+}
+
 /// Application state for the fancy TUI
 struct FancyTuiState {
     /// Currently selected left tab
@@ -64,6 +79,17 @@ struct FancyTuiState {
     selected_card_id: Option<CardId>,
     /// Whether logger was configured for memory-only mode
     logger_memory_mode_enabled: bool,
+    /// Currently focused pane
+    focused_pane: FocusedPane,
+    /// Selected card index in hand (for navigation) - reserved for future use
+    #[allow(dead_code)]
+    selected_card_in_hand: Option<usize>,
+    /// Selected card in your battlefield (for navigation) - reserved for future use
+    #[allow(dead_code)]
+    selected_card_in_your_bf: Option<CardId>,
+    /// Selected card in opponent battlefield (for navigation) - reserved for future use
+    #[allow(dead_code)]
+    selected_card_in_opp_bf: Option<CardId>,
 }
 
 impl FancyTuiState {
@@ -74,6 +100,10 @@ impl FancyTuiState {
             highlighted_choice: 0,
             selected_card_id: None,
             logger_memory_mode_enabled: false,
+            focused_pane: FocusedPane::Prompt, // Start with Prompt focused
+            selected_card_in_hand: None,
+            selected_card_in_your_bf: None,
+            selected_card_in_opp_bf: None,
         }
     }
 }
@@ -217,13 +247,30 @@ impl FancyTuiController {
 
     /// Draw the left tabbed panel (Stack|Combat|Log)
     fn draw_left_tabs(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+        // Determine focus state
+        let is_focused = self.state.focused_pane == FocusedPane::Info;
+        let border_color = if is_focused { Color::White } else { Color::Gray };
+
+        // Create title with highlighted first letter
+        let title = if is_focused {
+            Line::from(vec![
+                Span::styled("(I)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("nfo", Style::default().add_modifier(Modifier::BOLD)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("(I)", Style::default().fg(Color::Yellow)),
+                Span::raw("nfo"),
+            ])
+        };
+
         let titles = vec!["Stack", "Combat", "Log"];
         let tabs = Tabs::new(titles)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Info")
-                    .border_style(Style::default().fg(Color::Gray)),
+                    .title(title)
+                    .border_style(Style::default().fg(border_color)),
             )
             .select(self.state.left_tab as usize)
             .style(Style::default().fg(Color::White))
@@ -500,7 +547,7 @@ impl FancyTuiController {
     }
 
     /// Draw a single battlefield
-    fn draw_battlefield(&self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, title: &str) {
+    fn draw_battlefield(&self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, _title: &str) {
         let battlefield = view.battlefield();
         let player_cards: Vec<CardId> = battlefield
             .iter()
@@ -529,10 +576,44 @@ impl FancyTuiController {
             },
         );
 
+        // Determine focus state
+        let is_player_bf = owner_id == view.player_id();
+        let is_focused = if is_player_bf {
+            self.state.focused_pane == FocusedPane::YourBattlefield
+        } else {
+            self.state.focused_pane == FocusedPane::OpponentBattlefield
+        };
+        let border_color = if is_focused { Color::White } else { Color::Gray };
+
+        // Create title with highlighted first letter
+        let title_line = if is_player_bf {
+            if is_focused {
+                Line::from(vec![
+                    Span::styled("(Y)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled("our Battlefield", Style::default().add_modifier(Modifier::BOLD)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("(Y)", Style::default().fg(Color::Yellow)),
+                    Span::raw("our Battlefield"),
+                ])
+            }
+        } else if is_focused {
+            Line::from(vec![
+                Span::styled("(O)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("pponent Battlefield", Style::default().add_modifier(Modifier::BOLD)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("(O)", Style::default().fg(Color::Yellow)),
+                Span::raw("pponent Battlefield"),
+            ])
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(title)
-            .border_style(Style::default().fg(Color::Gray));
+            .title(title_line)
+            .border_style(Style::default().fg(border_color));
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
@@ -763,10 +844,30 @@ impl FancyTuiController {
     fn draw_hand(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let hand = view.hand();
 
+        // Determine focus state
+        let is_focused = self.state.focused_pane == FocusedPane::Hand;
+        let border_color = if is_focused { Color::White } else { Color::Gray };
+
+        // Create title with highlighted first letter
+        let title = if is_focused {
+            vec![
+                Span::styled("(H)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("and ({})", hand.len()),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]
+        } else {
+            vec![
+                Span::styled("(H)", Style::default().fg(Color::Yellow)),
+                Span::raw(format!("and ({})", hand.len())),
+            ]
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!("Hand ({})", hand.len()))
-            .border_style(Style::default().fg(Color::Gray));
+            .title(Line::from(title))
+            .border_style(Style::default().fg(border_color));
 
         let inner_area = block.inner(area);
         f.render_widget(block, area);
@@ -806,6 +907,24 @@ impl FancyTuiController {
             if event::poll(std::time::Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
+                        // Pane focus switching (H, I, Y, O)
+                        KeyCode::Char('h') | KeyCode::Char('H') => {
+                            self.state.focused_pane = FocusedPane::Hand;
+                            return Ok(InputAction::Continue); // Redraw needed
+                        }
+                        KeyCode::Char('i') | KeyCode::Char('I') => {
+                            self.state.focused_pane = FocusedPane::Info;
+                            return Ok(InputAction::Continue); // Redraw needed
+                        }
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            self.state.focused_pane = FocusedPane::YourBattlefield;
+                            return Ok(InputAction::Continue); // Redraw needed
+                        }
+                        KeyCode::Char('o') | KeyCode::Char('O') => {
+                            self.state.focused_pane = FocusedPane::OpponentBattlefield;
+                            return Ok(InputAction::Continue); // Redraw needed
+                        }
+                        // Choice navigation
                         KeyCode::Up | KeyCode::Char('k') => {
                             if self.state.highlighted_choice > 0 {
                                 self.state.highlighted_choice -= 1;

@@ -26,7 +26,7 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-b72100: Dim pane borders (grey instead of white)
 
 **Interactive focus system:**
-- mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O)
+- ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O)
 - mtg-1a7bae: Mouse support for card selection
 - mtg-fa42e3: Populate Card Details pane on selection
 
@@ -44,7 +44,8 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Initial visual polish (mtg-bc661f, mtg-b72100)
 - [x] Logging infrastructure (memory-only mode)
 - [x] 2D battlefield layout (mtg-fa9417) - major refactor
-- [ ] Interactive features (mtg-b3f1fe, mtg-1a7bae, mtg-fa42e3)
+- [x] Pane focus system (mtg-b3f1fe)
+- [ ] Remaining interactive features (mtg-1a7bae, mtg-fa42e3)
 - [ ] Advanced choice presentation (mtg-8a3ffb)
 
 ## Implementation order
@@ -63,10 +64,12 @@ Updated order based on user priority:
 2. **COMPLETED - Visual foundation:**
    - ✓ mtg-fa9417: 2D battlefield layout (major refactor)
 
-3. **NEXT - Interactive features:**
-   - mtg-b3f1fe: Pane focus system ← NEXT
-   - mtg-1a7bae: Mouse support
+3. **COMPLETED - Pane focus:**
+   - ✓ mtg-b3f1fe: Pane focus system
+
+4. **NEXT - Remaining interactive features:**
+   - mtg-1a7bae: Mouse support ← NEXT
    - mtg-fa42e3: Card Details population
 
-4. **Choice improvements:**
+5. **Choice improvements:**
    - mtg-8a3ffb: Enhanced choice highlighting
