@@ -1212,11 +1212,7 @@ impl HeuristicController {
     ///
     /// Reference: Various spell AI classes in forge-ai/src/main/java/forge/ai/ability/
     fn should_cast_spell(&self, spell: &Card, view: &GameStateView) -> bool {
-        // For now, don't cast removal or other spells automatically
-        // The targeting system needs to be improved first to avoid targeting wrong permanents
-        // TODO: Implement proper spell evaluation with correct targeting restrictions
-
-        // Only cast card draw if we're low on cards
+        // Check for card draw spells
         let has_draw = spell
             .effects
             .iter()
@@ -1229,7 +1225,100 @@ impl HeuristicController {
             }
         }
 
+        // Check for removal spells (destroy or damage effects)
+        // Reference: DestroyAi.java:106-303 (checkApiLogic)
+        let has_destroy = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }));
+        let has_damage = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
+
+        if has_destroy || has_damage {
+            // Check if there's a valid removal target
+            if let Some(_target) = self.choose_best_removal_target(spell, view) {
+                return true;
+            }
+        }
+
         false
+    }
+
+    /// Choose the best creature to target with removal
+    ///
+    /// Reference: DestroyAi.java:152-247 (target selection logic)
+    ///
+    /// Key filtering steps from Java:
+    /// 1. Get targetable opponent creatures (line 153)
+    /// 2. Filter out indestructible (line 157)
+    /// 3. Prioritize creatures worth removing (lines 158-160)
+    /// 4. Filter out creatures with shield counters (lines 162-163)
+    /// 5. Filter out creatures that can regenerate (lines 189-194)
+    /// 6. Filter out creatures that will die this turn (line 197)
+    /// 7. Select best creature (line 224: getBestCreatureAI)
+    ///
+    /// Simplified version for now:
+    /// - Target opponent's best creature
+    /// - Filter out indestructible
+    /// - Filter out creatures already dying (toughness <= 0)
+    fn choose_best_removal_target(&self, spell: &Card, view: &GameStateView) -> Option<CardId> {
+        // Get all opponent creatures on the battlefield
+        let mut opponent_creatures: Vec<&Card> = view
+            .battlefield()
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .filter(|c| c.owner != self.player_id && c.is_creature())
+            .collect();
+
+        if opponent_creatures.is_empty() {
+            return None;
+        }
+
+        // Filter out indestructible creatures (line 157)
+        opponent_creatures.retain(|c| !c.has_indestructible());
+
+        // Filter out creatures that are already dying (toughness <= 0)
+        // This is part of "filterCreaturesThatWillDieThisTurn" (line 197)
+        opponent_creatures.retain(|c| c.toughness.unwrap_or(0) > 0);
+
+        // For damage-based removal, filter out creatures with too much toughness
+        let has_damage = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
+        if has_damage {
+            // Find the damage amount
+            let damage_amount = spell
+                .effects
+                .iter()
+                .find_map(|e| {
+                    if let crate::core::Effect::DealDamage { amount, .. } = e {
+                        Some(*amount)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
+            // Only target creatures with toughness <= damage amount
+            opponent_creatures.retain(|c| c.toughness.unwrap_or(127) as i32 <= damage_amount);
+        }
+
+        if opponent_creatures.is_empty() {
+            return None;
+        }
+
+        // TODO: Implement more filtering from DestroyAi.java:
+        // - Filter out creatures with shield counters (line 162)
+        // - Filter out creatures that can be sacrificed in response (lines 165-186)
+        // - Filter out creatures with regeneration shields (lines 191-194)
+        // - Implement useRemovalNow() check for timing (line 246)
+
+        // Select the best creature (highest evaluation score)
+        // Reference: ComputerUtilCard.getBestCreatureAI() (line 224)
+        self.get_best_creature(&opponent_creatures).map(|c| c.id)
     }
 
     /// Determine if we should block an attacker with a specific blocker
