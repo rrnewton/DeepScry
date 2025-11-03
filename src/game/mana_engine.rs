@@ -217,20 +217,32 @@ pub struct ManaEngine {
     simple_capacity: ManaCapacity,
     /// All mana sources as ManaSource structs (for resolver)
     mana_sources: Vec<ManaSource>,
-    /// Payment resolver (strategy pattern for complex mana handling)
-    resolver: Box<dyn ManaPaymentResolver>,
+    /// Simple payment resolver (for basic lands only)
+    simple_resolver: SimpleManaResolver,
+    /// Greedy payment resolver (for complex mana sources)
+    greedy_resolver: GreedyManaResolver,
+    /// Flag indicating which resolver to use (true = use greedy, false = use simple)
+    use_greedy_resolver: bool,
 }
 
-impl ManaEngine {
-    /// Create a new mana engine
-    pub fn new() -> Self {
+impl Default for ManaEngine {
+    fn default() -> Self {
         Self {
             simple_sources: Vec::new(),
             complex_sources: Vec::new(),
             simple_capacity: ManaCapacity::new(),
             mana_sources: Vec::new(),
-            resolver: Box::new(SimpleManaResolver::new()),
+            simple_resolver: SimpleManaResolver::new(),
+            greedy_resolver: GreedyManaResolver::new(),
+            use_greedy_resolver: false,
         }
+    }
+}
+
+impl ManaEngine {
+    /// Create a new mana engine
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Update the engine by scanning the battlefield for mana sources
@@ -339,12 +351,8 @@ impl ManaEngine {
             }
         }
 
-        // Switch to GreedyManaResolver if we have complex sources
-        if !self.complex_sources.is_empty() {
-            self.resolver = Box::new(GreedyManaResolver::new());
-        } else {
-            self.resolver = Box::new(SimpleManaResolver::new());
-        }
+        // Switch resolver flag based on whether we have complex sources
+        self.use_greedy_resolver = !self.complex_sources.is_empty();
     }
 
     /// Check if the player can pay for a mana cost
@@ -352,8 +360,12 @@ impl ManaEngine {
     /// This considers all mana sources (simple and complex) and determines
     /// whether there exists a way to tap them to produce the required mana.
     pub fn can_pay(&self, cost: &ManaCost) -> bool {
-        // Use the resolver to check payment
-        self.resolver.can_pay(cost, &self.mana_sources)
+        // Use the appropriate resolver based on source complexity
+        if self.use_greedy_resolver {
+            self.greedy_resolver.can_pay(cost, &self.mana_sources)
+        } else {
+            self.simple_resolver.can_pay(cost, &self.mana_sources)
+        }
     }
 
     /// Get the current mana capacity from simple sources only
