@@ -235,24 +235,27 @@ impl GameState {
         // Check if targets are still valid before executing effects
         // MTG Rules 608.2b: If all targets are illegal, the spell doesn't resolve
         //
-        // For damage spells targeting permanents, verify targets are still on battlefield
-        // (they might have been removed by another spell resolving first)
-        // For counterspells, verify target is still on stack
+        // Check all effects that target permanents or spells on the stack
         let mut all_targets_illegal = false;
         if !chosen_targets.is_empty() {
-            // Check if this spell deals damage to permanents
+            // Check if this spell targets permanents (any effect type)
             let targets_permanents = effects.iter().any(|effect| {
                 matches!(
                     effect,
                     Effect::DealDamage {
                         target: TargetRef::Permanent(_),
                         ..
-                    }
+                    } | Effect::DestroyPermanent { .. }
+                        | Effect::ExilePermanent { .. }
+                        | Effect::TapPermanent { .. }
+                        | Effect::UntapPermanent { .. }
+                        | Effect::PumpCreature { .. }
                 )
             });
 
             if targets_permanents {
                 // Check if any permanent target is no longer on the battlefield
+                // This happens when multiple spells target the same permanent
                 let any_target_gone = chosen_targets
                     .iter()
                     .any(|&target_id| !self.battlefield.contains(target_id));
