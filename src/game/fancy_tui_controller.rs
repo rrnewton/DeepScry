@@ -63,8 +63,8 @@ enum FocusedPane {
     YourBattlefield,
     /// (O)pponent battlefield
     OpponentBattlefield,
-    /// Prompt pane (when making choices) - takes priority
-    Prompt,
+    /// (A)ctions pane (Prompt/Dock)
+    Actions,
 }
 
 /// Application state for the fancy TUI
@@ -100,7 +100,7 @@ impl FancyTuiState {
             highlighted_choice: 0,
             selected_card_id: None,
             logger_memory_mode_enabled: false,
-            focused_pane: FocusedPane::Prompt, // Start with Prompt focused
+            focused_pane: FocusedPane::Actions, // Start with Actions focused
             selected_card_in_hand: None,
             selected_card_in_your_bf: None,
             selected_card_in_opp_bf: None,
@@ -339,13 +339,30 @@ impl FancyTuiController {
         current_prompt: Option<&str>,
         choices: &[(String, bool)],
     ) {
+        // Determine focus state
+        let is_focused = self.state.focused_pane == FocusedPane::Actions;
+        let border_color = if is_focused { Color::White } else { Color::Gray };
+
+        // Create title with highlighted first letter
+        let title = if is_focused {
+            Line::from(vec![
+                Span::styled("(A)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("ctions", Style::default().add_modifier(Modifier::BOLD)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("(A)", Style::default().fg(Color::Yellow)),
+                Span::raw("ctions"),
+            ])
+        };
+
         let titles = vec!["Prompt", "Dock"];
         let tabs = Tabs::new(titles)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Actions")
-                    .border_style(Style::default().fg(Color::Gray)),
+                    .title(title)
+                    .border_style(Style::default().fg(border_color)),
             )
             .select(self.state.bottom_left_tab as usize)
             .style(Style::default().fg(Color::White))
@@ -907,7 +924,7 @@ impl FancyTuiController {
             if event::poll(std::time::Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
-                        // Pane focus switching (H, I, Y, O)
+                        // Pane focus switching (H, I, Y, O, A)
                         KeyCode::Char('h') | KeyCode::Char('H') => {
                             self.state.focused_pane = FocusedPane::Hand;
                             return Ok(InputAction::Continue); // Redraw needed
@@ -924,21 +941,50 @@ impl FancyTuiController {
                             self.state.focused_pane = FocusedPane::OpponentBattlefield;
                             return Ok(InputAction::Continue); // Redraw needed
                         }
-                        // Choice navigation
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if self.state.highlighted_choice > 0 {
-                                self.state.highlighted_choice -= 1;
-                            }
+                        KeyCode::Char('a') | KeyCode::Char('A') => {
+                            self.state.focused_pane = FocusedPane::Actions;
                             return Ok(InputAction::Continue); // Redraw needed
+                        }
+                        // Arrow key navigation - route based on focused pane
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            match self.state.focused_pane {
+                                FocusedPane::Actions => {
+                                    // Navigate choices in Actions pane
+                                    if self.state.highlighted_choice > 0 {
+                                        self.state.highlighted_choice -= 1;
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
+                                _ => {
+                                    // TODO: Navigate cards in other panes (future feature)
+                                    // For now, just redraw without change
+                                    return Ok(InputAction::Continue);
+                                }
+                            }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            if self.state.highlighted_choice + 1 < num_choices {
-                                self.state.highlighted_choice += 1;
+                            match self.state.focused_pane {
+                                FocusedPane::Actions => {
+                                    // Navigate choices in Actions pane
+                                    if self.state.highlighted_choice + 1 < num_choices {
+                                        self.state.highlighted_choice += 1;
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
+                                _ => {
+                                    // TODO: Navigate cards in other panes (future feature)
+                                    // For now, just redraw without change
+                                    return Ok(InputAction::Continue);
+                                }
                             }
-                            return Ok(InputAction::Continue); // Redraw needed
                         }
                         KeyCode::Enter => {
-                            return Ok(InputAction::Select(self.state.highlighted_choice));
+                            // Enter only selects when Actions pane is focused
+                            if self.state.focused_pane == FocusedPane::Actions {
+                                return Ok(InputAction::Select(self.state.highlighted_choice));
+                            }
+                            // TODO: In other panes, Enter could select a card for details
+                            return Ok(InputAction::Continue);
                         }
                         KeyCode::Char('p') | KeyCode::Esc => {
                             return Ok(InputAction::Pass);
@@ -955,9 +1001,12 @@ impl FancyTuiController {
                             return Ok(InputAction::Exit);
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() => {
-                            let digit = c.to_digit(10).unwrap() as usize;
-                            if digit < num_choices {
-                                return Ok(InputAction::Select(digit));
+                            // Digit selection only works when Actions pane is focused
+                            if self.state.focused_pane == FocusedPane::Actions {
+                                let digit = c.to_digit(10).unwrap() as usize;
+                                if digit < num_choices {
+                                    return Ok(InputAction::Select(digit));
+                                }
                             }
                         }
                         _ => {}

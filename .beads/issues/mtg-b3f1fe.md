@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Pane focus system with keyboard navigation'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:36:18.430704719+00:00
-updated_at: 2025-11-03T16:36:18.430704719+00:00
+updated_at: 2025-11-03T18:28:11.965951934+00:00
 ---
 
 # Description
