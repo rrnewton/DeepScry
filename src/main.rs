@@ -5,8 +5,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use mtg_forge_rs::{
     game::{
-        random_controller::RandomController, zero_controller::ZeroController, GameLoop, GameSnapshot,
-        HeuristicController, InteractiveController, RichInputController, StopCondition, VerbosityLevel,
+        random_controller::RandomController, zero_controller::ZeroController, FancyTuiController, GameLoop,
+        GameSnapshot, HeuristicController, InteractiveController, RichInputController, StopCondition, VerbosityLevel,
     },
     loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
@@ -23,6 +23,8 @@ enum ControllerType {
     Random,
     /// Text UI controller for human play via stdin
     Tui,
+    /// Full-featured TUI with ratatui (multi-panel interface)
+    Fancy,
     /// Heuristic AI controller with strategic decision making
     Heuristic,
     /// Fixed script controller with predetermined choices (requires --fixed-inputs)
@@ -832,6 +834,10 @@ async fn run_tui(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p1_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
@@ -909,6 +915,10 @@ async fn run_tui(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p2_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
@@ -1486,6 +1496,10 @@ async fn run_resume(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p1_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
@@ -1556,6 +1570,10 @@ async fn run_resume(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p2_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
