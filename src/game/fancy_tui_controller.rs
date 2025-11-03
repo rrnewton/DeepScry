@@ -81,14 +81,11 @@ struct FancyTuiState {
     logger_memory_mode_enabled: bool,
     /// Currently focused pane
     focused_pane: FocusedPane,
-    /// Selected card index in hand (for navigation) - reserved for future use
-    #[allow(dead_code)]
+    /// Selected card index in hand (for navigation)
     selected_card_in_hand: Option<usize>,
-    /// Selected card in your battlefield (for navigation) - reserved for future use
-    #[allow(dead_code)]
+    /// Selected card in your battlefield (for navigation)
     selected_card_in_your_bf: Option<CardId>,
-    /// Selected card in opponent battlefield (for navigation) - reserved for future use
-    #[allow(dead_code)]
+    /// Selected card in opponent battlefield (for navigation)
     selected_card_in_opp_bf: Option<CardId>,
 }
 
@@ -199,6 +196,44 @@ impl FancyTuiController {
         eprintln!("    {}", log_path.display());
 
         Ok(())
+    }
+
+    /// Get all cards for a battlefield in display order (lands, creatures, others)
+    fn get_battlefield_cards_in_order(view: &GameStateView, owner_id: PlayerId) -> Vec<CardId> {
+        let battlefield = view.battlefield();
+        let player_cards: Vec<CardId> = battlefield
+            .iter()
+            .filter(|&&card_id| {
+                view.get_card(card_id)
+                    .map(|c| c.controller == owner_id)
+                    .unwrap_or(false)
+            })
+            .copied()
+            .collect();
+
+        // Group cards: lands, creatures, other
+        let (lands, creatures, others): (Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut lands, mut creatures, mut others), &card_id| {
+                if let Some(card) = view.get_card(card_id) {
+                    if card.is_land() {
+                        lands.push(card_id);
+                    } else if card.is_creature() {
+                        creatures.push(card_id);
+                    } else {
+                        others.push(card_id);
+                    }
+                }
+                (lands, creatures, others)
+            },
+        );
+
+        // Concatenate in display order
+        let mut result = Vec::new();
+        result.extend(lands);
+        result.extend(creatures);
+        result.extend(others);
+        result
     }
 
     /// Draw the complete UI with all panels
@@ -739,6 +774,10 @@ impl FancyTuiController {
 
         let card = view.get_card(card_id);
 
+        // Check if this card is currently selected
+        let is_selected =
+            Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
+
         // Build multiline content for the card
         let mut lines = Vec::new();
 
@@ -749,7 +788,16 @@ impl FancyTuiController {
         } else {
             name.clone()
         };
-        lines.push(Line::from(display_name));
+
+        // Apply bold to card name if selected
+        if is_selected {
+            lines.push(Line::from(Span::styled(
+                display_name,
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+        } else {
+            lines.push(Line::from(display_name));
+        }
 
         // Line 2: Tapped status or empty line
         if is_tapped {
@@ -792,9 +840,16 @@ impl FancyTuiController {
             Color::Gray // Fallback if card not found
         };
 
+        // Apply bold modifier to border if selected
+        let border_style = if is_selected {
+            Style::default().fg(border_color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(border_color)
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color))
+            .border_style(border_style)
             .style(text_style);
 
         let text = Text::from(lines);
@@ -910,16 +965,29 @@ impl FancyTuiController {
                     .map(|c| format!(" ({})", c.mana_cost))
                     .unwrap_or_default();
 
-                ListItem::new(format!("[{}] {}{}", idx, name, cost))
+                let text = format!("[{}] {}{}", idx, name, cost);
+
+                // Highlight selected card if Hand pane is focused
+                let is_selected = is_focused && self.state.selected_card_in_hand == Some(idx);
+                let style = if is_selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                ListItem::new(text).style(style)
             })
             .collect();
 
-        let list = List::new(items).style(Style::default().fg(Color::White));
+        let list = List::new(items);
         f.render_widget(list, inner_area);
     }
 
     /// Wait for user input and update highlighted choice
-    fn wait_for_choice_input(&mut self, num_choices: usize) -> io::Result<InputAction> {
+    fn wait_for_choice_input(&mut self, num_choices: usize, view: &GameStateView) -> io::Result<InputAction> {
         loop {
             if event::poll(std::time::Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -927,6 +995,12 @@ impl FancyTuiController {
                         // Pane focus switching (H, I, Y, O, A)
                         KeyCode::Char('h') | KeyCode::Char('H') => {
                             self.state.focused_pane = FocusedPane::Hand;
+                            // Initialize selection to first card if hand not empty
+                            let hand = view.hand();
+                            if !hand.is_empty() && self.state.selected_card_in_hand.is_none() {
+                                self.state.selected_card_in_hand = Some(0);
+                                self.state.selected_card_id = Some(hand[0]);
+                            }
                             return Ok(InputAction::Continue); // Redraw needed
                         }
                         KeyCode::Char('i') | KeyCode::Char('I') => {
@@ -935,10 +1009,24 @@ impl FancyTuiController {
                         }
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             self.state.focused_pane = FocusedPane::YourBattlefield;
+                            // Initialize selection to first card if battlefield not empty
+                            let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
+                            if !bf_cards.is_empty() && self.state.selected_card_in_your_bf.is_none() {
+                                self.state.selected_card_in_your_bf = Some(bf_cards[0]);
+                                self.state.selected_card_id = Some(bf_cards[0]);
+                            }
                             return Ok(InputAction::Continue); // Redraw needed
                         }
                         KeyCode::Char('o') | KeyCode::Char('O') => {
                             self.state.focused_pane = FocusedPane::OpponentBattlefield;
+                            // Initialize selection to first card if battlefield not empty
+                            if let Some(opp_id) = view.opponents().next() {
+                                let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                if !bf_cards.is_empty() && self.state.selected_card_in_opp_bf.is_none() {
+                                    self.state.selected_card_in_opp_bf = Some(bf_cards[0]);
+                                    self.state.selected_card_id = Some(bf_cards[0]);
+                                }
+                            }
                             return Ok(InputAction::Continue); // Redraw needed
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') => {
@@ -955,9 +1043,55 @@ impl FancyTuiController {
                                     }
                                     return Ok(InputAction::Continue);
                                 }
+                                FocusedPane::Hand => {
+                                    // Navigate cards in Hand pane
+                                    let hand = view.hand();
+                                    if !hand.is_empty() {
+                                        let current = self.state.selected_card_in_hand.unwrap_or(0);
+                                        if current > 0 {
+                                            self.state.selected_card_in_hand = Some(current - 1);
+                                            self.state.selected_card_id = Some(hand[current - 1]);
+                                        }
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
+                                FocusedPane::YourBattlefield => {
+                                    // Navigate cards in Your Battlefield
+                                    let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
+                                    if !bf_cards.is_empty() {
+                                        let current_card = self.state.selected_card_in_your_bf;
+                                        if let Some(current_idx) =
+                                            current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                        {
+                                            if current_idx > 0 {
+                                                let new_card = bf_cards[current_idx - 1];
+                                                self.state.selected_card_in_your_bf = Some(new_card);
+                                                self.state.selected_card_id = Some(new_card);
+                                            }
+                                        }
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
+                                FocusedPane::OpponentBattlefield => {
+                                    // Navigate cards in Opponent Battlefield
+                                    if let Some(opp_id) = view.opponents().next() {
+                                        let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                        if !bf_cards.is_empty() {
+                                            let current_card = self.state.selected_card_in_opp_bf;
+                                            if let Some(current_idx) =
+                                                current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                            {
+                                                if current_idx > 0 {
+                                                    let new_card = bf_cards[current_idx - 1];
+                                                    self.state.selected_card_in_opp_bf = Some(new_card);
+                                                    self.state.selected_card_id = Some(new_card);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
                                 _ => {
-                                    // TODO: Navigate cards in other panes (future feature)
-                                    // For now, just redraw without change
                                     return Ok(InputAction::Continue);
                                 }
                             }
@@ -971,9 +1105,55 @@ impl FancyTuiController {
                                     }
                                     return Ok(InputAction::Continue);
                                 }
+                                FocusedPane::Hand => {
+                                    // Navigate cards in Hand pane
+                                    let hand = view.hand();
+                                    if !hand.is_empty() {
+                                        let current = self.state.selected_card_in_hand.unwrap_or(0);
+                                        if current + 1 < hand.len() {
+                                            self.state.selected_card_in_hand = Some(current + 1);
+                                            self.state.selected_card_id = Some(hand[current + 1]);
+                                        }
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
+                                FocusedPane::YourBattlefield => {
+                                    // Navigate cards in Your Battlefield
+                                    let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
+                                    if !bf_cards.is_empty() {
+                                        let current_card = self.state.selected_card_in_your_bf;
+                                        if let Some(current_idx) =
+                                            current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                        {
+                                            if current_idx + 1 < bf_cards.len() {
+                                                let new_card = bf_cards[current_idx + 1];
+                                                self.state.selected_card_in_your_bf = Some(new_card);
+                                                self.state.selected_card_id = Some(new_card);
+                                            }
+                                        }
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
+                                FocusedPane::OpponentBattlefield => {
+                                    // Navigate cards in Opponent Battlefield
+                                    if let Some(opp_id) = view.opponents().next() {
+                                        let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                        if !bf_cards.is_empty() {
+                                            let current_card = self.state.selected_card_in_opp_bf;
+                                            if let Some(current_idx) =
+                                                current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                            {
+                                                if current_idx + 1 < bf_cards.len() {
+                                                    let new_card = bf_cards[current_idx + 1];
+                                                    self.state.selected_card_in_opp_bf = Some(new_card);
+                                                    self.state.selected_card_id = Some(new_card);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
                                 _ => {
-                                    // TODO: Navigate cards in other panes (future feature)
-                                    // For now, just redraw without change
                                     return Ok(InputAction::Continue);
                                 }
                             }
@@ -1042,7 +1222,7 @@ impl FancyTuiController {
                 self.draw_ui(f, view, Some(prompt), &choice_tuples);
             })?;
 
-            match self.wait_for_choice_input(choices.len())? {
+            match self.wait_for_choice_input(choices.len(), view)? {
                 InputAction::Continue => {
                     // Arrow key pressed, continue loop to redraw
                     continue;
