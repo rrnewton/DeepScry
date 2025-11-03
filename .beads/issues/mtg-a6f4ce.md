@@ -1,0 +1,50 @@
+---
+title: 'Fancy TUI: Handle Ctrl-C and Ctrl-Z gracefully'
+status: open
+priority: 3
+issue_type: task
+created_at: 2025-11-03T16:35:12.265164552+00:00
+updated_at: 2025-11-03T16:35:12.265164552+00:00
+---
+
+# Description
+
+Part of: mtg-dba689
+
+Implement proper signal handling for Ctrl-C (SIGINT) and Ctrl-Z (SIGTSTP).
+
+## Current behavior
+
+Pressing Ctrl-C or Ctrl-Z while in the fancy TUI may leave the terminal in a broken state (raw mode still enabled, alternate screen not exited).
+
+## Required behavior
+
+- **Ctrl-C**: Gracefully exit the game, restore terminal to normal mode, show cursor
+- **Ctrl-Z**: Properly suspend the process, restore terminal; resume cleanly when foregrounded
+
+## Implementation
+
+Using crossterm:
+```rust
+// In wait_for_choice_input, handle Ctrl-C:
+if let Event::Key(key) = event::read()? {
+    match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Ok(InputAction::Exit); // New variant
+        }
+        // ...
+    }
+}
+```
+
+Signal handling may require:
+- Adding `signal-hook` or similar crate for SIGTSTP
+- Ensuring `restore_terminal` is called in all exit paths
+- Consider adding a Drop implementation for cleanup
+
+## Testing
+
+- Start game with `--p1=fancy`
+- Press Ctrl-C -> should exit cleanly
+- Press Ctrl-Z -> should suspend, `fg` should resume properly
+- Check terminal state after each (cursor visible, echo enabled, etc.)

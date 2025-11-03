@@ -1,0 +1,113 @@
+---
+title: 'Fancy TUI: Pane focus system with keyboard navigation'
+status: open
+priority: 3
+issue_type: task
+created_at: 2025-11-03T16:36:18.430704719+00:00
+updated_at: 2025-11-03T16:36:18.430704719+00:00
+---
+
+# Description
+
+Part of: mtg-dba689
+
+Implement a focus system allowing users to navigate between panes and cards using keyboard shortcuts.
+
+## Focus system design
+
+### Panes
+
+Four main focusable panes:
+- **(H)and**: Player's hand
+- **(I)nfo**: Left panel (Stack/Combat/Log)
+- **(Y)our battlefield**: Player's battlefield
+- **(O)pponent battlefield**: Opponent's battlefield
+
+Pressing the key letter (H, I, Y, O) switches focus to that pane.
+
+### Visual feedback
+
+**Focused pane**:
+- White border (instead of grey)
+- Bold title
+- First letter of title highlighted: **(H)**and
+
+**Unfocused panes**:
+- Grey border
+- Normal title
+- First letter still highlighted for reference: **(H)**and
+
+### Navigation within pane
+
+**Tab key**: 
+- In Info pane: Switch between Stack/Combat/Log tabs
+- In Hand/Battlefields: Move to next card
+
+**Arrow keys**:
+- In Hand: Up/Down to navigate cards vertically
+- In Battlefields: Arrow keys navigate 2D grid of cards
+- In Prompt: Continue to work as they do now (navigate choices)
+
+**Enter key**:
+- Select the currently highlighted card for details view
+- In Prompt pane: Select the highlighted choice (existing behavior)
+
+## Implementation
+
+### State management
+
+Add to `FancyTuiState`:
+```rust
+enum FocusedPane {
+    Hand,
+    Info,
+    YourBattlefield,
+    OpponentBattlefield,
+    Prompt,  // When making choices
+}
+
+struct FancyTuiState {
+    // ... existing fields ...
+    focused_pane: FocusedPane,
+    selected_card_in_hand: Option<usize>,
+    selected_card_in_your_bf: Option<CardId>,
+    selected_card_in_opp_bf: Option<CardId>,
+}
+```
+
+### Input handling
+
+Modify event handling to:
+1. Check for pane switch keys (H, I, Y, O) first
+2. Route Tab/Arrow key events to the focused pane's handler
+3. Update selected card in the Card Details pane
+
+### Drawing changes
+
+Each draw method needs to:
+1. Check if its pane is focused
+2. Apply appropriate border style (white vs grey)
+3. Highlight the first letter in title
+4. Show selection indicator for focused card (if applicable)
+
+## Files to modify
+
+- `src/game/fancy_tui_controller.rs`:
+  - Add `FocusedPane` enum
+  - Extend `FancyTuiState`
+  - Modify input event handling
+  - Update all draw methods to respect focus
+  - Add card selection state management
+
+## Dependencies
+
+- Requires: mtg-b72100 (dim borders) - builds on top of grey border system
+- Requires: mtg-fa9417 (2D battlefield) - navigation in 2D grid easier after layout is done
+
+## Testing
+
+- Start game with `--p1=fancy`
+- Press H/I/Y/O to switch between panes
+- Verify correct pane is highlighted
+- Use Tab/arrows to navigate within focused pane
+- Verify Card Details updates when cards are selected

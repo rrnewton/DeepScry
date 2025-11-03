@@ -1,0 +1,51 @@
+---
+title: 'Fancy TUI: Turn counter and phase indicator in status'
+status: open
+priority: 3
+issue_type: task
+created_at: 2025-11-03T16:34:59.128652163+00:00
+updated_at: 2025-11-03T16:34:59.128652163+00:00
+---
+
+# Description
+
+Part of: mtg-dba689
+
+Add turn counter and current phase indicator to player status bars.
+
+## Design
+
+Target layout (with plenty of horizontal space):
+```
+You: 20 life | Hand: 7 | GY: 0 | Lib: 53         Turn: 3, UP DR M1 BC DA BD FS CD EC M2 ET
+```
+
+- Left-indent the player stats
+- Right-indent the turn/phase info
+- Underline the current phase abbreviation
+- Bold the entire status line for the active player's turn
+
+Phase abbreviations:
+- UP = Untap
+- DR = Draw (properly "Upkeep" + "Draw" but simplified)
+- M1 = Main Phase 1
+- BC = Beginning of Combat
+- DA = Declare Attackers
+- BD = Declare Blockers
+- FS = First Strike Damage
+- CD = Combat Damage
+- EC = End of Combat
+- M2 = Main Phase 2
+- ET = End Turn
+
+## Implementation
+
+- Access turn number from `GameStateView` (need to add if not available)
+- Access current phase/step from view
+- Use ratatui styling: `add_modifier(Modifier::UNDERLINED)` for current phase
+- Use `add_modifier(Modifier::BOLD)` for active player's status line
+- Calculate spacing to right-align turn info within available width
+
+## Dependencies
+
+Requires: mtg-4d4e33 (library count) - will modify same status line
