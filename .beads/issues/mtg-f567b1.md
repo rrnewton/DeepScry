@@ -1,10 +1,11 @@
 ---
 title: 'Reorganize fancy TUI layout: move Stack and Actions'
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2025-11-03T20:20:04.318818209+00:00
-updated_at: 2025-11-03T20:20:22.901929212+00:00
+updated_at: 2025-11-03T20:41:36.688872811+00:00
+closed_at: 2025-11-03T20:41:36.688872601+00:00
 ---
 
 # Description

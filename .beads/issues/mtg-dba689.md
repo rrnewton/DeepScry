@@ -4,10 +4,12 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T20:23:35.184971996+00:00
+updated_at: 2025-11-03T20:41:31.238373508+00:00
 ---
 
 # Description
+
+## Description
 
 Tracking issue for enhancements to the fancy TUI controller (`--p1=fancy`).
 
@@ -20,14 +22,16 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-a862ff: Turn counter and phase indicator
 - ✓ mtg-a6f4ce: Ctrl-C and Ctrl-Z handling
 - ✓ Turn display: Show player turn and global turn (commit 2051ece)
+- mtg-29343b: Improve turn display with spacing and active player indication
 
 **Card display improvements:**
 - ✓ mtg-fa9417: Proportionate card rectangles (3.5:2.5 ratio) and 2D battlefield layout
 - ✓ mtg-bc661f: Card border colors reflecting mana colors
 - ✓ mtg-b72100: Dim pane borders (grey instead of white)
+- mtg-897dd0: Respect \\n in card text display
 
 **Interactive focus system:**
-- ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A)
+- ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A, S)
 - ✓ Card navigation: Hand and Battlefield panes with arrow keys (commit c4d0e5c)
 - ✓ mtg-fa42e3: Populate Card Details pane on selection
 - mtg-1a7bae: Mouse support for card selection
@@ -40,8 +44,8 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
 - ✓ mtg-f6b05f: Fix max mana calculation for dual lands (commits fb0b159, 8d61403)
 
-**UI Reorganization (Priority 1):**
-- mtg-f567b1: Move Stack and Actions panes, remove Dock tab
+**UI Reorganization:**
+- ✓ mtg-f567b1: Move Stack and Actions panes, remove Dock tab
 
 **Deferred improvements:**
 - mtg-6326b9: Card rendering improvements with intelligent space usage
@@ -57,7 +61,8 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Card navigation in Hand and Battlefield (commit c4d0e5c)
 - [x] Card Details population on selection (mtg-fa42e3)
 - [x] Max mana calculation fix (mtg-f6b05f)
-- [ ] UI reorganization (mtg-f567b1) ← NEXT
+- [x] UI reorganization (mtg-f567b1) ← COMPLETED
+- [ ] Remaining enhancements (mtg-29343b: turn display, mtg-897dd0: card text newlines)
 - [ ] Remaining interactive features (mtg-1a7bae: mouse support)
 - [ ] Advanced choice presentation (mtg-8a3ffb)
 
@@ -86,10 +91,12 @@ Updated order based on user priority:
 4. **COMPLETED - Critical bugs:**
    - ✓ mtg-f6b05f: Max mana calculation bug (fb0b159, 8d61403)
 
-5. **PRIORITY 1 - UI reorganization:**
-   - mtg-f567b1: Move Stack/Actions, remove Dock ← NEXT
+5. **COMPLETED - UI reorganization:**
+   - ✓ mtg-f567b1: Move Stack/Actions, remove Dock
 
-6. **Remaining interactive features:**
+6. **Remaining enhancements:**
+   - mtg-29343b: Turn display improvements (priority 2)
+   - mtg-897dd0: Card text newlines (priority 3)
    - mtg-1a7bae: Mouse support
 
 7. **Choice improvements:**

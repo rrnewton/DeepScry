@@ -35,21 +35,12 @@ enum InputAction {
     Exit,
 }
 
-/// Tab indices for left panels
+/// Tab indices for left panels (Combat|Log only)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 enum LeftTab {
-    Stack = 0,
-    Combat = 1,
-    Log = 2,
-}
-
-/// Tab indices for bottom-left panels
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-enum BottomLeftTab {
-    Prompt = 0,
-    Dock = 1,
+    Combat = 0,
+    Log = 1,
 }
 
 /// Currently focused pane for keyboard navigation
@@ -57,22 +48,22 @@ enum BottomLeftTab {
 enum FocusedPane {
     /// (H)and pane
     Hand,
-    /// (I)nfo pane (Stack/Combat/Log)
+    /// (I)nfo pane (Combat/Log)
     Info,
     /// (Y)our battlefield
     YourBattlefield,
     /// (O)pponent battlefield
     OpponentBattlefield,
-    /// (A)ctions pane (Prompt/Dock)
+    /// (A)ctions pane (Prompt - no tabs)
     Actions,
+    /// (S)tack pane
+    Stack,
 }
 
 /// Application state for the fancy TUI
 struct FancyTuiState {
     /// Currently selected left tab
     left_tab: LeftTab,
-    /// Currently selected bottom-left tab
-    bottom_left_tab: BottomLeftTab,
     /// Currently highlighted choice index (if in choice mode)
     highlighted_choice: usize,
     /// Currently selected card for details view
@@ -92,8 +83,7 @@ struct FancyTuiState {
 impl FancyTuiState {
     fn new() -> Self {
         Self {
-            left_tab: LeftTab::Stack,
-            bottom_left_tab: BottomLeftTab::Prompt,
+            left_tab: LeftTab::Log, // Log is default tab
             highlighted_choice: 0,
             selected_card_id: None,
             logger_memory_mode_enabled: false,
@@ -250,34 +240,36 @@ impl FancyTuiController {
             .constraints([
                 Constraint::Percentage(25), // Left panels
                 Constraint::Percentage(50), // Battlefields
-                Constraint::Percentage(25), // Right panels (Hand + Card Details)
+                Constraint::Percentage(25), // Right panels (Card Details + Hand + Stack)
             ])
             .split(f.area());
 
-        // Left column: split into top tabs and bottom tabs
+        // Left column: split into top tabs (Combat|Log) and bottom Prompt pane
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(60), // Stack|Combat|Log tabs
-                Constraint::Percentage(40), // Prompt|Dock tabs
+                Constraint::Percentage(60), // Combat|Log tabs
+                Constraint::Percentage(40), // Prompt pane (no tabs)
             ])
             .split(main_chunks[0]);
 
-        // Right column: split into Card Details and Hand
+        // Right column: split into Card Details, Hand, and Stack (33% each)
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(50), // Card Details
-                Constraint::Percentage(50), // Hand
+                Constraint::Percentage(33), // Card Details
+                Constraint::Percentage(33), // Hand
+                Constraint::Percentage(34), // Stack (34% to account for rounding)
             ])
             .split(main_chunks[2]);
 
         // Draw all panels
         self.draw_left_tabs(f, left_chunks[0], view);
-        self.draw_bottom_left_tabs(f, left_chunks[1], view, current_prompt, choices);
+        self.draw_prompt(f, left_chunks[1], view, current_prompt, choices);
         self.draw_battlefields(f, main_chunks[1], view);
         self.draw_card_details(f, right_chunks[0], view);
         self.draw_hand(f, right_chunks[1], view);
+        self.draw_stack(f, right_chunks[2], view);
     }
 
     /// Draw the left tabbed panel (Stack|Combat|Log)
@@ -299,7 +291,7 @@ impl FancyTuiController {
             ])
         };
 
-        let titles = vec!["Stack", "Combat", "Log"];
+        let titles = vec!["Combat", "Log"];
         let tabs = Tabs::new(titles)
             .block(
                 Block::default()
@@ -328,17 +320,9 @@ impl FancyTuiController {
         };
 
         match self.state.left_tab {
-            LeftTab::Stack => self.draw_stack_view(f, content_area, view),
             LeftTab::Combat => self.draw_combat_view(f, content_area, view),
             LeftTab::Log => self.draw_log_view(f, content_area, view),
         }
-    }
-
-    /// Draw the stack view
-    fn draw_stack_view(&self, f: &mut Frame, area: Rect, _view: &GameStateView) {
-        let text = Text::from("(Stack empty)");
-        let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, area);
     }
 
     /// Draw the combat view
@@ -365,12 +349,12 @@ impl FancyTuiController {
         f.render_widget(list, area);
     }
 
-    /// Draw the bottom-left tabbed panel (Prompt|Dock)
-    fn draw_bottom_left_tabs(
+    /// Draw the Prompt pane (Actions) with choices
+    fn draw_prompt(
         &self,
         f: &mut Frame,
         area: Rect,
-        view: &GameStateView,
+        _view: &GameStateView,
         current_prompt: Option<&str>,
         choices: &[(String, bool)],
     ) {
@@ -391,58 +375,22 @@ impl FancyTuiController {
             ])
         };
 
-        let titles = vec!["Prompt", "Dock"];
-        let tabs = Tabs::new(titles)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color)),
-            )
-            .select(self.state.bottom_left_tab as usize)
-            .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color));
+        let inner_area = block.inner(area);
+        f.render_widget(block, area);
 
-        let inner_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 3,
-        };
-        f.render_widget(tabs, inner_area);
-
-        // Content area (below tabs)
-        let content_area = Rect {
-            x: area.x + 1,
-            y: area.y + 3,
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(4),
-        };
-
-        match self.state.bottom_left_tab {
-            BottomLeftTab::Prompt => self.draw_prompt_view(f, content_area, view, current_prompt, choices),
-            BottomLeftTab::Dock => self.draw_dock_view(f, content_area, view),
-        }
-    }
-
-    /// Draw the prompt view with choices
-    fn draw_prompt_view(
-        &self,
-        f: &mut Frame,
-        area: Rect,
-        _view: &GameStateView,
-        current_prompt: Option<&str>,
-        choices: &[(String, bool)],
-    ) {
         if let Some(prompt) = current_prompt {
             // Show prompt text
             let prompt_text = Text::from(prompt);
             let prompt_height = 3; // Reserve lines for prompt
             let prompt_area = Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: prompt_height.min(area.height),
+                x: inner_area.x,
+                y: inner_area.y,
+                width: inner_area.width,
+                height: prompt_height.min(inner_area.height),
             };
             let paragraph = Paragraph::new(prompt_text)
                 .wrap(Wrap { trim: true })
@@ -452,10 +400,10 @@ impl FancyTuiController {
             // Show choices below prompt
             if !choices.is_empty() {
                 let choices_area = Rect {
-                    x: area.x,
-                    y: area.y + prompt_height,
-                    width: area.width,
-                    height: area.height.saturating_sub(prompt_height),
+                    x: inner_area.x,
+                    y: inner_area.y + prompt_height,
+                    width: inner_area.width,
+                    height: inner_area.height.saturating_sub(prompt_height),
                 };
 
                 let items: Vec<ListItem> = choices
@@ -479,15 +427,8 @@ impl FancyTuiController {
         } else {
             let text = Text::from("(Waiting for input...)");
             let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-            f.render_widget(paragraph, area);
+            f.render_widget(paragraph, inner_area);
         }
-    }
-
-    /// Draw the dock view (for future expansion - card library, etc.)
-    fn draw_dock_view(&self, f: &mut Frame, area: Rect, _view: &GameStateView) {
-        let text = Text::from("(Dock - future feature)");
-        let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-        f.render_widget(paragraph, area);
     }
 
     /// Draw both battlefields (opponent on top, player on bottom)
@@ -1034,6 +975,38 @@ impl FancyTuiController {
         f.render_widget(mana_paragraph, mana_area);
     }
 
+    /// Draw the Stack pane
+    fn draw_stack(&self, f: &mut Frame, area: Rect, _view: &GameStateView) {
+        // Determine focus state
+        let is_focused = self.state.focused_pane == FocusedPane::Stack;
+        let border_color = if is_focused { Color::White } else { Color::Gray };
+
+        // Create title with highlighted first letter
+        let title = if is_focused {
+            Line::from(vec![
+                Span::styled("(S)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("tack", Style::default().add_modifier(Modifier::BOLD)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("(S)", Style::default().fg(Color::Yellow)),
+                Span::raw("tack"),
+            ])
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color));
+        let inner_area = block.inner(area);
+        f.render_widget(block, area);
+
+        // TODO: Display actual stack contents from game state
+        let text = Text::from("(Stack empty)");
+        let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(paragraph, inner_area);
+    }
+
     /// Wait for user input and update highlighted choice
     fn wait_for_choice_input(&mut self, num_choices: usize, view: &GameStateView) -> io::Result<InputAction> {
         loop {
@@ -1079,6 +1052,10 @@ impl FancyTuiController {
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') => {
                             self.state.focused_pane = FocusedPane::Actions;
+                            return Ok(InputAction::Continue); // Redraw needed
+                        }
+                        KeyCode::Char('s') | KeyCode::Char('S') => {
+                            self.state.focused_pane = FocusedPane::Stack;
                             return Ok(InputAction::Continue); // Redraw needed
                         }
                         // Arrow key navigation - route based on focused pane
