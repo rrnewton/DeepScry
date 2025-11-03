@@ -67,4 +67,4 @@ For terminal display, this means cards should be approximately:
 
 ## Dependencies
 
-Should be done before: mtg-TBD (card border colors) - easier to add colors to well-formatted cards
+Should be done before: mtg-bc661f (card border colors) - easier to add colors to well-formatted cards
