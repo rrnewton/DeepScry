@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T20:13:00.046612305+00:00
+updated_at: 2025-11-03T20:23:35.184971996+00:00
 ---
 
 # Description
@@ -38,9 +38,10 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 
 **Infrastructure:**
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
+- ✓ mtg-f6b05f: Fix max mana calculation for dual lands (commits fb0b159, 8d61403)
 
-**Bugs (Priority 2):**
-- mtg-f6b05f: Fix max mana calculation for dual lands
+**UI Reorganization (Priority 1):**
+- mtg-f567b1: Move Stack and Actions panes, remove Dock tab
 
 **Deferred improvements:**
 - mtg-6326b9: Card rendering improvements with intelligent space usage
@@ -55,7 +56,8 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Pane focus system (mtg-b3f1fe)
 - [x] Card navigation in Hand and Battlefield (commit c4d0e5c)
 - [x] Card Details population on selection (mtg-fa42e3)
-- [ ] Critical bugs (mtg-f6b05f: max mana calculation)
+- [x] Max mana calculation fix (mtg-f6b05f)
+- [ ] UI reorganization (mtg-f567b1) ← NEXT
 - [ ] Remaining interactive features (mtg-1a7bae: mouse support)
 - [ ] Advanced choice presentation (mtg-8a3ffb)
 
@@ -81,14 +83,17 @@ Updated order based on user priority:
    - ✓ Card navigation in Hand and Battlefield (c4d0e5c)
    - ✓ mtg-fa42e3: Card Details population
 
-4. **PRIORITY 2 - Critical bugs:**
-   - mtg-f6b05f: Max mana calculation bug ← HIGH PRIORITY
+4. **COMPLETED - Critical bugs:**
+   - ✓ mtg-f6b05f: Max mana calculation bug (fb0b159, 8d61403)
 
-5. **Remaining interactive features:**
+5. **PRIORITY 1 - UI reorganization:**
+   - mtg-f567b1: Move Stack/Actions, remove Dock ← NEXT
+
+6. **Remaining interactive features:**
    - mtg-1a7bae: Mouse support
 
-6. **Choice improvements:**
+7. **Choice improvements:**
    - mtg-8a3ffb: Enhanced choice highlighting
 
-7. **Polish (deferred):**
+8. **Polish (deferred):**
    - mtg-6326b9: Improved card rendering
