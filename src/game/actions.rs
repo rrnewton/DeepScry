@@ -237,6 +237,7 @@ impl GameState {
         //
         // For damage spells targeting permanents, verify targets are still on battlefield
         // (they might have been removed by another spell resolving first)
+        // For counterspells, verify target is still on stack
         let mut all_targets_illegal = false;
         if !chosen_targets.is_empty() {
             // Check if this spell deals damage to permanents
@@ -257,6 +258,21 @@ impl GameState {
                     .any(|&target_id| !self.battlefield.contains(target_id));
                 if any_target_gone {
                     // Spell fizzles - permanent targets are no longer valid
+                    all_targets_illegal = true;
+                }
+            }
+
+            // Check if this spell counters spells on the stack
+            let targets_stack = effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CounterSpell { .. }));
+
+            if targets_stack {
+                // Check if any stack target is no longer on the stack
+                // This happens when multiple counterspells target the same spell
+                let any_target_gone = chosen_targets.iter().any(|&target_id| !self.stack.contains(target_id));
+                if any_target_gone {
+                    // Spell fizzles - target spell is no longer on the stack
                     all_targets_illegal = true;
                 }
             }
