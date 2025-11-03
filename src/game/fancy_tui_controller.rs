@@ -162,7 +162,12 @@ impl FancyTuiController {
     fn draw_left_tabs(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let titles = vec!["Stack", "Combat", "Log"];
         let tabs = Tabs::new(titles)
-            .block(Block::default().borders(Borders::ALL).title("Info"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Info")
+                    .border_style(Style::default().fg(Color::Gray)),
+            )
             .select(self.state.left_tab as usize)
             .style(Style::default().fg(Color::White))
             .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
@@ -230,7 +235,12 @@ impl FancyTuiController {
     ) {
         let titles = vec!["Prompt", "Dock"];
         let tabs = Tabs::new(titles)
-            .block(Block::default().borders(Borders::ALL).title("Actions"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Actions")
+                    .border_style(Style::default().fg(Color::Gray)),
+            )
             .select(self.state.bottom_left_tab as usize)
             .style(Style::default().fg(Color::White))
             .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
@@ -352,18 +362,23 @@ impl FancyTuiController {
         let life = view.player_life(player_id);
         let hand_size = view.player_hand(player_id).len();
         let graveyard_size = view.player_graveyard(player_id).len();
+        let library_size = view.player_library(player_id).len();
 
         let player_label = if player_id == view.player_id() { "You" } else { "Opp" };
 
         let info_text = format!(
-            "{}: {} life | Hand: {} | GY: {}",
-            player_label, life, hand_size, graveyard_size
+            "{}: {} life | Hand: {} | GY: {} | Lib: {}",
+            player_label, life, hand_size, graveyard_size, library_size
         );
 
         let paragraph = Paragraph::new(info_text)
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Gray)),
+            );
 
         f.render_widget(paragraph, area);
     }
@@ -398,7 +413,10 @@ impl FancyTuiController {
             },
         );
 
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(Color::Gray));
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
@@ -511,7 +529,7 @@ impl FancyTuiController {
         let block = Block::default()
             .borders(Borders::ALL)
             .title("Card Details")
-            .style(Style::default());
+            .border_style(Style::default().fg(Color::Gray));
 
         let inner_area = block.inner(area);
         f.render_widget(block, area);
@@ -568,7 +586,7 @@ impl FancyTuiController {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!("Hand ({})", hand.len()))
-            .style(Style::default());
+            .border_style(Style::default().fg(Color::Gray));
 
         let inner_area = block.inner(area);
         f.render_widget(block, area);

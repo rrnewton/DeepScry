@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Add library count to status bar'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:34:45.638090976+00:00
-updated_at: 2025-11-03T16:34:45.638090976+00:00
+updated_at: 2025-11-03T16:46:54.239664899+00:00
 ---
 
 # Description

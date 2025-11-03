@@ -252,6 +252,14 @@ impl<'a> GameStateView<'a> {
             .unwrap_or(&[])
     }
 
+    /// Get cards in a specific player's library
+    pub fn player_library(&self, player_id: PlayerId) -> &[CardId] {
+        self.game
+            .get_player_zones(player_id)
+            .map(|zones| zones.library.cards.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Check if a card is in a specific zone
     pub fn is_card_in_zone(&self, card_id: CardId, zone: Zone) -> bool {
         match zone {
