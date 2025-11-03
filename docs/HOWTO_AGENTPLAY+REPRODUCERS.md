@@ -21,11 +21,13 @@ The easiest way to play games step-by-step and build reproducers is using the `a
 ```
 
 This will:
-1. Initialize the game with deterministic seed (42)
-2. Stop before the first choice is needed
-3. Show you the available actions
-4. Save a snapshot to `agentplay/game.snapshot`
-5. Print a REPRODUCER command for easy replay
+1. Archive any existing `current.game` session to a numbered folder (001.game, 002.game, etc.)
+2. Create a fresh `agentplay/current.game/` directory for this session
+3. Initialize the game with deterministic seed (42)
+4. Stop before the first choice is needed
+5. Show you the available actions
+6. Save session files to `agentplay/current.game/`
+7. Print a REPRODUCER command for easy replay
 
 ### Adding Choices One at a Time
 
@@ -43,11 +45,11 @@ After start_game.sh shows you the available choices, add them one at a time:
 ```
 
 Each `continue_game.sh` call:
-- Appends the choice to `agentplay/choices.txt`
-- Resumes from the snapshot with all choices so far
-- Plays ONE more choice
+- Appends the choice to `agentplay/current.game/choices.txt`
+- Replays the game from scratch with ALL choices accumulated so far
+- Stops after the next choice is needed
 - Shows the NEXT available choices
-- Saves an updated snapshot
+- Updates `agentplay/current.game/reproduce_game.sh` with the full reproducer
 
 ### Rich Text Commands
 
@@ -70,27 +72,43 @@ The agentplay workflow automatically builds reproducers:
 
 1. Start a game session with `start_game.sh`
 2. Add choices with `continue_game.sh` until you reach the bug
-3. Copy the REPRODUCER command from the output
-4. That command replays the entire sequence deterministically
+3. The reproducer is automatically saved to `agentplay/current.game/reproduce_game.sh`
+4. Run that script to replay the entire sequence deterministically
+5. Or copy the REPRODUCER command from the script output
 
 Example reproducer from the output:
 ```bash
-mtg resume "/path/to/agentplay/game.snapshot" \
-    --override-p1=fixed --override-p2=fixed \
+mtg tui decks/simple_bolt.dck decks/simple_bolt.dck \
+    --p1=fixed --p2=fixed \
     --p1-fixed-inputs="0;1;pass;play swamp" \
     --p2-fixed-inputs="0;1;pass;play swamp" \
-    --stop-on-choice="5" --json --log-tail=100
+    --stop-on-choice=5 \
+    --seed=42 --json --log-tail=100
 ```
+
+The reproducer script in `current.game/reproduce_game.sh` includes the full `cargo run` command and is ready to execute.
 
 ### Session Management
 
 ```bash
-# Clean up and start fresh
-rm -f agentplay/game.snapshot agentplay/choices.txt
-
-# Or just run start_game.sh again (it cleans up automatically)
+# Start a new game (automatically archives the current session)
 ./agentplay/start_game.sh decks/new_deck.dck
+
+# Access archived sessions
+ls agentplay/*.game/  # Shows current.game, 001.game, 002.game, etc.
+
+# Replay an archived session
+./agentplay/001.game/reproduce_game.sh
+
+# Clean up all sessions
+rm -rf agentplay/*.game/
 ```
+
+Session files are stored in `agentplay/current.game/`:
+- `choices.txt` - All choices made so far (one per line)
+- `game.snapshot` - Latest game state snapshot
+- `reproduce_game.sh` - Executable reproducer script
+- `initial_args.txt` - Original mtg tui arguments
 
 ## Advanced: Direct mtg tui Usage
 
@@ -188,8 +206,10 @@ Stop after a specific number of total choices (both players):
 - Turn number and choice counters
 
 **REPRODUCER commands** are automatically printed by the agentplay scripts:
-- Copy-paste ready for bug reports
+- Saved to `current.game/reproduce_game.sh` as an executable script
+- Also printed in the terminal output for easy copy-paste
 - Include all choices made so far
+- Replay from scratch using `mtg tui` (not snapshots)
 - Deterministic (same seed, same choices = same outcome)
 
 ## Tips for Building Good Reproducers

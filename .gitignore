@@ -50,7 +50,4 @@ benchmark_output.log
 .claude/settings.local.json
 
 # Agent play session files
-agentplay/*.snapshot
-agentplay/*.log
-agentplay/choices.txt
-agentplay/last_command.txt
+agentplay/*.game/

@@ -11,6 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+GAME_DIR="$SCRIPT_DIR/current.game"
 
 # Parse arguments
 if [[ $# -lt 1 ]]; then
@@ -25,50 +26,83 @@ fi
 
 NEW_CHOICE="$1"
 
-# Check that we have a snapshot from a previous session
-if [[ ! -f "$SCRIPT_DIR/game.snapshot" ]]; then
-    echo "Error: No game.snapshot found. Run start_game.sh first."
+# Check that we have a game directory
+if [[ ! -d "$GAME_DIR" ]]; then
+    echo "Error: No current.game found. Run start_game.sh first."
+    exit 1
+fi
+
+# Check that we have initial args
+if [[ ! -f "$GAME_DIR/initial_args.txt" ]]; then
+    echo "Error: initial_args.txt not found. Run start_game.sh first."
     exit 1
 fi
 
 # Check that we have a choices file
-if [[ ! -f "$SCRIPT_DIR/choices.txt" ]]; then
+if [[ ! -f "$GAME_DIR/choices.txt" ]]; then
     echo "Error: choices.txt not found. Run start_game.sh first."
     exit 1
 fi
 
 # Append the new choice to the choices file
-echo "$NEW_CHOICE" >> "$SCRIPT_DIR/choices.txt"
+echo "$NEW_CHOICE" >> "$GAME_DIR/choices.txt"
 
 # Count total choices made so far
-CHOICE_COUNT=$(wc -l < "$SCRIPT_DIR/choices.txt" | tr -d ' ')
+CHOICE_COUNT=$(wc -l < "$GAME_DIR/choices.txt" | tr -d ' ')
 NEXT_STOP=$((CHOICE_COUNT + 1))
 
 # Read all choices and join with semicolons
-if [[ -s "$SCRIPT_DIR/choices.txt" ]]; then
-    CHOICES=$(tr '\n' ';' < "$SCRIPT_DIR/choices.txt" | sed 's/;$//')
+if [[ -s "$GAME_DIR/choices.txt" ]]; then
+    CHOICES=$(tr '\n' ';' < "$GAME_DIR/choices.txt" | sed 's/;$//')
 else
     CHOICES=""
 fi
 
-# Build the mtg command - resume from snapshot with fixed controllers for both players
+# Read initial game arguments
+INITIAL_ARGS=$(cat "$GAME_DIR/initial_args.txt")
+
+# Build the mtg command - start from scratch with all choices accumulated so far
 # Both players use the same choice script - the game engine will ask each player in turn
 # Stop after one more choice (total choices + 1)
 CMD=(
-    cargo run --release --bin mtg -- resume
-    "$SCRIPT_DIR/game.snapshot"
-    --override-p1=fixed
-    --override-p2=fixed
+    cargo run --release --bin mtg -- tui
+    $INITIAL_ARGS  # Note: no quotes to allow word splitting
+    --p1=fixed
+    --p2=fixed
     --p1-fixed-inputs="$CHOICES"
     --p2-fixed-inputs="$CHOICES"
     --stop-on-choice="$NEXT_STOP"
-    --snapshot-output="$SCRIPT_DIR/game.snapshot"
+    --snapshot-output="$GAME_DIR/game.snapshot"
     --json  # Use JSON format for better debuggability
     --log-tail=100
+    --seed=42  # Deterministic seed for reproducibility
 )
 
-# Build reproducer command
-REPRODUCER_CMD="mtg resume \"$SCRIPT_DIR/game.snapshot\" --override-p1=fixed --override-p2=fixed --p1-fixed-inputs=\"$CHOICES\" --p2-fixed-inputs=\"$CHOICES\" --stop-on-choice=\"$NEXT_STOP\" --json --log-tail=100"
+# Build reproducer command (without cargo run for cleaner output)
+REPRODUCER_CMD="mtg tui $INITIAL_ARGS --p1=fixed --p2=fixed --p1-fixed-inputs=\"$CHOICES\" --p2-fixed-inputs=\"$CHOICES\" --stop-on-choice=\"$NEXT_STOP\" --seed=42 --json --log-tail=100"
+
+# Update the reproduce_game.sh script with current state
+cat > "$GAME_DIR/reproduce_game.sh" <<EOF
+#!/usr/bin/env bash
+# Reproducer for this game session
+# Generated: $(date)
+# Choices made: $CHOICE_COUNT
+set -euo pipefail
+
+REPO_ROOT="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "\$REPO_ROOT"
+
+cargo run --release --bin mtg -- tui $INITIAL_ARGS \\
+    --p1=fixed \\
+    --p2=fixed \\
+    --p1-fixed-inputs="$CHOICES" \\
+    --p2-fixed-inputs="$CHOICES" \\
+    --stop-on-choice=$NEXT_STOP \\
+    --seed=42 \\
+    --json \\
+    --log-tail=100
+EOF
+chmod +x "$GAME_DIR/reproduce_game.sh"
 
 echo "============================================"
 echo "Continuing agent play session"
@@ -86,3 +120,4 @@ cd "$REPO_ROOT"
 
 echo ""
 echo "Use ./agentplay/continue_game.sh <choice> to add another choice."
+echo "Or run ./agentplay/current.game/reproduce_game.sh to replay the full session."
