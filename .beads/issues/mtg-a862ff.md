@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Turn counter and phase indicator in status'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:34:59.128652163+00:00
-updated_at: 2025-11-03T16:34:59.128652163+00:00
+updated_at: 2025-11-03T16:51:39.787375869+00:00
 ---
 
 # Description

@@ -309,6 +309,11 @@ impl<'a> GameStateView<'a> {
         self.game.turn.turn_number
     }
 
+    /// Get the active player (whose turn it is)
+    pub fn active_player(&self) -> PlayerId {
+        self.game.turn.active_player
+    }
+
     /// Get a card's name (convenience method)
     pub fn get_card_name(&self, card_id: CardId) -> Option<String> {
         self.card_name(card_id)
