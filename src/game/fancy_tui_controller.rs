@@ -621,42 +621,195 @@ impl FancyTuiController {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
-        // Render card groups
-        let mut y_offset = 0;
-
-        if !lands.is_empty() {
-            y_offset += self.render_card_group(f, inner_area, y_offset, view, &lands, "Lands", Color::Green);
-        }
-
-        if !creatures.is_empty() {
-            y_offset += self.render_card_group(f, inner_area, y_offset, view, &creatures, "Creatures", Color::Red);
-        }
-
-        if !others.is_empty() {
-            self.render_card_group(f, inner_area, y_offset, view, &others, "Other", Color::Blue);
-        }
-
         if player_cards.is_empty() {
             let empty_text = Text::from("(Empty)");
             let paragraph = Paragraph::new(empty_text)
                 .style(Style::default().fg(Color::DarkGray))
                 .alignment(Alignment::Center);
             f.render_widget(paragraph, inner_area);
+            return;
+        }
+
+        // Build card groups for size calculation
+        let mut card_groups = Vec::new();
+        if !lands.is_empty() {
+            card_groups.push((lands.clone(), "Lands"));
+        }
+        if !creatures.is_empty() {
+            card_groups.push((creatures.clone(), "Creatures"));
+        }
+        if !others.is_empty() {
+            card_groups.push((others.clone(), "Other"));
+        }
+
+        // Calculate optimal card size for this battlefield
+        let (card_width, card_height) = Self::calculate_optimal_card_size(inner_area, &card_groups, view);
+
+        // Render card groups with optimal size
+        let mut y_offset = 0;
+
+        if !lands.is_empty() {
+            y_offset += self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &lands,
+                "Lands",
+                Color::Green,
+                card_width,
+                card_height,
+            );
+        }
+
+        if !creatures.is_empty() {
+            y_offset += self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &creatures,
+                "Creatures",
+                Color::Red,
+                card_width,
+                card_height,
+            );
+        }
+
+        if !others.is_empty() {
+            self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &others,
+                "Other",
+                Color::Blue,
+                card_width,
+                card_height,
+            );
         }
     }
 
-    /// Get card dimensions based on tapped state
-    /// Tapped cards swap width and height to simulate 90-degree rotation
-    fn get_card_dimensions(view: &GameStateView, card_id: CardId) -> (u16, u16) {
-        const DEFAULT_WIDTH: u16 = 10;
-        const DEFAULT_HEIGHT: u16 = 7;
+    /// Card size constants
+    const DEFAULT_CARD_WIDTH: u16 = 10;
+    const DEFAULT_CARD_HEIGHT: u16 = 7;
+    const MIN_CARD_WIDTH: u16 = 5;
+    const MIN_CARD_HEIGHT: u16 = 4;
+    const CARD_SPACING: u16 = 1;
 
+    /// Get card dimensions based on tapped state and base size
+    /// Tapped cards swap width and height to simulate 90-degree rotation
+    fn get_card_dimensions_with_size(
+        view: &GameStateView,
+        card_id: CardId,
+        base_width: u16,
+        base_height: u16,
+    ) -> (u16, u16) {
         let is_tapped = view.is_tapped(card_id);
         if is_tapped {
             // Swap dimensions for tapped cards (simulate rotation)
-            (DEFAULT_HEIGHT, DEFAULT_WIDTH)
+            (base_height, base_width)
         } else {
-            (DEFAULT_WIDTH, DEFAULT_HEIGHT)
+            (base_width, base_height)
+        }
+    }
+
+    /// Test if all cards fit in the battlefield area with given card size
+    fn test_card_size_fits(
+        area: Rect,
+        card_groups: &[(Vec<CardId>, &str)], // (cards, label)
+        view: &GameStateView,
+        card_width: u16,
+        card_height: u16,
+    ) -> bool {
+        let mut y_offset = 0u16;
+
+        for (cards, _label) in card_groups {
+            if y_offset >= area.height {
+                return false;
+            }
+
+            // Account for label height
+            y_offset += 1;
+
+            // Simulate packing for this group
+            let mut current_x = 0u16;
+            let mut row_height = 0u16;
+
+            for &card_id in cards {
+                let (card_w, card_h) = Self::get_card_dimensions_with_size(view, card_id, card_width, card_height);
+
+                // Check if card fits on current row
+                if current_x + card_w > area.width && current_x > 0 {
+                    // Need to wrap to next row
+                    current_x = 0;
+                    y_offset += row_height + Self::CARD_SPACING;
+                    row_height = 0;
+
+                    // Check if we have vertical space for new row
+                    if y_offset >= area.height {
+                        return false;
+                    }
+                }
+
+                // Check if this card fits vertically
+                if y_offset + card_h > area.height {
+                    return false;
+                }
+
+                // Update position for next card
+                current_x += card_w + Self::CARD_SPACING;
+                row_height = row_height.max(card_h);
+            }
+
+            // Finalize this group's height
+            if current_x > 0 {
+                y_offset += row_height;
+            }
+        }
+
+        true
+    }
+
+    /// Calculate optimal card size for battlefield
+    /// Returns (width, height) that maximizes card size while fitting all cards
+    fn calculate_optimal_card_size(
+        area: Rect,
+        card_groups: &[(Vec<CardId>, &str)],
+        view: &GameStateView,
+    ) -> (u16, u16) {
+        // Try default size first
+        if Self::test_card_size_fits(
+            area,
+            card_groups,
+            view,
+            Self::DEFAULT_CARD_WIDTH,
+            Self::DEFAULT_CARD_HEIGHT,
+        ) {
+            // Try increasing size (greedy algorithm)
+            let mut width = Self::DEFAULT_CARD_WIDTH;
+            let mut height = Self::DEFAULT_CARD_HEIGHT;
+
+            // Increment by 1 each time, maintaining aspect ratio
+            while Self::test_card_size_fits(area, card_groups, view, width + 1, height + 1) {
+                width += 1;
+                height += 1;
+            }
+
+            (width, height)
+        } else {
+            // Default doesn't fit, shrink down
+            let mut width = Self::DEFAULT_CARD_WIDTH;
+            let mut height = Self::DEFAULT_CARD_HEIGHT;
+
+            while !Self::test_card_size_fits(area, card_groups, view, width, height) && width > Self::MIN_CARD_WIDTH {
+                width -= 1;
+                // Maintain aspect ratio (0.7)
+                height = ((width as f32) * 0.7).round().max(Self::MIN_CARD_HEIGHT as f32) as u16;
+            }
+
+            (width.max(Self::MIN_CARD_WIDTH), height.max(Self::MIN_CARD_HEIGHT))
         }
     }
 
@@ -671,6 +824,8 @@ impl FancyTuiController {
         cards: &[CardId],
         label: &str,
         color: Color,
+        card_width: u16,
+        card_height: u16,
     ) -> u16 {
         if y_offset >= area.height {
             return 0;
@@ -689,7 +844,6 @@ impl FancyTuiController {
         ));
         f.render_widget(Paragraph::new(label_text), label_area);
 
-        const CARD_SPACING: u16 = 1;
         let mut rendered_height = 1; // Start after label
 
         // Dynamic packing: pack cards left-to-right, wrapping when needed
@@ -698,18 +852,18 @@ impl FancyTuiController {
         let mut row_height = 0u16;
 
         for &card_id in cards {
-            let (card_width, card_height) = Self::get_card_dimensions(view, card_id);
+            let (card_w, card_h) = Self::get_card_dimensions_with_size(view, card_id, card_width, card_height);
 
             // Check if card fits on current row
-            if current_x + card_width > area.x + area.width && current_x > area.x {
+            if current_x + card_w > area.x + area.width && current_x > area.x {
                 // Wrap to next row
                 current_x = area.x;
-                current_y += row_height + CARD_SPACING;
+                current_y += row_height + Self::CARD_SPACING;
                 row_height = 0;
             }
 
             // Check if we have vertical space
-            if current_y + card_height > area.y + area.height {
+            if current_y + card_h > area.y + area.height {
                 break; // No more vertical space
             }
 
@@ -717,14 +871,14 @@ impl FancyTuiController {
             let card_area = Rect {
                 x: current_x,
                 y: current_y,
-                width: card_width,
-                height: card_height,
+                width: card_w,
+                height: card_h,
             };
             self.render_card_box(f, card_area, view, card_id);
 
             // Update position for next card
-            current_x += card_width + CARD_SPACING;
-            row_height = row_height.max(card_height);
+            current_x += card_w + Self::CARD_SPACING;
+            row_height = row_height.max(card_h);
         }
 
         // Total height used by this group
