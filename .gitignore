@@ -45,3 +45,4 @@ game.snapshot
 test_artifacts/
 __pycache__/
 tournament_errors.txt
+benchmark_output.log
