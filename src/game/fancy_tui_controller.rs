@@ -536,6 +536,14 @@ impl FancyTuiController {
         let active_player = view.active_player();
         let is_active = player_id == active_player;
 
+        // Calculate player's turn number (P1 goes on odd turns, P2 on even)
+        let is_first_player = (active_player == player_id) == (turn_number % 2 == 1);
+        let player_turn = if is_first_player {
+            turn_number.div_ceil(2)
+        } else {
+            turn_number / 2
+        };
+
         // All phases with current one underlined
         let all_steps = [
             Step::Untap,
@@ -551,7 +559,7 @@ impl FancyTuiController {
             Step::End,
         ];
 
-        let mut phase_spans = vec![Span::raw(format!("Turn: {}, ", turn_number))];
+        let mut phase_spans = vec![Span::raw(format!("Turn: {}({}) | ", player_turn, turn_number))];
 
         for (i, step) in all_steps.iter().enumerate() {
             let abbrev = Self::step_abbrev(*step);
@@ -571,7 +579,10 @@ impl FancyTuiController {
         let inner_width = area.width.saturating_sub(4); // Account for borders and padding
         let stats_len = stats_text.len() as u16;
         // Phase text without underline formatting for length calc
-        let phase_text_plain = format!("Turn: {}, UP UK DR M1 BC DA DB CD EC M2 ET", turn_number);
+        let phase_text_plain = format!(
+            "Turn: {}({}) | UP UK DR M1 BC DA DB CD EC M2 ET",
+            player_turn, turn_number
+        );
         let phase_len = phase_text_plain.len() as u16;
         let padding = inner_width.saturating_sub(stats_len + phase_len);
 
