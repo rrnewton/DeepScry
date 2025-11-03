@@ -441,16 +441,27 @@ impl HeuristicController {
         }
 
         // 2b: Cast creatures (best evaluation first)
-        // TODO(mtg-XX): Evaluate creature quality and choose best
-        // For now, just cast the first creature we find
+        // Evaluate all castable creatures and choose the best one
+        // This prioritizes high-value threats over weak creatures
+        let mut best_creature_ability: Option<SpellAbility> = None;
+        let mut best_creature_value = i32::MIN;
+
         for ability in available {
             if let SpellAbility::CastSpell { card_id } = ability {
                 if let Some(card) = view.get_card(*card_id) {
                     if card.is_creature() {
-                        return Some(ability.clone());
+                        let value = self.evaluate_creature(card);
+                        if value > best_creature_value {
+                            best_creature_value = value;
+                            best_creature_ability = Some(ability.clone());
+                        }
                     }
                 }
             }
+        }
+
+        if best_creature_ability.is_some() {
+            return best_creature_ability;
         }
 
         // Phase 2b: Activated abilities (especially removal during combat)

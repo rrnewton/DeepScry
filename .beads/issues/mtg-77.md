@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-03T16:43:31.758896478+00:00
+updated_at: 2025-11-03T17:29:42.378471323+00:00
 ---
 
 # Description
@@ -20,7 +20,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
 - ✅ Attack decisions with board state evaluation AND aggression levels (mtg-85 COMPLETED)
 - ✅ Multi-phase blocking strategy with gang blocks (3-phase: good/gang/trade/chump) (COMPLETED 2025-11-03)
 - ✅ Basic targeting (best creature)
-- ✅ Basic spell selection (creatures first)
+- ✅ **Intelligent creature casting priority** (cast best creature first) (2025-11-03)
 - ✅ GameStateEvaluator (basic holistic board evaluation)
 - ✅ Opponent life access (bd-4 completed)
 - ✅ Life-in-danger detection for blocking (2025-10-31)
@@ -38,25 +38,30 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Main1 timing for pump abilities
   - Skips mana abilities correctly
   - Reference: DamageDealAi.java:196-200, 682-703; PumpAi.java
+- ✅ **Mana ability recognition from creatures** (ALREADY IMPLEMENTED)
+  - ManaEngine detects Llanowar Elves and similar mana dorks
+  - Handles summoning sickness correctly
+  - Used by game engine to filter castable spells
+  - Reference: mana_engine.rs:327-338, 405-457
 
 **What's Missing:**
 
 ### High Priority (Core AI Strength):
 
-1. **Mana ability recognition from creatures (NEXT PRIORITY)**
-   - Need to recognize Llanowar Elves and similar mana dorks
-   - Should use them to cast bigger threats earlier
-   - Mana engine needs to see creature mana abilities
-
-2. **Combat outcome prediction**
+1. **Combat outcome prediction (NEXT PRIORITY)**
    - Simulate combat before making decisions
    - Critical for knowing if attacks will be lethal
    - Reference: GameStateEvaluator.java:40-67, 91-100
 
-3. **Activated ability improvements**
+2. **Activated ability improvements**
    - Expose game.stack through GameStateView for proper stack-empty checks
    - Better ping targeting (choose "best" killable creature, not just any)
    - Enhanced pump evaluation with combat simulation
+
+3. **Creature casting mana efficiency**
+   - Currently casts highest-value creature, but should consider mana efficiency
+   - Cast cheap threats early, save mana for interaction
+   - Reference: ComputerUtil.java creature casting logic
 
 ### Medium Priority:
 
@@ -117,11 +122,17 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Pump ability evaluation for combat
   - Mana ability skipping
   - Reference: DamageDealAi.java, PumpAi.java
+- ✅ **Intelligent creature casting priority (2025-11-03)**
+  - Evaluates all castable creatures using comprehensive heuristic
+  - Casts highest-value creature rather than first creature found
+  - Considers power, toughness, keywords, evasion, and combat abilities
+  - Reference: Choose best spell logic in HeuristicController
 
 ## Next Steps (Priority Order)
 
-1. **Mana ability recognition from creatures** (CURRENT PRIORITY)
-   - Detect and use Llanowar Elves, Llanowar Elf
+1. **Combat outcome prediction** (CURRENT PRIORITY)
+   - Simulate combat before attack/block decisions
+   - Determine if we can win through combat
 2. Improve activated ability stack-empty checks
-3. Combat outcome prediction
-4. During-combat pump evaluation (BLOCKED)
+3. During-combat pump evaluation (BLOCKED)
+4. Creature casting mana efficiency
