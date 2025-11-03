@@ -789,11 +789,13 @@ impl FancyTuiController {
             name.clone()
         };
 
-        // Apply bold to card name if selected
+        // Apply bold and underline to card name if selected
         if is_selected {
             lines.push(Line::from(Span::styled(
                 display_name,
-                Style::default().add_modifier(Modifier::BOLD),
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::UNDERLINED),
             )));
         } else {
             lines.push(Line::from(display_name));
@@ -1052,6 +1054,7 @@ impl FancyTuiController {
                             .fg(Color::Black)
                             .bg(Color::Yellow)
                             .add_modifier(Modifier::BOLD)
+                            .add_modifier(Modifier::UNDERLINED)
                     } else {
                         Style::default().fg(Color::White)
                     };
