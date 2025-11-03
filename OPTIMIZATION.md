@@ -329,75 +329,15 @@ let untapped_creatures = cards.iter()
 
 ## Status and Backlog
 
-### Known Inefficiencies
+### Active Optimization Work
 
-This section tracks identified allocation hotspots and optimization opportunities discovered through heap profiling (100 games, seed 42).
+For current allocation hotspots, profiling results, and optimization tasks, see the tracking issue:
 
-#### High Priority (From Profiling Results)
+**Issue mtg-2**: Optimization and performance tracking
 
-Based on `make heapprofile` analysis showing 228,016 total allocations across 100 games:
+Run `bd show mtg-2` to view current status, or use `make heapprofile` to generate fresh profiling data.
 
-1. **String formatting in logging** - 77,378 calls, 304.54KB (src/game/game_loop.rs:819)
-   - `Combat.clear()` triggers logging with `format!()` macros
-   - Every end-of-combat step allocates strings for event logging
-   - **Solution**: Use string interning, static strings, or conditional logging
-   - **Impact**: ~34% of all allocations in our code
-
-2. **Draw card logging** - 45,274 calls, 1.39KB (src/game/game_loop.rs:517)
-   - `format!("{} draws {} ({})", player_name, card.name, card_id)`
-   - Creates temporary string on every card draw
-   - **Solution**: Lazy logging or pre-allocated string buffers
-   - **Impact**: ~20% of all allocations in our code
-
-3. **Discard logging** - 43,437 calls, 18.36KB (src/game/game_loop.rs:863)
-   - `format!()` for discard notifications in cleanup step
-   - **Solution**: Same as above - string interning or conditional logging
-   - **Impact**: ~19% of all allocations in our code
-
-4. **PlayerName Display trait** - 41,806 calls, 3.63KB (src/core/types.rs:871)
-   - `write!(f, "{}", self.0)` in Display implementation
-   - Called during every logging operation
-   - **Solution**: Consider avoiding wrapper type or caching formatted names
-   - **Impact**: ~18% of all allocations in our code
-
-5. **Card loader allocations** - 269 calls, 24.58KB (src/loader/database_async.rs:88)
-   - One-time cost during game setup
-   - **Priority**: Low (not per-turn, but largest individual allocation)
-
-#### Medium Priority
-
-- [ ] **Vec reallocations** - Many small Vec allocations for temporary collections
-  - Review `game_loop.rs:418` (player_ids collection)
-  - Review `combat.rs:90,95` (attackers/blockers lists)
-  - **Solution**: Return iterators instead of `Vec` where possible
-
-- [ ] **Zone transfer operations** - Moving cards between zones (hand→battlefield→graveyard)
-  - Potential temporary allocations during card movement
-  - **Solution**: Audit and minimize intermediate allocations
-
-- [ ] **Mana pool calculations** - ManaEngine operations during cost payment
-  - Review for unnecessary cloning of mana costs
-  - Seen in `game_loop.rs:106,277` (mana_cost.clone())
-
-#### Low Priority
-
-- [ ] **Consider arena allocation** for per-turn temporary objects
-- [ ] **Object pooling** for frequently created/destroyed effects
-- [ ] **Investigate intern patterns** for card names and string literals
-- [ ] **Compile-time feature flag** to disable verbose logging in release builds
-
-### Key Insights from Profiling
-
-**Logging is the #1 allocation source** (>70% of allocations in our code):
-- String formatting via `format!()` dominates allocation count
-- Options to address:
-  1. Use `tracing` crate with zero-cost disabled spans
-  2. Implement string interning for repeated messages
-  3. Add compile-time feature flag to disable logging
-  4. Use `Cow<'static, str>` for common log messages
-  5. Pre-allocate string buffers and reuse them
-
-**Good news**: Most allocations are small (bytes to KB range), not large collections. The code isn't doing pathological things like cloning entire game states.
+The tracking issue contains up-to-date heap profiling results with specific file:line references and prioritized optimization opportunities.
 
 ### Optimization Wins
 
