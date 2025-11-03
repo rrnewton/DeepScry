@@ -82,6 +82,7 @@ pub async fn run_tourney(
     p1_type: ControllerType,
     p2_type: ControllerType,
     seed_resolved: Option<u64>,
+    mirror_only: bool,
 ) -> Result<()> {
     println!("=== MTG Forge Rust - Tournament Mode ===\n");
 
@@ -138,7 +139,12 @@ pub async fn run_tourney(
     if let Some(s) = seed_resolved {
         println!("Using tournament seed: {s}");
     }
-    println!("Controllers: P1={:?}, P2={:?}\n", p1_type, p2_type);
+    println!("Controllers: P1={:?}, P2={:?}", p1_type, p2_type);
+    if mirror_only {
+        println!("Mode: Mirror matches only (each deck vs itself)\n");
+    } else {
+        println!();
+    }
 
     // Statistics tracking (thread-safe)
     let stats = Arc::new(Mutex::new(TournamentStats::default()));
@@ -174,7 +180,7 @@ pub async fn run_tourney(
                 *count
             };
 
-            // Select random decks for this game
+            // Select decks for this game
             let deck_count = decks_clone.len();
             use rand::Rng;
             use rand::SeedableRng;
@@ -184,7 +190,13 @@ pub async fn run_tourney(
             let mut deck_rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(deck_rng_seed);
 
             let deck1_idx = deck_rng.gen_range(0..deck_count);
-            let deck2_idx = deck_rng.gen_range(0..deck_count);
+            let deck2_idx = if mirror_only {
+                // Mirror mode: use same deck for both players
+                deck1_idx
+            } else {
+                // Normal mode: randomly select second deck
+                deck_rng.gen_range(0..deck_count)
+            };
 
             let (deck1_path, deck1) = &decks_clone[deck1_idx];
             let (deck2_path, deck2) = &decks_clone[deck2_idx];

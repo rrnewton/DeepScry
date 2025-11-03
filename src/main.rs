@@ -264,6 +264,10 @@ enum Commands {
         /// Random seed for deterministic tournament
         #[arg(long)]
         seed: Option<SeedArg>,
+
+        /// Only play mirror matches (each deck against itself)
+        #[arg(long)]
+        mirror_only: bool,
     },
 
     /// Resume a saved game from snapshot
@@ -425,6 +429,7 @@ async fn main() -> Result<()> {
             p1,
             p2,
             seed,
+            mirror_only,
         } => {
             // Convert ControllerType to tournament::ControllerType
             let p1_tourney = match p1 {
@@ -448,7 +453,16 @@ async fn main() -> Result<()> {
                 }
             };
             let seed_resolved = seed.map(|s| s.resolve());
-            mtg_forge_rs::tournament::run_tourney(decks, games, seconds, p1_tourney, p2_tourney, seed_resolved).await?
+            mtg_forge_rs::tournament::run_tourney(
+                decks,
+                games,
+                seconds,
+                p1_tourney,
+                p2_tourney,
+                seed_resolved,
+                mirror_only,
+            )
+            .await?
         }
         Commands::Resume {
             snapshot_file,
