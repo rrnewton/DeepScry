@@ -33,8 +33,9 @@ fi
 # Create fresh game directory
 mkdir -p "$GAME_DIR"
 
-# Initialize empty choices file
-touch "$GAME_DIR/choices.txt"
+# Initialize empty choice files for each player
+touch "$GAME_DIR/p1_choices.txt"
+touch "$GAME_DIR/p2_choices.txt"
 
 # Store the initial game arguments for reproducers
 echo "$@" > "$GAME_DIR/initial_args.txt"
@@ -92,4 +93,4 @@ cd "$REPO_ROOT"
 "${CMD[@]}"
 
 echo ""
-echo "Session initialized. Use ./agentplay/continue_game.sh <choice> to add choices."
+echo "Session initialized. Use ./agentplay/continue_game.sh --p1 <choice> or --p2 <choice> to add choices."

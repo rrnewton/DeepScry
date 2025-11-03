@@ -81,16 +81,14 @@ impl RichInputController {
     ) -> Option<SpellAbility> {
         let cmd = command.trim().to_lowercase();
 
-        // Handle numeric choice (legacy format)
+        // Handle numeric choice (0-based indexing matching menu display)
+        // Choice N selects available[N] where N is 0..available.len()
+        // Out of bounds values pass priority
         if let Ok(idx) = cmd.parse::<usize>() {
-            if idx == 0 {
-                return None; // Pass priority
-            }
-            let ability_idx = idx - 1;
-            if ability_idx < available.len() {
-                return Some(available[ability_idx].clone());
+            if idx < available.len() {
+                return Some(available[idx].clone());
             } else {
-                return None; // Out of bounds = pass
+                return None; // Out of bounds = pass priority
             }
         }
 
@@ -399,7 +397,8 @@ mod tests {
     #[test]
     fn test_numeric_choice() {
         let player_id = EntityId::new(1);
-        let mut controller = RichInputController::new(player_id, vec!["1".to_string()]);
+        // Use 0-based indexing: choice "0" selects first ability (index 0)
+        let mut controller = RichInputController::new(player_id, vec!["0".to_string()]);
         let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 

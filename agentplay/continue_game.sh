@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Continue an agent play session with one more choice
-# Usage: ./agentplay/continue_game.sh <choice>
-# The game state determines which player's choice this is
+# Usage: ./agentplay/continue_game.sh --p1 <choice>  OR  ./agentplay/continue_game.sh --p2 <choice>
 # Examples:
-#   ./agentplay/continue_game.sh "0"
-#   ./agentplay/continue_game.sh "pass"
-#   ./agentplay/continue_game.sh "play swamp"
+#   ./agentplay/continue_game.sh --p1 "1"
+#   ./agentplay/continue_game.sh --p2 "0"
+#   ./agentplay/continue_game.sh --p1 "play mountain"
 
 set -euo pipefail
 
@@ -14,17 +13,48 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GAME_DIR="$SCRIPT_DIR/current.game"
 
 # Parse arguments
-if [[ $# -lt 1 ]]; then
-    echo "Error: One argument (choice) required"
-    echo "Usage: $0 <choice>"
+PLAYER=""
+CHOICE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --p1)
+            PLAYER="p1"
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "Error: --p1 requires a choice argument"
+                exit 1
+            fi
+            CHOICE="$1"
+            shift
+            ;;
+        --p2)
+            PLAYER="p2"
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "Error: --p2 requires a choice argument"
+                exit 1
+            fi
+            CHOICE="$1"
+            shift
+            ;;
+        *)
+            echo "Error: Unknown argument: $1"
+            echo "Usage: $0 --p1 <choice>  OR  $0 --p2 <choice>"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$PLAYER" ]]; then
+    echo "Error: Must specify --p1 or --p2"
+    echo "Usage: $0 --p1 <choice>  OR  $0 --p2 <choice>"
     echo "Examples:"
-    echo "  $0 \"0\""
-    echo "  $0 \"pass\""
-    echo "  $0 \"play swamp\""
+    echo "  $0 --p1 \"1\""
+    echo "  $0 --p2 \"0\""
+    echo "  $0 --p1 \"play mountain\""
     exit 1
 fi
-
-NEW_CHOICE="$1"
 
 # Check that we have a game directory
 if [[ ! -d "$GAME_DIR" ]]; then
@@ -38,39 +68,49 @@ if [[ ! -f "$GAME_DIR/initial_args.txt" ]]; then
     exit 1
 fi
 
-# Check that we have a choices file
-if [[ ! -f "$GAME_DIR/choices.txt" ]]; then
-    echo "Error: choices.txt not found. Run start_game.sh first."
+# Check that we have choice files
+if [[ ! -f "$GAME_DIR/p1_choices.txt" ]] || [[ ! -f "$GAME_DIR/p2_choices.txt" ]]; then
+    echo "Error: Choice files not found. Run start_game.sh first."
     exit 1
 fi
 
-# Append the new choice to the choices file
-echo "$NEW_CHOICE" >> "$GAME_DIR/choices.txt"
+# Append the new choice to the appropriate player's choice file
+if [[ "$PLAYER" == "p1" ]]; then
+    echo "$CHOICE" >> "$GAME_DIR/p1_choices.txt"
+else
+    echo "$CHOICE" >> "$GAME_DIR/p2_choices.txt"
+fi
 
-# Count total choices made so far
-CHOICE_COUNT=$(wc -l < "$GAME_DIR/choices.txt" | tr -d ' ')
-NEXT_STOP=$((CHOICE_COUNT + 1))
+# Count total choices made so far (for both players combined)
+P1_COUNT=$(wc -l < "$GAME_DIR/p1_choices.txt" | tr -d ' ')
+P2_COUNT=$(wc -l < "$GAME_DIR/p2_choices.txt" | tr -d ' ')
+TOTAL_CHOICES=$((P1_COUNT + P2_COUNT))
+NEXT_STOP=$((TOTAL_CHOICES + 1))
 
 # Read all choices and join with semicolons
-if [[ -s "$GAME_DIR/choices.txt" ]]; then
-    CHOICES=$(tr '\n' ';' < "$GAME_DIR/choices.txt" | sed 's/;$//')
+if [[ -s "$GAME_DIR/p1_choices.txt" ]]; then
+    P1_CHOICES=$(tr '\n' ';' < "$GAME_DIR/p1_choices.txt" | sed 's/;$//')
 else
-    CHOICES=""
+    P1_CHOICES=""
+fi
+
+if [[ -s "$GAME_DIR/p2_choices.txt" ]]; then
+    P2_CHOICES=$(tr '\n' ';' < "$GAME_DIR/p2_choices.txt" | sed 's/;$//')
+else
+    P2_CHOICES=""
 fi
 
 # Read initial game arguments
 INITIAL_ARGS=$(cat "$GAME_DIR/initial_args.txt")
 
 # Build the mtg command - start from scratch with all choices accumulated so far
-# Both players use the same choice script - the game engine will ask each player in turn
-# Stop after one more choice (total choices + 1)
 CMD=(
     cargo run --release --bin mtg -- tui
     $INITIAL_ARGS  # Note: no quotes to allow word splitting
     --p1=fixed
     --p2=fixed
-    --p1-fixed-inputs="$CHOICES"
-    --p2-fixed-inputs="$CHOICES"
+    --p1-fixed-inputs="$P1_CHOICES"
+    --p2-fixed-inputs="$P2_CHOICES"
     --stop-on-choice="$NEXT_STOP"
     --snapshot-output="$GAME_DIR/game.snapshot"
     --json  # Use JSON format for better debuggability
@@ -79,14 +119,14 @@ CMD=(
 )
 
 # Build reproducer command (without cargo run for cleaner output)
-REPRODUCER_CMD="mtg tui $INITIAL_ARGS --p1=fixed --p2=fixed --p1-fixed-inputs=\"$CHOICES\" --p2-fixed-inputs=\"$CHOICES\" --stop-on-choice=\"$NEXT_STOP\" --seed=42 --json --log-tail=100"
+REPRODUCER_CMD="mtg tui $INITIAL_ARGS --p1=fixed --p2=fixed --p1-fixed-inputs=\"$P1_CHOICES\" --p2-fixed-inputs=\"$P2_CHOICES\" --stop-on-choice=\"$NEXT_STOP\" --seed=42 --json --log-tail=100"
 
 # Update the reproduce_game.sh script with current state
 cat > "$GAME_DIR/reproduce_game.sh" <<EOF
 #!/usr/bin/env bash
 # Reproducer for this game session
 # Generated: $(date)
-# Choices made: $CHOICE_COUNT
+# P1 choices: $P1_COUNT | P2 choices: $P2_COUNT | Total: $TOTAL_CHOICES
 set -euo pipefail
 
 REPO_ROOT="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -95,8 +135,8 @@ cd "\$REPO_ROOT"
 cargo run --release --bin mtg -- tui $INITIAL_ARGS \\
     --p1=fixed \\
     --p2=fixed \\
-    --p1-fixed-inputs="$CHOICES" \\
-    --p2-fixed-inputs="$CHOICES" \\
+    --p1-fixed-inputs="$P1_CHOICES" \\
+    --p2-fixed-inputs="$P2_CHOICES" \\
     --stop-on-choice=$NEXT_STOP \\
     --seed=42 \\
     --json \\
@@ -106,7 +146,8 @@ chmod +x "$GAME_DIR/reproduce_game.sh"
 
 echo "============================================"
 echo "Continuing agent play session"
-echo "Choice #$CHOICE_COUNT: $NEW_CHOICE"
+echo "Choice for $PLAYER: $CHOICE"
+echo "P1 choices so far: $P1_COUNT | P2 choices so far: $P2_COUNT"
 echo "Will stop after choice #$NEXT_STOP"
 echo "============================================"
 echo ""
@@ -119,5 +160,5 @@ cd "$REPO_ROOT"
 "${CMD[@]}"
 
 echo ""
-echo "Use ./agentplay/continue_game.sh <choice> to add another choice."
+echo "Use ./agentplay/continue_game.sh --p1 <choice> or --p2 <choice> to add another choice."
 echo "Or run ./agentplay/current.game/reproduce_game.sh to replay the full session."
