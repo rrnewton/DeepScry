@@ -1,0 +1,53 @@
+---
+title: Auto-detect whose turn it is in continue_game.sh
+status: closed
+priority: 2
+issue_type: task
+created_at: 2025-11-03T19:51:08.711762792+00:00
+updated_at: 2025-11-03T20:07:04.852729963+00:00
+closed_at: 2025-11-03T20:07:04.852729913+00:00
+---
+
+# Description
+
+## Problem
+
+Currently continue_game.sh requires --p1 or --p2 flags to specify whose turn it is. This is cumbersome and error-prone for multi-step game replays.
+
+## Solution Implemented
+
+The agentplay script system now auto-detects whose turn is next by:
+1. Reading the snapshot JSON at .game_state.turn.active_player
+2. Mapping player ID (0=P1, 1=P2) to turn
+3. Defaulting to P1 for first move (when no snapshot exists)
+
+## Usage
+
+```bash
+## Auto-detect (recommended)
+./agentplay/continue_game.sh "1"
+
+## Explicit with sanity checking
+./agentplay/continue_game.sh --p1 "1"
+./agentplay/continue_game.sh --p2 "0"
+```
+
+## Implementation Details
+
+- Uses jq to parse .game_state.turn.active_player from snapshot JSON
+- Provides clear error messages if jq is not available
+- --p1/--p2 flags are now OPTIONAL and provide sanity checking
+- If specified flag doesn't match detected turn, script errors with helpful message
+- All error messages include explanation and remediation steps
+
+## Testing
+
+Tested scenarios:
+- ✅ Auto-detection for P1's first move (no snapshot)
+- ✅ Auto-detection for subsequent P1/P2 turns (from snapshot)
+- ✅ Explicit --p2 flag when it's P2's turn (validates and proceeds)
+- ✅ Wrong flag detection (--p1 when it's P2's turn → clear error)
+
+## Status
+
+COMPLETED - Auto-detection works perfectly with optional sanity checking flags.

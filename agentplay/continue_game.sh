@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Continue an agent play session with one more choice
-# Usage: ./agentplay/continue_game.sh --p1 <choice>  OR  ./agentplay/continue_game.sh --p2 <choice>
+# Usage: ./agentplay/continue_game.sh <choice>  OR  ./agentplay/continue_game.sh --p1 <choice>  OR  ./agentplay/continue_game.sh --p2 <choice>
+#
+# The script auto-detects whose turn it is from the snapshot.
+# You can optionally specify --p1 or --p2 for sanity checking.
+#
 # Examples:
-#   ./agentplay/continue_game.sh --p1 "1"
-#   ./agentplay/continue_game.sh --p2 "0"
+#   ./agentplay/continue_game.sh "1"                # Auto-detect whose turn
+#   ./agentplay/continue_game.sh --p1 "1"           # Assert it's P1's turn
+#   ./agentplay/continue_game.sh --p2 "0"           # Assert it's P2's turn
 #   ./agentplay/continue_game.sh --p1 "play mountain"
 
 set -euo pipefail
@@ -13,13 +18,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GAME_DIR="$SCRIPT_DIR/current.game"
 
 # Parse arguments
-PLAYER=""
+PLAYER_OVERRIDE=""  # Set if user explicitly specifies --p1 or --p2
 CHOICE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --p1)
-            PLAYER="p1"
+            PLAYER_OVERRIDE="p1"
             shift
             if [[ $# -eq 0 ]]; then
                 echo "Error: --p1 requires a choice argument"
@@ -29,7 +34,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --p2)
-            PLAYER="p2"
+            PLAYER_OVERRIDE="p2"
             shift
             if [[ $# -eq 0 ]]; then
                 echo "Error: --p2 requires a choice argument"
@@ -39,20 +44,26 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            echo "Error: Unknown argument: $1"
-            echo "Usage: $0 --p1 <choice>  OR  $0 --p2 <choice>"
-            exit 1
+            # If no flag, treat as the choice (auto-detect player)
+            if [[ -z "$CHOICE" ]]; then
+                CHOICE="$1"
+                shift
+            else
+                echo "Error: Unknown argument: $1"
+                echo "Usage: $0 <choice>  OR  $0 --p1 <choice>  OR  $0 --p2 <choice>"
+                exit 1
+            fi
             ;;
     esac
 done
 
-if [[ -z "$PLAYER" ]]; then
-    echo "Error: Must specify --p1 or --p2"
-    echo "Usage: $0 --p1 <choice>  OR  $0 --p2 <choice>"
+if [[ -z "$CHOICE" ]]; then
+    echo "Error: Must provide a choice"
+    echo "Usage: $0 <choice>  OR  $0 --p1 <choice>  OR  $0 --p2 <choice>"
     echo "Examples:"
-    echo "  $0 --p1 \"1\""
-    echo "  $0 --p2 \"0\""
-    echo "  $0 --p1 \"play mountain\""
+    echo "  $0 \"1\"                # Auto-detect whose turn"
+    echo "  $0 --p1 \"1\"           # Assert it's P1's turn"
+    echo "  $0 --p2 \"0\"           # Assert it's P2's turn"
     exit 1
 fi
 
@@ -72,6 +83,55 @@ fi
 if [[ ! -f "$GAME_DIR/p1_choices.txt" ]] || [[ ! -f "$GAME_DIR/p2_choices.txt" ]]; then
     echo "Error: Choice files not found. Run start_game.sh first."
     exit 1
+fi
+
+# Auto-detect whose turn it is from the snapshot (if it exists)
+DETECTED_PLAYER=""
+if [[ -f "$GAME_DIR/game.snapshot" ]]; then
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        echo "Warning: jq not found, cannot auto-detect turn. Please install jq or specify --p1/--p2 explicitly."
+        if [[ -z "$PLAYER_OVERRIDE" ]]; then
+            echo "Error: Cannot auto-detect turn without jq. Please specify --p1 or --p2."
+            exit 1
+        fi
+    else
+        # Extract active player ID from snapshot
+        ACTIVE_PLAYER_ID=$(jq -r '.game_state.turn.active_player' "$GAME_DIR/game.snapshot" 2>/dev/null || echo "")
+
+        if [[ "$ACTIVE_PLAYER_ID" == "0" ]]; then
+            DETECTED_PLAYER="p1"
+        elif [[ "$ACTIVE_PLAYER_ID" == "1" ]]; then
+            DETECTED_PLAYER="p2"
+        else
+            echo "Warning: Could not determine active player from snapshot (got: $ACTIVE_PLAYER_ID)"
+            if [[ -z "$PLAYER_OVERRIDE" ]]; then
+                echo "Error: Cannot auto-detect turn. Please specify --p1 or --p2."
+                exit 1
+            fi
+        fi
+    fi
+else
+    # No snapshot yet (first move) - must be P1's turn
+    DETECTED_PLAYER="p1"
+fi
+
+# Determine which player to use
+if [[ -n "$PLAYER_OVERRIDE" ]]; then
+    # User specified --p1 or --p2 explicitly
+    # Validate it matches auto-detected player (if we detected one)
+    if [[ -n "$DETECTED_PLAYER" ]] && [[ "$PLAYER_OVERRIDE" != "$DETECTED_PLAYER" ]]; then
+        echo "Error: You specified --$PLAYER_OVERRIDE but the snapshot shows it's $DETECTED_PLAYER's turn!"
+        echo "  Snapshot shows active player ID: $ACTIVE_PLAYER_ID (0=P1/Alice, 1=P2/Bob)"
+        echo "  Either use auto-detection (omit --p1/--p2) or fix the player flag."
+        exit 1
+    fi
+    PLAYER="$PLAYER_OVERRIDE"
+    echo "Using explicitly specified player: $PLAYER (validated against snapshot)"
+else
+    # Auto-detect mode
+    PLAYER="$DETECTED_PLAYER"
+    echo "Auto-detected turn: $PLAYER"
 fi
 
 # Append the new choice to the appropriate player's choice file
@@ -160,5 +220,6 @@ cd "$REPO_ROOT"
 "${CMD[@]}"
 
 echo ""
-echo "Use ./agentplay/continue_game.sh --p1 <choice> or --p2 <choice> to add another choice."
+echo "Use ./agentplay/continue_game.sh <choice> to add another choice (auto-detects turn)."
+echo "Or use --p1/--p2 flags for explicit turn specification."
 echo "Or run ./agentplay/current.game/reproduce_game.sh to replay the full session."

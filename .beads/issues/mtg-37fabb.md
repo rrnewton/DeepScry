@@ -1,0 +1,45 @@
+---
+title: Switch current.game to symlink for parallel game sessions
+status: open
+priority: 3
+issue_type: task
+created_at: 2025-11-03T19:51:19.247761630+00:00
+updated_at: 2025-11-03T19:51:19.247761630+00:00
+---
+
+# Description
+
+## Problem
+
+Currently, agentplay uses a single current.game file, which makes it hard to work on multiple games in parallel.
+
+## Desired Behavior
+
+Use numbered game files with current.game as a symlink:
+- Games stored as: 001.game, 002.game, 003.game, etc.
+- current.game → symlink to active game
+- Optional --game-dir flag to specify session directory
+
+## Benefits
+
+1. Can work on multiple games simultaneously
+2. Easy to switch between different test scenarios
+3. History of all game sessions preserved
+4. No accidental overwrites
+
+## Implementation
+
+1. Update start_game.sh to:
+   - Find next available number (001, 002, ...)
+   - Create game with that number
+   - Create/update current.game symlink
+
+2. Update continue_game.sh to:
+   - Use current.game symlink by default
+   - Accept optional --game=003.game to work on specific game
+
+3. Consider adding --game-dir flag for organizing sessions by topic
+
+## Priority
+
+Medium - nice-to-have for productivity but not blocking.
