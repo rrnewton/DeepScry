@@ -5,8 +5,9 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{GameStateView, PlayerController};
+use crate::game::Step;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -29,6 +30,8 @@ enum InputAction {
     Select(usize),
     /// Pass/cancel the choice
     Pass,
+    /// Exit the game (Ctrl-C pressed)
+    Exit,
 }
 
 /// Tab indices for left panels
@@ -95,6 +98,24 @@ impl FancyTuiController {
             player_id,
             state: FancyTuiState::new(),
         })
+    }
+
+    /// Get abbreviated phase name for display
+    fn step_abbrev(step: Step) -> &'static str {
+        match step {
+            Step::Untap => "UP",
+            Step::Upkeep => "UK", // Upkeep
+            Step::Draw => "DR",
+            Step::Main1 => "M1",
+            Step::BeginCombat => "BC",
+            Step::DeclareAttackers => "DA",
+            Step::DeclareBlockers => "DB",
+            Step::CombatDamage => "CD",
+            Step::EndCombat => "EC",
+            Step::Main2 => "M2",
+            Step::End => "ET",
+            Step::Cleanup => "CL",
+        }
     }
 
     /// Initialize the terminal for TUI mode
@@ -366,19 +387,76 @@ impl FancyTuiController {
 
         let player_label = if player_id == view.player_id() { "You" } else { "Opp" };
 
-        let info_text = format!(
+        // Left side: player stats
+        let stats_text = format!(
             "{}: {} life | Hand: {} | GY: {} | Lib: {}",
             player_label, life, hand_size, graveyard_size, library_size
         );
 
-        let paragraph = Paragraph::new(info_text)
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Gray)),
-            );
+        // Right side: turn and phase info
+        let turn_number = view.turn_number();
+        let current_step = view.current_step();
+        let active_player = view.active_player();
+        let is_active = player_id == active_player;
+
+        // All phases with current one underlined
+        let all_steps = [
+            Step::Untap,
+            Step::Upkeep,
+            Step::Draw,
+            Step::Main1,
+            Step::BeginCombat,
+            Step::DeclareAttackers,
+            Step::DeclareBlockers,
+            Step::CombatDamage,
+            Step::EndCombat,
+            Step::Main2,
+            Step::End,
+        ];
+
+        let mut phase_spans = vec![Span::raw(format!("Turn: {}, ", turn_number))];
+
+        for (i, step) in all_steps.iter().enumerate() {
+            let abbrev = Self::step_abbrev(*step);
+            let span = if *step == current_step {
+                Span::styled(abbrev, Style::default().add_modifier(Modifier::UNDERLINED))
+            } else {
+                Span::raw(abbrev)
+            };
+            phase_spans.push(span);
+
+            if i < all_steps.len() - 1 {
+                phase_spans.push(Span::raw(" "));
+            }
+        }
+
+        // Calculate spacing for right alignment
+        let inner_width = area.width.saturating_sub(4); // Account for borders and padding
+        let stats_len = stats_text.len() as u16;
+        // Phase text without underline formatting for length calc
+        let phase_text_plain = format!("Turn: {}, UP UK DR M1 BC DA DB CD EC M2 ET", turn_number);
+        let phase_len = phase_text_plain.len() as u16;
+        let padding = inner_width.saturating_sub(stats_len + phase_len);
+
+        // Combine with spacing
+        let mut line_spans = vec![Span::raw(stats_text)];
+        line_spans.push(Span::raw(" ".repeat(padding as usize)));
+        line_spans.extend(phase_spans);
+
+        let line = Line::from(line_spans);
+
+        // Bold the entire line if this is the active player
+        let base_style = if is_active {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let paragraph = Paragraph::new(Text::from(line)).style(base_style).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Gray)),
+        );
 
         f.render_widget(paragraph, area);
     }
@@ -647,6 +725,14 @@ impl FancyTuiController {
                         KeyCode::Char('q') => {
                             return Ok(InputAction::Pass);
                         }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(InputAction::Exit);
+                        }
+                        KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            // TODO: Full suspend/resume (SIGTSTP/SIGCONT) would require signal-hook crate
+                            // For now, treat Ctrl-Z as graceful exit
+                            return Ok(InputAction::Exit);
+                        }
                         KeyCode::Char(c) if c.is_ascii_digit() => {
                             let digit = c.to_digit(10).unwrap() as usize;
                             if digit < num_choices {
@@ -698,6 +784,12 @@ impl FancyTuiController {
                 InputAction::Pass => {
                     Self::restore_terminal(&mut terminal)?;
                     return Ok(None);
+                }
+                InputAction::Exit => {
+                    // Ctrl-C pressed - restore terminal and exit gracefully
+                    Self::restore_terminal(&mut terminal)?;
+                    eprintln!("Exiting game (Ctrl-C pressed)");
+                    std::process::exit(0);
                 }
             }
         }

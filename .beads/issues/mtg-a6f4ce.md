@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Handle Ctrl-C and Ctrl-Z gracefully'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:35:12.265164552+00:00
-updated_at: 2025-11-03T16:35:12.265164552+00:00
+updated_at: 2025-11-03T16:57:07.021290133+00:00
 ---
 
 # Description
