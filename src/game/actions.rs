@@ -2394,7 +2394,7 @@ mod tests {
 
         // Declare attacker and blocker
         game.combat.declare_attacker(attacker_id, p2_id);
-        let blocker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let blocker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, blocker_vec);
 
         // Create controllers
@@ -2459,7 +2459,7 @@ mod tests {
 
         // Declare attacker and both blockers
         game.combat.declare_attacker(attacker_id, p2_id);
-        let blocker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let blocker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker1_id, blocker_vec.clone());
         game.combat.declare_blocker(blocker2_id, blocker_vec);
 
@@ -2885,7 +2885,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Create controllers
@@ -2993,7 +2993,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Create controllers
@@ -3178,7 +3178,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Create controllers
@@ -3353,7 +3353,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record P2's life before combat
@@ -3412,7 +3412,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record P2's life before combat
@@ -3470,7 +3470,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record P2's life before combat
@@ -3537,7 +3537,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker1_id, attacker_vec.clone());
         game.combat.declare_blocker(blocker2_id, attacker_vec);
 
@@ -3604,7 +3604,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record P1's life before combat
@@ -3710,7 +3710,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record P2's life before combat
@@ -3784,7 +3784,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record life before combat
@@ -3852,7 +3852,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Assign combat damage
@@ -3910,7 +3910,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Assign combat damage
@@ -3969,7 +3969,7 @@ mod tests {
 
         // Declare combat
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker_id, attacker_vec);
 
         // Record P2's life before combat
@@ -4046,7 +4046,7 @@ mod tests {
 
         // Declare combat with both blockers
         game.combat.declare_attacker(attacker_id, p2_id);
-        let attacker_vec = smallvec::SmallVec::from_vec(vec![attacker_id]);
+        let attacker_vec = smallvec::smallvec![attacker_id];
         game.combat.declare_blocker(blocker1_id, attacker_vec.clone());
         game.combat.declare_blocker(blocker2_id, attacker_vec);
 

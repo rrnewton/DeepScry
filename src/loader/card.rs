@@ -160,9 +160,9 @@ impl CardDefinition {
     pub fn instantiate(&self, id: crate::core::CardId, owner: crate::core::PlayerId) -> Card {
         let mut card = Card::new(id, self.name.clone(), owner);
         card.mana_cost = self.mana_cost;
-        card.types = SmallVec::from_vec(self.types.clone());
-        card.subtypes = SmallVec::from_vec(self.subtypes.clone());
-        card.colors = SmallVec::from_vec(self.colors.clone());
+        card.types = SmallVec::from_slice(&self.types);
+        card.subtypes = self.subtypes.iter().cloned().collect();
+        card.colors = SmallVec::from_slice(&self.colors);
         card.power = self.power;
         card.toughness = self.toughness;
         card.text = self.oracle.clone();
