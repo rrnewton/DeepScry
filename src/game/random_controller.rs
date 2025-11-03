@@ -6,7 +6,6 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::GameStateView;
 use crate::game::controller::PlayerController;
-use crate::game::format_choice_menu;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use smallvec::SmallVec;
@@ -72,11 +71,6 @@ impl PlayerController for RandomController {
     ) -> Option<SpellAbility> {
         // INVARIANT: Choice 0 = pass priority (always available)
         //            Choice N (N > 0) = available[N-1]
-
-        // Display available choices if flag is set (e.g., in stop/go mode)
-        if view.logger().should_show_choice_menu() && !available.is_empty() {
-            print!("{}", format_choice_menu(view, available));
-        }
 
         // Random controller passes priority with 30% probability
         // This allows actions to be taken most of the time while still preventing infinite loops

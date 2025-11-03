@@ -11,7 +11,6 @@
 
 use crate::core::{Card, CardId, Keyword, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{GameStateView, PlayerController};
-use crate::game::format_choice_menu;
 use smallvec::SmallVec;
 
 /// Combat factors for attack decisions
@@ -2378,11 +2377,6 @@ impl PlayerController for HeuristicController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> Option<SpellAbility> {
-        // Display available choices if flag is set (e.g., in stop/go mode)
-        if view.logger().should_show_choice_menu() && !available.is_empty() {
-            print!("{}", format_choice_menu(view, available));
-        }
-
         if available.is_empty() {
             let player_name = view.player_name();
             view.logger().controller_choice(
