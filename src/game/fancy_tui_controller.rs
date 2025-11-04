@@ -11,6 +11,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use rand::Rng;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -39,6 +40,8 @@ enum InputAction {
     Exit,
     /// Undo the most recent action (Z key pressed)
     Undo,
+    /// Make a random choice (R key pressed)
+    RandomChoice,
 }
 
 /// Result from prompting for a choice
@@ -2607,6 +2610,10 @@ impl FancyTuiController {
                                 // Shift+Z: Undo the most recent action
                                 return Ok(InputAction::Undo);
                             }
+                            KeyCode::Char('r') | KeyCode::Char('R') => {
+                                // R: Make a random choice
+                                return Ok(InputAction::RandomChoice);
+                            }
                             KeyCode::Char(c) if c.is_ascii_digit() => {
                                 // Digit selection only works when Actions pane is focused
                                 if self.state.focused_pane == FocusedPane::Actions {
@@ -2678,6 +2685,18 @@ impl FancyTuiController {
                     // Return undo signal to be handled at controller trait method level
                     Self::restore_terminal(&mut terminal)?;
                     return Ok(PromptResult::Undo);
+                }
+                InputAction::RandomChoice => {
+                    // R key pressed - make a random choice
+                    let choice = if choices.is_empty() {
+                        None
+                    } else {
+                        let mut rng = rand::thread_rng();
+                        let idx = rng.gen_range(0..choices.len());
+                        Some(idx)
+                    };
+                    Self::restore_terminal(&mut terminal)?;
+                    return Ok(PromptResult::Choice(choice));
                 }
             }
         }
