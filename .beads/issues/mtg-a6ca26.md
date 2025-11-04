@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-04T20:48:12.406849084+00:00
-updated_at: 2025-11-04T20:48:48.290352018+00:00
+updated_at: 2025-11-04T21:39:48.828812350+00:00
 ---
 
 # Description
@@ -71,7 +71,7 @@ Continue the work from mtg-2 to eliminate as much allocation as possible:
 
 Tested mimalloc as drop-in replacement for system allocator.
 
-**Results (2025-11-04):**
+**Initial Results with 16 threads (hyperthreading enabled, 2025-11-04):**
 
 | Metric | glibc malloc | mimalloc | Improvement |
 |--------|--------------|----------|-------------|
@@ -80,20 +80,40 @@ Tested mimalloc as drop-in replacement for system allocator.
 | **Per-thread efficiency** | 1.5% of sequential | 2.5% of sequential | +67% |
 | **Aggregate speedup** | 0.23x | 0.40x | Still <1.0x |
 
+**Physical Core Results - 8 threads only (no hyperthreading, 2025-11-04):**
+
+| Metric | glibc malloc | mimalloc | Improvement |
+|--------|--------------|----------|-------------|
+| **Sequential** | 48,585 games/sec | 52,913 games/sec | +8.9% |
+| **Parallel (8 threads)** | 17,775 games/sec | 25,100 games/sec | +41% |
+| **Per-thread efficiency** | 36.6% of sequential | 47.4% of sequential | +30% |
+| **Aggregate speedup** | 0.37x | 0.47x | Still <1.0x |
+
 **Analysis:**
 
-Mimalloc provides **2.1x improvement in parallel throughput** (110% faster), but:
-- Still slower than sequential (0.40x vs ideal 16x)
-- Per-thread efficiency only 2.5% (need >60%)
-- **Contention remains the dominant bottleneck**
+Physical cores vs hyperthreading:
+- Using only 8 physical cores gives **24x better per-thread efficiency** (36.6% vs 1.5% with 16 threads)
+- Hyperthreading **massively exacerbates** allocator contention (1.5% efficiency vs 36.6%)
+- Each hyperthread pair shares L1/L2 cache, multiplying cache coherency traffic
 
-**Conclusion:** Mimalloc helps but is insufficient. The problem is not just allocator lock overhead, but the **high allocation frequency** itself (6.5KB per game). Even with thread-local allocators, this much allocation generates cache traffic and TLB pressure that degrades parallel performance.
+Mimalloc impact:
+- With 16 threads: **2.1x improvement** (110% faster) - dramatic but insufficient
+- With 8 threads: **1.4x improvement** (41% faster) - modest improvement
+- Hyperthreading amplifies mimalloc's benefit (110% vs 41%) because contention is worse
+
+**Conclusion:**
+
+The problem has two components:
+
+1. **Hyperthreading contention** (most severe): Hyperthreads share L1/L2 cache. Allocator operations generate cache coherency traffic that serializes hyperthreads on the same physical core. **Never use hyperthreading for parallel MCTS.**
+
+2. **High allocation frequency** (still critical): Even with physical cores only, 47.4% efficiency is far below the 80-90% target. The **6.5KB/game allocation rate** generates enough cache traffic to degrade parallel performance significantly.
 
 **Next steps:**
-- Phase 1 (zero-copy) is now **critical**, not optional
-- Target: <1KB per game (not just <2KB)
-- Only then will thread-local allocators show 10-30x gains
-- Phase 2 (bump allocators) will likely be necessary for 80-90% efficiency
+- **MCTS implementation: Use only physical cores** (num_cpus::get_physical())
+- Phase 1 (zero-copy) is **critical**: Target <1KB per game
+- Phase 2 (bump allocators) will be necessary to reach 80-90% efficiency
+- Mimalloc provides modest benefit but is not sufficient alone
 
 ### Phase 2: Per-Thread Bump Allocators (Target: 80-90% efficiency)
 
@@ -149,13 +169,14 @@ Once allocations are minimized, switch remaining allocations to thread-local are
 - Per-game allocation: 6.5KB → <2KB
 - Reduced allocator pressure even in single-threaded case
 
-**After quick win (mimalloc):**
-- Parallel efficiency: 1.5% → 15-45%
-- Aggregate throughput: 10,441 → 100,000+ games/sec (16 threads)
-- Per-thread: 653 → 6,000+ games/sec
+**After physical core optimization + mimalloc (CURRENT):**
+- Parallel efficiency: 1.5% (16 threads) → 47.4% (8 physical cores)
+- Aggregate throughput: 10,441 (16 threads) → 25,100 games/sec (8 physical cores)
+- Per-thread: 653 (16 threads) → 3,138 games/sec (8 physical cores)
+- **Using physical cores only is MANDATORY** - never use hyperthreading for MCTS
 
-**Phase 2 completion:**
-- Parallel efficiency: 80-90%
-- Aggregate throughput: ~600,000+ games/sec (16 threads)
-- Per-thread: ~40,000 games/sec (near sequential performance)
-- **MCTS will scale effectively across all available cores**
+**Phase 2 completion (8 physical cores):**
+- Parallel efficiency: 47.4% → 80-90%
+- Aggregate throughput: 25,100 → 340,000-380,000 games/sec
+- Per-thread: 3,138 → 42,500-47,500 games/sec (near sequential performance)
+- **MCTS will scale effectively across all physical cores**
