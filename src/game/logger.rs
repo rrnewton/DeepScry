@@ -428,7 +428,8 @@ impl GameLogger {
 
         // Standardized deterministic format for stdout: just the choice, not the controller type
         // This ensures logs match regardless of which controller made the choice
-        let formatted = message.to_string();
+        // Prepend <Choice> tag for easy grepping of all choices in a game
+        let formatted = format!("<Choice> {}", message);
 
         // Capture if mode requires it
         if should_capture {
