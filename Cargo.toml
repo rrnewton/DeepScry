@@ -61,6 +61,7 @@ dir-test = "0.4"
 similar-asserts = "1.5"
 libc = "0.2"
 tempfile = "3.10.1"
+dhat = "0.3"
 
 # Performance benchmarks
 [[bench]]
@@ -69,6 +70,10 @@ harness = false
 
 [[bench]]
 name = "puzzle_parse_benchmark"
+harness = false
+
+[[bench]]
+name = "dhat_profile"
 harness = false
 
 [features]

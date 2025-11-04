@@ -91,10 +91,30 @@ Temporary allocations: 484,954 (38% of total)
 **High priority open issues:**
 - (None currently - all major hotspots addressed)
 
-**Medium priority:**
-- AI decision allocations (mtg-ai-allocs) - 55K calls
-  - Note: Current heaptrack profiling lacks symbols to identify next hotspot
-  - Need better profiling strategy: use dhat-rs or rebuild with symbols
+**High priority (identified via dhat-rs profiling):**
+- **ManaEngine::update buffer reuse** - 600KB/iteration (32.2% of gameplay allocations)
+  - Location: src/game/mana_engine.rs:264 (Vec reserve during source collection)
+  - Appears in 3 call sites (cast_spell, draw_step, get_castable_spells)
+  - Fix: Store reusable Vec buffer in ManaEngine (same pattern as mana payment)
+  - Estimated impact: 32% allocation reduction
+  - Issue: Need to investigate if ManaEngine itself needs dynamic allocation (see below)
+
+**Medium priority (identified via dhat-rs profiling):**
+- **RandomController format! logging** - 41KB/iteration (2.2%)
+  - Location: src/game/random_controller.rs:94 (format! before logger check)
+  - Root cause: format! executes before verbosity check in logger
+  - Fix: Check verbosity BEFORE calling format!, or use lazy evaluation
+  - Estimated impact: 2% allocation reduction + performance boost
+
+- **GameLoop::get_available_spell_abilities** - 53KB/iteration (2.8%)
+  - Location: src/game/game_loop.rs:3054 (Vec::push collecting abilities)
+  - Fix: Store reusable Vec in GameLoop
+  - Estimated impact: 2.8% allocation reduction
+
+- **RandomController::choose_spell_ability_to_play** - 93KB/iteration (5.0%)
+  - Location: src/game/random_controller.rs:104 (Vec::extend_from_slice)
+  - Fix: Pass output buffer parameter to avoid allocation
+  - Estimated impact: 5% allocation reduction
   
 **Low priority (setup costs):**
 - Card loading string clones (acceptable one-time cost)
@@ -107,6 +127,17 @@ Temporary allocations: 484,954 (38% of total)
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 
 ---
+**Updated 2025-11-04_#705 (pending commit)**
+- **Integrated dhat-rs profiling**: Full Rust symbol resolution for heap profiling
+- Added `make dhatprofile` target + Python analysis script
+- Identified next 4 optimization targets representing 42% of remaining allocations:
+  1. ManaEngine::update buffer reuse (32.2%) - HIGH priority
+  2. RandomController format! logging (2.2%) - MEDIUM priority
+  3. GameLoop ability list buffer (2.8%) - MEDIUM priority
+  4. Controller output buffer (5.0%) - MEDIUM priority
+- All findings documented in ai_docs/dhat_profile_2025-11-04.md
+- Updated OPTIMIZATION.md with dhat-rs as recommended profiling tool
+
 **Updated 2025-11-04_#704(febed0a)**
 - **MAJOR WIN**: Eliminated 1.4M Vec allocations from mana payment system
 - Changed SimpleManaResolver API to use output buffer pattern

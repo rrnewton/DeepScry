@@ -242,15 +242,53 @@ Key metrics to track:
 
 ### Heap Profiling
 
+We have two heap profiling tools available:
+
+#### Option 1: dhat-rs (Recommended) - Full Rust symbols
+
 ```bash
-# Generate heap profile
+# Generate heap profile with full function names and source locations
+make dhatprofile
+
+# View results interactively at:
+# https://nnethercote.github.io/dh_view/dh_view.html
+# Load: experiment_results/dhat-heap.json
+
+# Or analyze in terminal:
+python3 scripts/analyze_dhat.py
+```
+
+**Advantages:**
+- Full Rust function names and source locations
+- Per-call-site allocation breakdowns
+- Interactive visualization
+- Rust-native (no external dependencies)
+
+**Output example:**
+```
+#1: 397.27 KB (21.9%) in 565 blocks
+  Location: mtg_forge_rs::game::mana_engine::ManaEngine::update (src/game/mana_engine.rs:264:27)
+    ↳ GameLoop::priority_round (src/game/game_loop.rs:2379:49)
+```
+
+#### Option 2: heaptrack - System-level profiling
+
+```bash
+# Generate heap profile (requires heaptrack package)
 make heapprofile
 
 # Process and view results
 ./scripts/analyze_heapprofile.sh
 ```
 
-This will show the top allocation sites in your code with file:line references.
+**Advantages:**
+- No code changes required
+- Can profile any binary
+- System-level view
+
+**Disadvantages:**
+- Lacks Rust symbol resolution (shows only addresses)
+- Requires external heaptrack package
 
 ### CPU Profiling
 
@@ -399,7 +437,8 @@ Consider feature flags for different optimization profiles:
 ## Profiling Tools
 
 - **cargo bench**: Built-in benchmark harness (benches/game_benchmark.rs)
-- **heaptrack**: Heap profiling for allocation tracking (`make heapprofile`)
+- **dhat-rs**: Rust-native heap profiling with full symbols (`make dhatprofile`) - **Recommended**
+- **heaptrack**: System-level heap profiling (`make heapprofile`)
 - **flamegraph**: CPU profiling for hotspot identification (`make profile`)
 - **valgrind/cachegrind**: Cache behavior analysis (manual setup)
 

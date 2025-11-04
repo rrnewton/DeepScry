@@ -32,6 +32,7 @@ flamegraph.svg
 *.gz
 heaptrack_analysis.*.txt
 heaptrack.profile.*
+dhat-heap.json
 
 # Claude Logging
 

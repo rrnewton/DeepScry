@@ -880,7 +880,10 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 
                 eprintln!("\nRewind + Play Again mode (seed {initial_seed}):");
                 eprintln!("  Game completed with {} actions in undo log", actions_count);
-                eprintln!("  Will rewind to action {} (middle) for each iteration...", rewind_target);
+                eprintln!(
+                    "  Will rewind to action {} (middle) for each iteration...",
+                    rewind_target
+                );
                 eprintln!("  Then replay second half with different random seed per iteration");
 
                 initial_game = Some(game);

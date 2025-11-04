@@ -322,7 +322,10 @@ pub trait ManaPaymentResolver {
     /// or `false` if the cost cannot be paid or is uncertain.
     fn compute_tap_order(&self, cost: &ManaCost, sources: &[ManaSource], tap_order_out: &mut Vec<CardId>) -> bool {
         tap_order_out.clear();
-        matches!(self.check_payment(cost, sources, Some(tap_order_out)), PaymentResult::Yes)
+        matches!(
+            self.check_payment(cost, sources, Some(tap_order_out)),
+            PaymentResult::Yes
+        )
     }
 }
 

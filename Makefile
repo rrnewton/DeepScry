@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile heapprofile count setup-claude claude-github claude-beads happy code-dups
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups
 
 # Default target - show available commands
 help:
@@ -16,6 +16,7 @@ help:
 	@echo "  make bench-logging  - Run stdout logging benchmark only"
 	@echo "  make profile        - Profile game execution with flamegraph (CPU time)"
 	@echo "  make heapprofile    - Profile allocations with heaptrack"
+	@echo "  make dhatprofile    - Profile allocations with dhat-rs (Rust-native, full symbols)"
 	@echo "  make clean          - Clean build artifacts (cargo clean)"
 	@echo "  make run            - Run the main binary (cargo run)"
 	@echo "  make check          - Fast compilation check (cargo check)"
@@ -250,6 +251,34 @@ heapprofile:
 	./scripts/analyze_heapprofile.sh
 	@echo ""
 	@echo "Analysis complete! Check output above for top allocation sites."
+
+# Profile allocations with dhat-rs (Rust-native profiler with full symbol information)
+# Generates dhat-heap.json which can be viewed with dh_view.html
+dhatprofile:
+	@echo "=== Profiling allocations with dhat-rs ==="
+	@echo "This will run 100 iterations of rewind+replay pattern"
+	@echo "Output: dhat-heap.json (forward gameplay allocations only)"
+	@echo ""
+	@mkdir -p experiment_results
+	cargo bench --bench dhat_profile --no-default-features
+	@# Move dhat output to experiment_results
+	@if [ -f dhat-heap.json ]; then \
+		mv dhat-heap.json experiment_results/dhat-heap.json; \
+		echo ""; \
+		echo "=== DHAT profiling complete! ==="; \
+		echo ""; \
+		echo "Output saved to: experiment_results/dhat-heap.json"; \
+		echo ""; \
+		echo "View results:"; \
+		echo "  1. Open https://nnethercote.github.io/dh_view/dh_view.html"; \
+		echo "  2. Load experiment_results/dhat-heap.json"; \
+		echo ""; \
+		echo "Or analyze with Python:"; \
+		echo "  python3 scripts/analyze_dhat.py"; \
+	else \
+		echo "Error: dhat-heap.json not found"; \
+		exit 1; \
+	fi
 
 # ==============================================================================
 
