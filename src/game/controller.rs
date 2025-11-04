@@ -531,7 +531,16 @@ impl<T> ChoiceResult<T> {
 /// This macro reduces verbosity when handling ChoiceResult values in the game loop.
 /// It handles all the special cases (UndoRequest, ExitGame, Error) uniformly.
 ///
-/// Usage: `handle_choice_result!(choice_result, game_state, player_id)`
+/// Usage: Must be called within a loop block:
+/// ```
+/// let result = loop {
+///     let choice = controller.choose_something(...);
+///     break handle_choice_result!(choice, game_state, player_id);
+/// };
+/// ```
+///
+/// This macro continues to the immediately enclosing loop on undo requests,
+/// causing the choice to be re-prompted.
 ///
 /// Special undo values:
 /// - `usize::MAX`: Undo to previous choice point for the requesting player
@@ -566,6 +575,67 @@ macro_rules! handle_choice_result {
                 }
                 // After undo, continue the loop to re-prompt for choice
                 continue;
+            }
+            $crate::game::controller::ChoiceResult::ExitGame => {
+                return Err($crate::MtgError::InvalidAction(
+                    "Game exit requested by controller".to_string(),
+                ));
+            }
+            $crate::game::controller::ChoiceResult::Error(msg) => {
+                return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
+            }
+        }
+    };
+}
+
+/// Macro for handling ChoiceResult in secondary choice contexts
+///
+/// This variant returns from the enclosing function on undo instead of continuing.
+/// Use this for secondary choices (attackers, blockers, targets, etc.) where
+/// an undo should exit the current step handler and return control to the main
+/// game loop, allowing it to re-evaluate from the rewound game state.
+///
+/// Usage: Use directly in step handler functions:
+/// ```
+/// let view = GameStateView::new(self.game, active_player);
+/// let choice = controller.choose_attackers(&view, &available_creatures);
+/// let attackers = handle_choice_result_break!(choice, self.game, active_player);
+/// ```
+///
+/// On undo, this macro performs the undo and then RETURNS `Ok(None)` from the
+/// enclosing function, exiting the step handler. The game loop will then check
+/// if the step changed and re-execute from the rewound state.
+#[macro_export]
+macro_rules! handle_choice_result_break {
+    ($result:expr, $game:expr, $player_id:expr) => {
+        match $result {
+            $crate::game::controller::ChoiceResult::Ok(value) => value,
+            $crate::game::controller::ChoiceResult::UndoRequest(n) => {
+                if n == usize::MAX {
+                    // Special case: undo to previous choice point for the requesting player
+                    eprintln!("[UNDO DEBUG MACRO BREAK] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                              $game.undo_log.len(), $game.logger.log_count(), $game.logger.choice_count());
+                    if let Ok(Some((_actions_undone, choice_log_size))) =
+                        $game.undo_to_previous_choice_point($player_id)
+                    {
+                        eprintln!("[UNDO DEBUG MACRO BREAK] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
+                        $game.logger.truncate_to(choice_log_size);
+                        eprintln!("[UNDO DEBUG MACRO BREAK] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
+                        // Note: Undo info should be displayed in status bar only, not logged
+                    }
+                } else {
+                    // Normal case: undo N specific actions
+                    for _ in 0..n {
+                        if let Ok(Some(prior_log_size)) = $game.undo() {
+                            $game.logger.truncate_to(prior_log_size);
+                        } else {
+                            break; // No more actions to undo
+                        }
+                    }
+                }
+                // After undo, return from the step handler
+                // The game loop will detect that the step changed and re-execute from the rewound state
+                return Ok(None);
             }
             $crate::game::controller::ChoiceResult::ExitGame => {
                 return Err($crate::MtgError::InvalidAction(

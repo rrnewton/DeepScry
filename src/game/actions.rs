@@ -3,7 +3,7 @@
 use crate::core::{CardId, CardType, Cost, Effect, Keyword, PlayerId, TargetRef, TriggerEvent};
 use crate::game::GameState;
 use crate::zones::Zone;
-use crate::{handle_choice_result, MtgError, Result};
+use crate::{MtgError, Result};
 use smallvec::SmallVec;
 
 /// Types of game actions
@@ -1757,15 +1757,40 @@ impl GameState {
                     let attacker = self.cards.get(attacker_id)?;
                     let attacker_owner = attacker.owner;
 
-                    // Loop to allow undo/retry
-                    let ordered_blockers = loop {
-                        let view = GameStateView::new(self, attacker_owner);
-                        let choice = if attacker_owner == attacker_controller.player_id() {
-                            attacker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
-                        } else {
-                            blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
-                        };
-                        break handle_choice_result!(choice, self, attacker_owner);
+                    // Ask controller for damage assignment order
+                    let view = GameStateView::new(self, attacker_owner);
+                    let choice = if attacker_owner == attacker_controller.player_id() {
+                        attacker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
+                    } else {
+                        blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
+                    };
+
+                    use crate::game::controller::ChoiceResult;
+                    let ordered_blockers = match choice {
+                        ChoiceResult::Ok(value) => value,
+                        ChoiceResult::UndoRequest(n) => {
+                            // Perform undo and exit early - game loop will re-execute from rewound state
+                            if n == usize::MAX {
+                                if let Ok(Some((_actions_undone, choice_log_size))) =
+                                    self.undo_to_previous_choice_point(attacker_owner)
+                                {
+                                    self.logger.truncate_to(choice_log_size);
+                                }
+                            } else {
+                                for _ in 0..n {
+                                    if let Ok(Some(prior_log_size)) = self.undo() {
+                                        self.logger.truncate_to(prior_log_size);
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+                        ChoiceResult::ExitGame => {
+                            return Err(MtgError::InvalidAction("Game exit requested".to_string()));
+                        }
+                        ChoiceResult::Error(msg) => {
+                            return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
+                        }
                     };
 
                     damage_orders.insert(attacker_id, ordered_blockers);
