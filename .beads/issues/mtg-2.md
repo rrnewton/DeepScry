@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-03T02:09:18.444970312+00:00
+updated_at: 2025-11-04T11:50:22.458980726+00:00
 ---
 
 # Description
@@ -71,7 +71,7 @@ Temporary allocations: 484,954 (38% of total)
 - ✅ mtg-9: CardName and PlayerName use Arc<str>
 - ✅ mtg-12: Mana pool calculation optimization (already resolved)
 - ✅ mtg-11: Zone transfer operations (investigated, already optimal)
-- ✅ mtg-934c9c: ManaEngine allocation hotspot - MAJOR WIN
+- ✅ mtg-120: ManaEngine allocation hotspot - MAJOR WIN
   - Stored single reusable ManaEngine in GameLoop
   - Added capacity pre-allocation (reserve 10/5/15)
   - 20-39% allocation reduction, 15-16% speed improvement

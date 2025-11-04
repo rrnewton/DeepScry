@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-04T01:55:11.731117249+00:00
+updated_at: 2025-11-04T11:50:22.461685265+00:00
 ---
 
 # Description
@@ -26,7 +26,7 @@ Track architectural improvements, API design, and testing infrastructure.
   - InteractiveController: Human player via stdin/stdout
 - mtg-40: Migrate game loop from v1 to v2 controller interface (OBSOLETE - already unified)
 - mtg-41: Controller API consistency and documentation
-- mtg-0b2081: Missing player choices (mulligan, activated abilities)
+- mtg-144: Missing player choices (mulligan, activated abilities)
 
 **Testing infrastructure:**
 - Current: 405 passing tests (nextest, all categories)
@@ -54,4 +54,4 @@ Track architectural improvements, API design, and testing infrastructure.
 - Marked mtg-40 as obsolete (v1/v2 already unified)
 - Verified file locations (ai_docs/CONTROLLER_DESIGN.md exists)
 - All controller implementations working correctly
-- Added mtg-0b2081: Missing player choices (mulligan + activated abilities)
+- Added mtg-144: Missing player choices (mulligan + activated abilities)
