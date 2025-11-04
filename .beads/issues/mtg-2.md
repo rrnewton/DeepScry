@@ -13,6 +13,26 @@ updated_at: 2025-11-04T20:49:40.072642078+00:00
 
 Track performance optimization work for MTG Forge Rust.
 
+## ⚠️ CRITICAL: Parallel Bottleneck Discovered
+
+**See mtg-a6ca26 for parallel MCTS optimization plan.**
+
+The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator contention**:
+- Parallel aggregate: 0.23x speedup (actually SLOWER than sequential!)
+- Per-thread: 68.8x slowdown (1.5% of sequential throughput)
+- Parallel efficiency: 1.5% (should be >60%)
+
+**Root cause:** System allocator (glibc malloc) global lock serializes all 16 threads.
+
+**Plan:** Two-phase approach in mtg-a6ca26:
+1. Maximize zero-copy patterns (target <2KB/game)
+2. Quick win: Try mimalloc/jemalloc (expect 10-30x improvement)
+3. Per-thread bump allocators (target 80-90% efficiency)
+
+**Impact on MCTS:** Without fixing this, parallel MCTS will be slower than sequential MCTS!
+
+---
+
 **Current performance as of 2025-11-04_#713(1961e96):**
 
 *Simple deck (simple_bolt.dck):*
@@ -57,6 +77,10 @@ Top hotspots:
 - ✅ mtg-buffer-reuse: GameLoop + ManaEngine buffer optimization (108KB eliminated, -5% total allocations)
 - ✅ mtg-437f88: RNG bincode serialization (96 bytes/turn saved, ~8% of advance_step allocations)
 - ✅ mtg-02f1df: RNG SmallVec inline storage (heap allocation eliminated, +52% Rewind mode performance!)
+- ✅ mtg-a60157: Parallel benchmark implementation (exposed allocator contention bottleneck)
+
+**Parallel optimization (new focus):**
+- 🚧 mtg-a6ca26: Epic tracking parallel MCTS optimization (allocator contention fixes)
 
 **Low priority (remaining allocations):**
 - GameLoop::get_available_spell_abilities helper allocations - 51KB (4.6%)
