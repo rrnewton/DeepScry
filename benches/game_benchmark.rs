@@ -927,6 +927,7 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
             let actions_played = total_actions_now - rewind_target;
 
             // Record metrics for the forward gameplay only
+            // Note: result.turns_played is the number of turns in THIS GameLoop session (correct!)
             let metrics = GameMetrics {
                 turns: result.turns_played,
                 actions: actions_played,
