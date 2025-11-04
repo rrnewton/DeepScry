@@ -1,0 +1,100 @@
+---
+title: 'Missing player choices: Priority not retained after special actions'
+status: open
+priority: 2
+issue_type: bug
+created_at: 2025-11-04T01:38:25.330256870+00:00
+updated_at: 2025-11-04T01:38:25.330256870+00:00
+---
+
+# Description
+
+## Problem
+
+Players are not being given priority to make choices after taking special actions, violating MTG Rules 116.3 and 117.3c which state that a player receives priority after taking a special action.
+
+**MTG Rules 116.3**: "If a player takes a special action, that player receives priority afterward."
+
+**MTG Rules 117.3c**: "If a player has priority when they cast a spell, activate an ability, or take a special action, that player receives priority afterward."
+
+## Concrete Example: Vibrant Cityscape
+
+**Card**: Vibrant Cityscape  
+**Ability**: {T}, Sacrifice this land: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.
+
+**Expected behavior**:
+1. Player plays Vibrant Cityscape (special action)
+2. Player retains priority and can activate the land's ability
+3. Player can tap and sacrifice it immediately to search for a basic land
+
+**Actual behavior**:
+1. Player plays Vibrant Cityscape
+2. Priority immediately passes to opponent
+3. Player never gets a chance to activate the ability
+
+**Reproducer**:
+\`\`\`bash
+./target/release/mtg tui decks/ryan_spiderman_draft.dck --p1=fixed --p2=random --p1-fixed-inputs="3" --seed=42 --stop-on-choice=2
+\`\`\`
+
+Expected: After playing land (choice 1), Alice should get priority back to potentially activate abilities.
+Actual: Turn immediately passes to Bob without giving Alice priority.
+
+## Root Cause
+
+In \`src/game/game_loop.rs\` lines 2212-2251, after successfully playing a land, the code simply continues to the next iteration of the priority loop. It doesn't explicitly keep priority with the current player, so the loop switches to the opponent.
+
+The code should:
+1. After successful land play, keep \`current_priority\` unchanged
+2. Let the loop iterate again with same player having priority
+3. Player can then choose to activate abilities or pass
+
+## Scope: All Special Actions
+
+This issue likely affects ALL special actions, not just land play:
+
+### Special Actions (MTG Rules 116.2):
+- **116.2a**: Playing a land ✗ (confirmed broken)
+- **116.2b**: Turning a face-down creature face up (not implemented yet)
+- **116.2c**: Taking an action to end a continuous effect (not implemented yet)
+- **116.2d**: Taking an action to ignore a static ability effect (not implemented yet)
+- **116.2e**: Discarding Circling Vultures (specific card, not implemented)
+- **116.2f**: Suspending a card (not implemented yet)
+- **116.2g**: Companion special action (not implemented yet)
+- **116.2h**: Foretell special action (not implemented yet)
+- **116.2i**: Rolling planar die (Planechase, not implemented)
+- **116.2j**: Turning face-down conspiracy face up (not implemented)
+- **116.2k**: Plot special action (not implemented yet)
+- **116.2m**: Paying unlock cost (not implemented yet)
+
+## Impact
+
+This prevents players from:
+- Using mana abilities of lands immediately after playing them
+- Activating other abilities of permanents immediately after playing them
+- Taking advantage of priority windows that should exist
+- Playing optimally with cards that have sacrifice abilities
+
+## Related Issues
+
+This is part of a larger pattern: **We need systematic tracking of all missing player choice opportunities.**
+
+Cases where players should be asked but aren't:
+- Priority after special actions (this issue)
+- Priority after mana abilities? (needs verification)
+- Ordering replacement effects (needs verification)
+- Choosing modes for modal spells (partially implemented)
+- Choosing X values (partially implemented)
+- Choosing targets for multiple-target spells (partially implemented)
+
+## Recommended Fix
+
+In \`src/game/game_loop.rs\`, after successful special action (land play), the player should retain priority. The code already has the loop structure - it just needs to NOT switch priority after a special action.
+
+## Testing
+
+After fix, verify:
+1. Vibrant Cityscape reproducer shows activated ability as an option
+2. Other fetch lands work correctly
+3. Sacrifice lands can be used immediately after playing
+4. Mana abilities can be activated immediately after land play

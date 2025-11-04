@@ -1,0 +1,108 @@
+---
+title: 'Systematic tracking: Missing player choice opportunities'
+status: open
+priority: 1
+issue_type: epic
+created_at: 2025-11-04T01:38:54.278957623+00:00
+updated_at: 2025-11-04T01:38:54.278957623+00:00
+---
+
+# Description
+
+## Overview
+
+This tracking issue collects all cases where players should be given choices but currently aren't. We need systematic analysis and documentation of every point in the game where player input should be requested.
+
+## Philosophy
+
+The game engine should present players with ALL valid choices at the appropriate times, even if:
+- The choice seems "obvious" (e.g., only one legal target)
+- AI controllers would make automatic decisions
+- The choice is rare or edge-case
+
+Every missing choice is a bug that prevents optimal play and violates MTG rules.
+
+## Categories of Missing Choices
+
+### 1. Priority and Timing
+- ✗ **mtg-fe5398**: Priority after special actions (land play confirmed broken)
+- ❓ Priority after mana abilities (needs investigation)
+- ❓ Priority between triggered abilities on stack (needs investigation)
+- ❓ Priority after state-based actions (needs investigation)
+
+### 2. Spell and Ability Choices
+- ❓ Modal spell mode selection (partially implemented - needs audit)
+- ❓ X value selection in costs (partially implemented - needs audit)
+- ❓ Kicker/additional costs (needs investigation)
+- ❓ Alternative costs (needs investigation)
+- ❓ Ordering multiple targets (needs investigation)
+
+### 3. Combat Choices
+- ❓ Damage assignment order (implemented for attackers, needs verification)
+- ❓ First strike vs normal damage ordering (needs investigation)
+- ❓ Combat trick timing (needs investigation)
+
+### 4. Replacement Effects
+- ❓ Choosing between multiple replacement effects (needs investigation)
+- ❓ Ordering simultaneous replacement effects (needs investigation)
+
+### 5. Triggered Abilities
+- ❓ Ordering simultaneous triggers (needs investigation)
+- ❓ Optional trigger choices (needs investigation)
+- ❓ \"May\" ability decisions (needs investigation)
+
+### 6. Card-Specific Choices
+- ❓ Choosing card types/names (needs investigation)
+- ❓ Distributing counters/damage (needs investigation)
+- ❓ Sacrificing permanents (partially implemented)
+
+## Methodology for Discovery
+
+To discover missing choices, we need to:
+
+1. **Play test with TUI controller** - Human players notice when they can't do something
+2. **Review game logs** - Look for automatic decisions that should be choices
+3. **Compare to Java Forge** - Check which choices Java prompts for
+4. **Read MTG rules** - Identify all points requiring player decisions
+5. **Analyze controller behavior** - AI making \"choices\" that should be presented to human
+
+## Tools and Infrastructure Needed
+
+### Choice Logging System
+Create a system to log every time a choice is made automatically vs presented to player:
+
+\`\`\`
+[AUTO] Alice: Automatically tapped Mountain for {R} (no alternatives)
+[CHOICE] Alice: Selected target for Lightning Bolt (3 options)
+[MISSING] Alice: Should have been asked about priority after land play
+\`\`\`
+
+### Choice Validation Mode
+Add a --validate-choices flag that:
+- Logs all automatic decisions
+- Warns when choices are made without player input
+- Compares controller decisions to available options
+- Generates report of potential missing choices
+
+### Test Coverage
+- Add tests that verify players are asked for choices
+- Create \"choice audit\" tests for each game phase
+- Document expected choice points for common scenarios
+
+## Related Issues
+
+- mtg-fe5398: Priority after special actions (first concrete case)
+- Future issues will be added as discovered
+
+## Success Criteria
+
+- [ ] Complete audit of all game phases for choice opportunities
+- [ ] All MTG-rules-mandated choices are presented to players
+- [ ] Choice logging system implemented
+- [ ] Test coverage for choice presentation
+- [ ] Documentation of expected choices for each game phase
+- [ ] Zero \"missing choice\" bugs in common scenarios
+
+## Priority
+
+This is Priority 1 (tracking issue) because it affects game correctness and player experience across many scenarios. Individual missing choices will be Priority 2-3 bugs.
