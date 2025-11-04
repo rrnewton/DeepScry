@@ -13,12 +13,13 @@ updated_at: 2025-11-04T11:50:22.458980726+00:00
 
 Track performance optimization work for MTG Forge Rust.
 
-**Current performance as of 2025-11-03_#597(6e47d7d):**
+**Current performance as of 2025-11-04_#704(febed0a):**
 
 *Simple deck (simple_bolt.dck):*
 - **Fresh Mode**: 5,502 games/sec, avg 7 turns/game, 244KB/game, 34.8KB/turn
 - **Snapshot Mode**: 19,291 games/sec (3.5x faster via clone)
 - **Rewind Mode**: 202,583 games/sec (36.8x faster via undo)
+- **Rewind + Play Again** (isolates forward gameplay): 47,537 games/sec, 4 turns/game, 14.0KB/game, **3,507 bytes/turn**
 
 *Old School decks (realistic 30-56 turn games):*
 - **Mono Black vs The Deck**: 1,507 games/sec, 32 turns/game, 811KB/game, 25.3KB/turn
@@ -79,13 +80,21 @@ Temporary allocations: 484,954 (38% of total)
   - Store both resolvers directly, switch with bool flag
   - Minimal allocation impact (~2% measurement variance)
   - 3-7% speed improvement from reduced indirection
+- ✅ mtg-payment-vecs: Mana payment Vec elimination - MAJOR WIN (2025-11-04_#704)
+  - Eliminated 1.4M Vec allocations from SimpleManaResolver::check_payment
+  - Changed API to use output buffer pattern instead of returning Vec
+  - Performance: 85% faster (115µs → 17µs), allocation hotspot completely eliminated
+  - Before: 48K calls/1000 games, #1 allocation site by count
+  - After: ZERO allocations from this site (no longer appears in heaptrack top 30)
+  - All 406 tests passing
 
 **High priority open issues:**
 - (None currently - all major hotspots addressed)
 
 **Medium priority:**
-- Mana payment Vec allocations (mtg-payment-vecs) - 48K calls
 - AI decision allocations (mtg-ai-allocs) - 55K calls
+  - Note: Current heaptrack profiling lacks symbols to identify next hotspot
+  - Need better profiling strategy: use dhat-rs or rebuild with symbols
   
 **Low priority (setup costs):**
 - Card loading string clones (acceptable one-time cost)
@@ -98,6 +107,14 @@ Temporary allocations: 484,954 (38% of total)
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 
 ---
+**Updated 2025-11-04_#704(febed0a)**
+- **MAJOR WIN**: Eliminated 1.4M Vec allocations from mana payment system
+- Changed SimpleManaResolver API to use output buffer pattern
+- 85% performance improvement (115µs → 17µs) in mana resolution
+- Allocation hotspot completely eliminated (was #1, now absent from top 30)
+- Verified with rewind_play_again benchmark: 3,507 bytes/turn (pure gameplay)
+- All 406 tests passing
+
 **Updated 2025-11-03_#597(6e47d7d)**
 - Fresh heap profiling with 1000 games completed
 - ManaResolver Box elimination: minimal allocation impact, 3-7% speed improvement
