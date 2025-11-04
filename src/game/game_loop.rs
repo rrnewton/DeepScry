@@ -2193,6 +2193,15 @@ impl<'a> GameLoop<'a> {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                         eprintln!("  Error playing land: {e}");
                                     }
+                                    // Treat failed land play like passing priority to prevent infinite loops
+                                    // This can happen if controller makes invalid choices
+                                    consecutive_passes += 1;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    continue;
                                 } else {
                                     let card_name = self
                                         .game
@@ -2348,6 +2357,15 @@ impl<'a> GameLoop<'a> {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                         eprintln!("  Error casting spell: {e}");
                                     }
+                                    // Treat failed spell cast like passing priority to prevent infinite loops
+                                    // This can happen if controller makes invalid choices or mana engine has stale state
+                                    consecutive_passes += 1;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    continue;
                                 } else {
                                     // Store targets for this spell (will be used when it resolves)
                                     self.spell_targets.push((card_id, chosen_targets_vec));
@@ -2462,6 +2480,13 @@ impl<'a> GameLoop<'a> {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             eprintln!("    Failed to pay cost: {e}");
                                         }
+                                        // Treat failed ability activation like passing priority to prevent infinite loops
+                                        consecutive_passes += 1;
+                                        current_priority = if current_priority == active_player {
+                                            non_active_player
+                                        } else {
+                                            active_player
+                                        };
                                         continue;
                                     }
 
