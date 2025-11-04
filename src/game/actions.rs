@@ -1205,7 +1205,8 @@ impl GameState {
             // Log visible message for mana tapping
             if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                 let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                println!("  Tap {} for {{{}}}", card_name, color_symbol);
+                let message = format!("Tap {} for {{{}}}", card_name, color_symbol);
+                self.logger.normal(&message);
             }
         }
 

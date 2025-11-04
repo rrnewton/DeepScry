@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-04T10:06:15.780899208+00:00
+updated_at: 2025-11-04T11:24:38.873295822+00:00
 ---
 
 # Description
@@ -33,7 +33,7 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ Card rendering improvements: Aspect ratio and priority-based layout (commit 65ad5b3)
 - ✓ mtg-6326b9: Intelligent space usage with progressive compaction (2025-11-04)
 - ✓ Max card height limit (15 rows, configurable parameter for future)
-- mtg-cf6f3f: Simple stacking with multiplier prefix (e.g., "3x Island")
+- ✓ mtg-cf6f3f: Simple stacking with multiplier prefix (e.g., "3x Island") - 2025-11-04
 - mtg-a07166: Visual stacking with diagonal offsets (depends on mtg-cf6f3f)
 
 **Interactive focus system:**
@@ -49,74 +49,26 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 **Infrastructure:**
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
 - ✓ mtg-f6b05f: Fix max mana calculation for dual lands (commits fb0b159, 8d61403)
+- mtg-7216cc: Replace println/eprintln with logger calls (game_loop.rs)
 
 **UI Reorganization:**
 - ✓ mtg-f567b1: Move Stack and Actions panes, remove Dock tab
 
-## Status
-
-- [x] Initial fancy TUI implementation (commit 04dc7ed)
-- [x] Basic info enhancements (mtg-4d4e33, mtg-a862ff, mtg-a6f4ce, turn display)
-- [x] Initial visual polish (mtg-bc661f, mtg-b72100)
-- [x] Logging infrastructure (memory-only mode)
-- [x] 2D battlefield layout (mtg-fa9417) - major refactor
-- [x] Pane focus system (mtg-b3f1fe)
-- [x] Card navigation in Hand and Battlefield (commit c4d0e5c)
-- [x] Card Details population on selection (mtg-fa42e3)
-- [x] Max mana calculation fix (mtg-f6b05f)
-- [x] UI reorganization (mtg-f567b1)
-- [x] Turn display improvements (mtg-29343b) - commit 62cf104
-- [x] Card text newlines (mtg-897dd0) - commit 62cf104
-- [x] Smarter layout with variable sized cards (mtg-1af4f0) - commits 964113e, edd041f, 65ad5b3
-- [x] Mouse support (mtg-1a7bae) - 2025-11-04
-- [x] Enhanced choice highlighting (mtg-8a3ffb) - 2025-11-04
-- [x] Intelligent card rendering layout (mtg-6326b9) - 2025-11-04
-- [x] Max card height limit (2025-11-04)
-- [ ] Simple stacking (mtg-cf6f3f) - next priority
-- [ ] Visual stacking (mtg-a07166) - after simple stacking
-
 ## Recent progress (2025-11-04)
 
-Created simple stacking issue (mtg-cf6f3f):
-- Intermediate feature before full visual stacking
+Simple stacking (mtg-cf6f3f) - COMPLETED:
+- Phase 1: Trait abstraction with BattlefieldEntity trait (commit 97c1ef1)
+- Phase 2: Enable actual stacking with grouping logic (commit 22ac0c0)
 - Displays "3x Island" with cyan multiplier prefix
 - Groups cards by (name, tapped_state)
-- Introduces BattlefieldEntity abstraction
-- Much simpler than full visual stacking
-- Prerequisite for mtg-a07166
+- Aspect ratio fix for tapped stacks (commit 4d807df)
+- All 405 tests passing
 
-Max card height limit:
-- Added MAX_CARD_HEIGHT constant (15 rows)
-- Applied in calculate_optimal_card_size() greedy algorithm
-- Prevents cards from becoming too large on big terminals
-- Will become configurable parameter in future
-
-Intelligent card rendering layout (mtg-6326b9):
-- Progressive compaction for TAPPED marker: [TAPPED] → [T] → T based on width
-- Multi-strategy name layout: uses vertical space to avoid truncation
-- Better space usage: "Mountain" instead of "Mou..." when possible
-- Frees up 5 chars on narrow cards by using [T] instead of [TAPPED] earlier
-
-Enhanced choice highlighting (mtg-8a3ffb):
-- Added ChoiceContext enum (PlayingSpell, DeclareAttackers, DeclareBlockers, TargetSelection)
-- Tracks valid_choices for each decision context
-- Highlights playable cards (bright white), dims unplayable cards (dark gray)
-- Applied to all choice methods: spell/ability selection, attackers, blockers, targets
-- Instant visual feedback shows what's possible at each decision point
-
-Mouse support (mtg-1a7bae):
-- Enabled mouse capture in terminal setup/restore
-- Implemented card position tracking during rendering
-- Added mouse click hit testing in input loop
-- Click cards in battlefield to select and view details
-- Automatic pane focus switching when clicking cards
-- Selected cards highlighted with bold border
-
-Previous progress (2025-11-03):
-- Commit 964113e: Phase 1 - Natural card tapping with dimension swapping
-- Commit edd041f: Phase 2 - Greedy card size optimization
-- Commit 65ad5b3: Aspect ratio fixes and priority-based card content layout
-- Commit 62cf104: Turn display and card text newline rendering
+Logging issue discovered (mtg-7216cc):
+- game_loop.rs uses println!/eprintln! instead of logger
+- Causes fancy TUI log pane to be very sparse
+- Missing: damage logs, combat logs, player actions
+- Need to centralize logging with life totals
 
 ## Implementation order
 
@@ -130,10 +82,11 @@ Completed phases:
 6. ✅ **Card rendering enhancements**: Variable sized cards, turn display, card text newlines, intelligent layout, max height
 7. ✅ **Interactive features**: Mouse support, choice highlighting
 8. ✅ **Polish**: Intelligent space usage, progressive compaction
+9. ✅ **Simple stacking** (mtg-cf6f3f): Multiplier prefix for duplicate cards
 
 Next priorities:
 
-9. ⏸ **Simple stacking** (mtg-cf6f3f): Multiplier prefix for duplicate cards
-10. ⏸ **Visual stacking** (mtg-a07166): Diagonal offsets and partial rendering
+10. ⏸ **Logging improvements** (mtg-7216cc): Centralize logging, add life totals, capture all actions
+11. ⏸ **Visual stacking** (mtg-a07166): Diagonal offsets and partial rendering
 
-The fancy TUI baseline is complete with excellent usability! Next: space-saving stacking features.
+The fancy TUI baseline is complete! Simple stacking is working. Next: fix logging and add visual stacking.
