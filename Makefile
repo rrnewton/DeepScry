@@ -117,7 +117,7 @@ validate-impl-sequential:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 .PHONY: validate-parallel-steps validate-impl-sequential validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step
-validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step
+validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step deck_list
 
 validate-fmt-check-step:
 	@$(MAKE) fmt-check
@@ -248,3 +248,8 @@ heapprofile:
 	@echo ""
 	@echo "Analysis complete! Check output above for top allocation sites."
 
+# ==============================================================================
+
+deck_list: full_deck_list.txt
+full_deck_list.txt:
+	find decks/ forge-java/ -name "*.dck" | sort > $@
