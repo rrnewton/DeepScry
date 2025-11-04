@@ -749,6 +749,7 @@ impl FancyTuiController {
     const DEFAULT_CARD_HEIGHT: u16 = 7;
     const MIN_CARD_WIDTH: u16 = 5;
     const MIN_CARD_HEIGHT: u16 = 4;
+    const MAX_CARD_HEIGHT: u16 = 15; // Prevent cards from getting too large
     const CARD_SPACING: u16 = 1;
 
     /// Compute card width from height while maintaining the default aspect ratio
@@ -857,6 +858,12 @@ impl FancyTuiController {
 
             loop {
                 let next_height = height + 1;
+
+                // Stop if we've reached the maximum height
+                if next_height > Self::MAX_CARD_HEIGHT {
+                    break;
+                }
+
                 // Compute width from height using centralized aspect ratio function
                 let next_width = Self::compute_width_from_height(next_height);
 

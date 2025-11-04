@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-04T01:34:35.883187062+00:00
+updated_at: 2025-11-04T02:00:01.327670432+00:00
 ---
 
 # Description
@@ -32,6 +32,8 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-1af4f0: Smarter layout with variable sized cards (commits 964113e, edd041f)
 - ✓ Card rendering improvements: Aspect ratio and priority-based layout (commit 65ad5b3)
 - ✓ mtg-6326b9: Intelligent space usage with progressive compaction (2025-11-04)
+- ✓ Max card height limit (15 rows, configurable parameter for future)
+- mtg-a07166: Visual stacking for multiple copies of same card (future enhancement)
 
 **Interactive focus system:**
 - ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A, S)
@@ -68,8 +70,15 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Mouse support (mtg-1a7bae) - 2025-11-04
 - [x] Enhanced choice highlighting (mtg-8a3ffb) - 2025-11-04
 - [x] Intelligent card rendering layout (mtg-6326b9) - 2025-11-04
+- [x] Max card height limit (2025-11-04)
 
 ## Recent progress (2025-11-04)
+
+Max card height limit:
+- Added MAX_CARD_HEIGHT constant (15 rows)
+- Applied in calculate_optimal_card_size() greedy algorithm
+- Prevents cards from becoming too large on big terminals
+- Will become configurable parameter in future
 
 Intelligent card rendering layout (mtg-6326b9):
 - Progressive compaction for TAPPED marker: [TAPPED] → [T] → T based on width
@@ -107,7 +116,7 @@ All phases completed! The fancy TUI now has:
 3. ✅ **Pane focus and navigation**: Keyboard shortcuts (H/I/Y/O/A/S), arrow key navigation, card details
 4. ✅ **Critical bugs**: Max mana calculation, aspect ratio consistency
 5. ✅ **UI reorganization**: Stack/Actions panes repositioned
-6. ✅ **Card rendering enhancements**: Variable sized cards, turn display, card text newlines, intelligent layout
+6. ✅ **Card rendering enhancements**: Variable sized cards, turn display, card text newlines, intelligent layout, max height
 7. ✅ **Interactive features**: Mouse support, choice highlighting
 8. ✅ **Polish**: Intelligent space usage, progressive compaction
 
