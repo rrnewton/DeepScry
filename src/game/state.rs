@@ -558,27 +558,34 @@ impl GameState {
         self.players.iter().find(|p| !p.has_lost).map(|p| p.id)
     }
 
-    /// Undo back to the previous choice point
+    /// Undo back to the previous choice point for a specific player
     ///
-    /// Keeps undoing actions until a ChoicePoint action is found and removed.
+    /// Keeps undoing actions until a ChoicePoint action for the specified player is found.
+    /// This will undo ALL intervening choices (including other players' choices) until
+    /// reaching the target player's previous choice.
+    ///
     /// Returns (actions_undone, choice_log_size) where:
     /// - actions_undone: number of non-ChoicePoint actions undone
     /// - choice_log_size: the log size to truncate to (from the ChoicePoint)
     ///
-    /// Returns Ok(None) if no ChoicePoint is found in the undo log.
-    pub fn undo_to_previous_choice_point(&mut self) -> Result<Option<(usize, usize)>> {
+    /// Returns Ok(None) if no ChoicePoint for the specified player is found.
+    pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
         let mut actions_undone = 0;
         let mut choice_log_size = None;
 
-        // Keep undoing until we hit a ChoicePoint
+        // Keep undoing until we hit a ChoicePoint for the requesting player
         while let Some((action, prior_log_size)) = self.undo_log.pop() {
             match action {
-                crate::undo::GameAction::ChoicePoint { .. } => {
-                    // Found the choice point! Save the log size and stop
-                    choice_log_size = Some(prior_log_size);
-                    // Decrement the choice counter since we're undoing a choice
+                crate::undo::GameAction::ChoicePoint { player_id, .. } => {
+                    // Decrement the choice counter for ANY choice point we encounter
                     self.logger.decrement_choice_count();
-                    break;
+
+                    if player_id == requesting_player {
+                        // Found a choice point for the requesting player! Save the log size and stop
+                        choice_log_size = Some(prior_log_size);
+                        break;
+                    }
+                    // Otherwise, this was another player's choice - keep undoing
                 }
                 _ => {
                     // Not a choice point - undo this action

@@ -1547,7 +1547,7 @@ impl<'a> GameLoop<'a> {
             let attackers = loop {
                 let view = GameStateView::new(self.game, active_player);
                 let choice = controller.choose_attackers(&view, &available_creatures);
-                break handle_choice_result!(choice, self.game);
+                break handle_choice_result!(choice, self.game, active_player);
             };
 
             // Log this choice point for snapshot/replay
@@ -1671,7 +1671,7 @@ impl<'a> GameLoop<'a> {
             let blocks = loop {
                 let view = GameStateView::new(self.game, defending_player);
                 let choice = controller.choose_blockers(&view, &available_blockers, &attackers);
-                let blocks_value = handle_choice_result!(choice, self.game);
+                let blocks_value = handle_choice_result!(choice, self.game, defending_player);
 
                 // Log this choice point for snapshot/replay
                 let replay_choice = crate::game::ReplayChoice::Blockers(blocks_value.clone());
@@ -1947,7 +1947,7 @@ impl<'a> GameLoop<'a> {
                     let view = GameStateView::new(self.game, player_id);
                     let hand = view.hand();
                     let choice = controller.choose_cards_to_discard(&view, hand, discard_count);
-                    let discard_value = handle_choice_result!(choice, self.game);
+                    let discard_value = handle_choice_result!(choice, self.game, player_id);
 
                     // Log this choice point for snapshot/replay
                     let replay_choice = crate::game::ReplayChoice::Discard(discard_value.clone());
@@ -2224,7 +2224,7 @@ impl<'a> GameLoop<'a> {
                     // Ask controller to choose one (or None to pass)
                     let view = GameStateView::new(self.game, current_priority);
                     let choice_result = controller.choose_spell_ability_to_play(&view, &available);
-                    let choice_value = handle_choice_result!(choice_result, self.game);
+                    let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
 
                     // Log this choice point for snapshot/replay
                     let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
@@ -2379,7 +2379,7 @@ impl<'a> GameLoop<'a> {
                                     let chosen_targets = loop {
                                         let view = GameStateView::new(self.game, current_priority);
                                         let choice = controller.choose_targets(&view, card_id, &valid_targets);
-                                        let targets_value = handle_choice_result!(choice, self.game);
+                                        let targets_value = handle_choice_result!(choice, self.game, current_priority);
 
                                         // Log this choice point for snapshot/replay
                                         let replay_choice = crate::game::ReplayChoice::Targets(targets_value.clone());
@@ -2487,7 +2487,8 @@ impl<'a> GameLoop<'a> {
                                         let chosen_targets = loop {
                                             let view = GameStateView::new(self.game, current_priority);
                                             let choice = controller.choose_targets(&view, card_id, &valid_targets);
-                                            let targets_value = handle_choice_result!(choice, self.game);
+                                            let targets_value =
+                                                handle_choice_result!(choice, self.game, current_priority);
 
                                             // Log this choice point for snapshot/replay
                                             let replay_choice =

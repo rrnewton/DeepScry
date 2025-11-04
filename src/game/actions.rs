@@ -1765,7 +1765,7 @@ impl GameState {
                         } else {
                             blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
                         };
-                        break handle_choice_result!(choice, self);
+                        break handle_choice_result!(choice, self, attacker_owner);
                     };
 
                     damage_orders.insert(attacker_id, ordered_blockers);

@@ -531,25 +531,24 @@ impl<T> ChoiceResult<T> {
 /// This macro reduces verbosity when handling ChoiceResult values in the game loop.
 /// It handles all the special cases (UndoRequest, ExitGame, Error) uniformly.
 ///
-/// Usage: `handle_choice_result!(choice_result, game_state, error_context)`
+/// Usage: `handle_choice_result!(choice_result, game_state, player_id)`
 ///
 /// Special undo values:
-/// - `usize::MAX`: Undo to previous choice point (undoes all actions since last choice)
+/// - `usize::MAX`: Undo to previous choice point for the requesting player
 /// - Any other value N: Undo exactly N individual actions
 #[macro_export]
 macro_rules! handle_choice_result {
-    ($result:expr, $game:expr) => {
+    ($result:expr, $game:expr, $player_id:expr) => {
         match $result {
             $crate::game::controller::ChoiceResult::Ok(value) => value,
             $crate::game::controller::ChoiceResult::UndoRequest(n) => {
                 if n == usize::MAX {
-                    // Special case: undo to previous choice point
-                    if let Ok(Some((actions_undone, choice_log_size))) = $game.undo_to_previous_choice_point() {
+                    // Special case: undo to previous choice point for the requesting player
+                    if let Ok(Some((_actions_undone, choice_log_size))) =
+                        $game.undo_to_previous_choice_point($player_id)
+                    {
                         $game.logger.truncate_to(choice_log_size);
-                        // Store undo info for status display
-                        $game
-                            .logger
-                            .normal(&format!("Undo choice! {} actions rolled back.", actions_undone));
+                        // Note: Undo info should be displayed in status bar only, not logged
                     }
                 } else {
                     // Normal case: undo N specific actions
