@@ -478,6 +478,17 @@ impl GameLogger {
     pub fn choice_count(&self) -> usize {
         *self.choice_count.borrow()
     }
+
+    /// Decrement the choice counter
+    ///
+    /// Used when undoing a choice to keep the counter accurate.
+    /// Does nothing if the counter is already at 0.
+    pub fn decrement_choice_count(&self) {
+        let current = *self.choice_count.borrow();
+        if current > 0 {
+            *self.choice_count.borrow_mut() = current - 1;
+        }
+    }
 }
 
 impl Default for GameLogger {

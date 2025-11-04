@@ -558,6 +558,192 @@ impl GameState {
         self.players.iter().find(|p| !p.has_lost).map(|p| p.id)
     }
 
+    /// Undo back to the previous choice point
+    ///
+    /// Keeps undoing actions until a ChoicePoint action is found and removed.
+    /// Returns (actions_undone, choice_log_size) where:
+    /// - actions_undone: number of non-ChoicePoint actions undone
+    /// - choice_log_size: the log size to truncate to (from the ChoicePoint)
+    ///
+    /// Returns Ok(None) if no ChoicePoint is found in the undo log.
+    pub fn undo_to_previous_choice_point(&mut self) -> Result<Option<(usize, usize)>> {
+        let mut actions_undone = 0;
+        let mut choice_log_size = None;
+
+        // Keep undoing until we hit a ChoicePoint
+        while let Some((action, prior_log_size)) = self.undo_log.pop() {
+            match action {
+                crate::undo::GameAction::ChoicePoint { .. } => {
+                    // Found the choice point! Save the log size and stop
+                    choice_log_size = Some(prior_log_size);
+                    // Decrement the choice counter since we're undoing a choice
+                    self.logger.decrement_choice_count();
+                    break;
+                }
+                _ => {
+                    // Not a choice point - undo this action
+                    match action {
+                        crate::undo::GameAction::MoveCard {
+                            card_id,
+                            from_zone,
+                            to_zone,
+                            owner,
+                        } => {
+                            // Move card back from to_zone to from_zone
+                            let removed = match to_zone {
+                                Zone::Battlefield => self.battlefield.remove(card_id),
+                                Zone::Stack => self.stack.remove(card_id),
+                                _ => {
+                                    if let Some(zones) = self.get_player_zones_mut(owner) {
+                                        if let Some(zone) = zones.get_zone_mut(to_zone) {
+                                            zone.remove(card_id)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                }
+                            };
+
+                            if removed {
+                                match from_zone {
+                                    Zone::Battlefield => self.battlefield.add(card_id),
+                                    Zone::Stack => self.stack.add(card_id),
+                                    _ => {
+                                        if let Some(zones) = self.get_player_zones_mut(owner) {
+                                            if let Some(zone) = zones.get_zone_mut(from_zone) {
+                                                zone.add(card_id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::TapCard { card_id, tapped } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                if tapped {
+                                    card.untap();
+                                } else {
+                                    card.tap();
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::ModifyLife { player_id, delta } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                if delta > 0 {
+                                    player.lose_life(delta);
+                                } else {
+                                    player.gain_life(-delta);
+                                }
+                                if player.life > 0 {
+                                    player.has_lost = false;
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::AddMana { player_id, mana } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                if player.mana_pool.white >= mana.white {
+                                    player.mana_pool.white -= mana.white;
+                                }
+                                if player.mana_pool.blue >= mana.blue {
+                                    player.mana_pool.blue -= mana.blue;
+                                }
+                                if player.mana_pool.black >= mana.black {
+                                    player.mana_pool.black -= mana.black;
+                                }
+                                if player.mana_pool.red >= mana.red {
+                                    player.mana_pool.red -= mana.red;
+                                }
+                                if player.mana_pool.green >= mana.green {
+                                    player.mana_pool.green -= mana.green;
+                                }
+                                if player.mana_pool.colorless >= mana.colorless {
+                                    player.mana_pool.colorless -= mana.colorless;
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::EmptyManaPool {
+                            player_id,
+                            prev_white,
+                            prev_blue,
+                            prev_black,
+                            prev_red,
+                            prev_green,
+                            prev_colorless,
+                        } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                player.mana_pool.white = prev_white;
+                                player.mana_pool.blue = prev_blue;
+                                player.mana_pool.black = prev_black;
+                                player.mana_pool.red = prev_red;
+                                player.mana_pool.green = prev_green;
+                                player.mana_pool.colorless = prev_colorless;
+                            }
+                        }
+                        crate::undo::GameAction::AddCounter {
+                            card_id,
+                            counter_type,
+                            amount,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.remove_counter(counter_type, amount);
+                            }
+                        }
+                        crate::undo::GameAction::RemoveCounter {
+                            card_id,
+                            counter_type,
+                            amount,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.add_counter(counter_type, amount);
+                            }
+                        }
+                        crate::undo::GameAction::AdvanceStep { from_step, to_step: _ } => {
+                            self.turn.current_step = from_step;
+                        }
+                        crate::undo::GameAction::ChangeTurn {
+                            from_player,
+                            to_player: _,
+                            turn_number,
+                            rng_state,
+                        } => {
+                            self.turn.active_player = from_player;
+                            self.turn.turn_number = turn_number - 1;
+
+                            if let Some(rng_bytes) = rng_state {
+                                if let Ok(rng) = serde_json::from_slice::<ChaCha12Rng>(&rng_bytes) {
+                                    *self.rng.borrow_mut() = rng;
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::PumpCreature {
+                            card_id,
+                            power_delta,
+                            toughness_delta,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.power_bonus -= power_delta;
+                                card.toughness_bonus -= toughness_delta;
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    actions_undone += 1;
+                    // Truncate logger to the prior size
+                    self.logger.truncate_to(prior_log_size);
+                }
+            }
+        }
+
+        if let Some(log_size) = choice_log_size {
+            Ok(Some((actions_undone, log_size)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Undo the most recent action
     ///
     /// Pops the last action from the undo log and reverts it.

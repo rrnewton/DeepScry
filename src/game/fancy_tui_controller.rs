@@ -2719,7 +2719,7 @@ impl PlayerController for FancyTuiController {
                 // Clear choice context
                 self.state.choice_context = ChoiceContext::None;
                 self.state.valid_choices.clear();
-                ChoiceResult::UndoRequest(1)
+                ChoiceResult::UndoRequest(usize::MAX)
             }
             Ok(PromptResult::Choice(choice_opt)) => {
                 let result = match choice_opt {
@@ -2819,7 +2819,7 @@ impl PlayerController for FancyTuiController {
             Ok(PromptResult::Undo) => {
                 self.state.choice_context = ChoiceContext::None;
                 self.state.valid_choices.clear();
-                return ChoiceResult::UndoRequest(1);
+                return ChoiceResult::UndoRequest(usize::MAX);
             }
             Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_targets.len() => {
                 targets.push(valid_targets[idx - 1]);
@@ -2873,7 +2873,7 @@ impl PlayerController for FancyTuiController {
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => {
-                    return ChoiceResult::UndoRequest(1);
+                    return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(idx))) if idx < available_sources.len() => {
                     sources.push(available_sources[idx]);
@@ -2917,7 +2917,7 @@ impl PlayerController for FancyTuiController {
                 Ok(PromptResult::Undo) => {
                     self.state.choice_context = ChoiceContext::None;
                     self.state.valid_choices.clear();
-                    return ChoiceResult::UndoRequest(1);
+                    return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => break,
                 Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= available_creatures.len() => {
@@ -3009,7 +3009,7 @@ impl PlayerController for FancyTuiController {
                 Ok(PromptResult::Undo) => {
                     self.state.choice_context = ChoiceContext::None;
                     self.state.valid_choices.clear();
-                    return ChoiceResult::UndoRequest(1);
+                    return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => continue,
                 Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= attackers.len() => {
@@ -3081,7 +3081,7 @@ impl PlayerController for FancyTuiController {
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => {
-                    return ChoiceResult::UndoRequest(1);
+                    return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(idx))) if idx < hand.len() => {
                     let card_id = hand
