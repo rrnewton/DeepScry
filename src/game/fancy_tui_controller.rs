@@ -1929,7 +1929,7 @@ impl FancyTuiController {
     }
 
     /// Draw the Stack pane
-    fn draw_stack(&self, f: &mut Frame, area: Rect, _view: &GameStateView) {
+    fn draw_stack(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
         // Determine focus state
         let is_focused = self.state.focused_pane == FocusedPane::Stack;
         let border_color = if is_focused { Color::White } else { Color::Gray };
@@ -1954,10 +1954,43 @@ impl FancyTuiController {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
-        // TODO: Display actual stack contents from game state
-        let text = Text::from("(Stack empty)");
-        let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-        f.render_widget(paragraph, inner_area);
+        // Display actual stack contents from game state
+        let stack = view.stack();
+        if stack.is_empty() {
+            let text = Text::from("(Stack empty)");
+            let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
+            f.render_widget(paragraph, inner_area);
+        } else {
+            // Display stack from bottom to top
+            let mut lines = Vec::new();
+            for (idx, &card_id) in stack.iter().enumerate() {
+                let card_name = view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id));
+
+                // Stack position indicator (0 = bottom, N-1 = top)
+                let position = if idx == stack.len() - 1 {
+                    "TOP"
+                } else if idx == 0 {
+                    "BOT"
+                } else {
+                    "   "
+                };
+
+                // Highlight the top of stack
+                let style = if idx == stack.len() - 1 {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled(format!("[{}] ", position), Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name, style),
+                ]));
+            }
+
+            let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+            f.render_widget(paragraph, inner_area);
+        }
     }
 
     /// Wait for user input and update highlighted choice

@@ -448,6 +448,13 @@ impl<'a> GameStateView<'a> {
             .map(|p| p.can_play_land())
             .unwrap_or(false)
     }
+
+    /// Get cards on the stack
+    ///
+    /// Returns cards on the stack in order (bottom to top).
+    pub fn stack(&self) -> &[CardId] {
+        &self.game.stack.cards
+    }
 }
 
 /// Player controller interface
