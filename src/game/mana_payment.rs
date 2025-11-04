@@ -24,8 +24,10 @@
 //! let cost = ManaCost::from_string("2R");
 //!
 //! if resolver.can_pay(&cost, &sources) {
-//!     let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
-//!     // Use tap_order to actually tap the lands
+//!     let mut tap_order = Vec::new();
+//!     if resolver.compute_tap_order(&cost, &sources, &mut tap_order) {
+//!         // Use tap_order to actually tap the lands
+//!     }
 //! }
 //! ```
 
@@ -34,13 +36,17 @@ use crate::core::{CardId, ManaCost};
 /// Result of checking whether a mana cost can be paid
 ///
 /// This three-valued logic allows us to distinguish between:
-/// - Definite success (with solution)
+/// - Definite success
 /// - Definite failure (provably impossible)
 /// - Uncertain (greedy failed but backtracking might succeed)
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Note: The tap order is now written to an output buffer parameter
+/// instead of being returned in the Yes variant to avoid allocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentResult {
-    /// We can definitely pay this cost, here's the tap order
-    Yes(Vec<CardId>),
+    /// We can definitely pay this cost
+    /// (tap order written to output buffer if provided)
+    Yes,
 
     /// We can prove that this cost cannot be paid with available sources
     No,
@@ -255,14 +261,35 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
 ///
 /// Different implementations can provide different algorithms for determining
 /// how to pay mana costs. The interface is kept minimal to allow flexibility.
+///
+/// # Output Buffer Pattern
+///
+/// To avoid allocations in the hot path, this API uses an output buffer pattern:
+/// - Pass `Some(&mut vec)` to compute and write the tap order to the buffer
+/// - Pass `None` to only check if payment is possible (no tap order computation)
+///
+/// This allows `can_pay()` to avoid allocations entirely while `compute_tap_order()`
+/// can reuse a pre-allocated buffer.
 pub trait ManaPaymentResolver {
-    /// Check if a cost can be paid and return the payment result
+    /// Check if a cost can be paid and optionally compute the tap order
     ///
-    /// This is the primary method that should be implemented. It returns:
-    /// - `PaymentResult::Yes(tap_order)` if we found a solution
+    /// # Parameters
+    /// - `cost`: The mana cost to pay
+    /// - `sources`: Available mana sources
+    /// - `tap_order_out`: Optional output buffer for tap order
+    ///   - `Some(&mut vec)`: Compute tap order and write to this buffer (cleared first)
+    ///   - `None`: Just check if payment is possible (no tap order computation)
+    ///
+    /// # Returns
+    /// - `PaymentResult::Yes` if we found a solution (tap order written to buffer if provided)
     /// - `PaymentResult::No` if we can prove it's impossible
     /// - `PaymentResult::Maybe` if our algorithm couldn't find a solution but one might exist
-    fn check_payment(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult;
+    fn check_payment(
+        &self,
+        cost: &ManaCost,
+        sources: &[ManaSource],
+        tap_order_out: Option<&mut Vec<CardId>>,
+    ) -> PaymentResult;
 
     /// Quick bounds check without attempting to construct a solution
     ///
@@ -280,22 +307,22 @@ pub trait ManaPaymentResolver {
     ///
     /// This is pessimistic: `Maybe` is treated as `No`.
     /// Returns `true` only if we have a definite solution.
+    ///
+    /// This method does NOT allocate - it passes `None` for the tap order buffer.
     fn can_pay(&self, cost: &ManaCost, sources: &[ManaSource]) -> bool {
-        matches!(self.check_payment(cost, sources), PaymentResult::Yes(_))
+        matches!(self.check_payment(cost, sources, None), PaymentResult::Yes)
     }
 
     /// Compute the actual tap order for paying a cost
     ///
-    /// Returns `Some(vec)` with the CardIds to tap in order if payment is
-    /// possible, or `None` if the cost cannot be paid or is uncertain.
+    /// Writes the tap order to the provided buffer if payment is possible.
+    /// The buffer is cleared before writing.
     ///
-    /// The returned vector should contain exactly the cards needed to pay
-    /// the cost, in the order they should be tapped.
-    fn compute_tap_order(&self, cost: &ManaCost, sources: &[ManaSource]) -> Option<Vec<CardId>> {
-        match self.check_payment(cost, sources) {
-            PaymentResult::Yes(tap_order) => Some(tap_order),
-            _ => None,
-        }
+    /// Returns `true` if payment is possible (tap order written to buffer),
+    /// or `false` if the cost cannot be paid or is uncertain.
+    fn compute_tap_order(&self, cost: &ManaCost, sources: &[ManaSource], tap_order_out: &mut Vec<CardId>) -> bool {
+        tap_order_out.clear();
+        matches!(self.check_payment(cost, sources, Some(tap_order_out)), PaymentResult::Yes)
     }
 }
 
@@ -323,7 +350,12 @@ impl Default for SimpleManaResolver {
 }
 
 impl ManaPaymentResolver for SimpleManaResolver {
-    fn check_payment(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
+    fn check_payment(
+        &self,
+        cost: &ManaCost,
+        sources: &[ManaSource],
+        tap_order_out: Option<&mut Vec<CardId>>,
+    ) -> PaymentResult {
         // Check if we have any complex sources - SimpleManaResolver doesn't handle them
         let has_complex = sources.iter().any(|s| {
             !s.is_tapped
@@ -342,11 +374,17 @@ impl ManaPaymentResolver for SimpleManaResolver {
         match bounds_check_payment(cost, sources) {
             PaymentResult::No => return PaymentResult::No,
             PaymentResult::Maybe => {} // Continue to tap order computation
-            PaymentResult::Yes(_) => unreachable!("bounds_check never returns Yes"),
+            PaymentResult::Yes => unreachable!("bounds_check never returns Yes"),
         }
 
-        // Bounds check passed and we have only simple sources, compute tap order
-        let mut tap_order = Vec::new();
+        // Bounds check passed and we have only simple sources
+        // If no output buffer provided, we can return Yes now (just checking, not computing)
+        let Some(tap_order) = tap_order_out else {
+            return PaymentResult::Yes;
+        };
+
+        // Clear output buffer and compute tap order
+        tap_order.clear();
         let mut remaining_cost = *cost;
 
         // Helper to tap sources of a specific color
@@ -419,7 +457,7 @@ impl ManaPaymentResolver for SimpleManaResolver {
             }
         }
 
-        PaymentResult::Yes(tap_order)
+        PaymentResult::Yes
     }
 }
 
@@ -476,22 +514,26 @@ impl Default for GreedyManaResolver {
 }
 
 impl ManaPaymentResolver for GreedyManaResolver {
-    fn check_payment(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
+    fn check_payment(
+        &self,
+        cost: &ManaCost,
+        sources: &[ManaSource],
+        tap_order_out: Option<&mut Vec<CardId>>,
+    ) -> PaymentResult {
         // Use shared bounds checking to see if we can prove "No"
         match bounds_check_payment(cost, sources) {
             PaymentResult::No => return PaymentResult::No,
             PaymentResult::Maybe => {} // Continue to greedy algorithm
-            PaymentResult::Yes(_) => unreachable!("bounds_check never returns Yes"),
+            PaymentResult::Yes => unreachable!("bounds_check never returns Yes"),
         }
 
         // Bounds check passed, now try greedy algorithm
-        match self.try_greedy_payment(cost, sources) {
-            Some(tap_order) => PaymentResult::Yes(tap_order),
-            None => {
-                // Greedy failed but bounds check says it might be possible
-                // A backtracking search might find a solution
-                PaymentResult::Maybe
-            }
+        if self.try_greedy_payment(cost, sources, tap_order_out) {
+            PaymentResult::Yes
+        } else {
+            // Greedy failed but bounds check says it might be possible
+            // A backtracking search might find a solution
+            PaymentResult::Maybe
         }
     }
 
@@ -499,9 +541,22 @@ impl ManaPaymentResolver for GreedyManaResolver {
 }
 
 impl GreedyManaResolver {
-    /// Try to pay using greedy algorithm, return tap order if successful
-    fn try_greedy_payment(&self, cost: &ManaCost, sources: &[ManaSource]) -> Option<Vec<CardId>> {
-        let mut tap_order = Vec::new();
+    /// Try to pay using greedy algorithm
+    ///
+    /// Returns `true` if payment is possible (tap order written to buffer if provided),
+    /// or `false` if greedy algorithm couldn't find a solution.
+    fn try_greedy_payment(
+        &self,
+        cost: &ManaCost,
+        sources: &[ManaSource],
+        tap_order_out: Option<&mut Vec<CardId>>,
+    ) -> bool {
+        // If no output buffer provided, we need a temporary one for the algorithm
+        // (greedy algorithm needs to track tapped sources even if we don't return the order)
+        let mut temp_buffer = Vec::new();
+        let tap_order = tap_order_out.unwrap_or(&mut temp_buffer);
+        tap_order.clear();
+
         let mut remaining_cost = *cost;
 
         // Helper to tap sources for a specific color
@@ -538,27 +593,27 @@ impl GreedyManaResolver {
 
         // Pay specific color requirements first
         if remaining_cost.white > 0 && !tap_for_color(ManaColor::White, remaining_cost.white) {
-            return None;
+            return false;
         }
         remaining_cost.white = 0;
 
         if remaining_cost.blue > 0 && !tap_for_color(ManaColor::Blue, remaining_cost.blue) {
-            return None;
+            return false;
         }
         remaining_cost.blue = 0;
 
         if remaining_cost.black > 0 && !tap_for_color(ManaColor::Black, remaining_cost.black) {
-            return None;
+            return false;
         }
         remaining_cost.black = 0;
 
         if remaining_cost.red > 0 && !tap_for_color(ManaColor::Red, remaining_cost.red) {
-            return None;
+            return false;
         }
         remaining_cost.red = 0;
 
         if remaining_cost.green > 0 && !tap_for_color(ManaColor::Green, remaining_cost.green) {
-            return None;
+            return false;
         }
         remaining_cost.green = 0;
 
@@ -578,7 +633,7 @@ impl GreedyManaResolver {
                 }
             }
             if tapped < remaining_cost.colorless {
-                return None;
+                return false;
             }
         }
         remaining_cost.colorless = 0;
@@ -597,11 +652,11 @@ impl GreedyManaResolver {
                 tapped += 1;
             }
             if tapped < remaining_cost.generic {
-                return None;
+                return false;
             }
         }
 
-        Some(tap_order)
+        true
     }
 }
 
@@ -657,7 +712,8 @@ mod tests {
 
         assert!(resolver.can_pay(&cost, &sources));
 
-        let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources, &mut tap_order));
         assert_eq!(tap_order.len(), 3); // Should tap all 3 mountains
     }
 
@@ -685,7 +741,8 @@ mod tests {
         };
 
         assert!(!resolver.can_pay(&cost, &sources));
-        assert!(resolver.compute_tap_order(&cost, &sources).is_none());
+        let mut tap_order = Vec::new();
+        assert!(!resolver.compute_tap_order(&cost, &sources, &mut tap_order));
     }
 
     #[test]
@@ -756,7 +813,8 @@ mod tests {
 
         assert!(resolver.can_pay(&cost, &sources));
 
-        let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources, &mut tap_order));
         assert_eq!(tap_order.len(), 2);
         // Should prefer Mountain (card 2) for R, then Taiga for generic
         assert_eq!(tap_order[0], CardId::new(2)); // Mountain for R
@@ -788,7 +846,8 @@ mod tests {
         };
 
         assert!(resolver.can_pay(&cost, &sources));
-        let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources, &mut tap_order));
         assert_eq!(tap_order.len(), 1);
     }
 
@@ -829,7 +888,8 @@ mod tests {
             x_count: 0,
         };
 
-        let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources, &mut tap_order));
         assert_eq!(tap_order.len(), 1);
         // Should prefer Mountain (most specific) over Taiga or City of Brass
         assert_eq!(tap_order[0], CardId::new(3));
@@ -873,7 +933,8 @@ mod tests {
         };
 
         assert!(resolver.can_pay(&cost, &sources));
-        let tap_order = resolver.compute_tap_order(&cost, &sources).unwrap();
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources, &mut tap_order));
         assert_eq!(tap_order.len(), 3);
     }
 
@@ -901,7 +962,8 @@ mod tests {
         };
 
         assert!(!resolver.can_pay(&cost, &sources));
-        assert!(resolver.compute_tap_order(&cost, &sources).is_none());
+        let mut tap_order = Vec::new();
+        assert!(!resolver.compute_tap_order(&cost, &sources, &mut tap_order));
     }
 
     // Tests for PaymentResult::Maybe behavior
@@ -936,7 +998,8 @@ mod tests {
         };
 
         // SimpleManaResolver returns Maybe when it encounters complex sources
-        let result = resolver.check_payment(&cost, &sources);
+        let mut tap_order = Vec::new();
+        let result = resolver.check_payment(&cost, &sources, Some(&mut tap_order));
         assert_eq!(result, PaymentResult::Maybe);
 
         // can_pay treats Maybe as No (pessimistic)
@@ -965,14 +1028,11 @@ mod tests {
             x_count: 0,
         };
 
-        let result = resolver.check_payment(&cost, &sources);
-        match result {
-            PaymentResult::Yes(tap_order) => {
-                assert_eq!(tap_order.len(), 1);
-                assert_eq!(tap_order[0], CardId::new(1));
-            }
-            _ => panic!("Expected PaymentResult::Yes, got {:?}", result),
-        }
+        let mut tap_order = Vec::new();
+        let result = resolver.check_payment(&cost, &sources, Some(&mut tap_order));
+        assert_eq!(result, PaymentResult::Yes);
+        assert_eq!(tap_order.len(), 1);
+        assert_eq!(tap_order[0], CardId::new(1));
     }
 
     #[test]
@@ -998,7 +1058,8 @@ mod tests {
             x_count: 0,
         };
 
-        let result = resolver.check_payment(&cost, &sources);
+        let mut tap_order = Vec::new();
+        let result = resolver.check_payment(&cost, &sources, Some(&mut tap_order));
         assert_eq!(result, PaymentResult::No);
     }
 
@@ -1036,7 +1097,8 @@ mod tests {
         };
 
         // Should return No - provably impossible
-        let result = resolver.check_payment(&cost, &sources);
+        let mut tap_order = Vec::new();
+        let result = resolver.check_payment(&cost, &sources, Some(&mut tap_order));
         assert_eq!(result, PaymentResult::No);
     }
 
@@ -1065,7 +1127,7 @@ mod tests {
         // quick_check never returns Yes, even when payment is possible
         let result = resolver.quick_check(&cost, &sources);
         assert!(matches!(result, PaymentResult::Maybe | PaymentResult::No));
-        assert_ne!(result, PaymentResult::Yes(vec![])); // Should not be Yes
+        assert_ne!(result, PaymentResult::Yes); // Should not be Yes
     }
 
     // Tests for conditional mana sources (sources with activation costs)
@@ -1134,7 +1196,7 @@ mod tests {
         };
 
         // The bounds check should not reject this (total delta = 2, needed = 2)
-        let result = resolver.check_payment(&cost, &sources);
+        let result = resolver.check_payment(&cost, &sources, None);
         // Greedy might not find a solution (it doesn't use conditional sources yet),
         // but it shouldn't return No due to bounds
         assert_ne!(result, PaymentResult::No);
@@ -1175,7 +1237,7 @@ mod tests {
             x_count: 0,
         };
 
-        let result = resolver.check_payment(&cost, &sources);
+        let result = resolver.check_payment(&cost, &sources, None);
         assert_eq!(result, PaymentResult::No); // Should be provably impossible
     }
 
@@ -1206,7 +1268,7 @@ mod tests {
 
         // The color bounds check should pass (we can produce red, ignoring cost)
         // But the total delta check should fail (delta = -1, needed = 1)
-        let result = resolver.check_payment(&cost, &sources);
+        let result = resolver.check_payment(&cost, &sources, None);
         assert_eq!(result, PaymentResult::No); // Fails on total delta, not color
     }
 

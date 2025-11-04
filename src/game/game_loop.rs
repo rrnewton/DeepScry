@@ -2385,7 +2385,12 @@ impl<'a> GameLoop<'a> {
 
                                     // Use GreedyManaResolver to compute proper tap order
                                     let resolver = GreedyManaResolver::new();
-                                    resolver.compute_tap_order(cost, mana_sources).unwrap_or_default()
+                                    let mut tap_order = Vec::new();
+                                    if resolver.compute_tap_order(cost, mana_sources, &mut tap_order) {
+                                        tap_order
+                                    } else {
+                                        Vec::new()
+                                    }
                                 };
 
                                 // Cast using 8-step process
@@ -2478,9 +2483,8 @@ impl<'a> GameLoop<'a> {
 
                                         // Use GreedyManaResolver to compute proper tap order
                                         let resolver = GreedyManaResolver::new();
-                                        let sources_to_tap = resolver
-                                            .compute_tap_order(mana_cost, mana_sources)
-                                            .unwrap_or_else(Vec::new);
+                                        let mut sources_to_tap = Vec::new();
+                                        resolver.compute_tap_order(mana_cost, mana_sources, &mut sources_to_tap);
 
                                         // Tap lands to add mana to pool
                                         for &source_id in &sources_to_tap {
