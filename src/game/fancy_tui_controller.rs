@@ -84,7 +84,7 @@ trait BattlefieldEntity {
     fn contains_card(&self, card_id: CardId) -> bool;
 }
 
-/// Concrete entity type - single card or simple stack
+/// Concrete entity type - single card, simple stack, or visual stack
 #[derive(Debug, Clone)]
 enum Entity {
     SingleCard {
@@ -95,6 +95,11 @@ enum Entity {
         card_name: String,
         is_tapped: bool,
     },
+    VisualStack {
+        card_ids: SmallVec<[CardId; 8]>,
+        card_name: String,
+        tapped_count: usize, // How many are tapped (tapped ones on top)
+    },
 }
 
 impl BattlefieldEntity for Entity {
@@ -102,6 +107,7 @@ impl BattlefieldEntity for Entity {
         match self {
             Entity::SingleCard { card_id } => std::slice::from_ref(card_id),
             Entity::SimpleStack { card_ids, .. } => card_ids,
+            Entity::VisualStack { card_ids, .. } => card_ids,
         }
     }
 
@@ -109,6 +115,7 @@ impl BattlefieldEntity for Entity {
         match self {
             Entity::SingleCard { card_id } => *card_id,
             Entity::SimpleStack { card_ids, .. } => card_ids[0],
+            Entity::VisualStack { card_ids, .. } => card_ids[0],
         }
     }
 
@@ -116,6 +123,7 @@ impl BattlefieldEntity for Entity {
         match self {
             Entity::SingleCard { .. } => 1,
             Entity::SimpleStack { card_ids, .. } => card_ids.len(),
+            Entity::VisualStack { card_ids, .. } => card_ids.len(),
         }
     }
 
@@ -132,6 +140,18 @@ impl BattlefieldEntity for Entity {
                     card_name.clone()
                 }
             }
+            Entity::VisualStack {
+                card_name, card_ids, ..
+            } => {
+                // For visual stacks, don't show the "Nx" prefix since
+                // the visual diagonal offsets convey the count
+                let count = card_ids.len();
+                if count > 1 {
+                    format!("{}x {}", count, card_name)
+                } else {
+                    card_name.clone()
+                }
+            }
         }
     }
 
@@ -139,6 +159,7 @@ impl BattlefieldEntity for Entity {
         match self {
             Entity::SingleCard { card_id } => view.is_tapped(*card_id),
             Entity::SimpleStack { is_tapped, .. } => *is_tapped,
+            Entity::VisualStack { tapped_count, .. } => *tapped_count > 0,
         }
     }
 
@@ -384,45 +405,92 @@ impl FancyTuiController {
     /// Group cards into battlefield entities
     ///
     /// Groups cards by (name, tapped_state) into stacks when multiple copies exist
+    /// With visual_stacking=true, creates VisualStack entities with diagonal offsets
     fn group_cards_into_entities(cards: &[CardId], view: &GameStateView) -> Vec<Entity> {
         use std::collections::HashMap;
 
-        // Group cards by (name, is_tapped)
-        let mut groups: HashMap<(String, bool), SmallVec<[CardId; 8]>> = HashMap::new();
+        const ENABLE_VISUAL_STACKING: bool = true; // Toggle feature here
 
-        for &card_id in cards {
-            let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-            let is_tapped = view.is_tapped(card_id);
-            let key = (name, is_tapped);
+        if ENABLE_VISUAL_STACKING {
+            // Group cards by name only (not tapped state) for visual stacks
+            let mut groups: HashMap<String, SmallVec<[CardId; 8]>> = HashMap::new();
 
-            groups.entry(key).or_default().push(card_id);
-        }
+            for &card_id in cards {
+                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+                groups.entry(name).or_default().push(card_id);
+            }
 
-        // Convert groups to entities
-        let mut entities: Vec<Entity> = groups
-            .into_iter()
-            .map(|((card_name, is_tapped), card_ids)| {
-                if card_ids.len() > 1 {
-                    // Create a stack
-                    Entity::SimpleStack {
-                        card_ids,
-                        card_name,
-                        is_tapped,
+            // Convert groups to visual stack entities
+            let mut entities: Vec<Entity> = groups
+                .into_iter()
+                .map(|(card_name, mut card_ids)| {
+                    if card_ids.len() > 1 {
+                        // Sort cards: untapped first, then tapped (tapped ones will be on top visually)
+                        card_ids.sort_by_key(|&id| view.is_tapped(id));
+
+                        // Count how many are tapped
+                        let tapped_count = card_ids.iter().filter(|&&id| view.is_tapped(id)).count();
+
+                        // Create visual stack
+                        Entity::VisualStack {
+                            card_ids,
+                            card_name,
+                            tapped_count,
+                        }
+                    } else {
+                        // Single card
+                        Entity::SingleCard { card_id: card_ids[0] }
                     }
-                } else {
-                    // Single card
-                    Entity::SingleCard { card_id: card_ids[0] }
-                }
-            })
-            .collect();
+                })
+                .collect();
 
-        // Sort for consistent ordering: single cards first, then stacks
-        entities.sort_by_key(|e| match e {
-            Entity::SingleCard { card_id } => (0, *card_id),
-            Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
-        });
+            // Sort for consistent ordering: single cards first, then stacks
+            entities.sort_by_key(|e| match e {
+                Entity::SingleCard { card_id } => (0, *card_id),
+                Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
+                Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
+            });
 
-        entities
+            entities
+        } else {
+            // Original simple stacking logic
+            let mut groups: HashMap<(String, bool), SmallVec<[CardId; 8]>> = HashMap::new();
+
+            for &card_id in cards {
+                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+                let is_tapped = view.is_tapped(card_id);
+                let key = (name, is_tapped);
+
+                groups.entry(key).or_default().push(card_id);
+            }
+
+            // Convert groups to entities
+            let mut entities: Vec<Entity> = groups
+                .into_iter()
+                .map(|((card_name, is_tapped), card_ids)| {
+                    if card_ids.len() > 1 {
+                        // Create a simple stack
+                        Entity::SimpleStack {
+                            card_ids,
+                            card_name,
+                            is_tapped,
+                        }
+                    } else {
+                        // Single card
+                        Entity::SingleCard { card_id: card_ids[0] }
+                    }
+                })
+                .collect();
+
+            // Sort for consistent ordering: single cards first, then stacks
+            entities.sort_by_key(|e| match e {
+                Entity::SingleCard { card_id } => (0, *card_id),
+                Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
+                Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
+            });
+
+            entities
+        }
     }
 
     /// Draw the complete UI with all panels
@@ -1018,6 +1086,30 @@ impl FancyTuiController {
         }
     }
 
+    /// Get dimensions for an entity (handles visual stacking diagonal offsets)
+    fn get_entity_dimensions(entity: &Entity, view: &GameStateView, base_width: u16, base_height: u16) -> (u16, u16) {
+        match entity {
+            Entity::SingleCard { .. } | Entity::SimpleStack { .. } => {
+                let is_tapped = entity.is_tapped(view);
+                Self::get_dimensions_for_tapped_state(is_tapped, base_width, base_height)
+            }
+            Entity::VisualStack {
+                card_ids, tapped_count, ..
+            } => {
+                // Visual stacks need extra space for diagonal offsets
+                const DIAGONAL_OFFSET: u16 = 1; // chars per card in stack
+                let stack_depth = card_ids.len() as u16;
+                let offset_total = (stack_depth.saturating_sub(1)) * DIAGONAL_OFFSET;
+
+                // Determine if we need tapped dimensions for the visible top cards
+                let any_tapped = *tapped_count > 0;
+                let (base_w, base_h) = Self::get_dimensions_for_tapped_state(any_tapped, base_width, base_height);
+
+                (base_w + offset_total, base_h + offset_total)
+            }
+        }
+    }
+
     /// Test if all cards fit in the battlefield area with given card size
     fn test_card_size_fits(
         area: Rect,
@@ -1177,8 +1269,7 @@ impl FancyTuiController {
         let mut current_row_width = 0u16;
 
         for entity in &entities {
-            let is_tapped = entity.is_tapped(view);
-            let (card_w, card_h) = Self::get_dimensions_for_tapped_state(is_tapped, card_width, card_height);
+            let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
             let entity_width_with_spacing = card_w + Self::CARD_SPACING;
 
@@ -1247,6 +1338,106 @@ impl FancyTuiController {
         rendered_height
     }
 
+    /// Render a visual stack with diagonal offsets
+    fn render_visual_stack(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, entity: &Entity) {
+        let Entity::VisualStack {
+            card_ids, tapped_count, ..
+        } = entity
+        else {
+            return;
+        };
+
+        const DIAGONAL_OFFSET: u16 = 1;
+        let stack_depth = card_ids.len();
+        let card_id = card_ids[0]; // Representative card
+        let card = view.get_card(card_id);
+
+        // Check if this card is currently selected
+        let is_selected =
+            Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
+
+        // Determine border color from card colors
+        let border_color = if let Some(card) = card.as_ref() {
+            match card.colors.len() {
+                0 => Color::Gray,
+                1 => match card.colors[0] {
+                    crate::core::Color::Red => Color::Red,
+                    crate::core::Color::Green => Color::Green,
+                    crate::core::Color::Blue => Color::Blue,
+                    crate::core::Color::White => Color::White,
+                    crate::core::Color::Black => Color::DarkGray,
+                    crate::core::Color::Colorless => Color::Gray,
+                },
+                _ => Color::Yellow,
+            }
+        } else {
+            Color::Gray
+        };
+
+        // Render stacked cards from back to front (bottom-left to top-right)
+        for i in 0..stack_depth {
+            let offset = i as u16 * DIAGONAL_OFFSET;
+
+            // Card area with diagonal offset
+            let card_area = Rect {
+                x: area.x + offset,
+                y: area.y + offset,
+                width: area
+                    .width
+                    .saturating_sub(offset + DIAGONAL_OFFSET * (stack_depth - i - 1) as u16),
+                height: area
+                    .height
+                    .saturating_sub(offset + DIAGONAL_OFFSET * (stack_depth - i - 1) as u16),
+            };
+
+            // For all but the topmost card, render only the border
+            if i < stack_depth - 1 {
+                let border_style = Style::default().fg(border_color);
+                let block = Block::default().borders(Borders::ALL).border_style(border_style);
+                f.render_widget(block, card_area);
+            } else {
+                // Render the top card with full content
+                // Determine if the top cards are tapped
+                let is_tapped = *tapped_count > 0;
+
+                let border_style = if is_selected {
+                    Style::default().fg(border_color).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(border_color)
+                };
+
+                let text_style = if is_tapped {
+                    Style::default().fg(Color::Gray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                // Build simple content for the top card
+                let name = entity.display_name(view);
+                let cost_str = card.as_ref().map(|c| c.mana_cost.to_string()).unwrap_or_default();
+
+                let content_width = card_area.width.saturating_sub(2) as usize;
+                let mut lines = Vec::new();
+
+                // Title line with count prefix
+                if !cost_str.is_empty() && name.len() + cost_str.len() < content_width {
+                    let padding = content_width.saturating_sub(name.len() + cost_str.len());
+                    lines.push(Line::from(vec![
+                        Span::styled(name.clone(), text_style),
+                        Span::raw(" ".repeat(padding)),
+                        Span::raw(cost_str),
+                    ]));
+                } else {
+                    lines.push(Line::from(Span::styled(name, text_style)));
+                }
+
+                let block = Block::default().borders(Borders::ALL).border_style(border_style);
+                let paragraph = Paragraph::new(Text::from(lines)).block(block);
+                f.render_widget(paragraph, card_area);
+            }
+        }
+    }
+
     /// Render a single entity as a box with priority-based content layout
     fn render_entity(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, entity: &Entity) {
         // Track entity position for mouse hit testing
@@ -1254,6 +1445,12 @@ impl FancyTuiController {
             entity: entity.clone(),
             area,
         });
+
+        // Dispatch to visual stack renderer if applicable
+        if matches!(entity, Entity::VisualStack { .. }) {
+            self.render_visual_stack(f, area, view, entity);
+            return;
+        }
 
         let card_id = entity.representative_card();
         let name = entity.display_name(view);
