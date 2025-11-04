@@ -49,7 +49,7 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 **Infrastructure:**
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
 - ✓ mtg-f6b05f: Fix max mana calculation for dual lands (commits fb0b159, 8d61403)
-- mtg-7216cc: Replace println/eprintln with logger calls (game_loop.rs)
+- ✓ mtg-7216cc: Replace println/eprintln with logger calls (commit f4a6938)
 
 **UI Reorganization:**
 - ✓ mtg-f567b1: Move Stack and Actions panes, remove Dock tab
@@ -64,11 +64,13 @@ Simple stacking (mtg-cf6f3f) - COMPLETED:
 - Aspect ratio fix for tapped stacks (commit 4d807df)
 - All 405 tests passing
 
-Logging issue discovered (mtg-7216cc):
-- game_loop.rs uses println!/eprintln! instead of logger
-- Causes fancy TUI log pane to be very sparse
-- Missing: damage logs, combat logs, player actions
-- Need to centralize logging with life totals
+Logging improvements (mtg-7216cc) - COMPLETED:
+- Replaced all println!/eprintln! with logger calls (commit f4a6938)
+- Centralized damage logging with life totals
+- All combat logs captured (attacks, blocks, damage)
+- All player actions logged (lands, spells, abilities, mana)
+- Verified no stdout interference in fancy TUI mode
+- All 276 tests passing
 
 ## Implementation order
 
@@ -83,10 +85,10 @@ Completed phases:
 7. ✅ **Interactive features**: Mouse support, choice highlighting
 8. ✅ **Polish**: Intelligent space usage, progressive compaction
 9. ✅ **Simple stacking** (mtg-cf6f3f): Multiplier prefix for duplicate cards
+10. ✅ **Logging improvements** (mtg-7216cc): Centralize logging, add life totals, capture all actions
 
 Next priorities:
 
-10. ⏸ **Logging improvements** (mtg-7216cc): Centralize logging, add life totals, capture all actions
 11. ⏸ **Visual stacking** (mtg-a07166): Diagonal offsets and partial rendering
 
-The fancy TUI baseline is complete! Simple stacking is working. Next: fix logging and add visual stacking.
+The fancy TUI is feature-complete! All logging is centralized and working properly. Next: add visual stacking for even more polish.
