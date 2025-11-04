@@ -439,6 +439,15 @@ impl ManaEngine {
     pub fn complex_sources(&self) -> &[CardId] {
         &self.complex_sources
     }
+
+    /// Get all mana sources with their production information
+    ///
+    /// This returns the complete list of ManaSource structs that were identified
+    /// during the last update(). This is useful for getting a tap order from the
+    /// payment resolver without rebuilding the source list.
+    pub fn all_sources(&self) -> &[ManaSource] {
+        &self.mana_sources
+    }
 }
 
 /// Determine if a land is a simple mana source (produces exactly one color)

@@ -2318,85 +2318,21 @@ impl<'a> GameLoop<'a> {
 
                                 let mana_callback = |game: &GameState, cost: &crate::core::ManaCost| {
                                     // Use ManaEngine to compute proper color-aware tap order
-                                    // Note: Create temporary engine here since we're in a closure
+                                    // Create temporary engine and update it with current game state
                                     use crate::game::mana_engine::ManaEngine;
+                                    use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
                                     let mut mana_engine = ManaEngine::new();
                                     mana_engine.update(game, current_priority);
 
-                                    // The mana engine already knows which sources to tap
-                                    // It uses the GreedyManaResolver internally to compute tap order
-                                    // TODO: Extract tap order from mana_engine instead of computing separately
-
-                                    // For now, use the same logic that get_castable_spells uses:
-                                    // Build ManaSource list and use GreedyManaResolver
-                                    use crate::game::mana_payment::{
-                                        GreedyManaResolver, ManaPaymentResolver, ManaSource,
-                                    };
-
-                                    let mut mana_sources = Vec::new();
-                                    for &card_id in &game.battlefield.cards {
-                                        if let Ok(card) = game.cards.get(card_id) {
-                                            if card.owner != current_priority {
-                                                continue; // Skip permanents we don't own
-                                            }
-
-                                            // Check if this is a mana-producing permanent (land or creature with mana ability)
-                                            // Must match the same logic as ManaEngine::update() to avoid inconsistencies
-                                            let is_mana_source = if card.is_land() {
-                                                true
-                                            } else if card.is_creature() {
-                                                // Check for creature mana abilities (Llanowar Elves, Birds of Paradise)
-                                                let text_lower = card.text.to_lowercase();
-                                                text_lower.contains("{t}: add")
-                                                    || (text_lower.contains("add") && text_lower.contains("mana"))
-                                            } else {
-                                                false
-                                            };
-
-                                            if !is_mana_source || card.tapped {
-                                                continue;
-                                            }
-
-                                            // Check summoning sickness for creatures
-                                            let has_summoning_sickness = if card.is_creature() {
-                                                if let Some(entered_turn) = card.turn_entered_battlefield {
-                                                    entered_turn == game.turn.turn_number
-                                                        && !card.has_keyword(&crate::core::Keyword::Haste)
-                                                } else {
-                                                    false
-                                                }
-                                            } else {
-                                                false
-                                            };
-
-                                            if has_summoning_sickness {
-                                                continue; // Skip summoning-sick creatures
-                                            }
-
-                                            // Determine mana production
-                                            let production = if let Some(prod) = Self::get_mana_production(card) {
-                                                Some(prod)
-                                            } else if card.is_creature() {
-                                                // Try creature mana production
-                                                Self::get_creature_mana_production_for_callback(card)
-                                            } else {
-                                                None
-                                            };
-
-                                            if let Some(prod) = production {
-                                                mana_sources.push(ManaSource {
-                                                    card_id,
-                                                    production: prod,
-                                                    is_tapped: card.tapped,
-                                                    has_summoning_sickness,
-                                                });
-                                            }
-                                        }
-                                    }
+                                    // Use the engine's mana sources directly - no need to rebuild the list!
+                                    // The engine has already scanned the battlefield and identified all mana-producing
+                                    // permanents (lands and creatures with mana abilities)
+                                    let mana_sources = mana_engine.all_sources();
 
                                     // Use GreedyManaResolver to compute proper tap order
                                     let resolver = GreedyManaResolver::new();
-                                    resolver.compute_tap_order(cost, &mana_sources).unwrap_or_else(Vec::new)
+                                    resolver.compute_tap_order(cost, mana_sources).unwrap_or_default()
                                 };
 
                                 // Cast using 8-step process
@@ -3193,101 +3129,6 @@ impl<'a> GameLoop<'a> {
         card.effects
             .iter()
             .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.as_u32() == 0))
-    }
-
-    /// Determine mana production for a land card
-    /// Returns None if we don't know how to handle this land yet
-    fn get_mana_production(card: &crate::core::Card) -> Option<crate::game::mana_payment::ManaProduction> {
-        use crate::core::CardType;
-        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
-
-        // Must be a land
-        if !card.types.contains(&CardType::Land) {
-            return None;
-        }
-
-        // Check for basic lands first (simple sources)
-        let simple_color = match card.name.as_str() {
-            "Plains" => Some(ManaColor::White),
-            "Island" => Some(ManaColor::Blue),
-            "Swamp" => Some(ManaColor::Black),
-            "Mountain" => Some(ManaColor::Red),
-            "Forest" => Some(ManaColor::Green),
-            "Wastes" => return Some(ManaProduction::free(ManaProductionKind::Colorless)),
-            _ => None,
-        };
-
-        if let Some(color) = simple_color {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(color)));
-        }
-
-        // Check for dual lands by looking at basic land subtypes
-        let mut colors = Vec::new();
-        for subtype in &card.subtypes {
-            let color = match subtype.as_str() {
-                "Plains" => Some(ManaColor::White),
-                "Island" => Some(ManaColor::Blue),
-                "Swamp" => Some(ManaColor::Black),
-                "Mountain" => Some(ManaColor::Red),
-                "Forest" => Some(ManaColor::Green),
-                _ => None,
-            };
-            if let Some(c) = color {
-                colors.push(c);
-            }
-        }
-
-        // If we have exactly 2 basic land subtypes, it's a dual land
-        if colors.len() == 2 {
-            return Some(ManaProduction::free(ManaProductionKind::Choice(colors)));
-        }
-
-        // Check oracle text for any-color lands (City of Brass pattern)
-        let text_lower = card.text.to_lowercase();
-        if text_lower.contains("any color") {
-            return Some(ManaProduction::free(ManaProductionKind::AnyColor));
-        }
-
-        // Not a complex source we can handle yet
-        None
-    }
-
-    /// Determine mana production for a creature with mana abilities
-    /// Returns None if this creature doesn't produce mana
-    fn get_creature_mana_production_for_callback(
-        card: &crate::core::Card,
-    ) -> Option<crate::game::mana_payment::ManaProduction> {
-        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
-
-        let text_lower = card.text.to_lowercase();
-
-        // Check for any-color production (Birds of Paradise pattern)
-        if text_lower.contains("any color") {
-            return Some(ManaProduction::free(ManaProductionKind::AnyColor));
-        }
-
-        // Check for specific color production patterns
-        // Pattern: "{T}: Add {G}" or similar
-        if text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White)));
-        }
-        if text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)));
-        }
-        if text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black)));
-        }
-        if text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red)));
-        }
-        if text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)));
-        }
-        if text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}") {
-            return Some(ManaProduction::free(ManaProductionKind::Colorless));
-        }
-
-        None
     }
 }
 
