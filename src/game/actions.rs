@@ -678,8 +678,35 @@ impl GameState {
         // Step 6: Activate mana abilities
         // This is where mana gets tapped - AFTER the spell is on the stack
         let sources_to_tap = choose_mana_sources_fn(self, &mana_cost);
+
+        // Track which sources we've successfully tapped for unwinding if needed
+        let mut tapped_sources = Vec::new();
+
         for &source_id in &sources_to_tap {
-            self.tap_for_mana_for_cost(player_id, source_id, &mana_cost)?;
+            if let Err(e) = self.tap_for_mana_for_cost(player_id, source_id, &mana_cost) {
+                // Tapping failed - unwind the spell cast
+                // Move card back to hand
+                self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+
+                // Untap all sources that were successfully tapped so far
+                for &tapped_id in &tapped_sources {
+                    if let Ok(card) = self.cards.get_mut(tapped_id) {
+                        card.untap();
+                        // Log the untap for undo functionality
+                        self.undo_log.log(crate::undo::GameAction::TapCard {
+                            card_id: tapped_id,
+                            tapped: false,
+                        });
+                    }
+                }
+
+                // Clear the mana pool (remove any mana that was added)
+                let player = self.get_player_mut(player_id)?;
+                player.mana_pool.clear();
+
+                return Err(MtgError::InvalidAction(format!("Failed to tap mana source: {e}")));
+            }
+            tapped_sources.push(source_id);
         }
 
         // Step 7: Pay costs
@@ -694,7 +721,7 @@ impl GameState {
             self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
 
             // Untap all sources that were tapped
-            for &source_id in &sources_to_tap {
+            for &source_id in &tapped_sources {
                 if let Ok(card) = self.cards.get_mut(source_id) {
                     card.untap();
                     // Log the untap for undo functionality
