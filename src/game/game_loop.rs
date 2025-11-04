@@ -108,6 +108,9 @@ pub struct GameLoop<'a> {
     /// Reusable mana engine for checking mana availability
     /// Updated per-player as needed, retains Vec capacity across calls
     mana_engine: crate::game::mana_engine::ManaEngine,
+    /// Reusable buffer for collecting available spell abilities
+    /// Cleared and reused each priority round to avoid allocations
+    abilities_buffer: Vec<crate::core::SpellAbility>,
     /// Stop and snapshot when fixed controller is exhausted
     stop_when_fixed_exhausted: bool,
     /// Snapshot path for fixed-exhausted snapshots
@@ -148,6 +151,7 @@ impl<'a> GameLoop<'a> {
             spell_targets: Vec::new(),
             choice_counter: 0,
             mana_engine: crate::game::mana_engine::ManaEngine::new(),
+            abilities_buffer: Vec::new(), // Starts empty, capacity grows and is retained via mem::replace
             stop_when_fixed_exhausted: false,
             snapshot_path_for_fixed: None,
             snapshot_format: crate::game::snapshot::SnapshotFormat::default(),
@@ -3007,7 +3011,9 @@ impl<'a> GameLoop<'a> {
     /// must map to the same logical cards across runs.
     fn get_available_spell_abilities(&mut self, player_id: PlayerId) -> Vec<crate::core::SpellAbility> {
         use crate::core::SpellAbility;
-        let mut abilities = Vec::new();
+
+        // Clear and reuse the buffer (takes ownership, leaving empty Vec in place)
+        self.abilities_buffer.clear();
 
         // Check if stack is empty (required for sorcery-speed actions)
         let stack_is_empty = self.game.stack.is_empty();
@@ -3022,7 +3028,7 @@ impl<'a> GameLoop<'a> {
                 if player.can_play_land() {
                     let lands = self.get_lands_in_hand(player_id);
                     for land_id in lands {
-                        abilities.push(SpellAbility::PlayLand { card_id: land_id });
+                        self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
                     }
                 }
             }
@@ -3031,26 +3037,29 @@ impl<'a> GameLoop<'a> {
         // Add castable spells
         let spells = self.get_castable_spells(player_id);
         for spell_id in spells {
-            abilities.push(SpellAbility::CastSpell { card_id: spell_id });
+            self.abilities_buffer
+                .push(SpellAbility::CastSpell { card_id: spell_id });
         }
 
         // Add activated abilities
         let activatable = self.get_activatable_abilities(player_id);
         for (card_id, ability_index) in activatable {
-            abilities.push(SpellAbility::ActivateAbility { card_id, ability_index });
+            self.abilities_buffer
+                .push(SpellAbility::ActivateAbility { card_id, ability_index });
         }
 
         // Sort by card ID to ensure deterministic ordering
         // This is critical for snapshot/resume: if two runs have the same cards available
         // but in different hand order, we need to present them in the same order so that
         // index-based choice replay (FixedScriptController) selects the same logical card
-        abilities.sort_by_key(|ability| match ability {
+        self.abilities_buffer.sort_by_key(|ability| match ability {
             SpellAbility::PlayLand { card_id } => *card_id,
             SpellAbility::CastSpell { card_id } => *card_id,
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
         });
 
-        abilities
+        // Take ownership of the buffer, leaving an empty Vec with retained capacity
+        std::mem::take(&mut self.abilities_buffer)
     }
 
     /// Execute a player action

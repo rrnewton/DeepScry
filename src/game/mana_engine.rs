@@ -255,13 +255,12 @@ impl ManaEngine {
     /// The player_id parameter specifies which player's mana sources to scan.
     pub fn update(&mut self, game: &GameState, player_id: PlayerId) {
         // Clear previous state (but retain capacity for reuse)
+        // Note: We don't call reserve() here - the Vecs will grow naturally on first use
+        // and subsequent clears will retain that capacity, avoiding allocations
         self.simple_sources.clear();
-        self.simple_sources.reserve(10); // Typical: 5-10 lands
         self.complex_sources.clear();
-        self.complex_sources.reserve(5); // Typical: 0-5 mana dorks/rocks
         self.simple_capacity = ManaCapacity::new();
         self.mana_sources.clear();
-        self.mana_sources.reserve(15); // Combined capacity
 
         // Scan battlefield for mana-producing permanents owned by this player
         // This includes lands and creatures with mana abilities (e.g., Llanowar Elves)
