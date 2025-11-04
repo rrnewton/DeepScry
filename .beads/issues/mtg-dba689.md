@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-04T02:00:01.327670432+00:00
+updated_at: 2025-11-04T10:06:15.780899208+00:00
 ---
 
 # Description
@@ -33,7 +33,8 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ Card rendering improvements: Aspect ratio and priority-based layout (commit 65ad5b3)
 - ✓ mtg-6326b9: Intelligent space usage with progressive compaction (2025-11-04)
 - ✓ Max card height limit (15 rows, configurable parameter for future)
-- mtg-a07166: Visual stacking for multiple copies of same card (future enhancement)
+- mtg-cf6f3f: Simple stacking with multiplier prefix (e.g., "3x Island")
+- mtg-a07166: Visual stacking with diagonal offsets (depends on mtg-cf6f3f)
 
 **Interactive focus system:**
 - ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A, S)
@@ -71,8 +72,18 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Enhanced choice highlighting (mtg-8a3ffb) - 2025-11-04
 - [x] Intelligent card rendering layout (mtg-6326b9) - 2025-11-04
 - [x] Max card height limit (2025-11-04)
+- [ ] Simple stacking (mtg-cf6f3f) - next priority
+- [ ] Visual stacking (mtg-a07166) - after simple stacking
 
 ## Recent progress (2025-11-04)
+
+Created simple stacking issue (mtg-cf6f3f):
+- Intermediate feature before full visual stacking
+- Displays "3x Island" with cyan multiplier prefix
+- Groups cards by (name, tapped_state)
+- Introduces BattlefieldEntity abstraction
+- Much simpler than full visual stacking
+- Prerequisite for mtg-a07166
 
 Max card height limit:
 - Added MAX_CARD_HEIGHT constant (15 rows)
@@ -109,7 +120,7 @@ Previous progress (2025-11-03):
 
 ## Implementation order
 
-All phases completed! The fancy TUI now has:
+Completed phases:
 
 1. ✅ **Quick wins**: Library count, dim borders, signal handling, turn/phase indicator, card colors, ownership display, logging fix
 2. ✅ **Visual foundation**: 2D battlefield layout with proper aspect ratios
@@ -120,4 +131,9 @@ All phases completed! The fancy TUI now has:
 7. ✅ **Interactive features**: Mouse support, choice highlighting
 8. ✅ **Polish**: Intelligent space usage, progressive compaction
 
-The fancy TUI is now feature-complete with excellent usability!
+Next priorities:
+
+9. ⏸ **Simple stacking** (mtg-cf6f3f): Multiplier prefix for duplicate cards
+10. ⏸ **Visual stacking** (mtg-a07166): Diagonal offsets and partial rendering
+
+The fancy TUI baseline is complete with excellent usability! Next: space-saving stacking features.
