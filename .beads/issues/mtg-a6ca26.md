@@ -180,3 +180,29 @@ Once allocations are minimized, switch remaining allocations to thread-local are
 - Aggregate throughput: 25,100 → 340,000-380,000 games/sec
 - Per-thread: 3,138 → 42,500-47,500 games/sec (near sequential performance)
 - **MCTS will scale effectively across all physical cores**
+
+## Additional Contention Analysis (2025-11-04)
+
+Beyond allocation frequency, **GameState cloning** contributes significantly to poor parallel efficiency:
+
+**Clone cost breakdown**:
+- Current: 15-20KB per clone (Cards 8KB + Undo log 10KB + Zones 320B + Other 2KB)
+- With 8 threads: 120-160KB cloned per benchmark iteration
+- Impact: Cache pressure, TLB misses
+
+**Root causes**:
+1. Deep copying all Card structs with String fields
+2. Cloning entire undo_log (unnecessary for forward simulations)
+3. Allocating new Vecs for all zones
+
+**Optimization path**:
+- New issue **mtg-61ea98**: Optimize GameState clone for MCTS
+- Target: Reduce clone cost by 60% (15-20KB to 5-8KB)
+- Method: Selective cloning (skip undo_log, logger for simulations)
+
+**Combined impact prediction**:
+- GameState clone optimization: 60% reduction in clone cost
+- Plus mtg-2 allocation reduction (<1KB/game): 85% reduction in gameplay allocations
+- **Expected parallel efficiency: 70-80%** (vs current 47.4%)
+
+See `ai_docs/parallel_contention_analysis.md` for full analysis.
