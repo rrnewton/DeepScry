@@ -2336,19 +2336,59 @@ impl<'a> GameLoop<'a> {
                                     let mut mana_sources = Vec::new();
                                     for &card_id in &game.battlefield.cards {
                                         if let Ok(card) = game.cards.get(card_id) {
-                                            if card.owner == current_priority && card.is_land() && !card.tapped {
-                                                // Determine mana production for this land
-                                                let production = if let Some(prod) = Self::get_mana_production(card) {
-                                                    prod
-                                                } else {
-                                                    continue; // Skip lands we don't know how to tap yet
-                                                };
+                                            if card.owner != current_priority {
+                                                continue; // Skip permanents we don't own
+                                            }
 
+                                            // Check if this is a mana-producing permanent (land or creature with mana ability)
+                                            // Must match the same logic as ManaEngine::update() to avoid inconsistencies
+                                            let is_mana_source = if card.is_land() {
+                                                true
+                                            } else if card.is_creature() {
+                                                // Check for creature mana abilities (Llanowar Elves, Birds of Paradise)
+                                                let text_lower = card.text.to_lowercase();
+                                                text_lower.contains("{t}: add")
+                                                    || (text_lower.contains("add") && text_lower.contains("mana"))
+                                            } else {
+                                                false
+                                            };
+
+                                            if !is_mana_source || card.tapped {
+                                                continue;
+                                            }
+
+                                            // Check summoning sickness for creatures
+                                            let has_summoning_sickness = if card.is_creature() {
+                                                if let Some(entered_turn) = card.turn_entered_battlefield {
+                                                    entered_turn == game.turn.turn_number
+                                                        && !card.has_keyword(&crate::core::Keyword::Haste)
+                                                } else {
+                                                    false
+                                                }
+                                            } else {
+                                                false
+                                            };
+
+                                            if has_summoning_sickness {
+                                                continue; // Skip summoning-sick creatures
+                                            }
+
+                                            // Determine mana production
+                                            let production = if let Some(prod) = Self::get_mana_production(card) {
+                                                Some(prod)
+                                            } else if card.is_creature() {
+                                                // Try creature mana production
+                                                Self::get_creature_mana_production_for_callback(card)
+                                            } else {
+                                                None
+                                            };
+
+                                            if let Some(prod) = production {
                                                 mana_sources.push(ManaSource {
                                                     card_id,
-                                                    production,
+                                                    production: prod,
                                                     is_tapped: card.tapped,
-                                                    has_summoning_sickness: false, // Lands don't have summoning sickness
+                                                    has_summoning_sickness,
                                                 });
                                             }
                                         }
@@ -3209,6 +3249,44 @@ impl<'a> GameLoop<'a> {
         }
 
         // Not a complex source we can handle yet
+        None
+    }
+
+    /// Determine mana production for a creature with mana abilities
+    /// Returns None if this creature doesn't produce mana
+    fn get_creature_mana_production_for_callback(
+        card: &crate::core::Card,
+    ) -> Option<crate::game::mana_payment::ManaProduction> {
+        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
+
+        let text_lower = card.text.to_lowercase();
+
+        // Check for any-color production (Birds of Paradise pattern)
+        if text_lower.contains("any color") {
+            return Some(ManaProduction::free(ManaProductionKind::AnyColor));
+        }
+
+        // Check for specific color production patterns
+        // Pattern: "{T}: Add {G}" or similar
+        if text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}") {
+            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White)));
+        }
+        if text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}") {
+            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)));
+        }
+        if text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}") {
+            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black)));
+        }
+        if text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}") {
+            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red)));
+        }
+        if text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}") {
+            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)));
+        }
+        if text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}") {
+            return Some(ManaProduction::free(ManaProductionKind::Colorless));
+        }
+
         None
     }
 }
