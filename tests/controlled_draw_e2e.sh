@@ -82,8 +82,10 @@ echo "Verifying P1's opening hand contains all requested cards..."
 
 # Extract P1's hand from Turn 1 output
 # Look for the section with "Hand contents:" after "Player1" (P1)
-P1_HAND=$(sed -n '/Turn 1.*Player1/,/Player2:/p' /tmp/controlled_draw_test.txt | \
-          sed -n '/Hand contents:/,/Battlefield:/p')
+# Note: Turn format is "         >>> Turn 1 - Player1 20 (Player2 20) <<<<"
+# Use ^Player2: to match only the start of line (opponent section label)
+P1_HAND=$(sed -n '/Turn 1.*Player1/,/^Player2:/p' /tmp/controlled_draw_test.txt | \
+          sed -n '/Hand contents:/,/Battlefield:/p' | head -10)
 
 # Check for Mountains (need at least 3)
 P1_MISSING=""
@@ -114,7 +116,8 @@ echo "Verifying P2's opening hand contains all requested cards..."
 
 # Extract P2's hand from Turn 2 output (Player2's first turn as active player)
 # Note: Player2's first active turn shows his hand
-P2_HAND=$(grep -A 20 "Turn 2 - Player2" /tmp/controlled_draw_test.txt | \
+# Note: Turn format is "         >>> Turn 2 - Player2 20 (Player1 19) <<<<"
+P2_HAND=$(grep -A 20 "Turn 2.*Player2" /tmp/controlled_draw_test.txt | \
           sed -n '/Hand contents:/,/Battlefield:/p')
 
 # Check P2's requested hand (3 Mountains, 2 Lightning Bolts)

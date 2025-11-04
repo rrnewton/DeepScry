@@ -575,6 +575,34 @@ impl<'a> GameLoop<'a> {
                 self.p1_hand_setup.as_ref(),
                 self.p2_hand_setup.as_ref(),
             )?;
+
+            // Log the start of Turn 1 (for fresh games only)
+            // This matches the format used in state.rs when transitioning between turns
+            let active_player = self.game.turn.active_player;
+            let active_player_name = self
+                .game
+                .get_player(active_player)
+                .map(|p| p.name.as_str())
+                .unwrap_or("Unknown");
+            let active_player_life = self.game.get_player(active_player).map(|p| p.life).unwrap_or(0);
+            let other_player_name = self
+                .game
+                .get_other_player_id(active_player)
+                .and_then(|id| self.game.get_player(id).ok())
+                .map(|p| p.name.as_str())
+                .unwrap_or("Unknown");
+            let other_player_life = self
+                .game
+                .get_other_player_id(active_player)
+                .and_then(|id| self.game.get_player(id).ok())
+                .map(|p| p.life)
+                .unwrap_or(0);
+
+            let turn_msg = format!(
+                "         >>> Turn 1 - {} {} ({} {}) <<<<",
+                active_player_name, active_player_life, other_player_name, other_player_life
+            );
+            self.game.logger.normal(&turn_msg);
         }
 
         Ok((player1_id, player2_id))

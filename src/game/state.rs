@@ -512,8 +512,11 @@ impl GameState {
                 .map(|p| p.life)
                 .unwrap_or(0);
 
+            // Add a newline before the turn separator for visual separation
+            self.logger.normal("");
+
             let turn_msg = format!(
-                ">>> T{} - {} {} ({} {})",
+                "         >>> Turn {} - {} {} ({} {}) <<<<",
                 new_turn_num, active_player_name, active_player_life, other_player_name, other_player_life
             );
             self.logger.normal(&turn_msg);
