@@ -1595,28 +1595,50 @@ impl GameState {
             }
         }
 
-        // Deal all damage simultaneously
-        for (creature_id, damage) in damage_to_creatures {
-            self.deal_damage_to_creature(creature_id, damage)?;
-        }
-
+        // Deal all damage to players first (they don't die from damage in combat)
         for (player_id, damage) in damage_to_players {
             self.deal_damage(player_id, damage)?;
         }
 
-        // Apply deathtouch state-based action (MTG Rules 702.2b)
-        // Any creature with toughness > 0 that was dealt damage by a deathtouch source is destroyed
+        // Track which creatures should die (MTG Rules 704.5f: State-based actions)
+        // Creatures die if:
+        // 1. They have lethal damage (damage >= toughness), OR
+        // 2. They were dealt any damage by a source with deathtouch
         // MTG Rules 702.12b: Permanents with indestructible can't be destroyed
-        for creature_id in deathtouch_damaged_creatures {
-            // Check if creature is still on battlefield (might have died from normal damage)
+        let mut creatures_to_destroy = std::collections::HashSet::new();
+
+        // Check creatures for lethal damage
+        for (creature_id, damage) in damage_to_creatures {
             if self.battlefield.contains(creature_id) {
                 if let Ok(creature) = self.cards.get(creature_id) {
-                    // Only destroy if it has toughness > 0 and doesn't have indestructible
-                    if creature.is_creature() && creature.current_toughness() > 0 && !creature.has_indestructible() {
-                        let owner = creature.owner;
-                        self.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    if creature.is_creature() && !creature.has_indestructible() {
+                        // Lethal damage: damage >= toughness
+                        if damage >= creature.current_toughness() as i32 {
+                            creatures_to_destroy.insert(creature_id);
+                        }
                     }
                 }
+            }
+        }
+
+        // Check creatures for deathtouch damage (MTG Rules 702.2b)
+        // Any creature dealt damage by a deathtouch source is destroyed
+        for creature_id in deathtouch_damaged_creatures {
+            if self.battlefield.contains(creature_id) {
+                if let Ok(creature) = self.cards.get(creature_id) {
+                    // Only destroy if it's a creature with toughness > 0 and doesn't have indestructible
+                    if creature.is_creature() && creature.current_toughness() > 0 && !creature.has_indestructible() {
+                        creatures_to_destroy.insert(creature_id);
+                    }
+                }
+            }
+        }
+
+        // Move all dying creatures to graveyard (MTG Rules 704.5f)
+        for creature_id in creatures_to_destroy {
+            if let Ok(creature) = self.cards.get(creature_id) {
+                let owner = creature.owner;
+                self.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, owner)?;
             }
         }
 
