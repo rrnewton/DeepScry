@@ -19,9 +19,13 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Wrap},
     Frame, Terminal,
 };
+use signal_hook::consts::signal::{SIGCONT, SIGTSTP};
+use signal_hook::flag as signal_flag;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Input action result from user interaction
 enum InputAction {
@@ -2077,7 +2081,42 @@ impl FancyTuiController {
 
     /// Wait for user input and update highlighted choice
     fn wait_for_choice_input(&mut self, num_choices: usize, view: &GameStateView) -> io::Result<InputAction> {
+        // Set up signal handlers for suspend/resume
+        let sigtstp_flag = Arc::new(AtomicBool::new(false));
+        let sigcont_flag = Arc::new(AtomicBool::new(false));
+
+        // Register SIGTSTP (Ctrl-Z) handler
+        let _sigtstp_handle = signal_flag::register(SIGTSTP, Arc::clone(&sigtstp_flag)).map_err(io::Error::other)?;
+
+        // Register SIGCONT (resume) handler
+        let _sigcont_handle = signal_flag::register(SIGCONT, Arc::clone(&sigcont_flag)).map_err(io::Error::other)?;
+
         loop {
+            // Check for suspend signal (Ctrl-Z)
+            if sigtstp_flag.swap(false, Ordering::Relaxed) {
+                // Disable raw mode and leave alternate screen
+                disable_raw_mode()?;
+                execute!(io::stdout(), LeaveAlternateScreen)?;
+
+                // Send SIGSTOP to ourselves to actually suspend
+                #[cfg(unix)]
+                unsafe {
+                    libc::raise(libc::SIGSTOP);
+                }
+
+                // When we resume (SIGCONT received), we'll continue here
+            }
+
+            // Check for resume signal
+            if sigcont_flag.swap(false, Ordering::Relaxed) {
+                // Re-enable raw mode and re-enter alternate screen
+                enable_raw_mode()?;
+                execute!(io::stdout(), EnterAlternateScreen)?;
+
+                // Return Continue to force a redraw
+                return Ok(InputAction::Continue);
+            }
+
             if event::poll(std::time::Duration::from_millis(100))? {
                 let event = event::read()?;
                 match event {
@@ -2499,9 +2538,9 @@ impl FancyTuiController {
                                 return Ok(InputAction::Exit);
                             }
                             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                // TODO: Full suspend/resume (SIGTSTP/SIGCONT) would require signal-hook crate
-                                // For now, treat Ctrl-Z as graceful exit
-                                return Ok(InputAction::Exit);
+                                // Ctrl-Z is now handled by SIGTSTP signal handler above
+                                // No action needed here - the signal handler will suspend the process
+                                return Ok(InputAction::Continue);
                             }
                             KeyCode::Char(c) if c.is_ascii_digit() => {
                                 // Digit selection only works when Actions pane is focused
