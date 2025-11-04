@@ -1217,7 +1217,11 @@ impl GameState {
         self.tap_for_mana_for_cost(player_id, card_id, &empty_cost)
     }
 
-    /// Tap a land for mana with a cost hint to guide color production for any-color lands
+    /// Tap a permanent for mana with a cost hint to guide color production
+    ///
+    /// This method handles both:
+    /// - Lands with implicit mana abilities (based on subtypes)
+    /// - Creatures/artifacts with explicit mana abilities (e.g., "Guy in the Chair")
     pub fn tap_for_mana_for_cost(
         &mut self,
         player_id: PlayerId,
@@ -1226,24 +1230,147 @@ impl GameState {
     ) -> Result<()> {
         let card = self.cards.get_mut(card_id)?;
 
-        // Check if card is a land and untapped
-        if !card.is_land() {
-            return Err(MtgError::InvalidAction("Card is not a land".to_string()));
-        }
-
+        // Check if card is untapped
         if card.tapped {
-            return Err(MtgError::InvalidAction("Land is already tapped".to_string()));
+            return Err(MtgError::InvalidAction("Permanent is already tapped".to_string()));
         }
 
-        // Get land name before tapping (to avoid borrow conflicts)
-        let land_name = card.name.to_lowercase();
+        // Check if card can produce mana (either land or has mana ability)
+        let is_land = card.is_land();
+        let has_mana_ability = card.activated_abilities.iter().any(|ab| ab.is_mana_ability);
 
-        // Tap the land
+        if !is_land && !has_mana_ability {
+            return Err(MtgError::InvalidAction("Permanent cannot produce mana".to_string()));
+        }
+
+        // Get card name and check for explicit mana ability before tapping
+        let card_name = card.name.to_lowercase();
+        let explicit_mana = if !is_land && has_mana_ability {
+            // For non-lands (creatures, artifacts) with mana abilities,
+            // extract the mana from the activated ability's AddMana effect
+            card.activated_abilities
+                .iter()
+                .find(|ab| ab.is_mana_ability)
+                .and_then(|ab| {
+                    ab.effects.iter().find_map(|effect| {
+                        if let crate::core::Effect::AddMana { mana, .. } = effect {
+                            Some(*mana)
+                        } else {
+                            None
+                        }
+                    })
+                })
+        } else {
+            None
+        };
+
+        // Tap the permanent
         card.tap();
 
         // Log the tap
         self.undo_log
             .log(crate::undo::GameAction::TapCard { card_id, tapped: true });
+
+        // Handle non-land mana sources with explicit mana abilities
+        if let Some(mana_to_add) = explicit_mana {
+            // For creatures with "Add mana of any color", we need to choose based on cost hint
+            // Check if this is an any-color source by looking at the card text
+            // Extract this BEFORE getting mutable player reference to avoid borrow conflicts
+            let card_text = self.cards.get(card_id)?.text.to_lowercase();
+            let is_any_color = card_text.contains("any color");
+
+            let player = self.get_player_mut(player_id)?;
+
+            if is_any_color {
+                // Choose color based on cost hint
+                let color = if cost_hint.white > 0 {
+                    crate::core::Color::White
+                } else if cost_hint.blue > 0 {
+                    crate::core::Color::Blue
+                } else if cost_hint.black > 0 {
+                    crate::core::Color::Black
+                } else if cost_hint.red > 0 {
+                    crate::core::Color::Red
+                } else if cost_hint.green > 0 {
+                    crate::core::Color::Green
+                } else {
+                    // Default to green if no specific color needed
+                    crate::core::Color::Green
+                };
+
+                player.mana_pool.add_color(color);
+
+                // Log the mana addition
+                let mut mana = crate::core::ManaCost::new();
+                let color_symbol = match color {
+                    crate::core::Color::White => {
+                        mana.white = 1;
+                        "W"
+                    }
+                    crate::core::Color::Blue => {
+                        mana.blue = 1;
+                        "U"
+                    }
+                    crate::core::Color::Black => {
+                        mana.black = 1;
+                        "B"
+                    }
+                    crate::core::Color::Red => {
+                        mana.red = 1;
+                        "R"
+                    }
+                    crate::core::Color::Green => {
+                        mana.green = 1;
+                        "G"
+                    }
+                    crate::core::Color::Colorless => {
+                        mana.colorless = 1;
+                        "C"
+                    }
+                };
+                self.undo_log.log(crate::undo::GameAction::AddMana { player_id, mana });
+
+                // Log visible message
+                if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
+                    let card = self.cards.get(card_id).ok();
+                    let name = card.map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    let message = format!("Tap {} for {{{}}}", name, color_symbol);
+                    self.logger.normal(&message);
+                }
+            } else {
+                // Add the specific mana from the ability
+                if mana_to_add.white > 0 {
+                    player.mana_pool.white += mana_to_add.white;
+                }
+                if mana_to_add.blue > 0 {
+                    player.mana_pool.blue += mana_to_add.blue;
+                }
+                if mana_to_add.black > 0 {
+                    player.mana_pool.black += mana_to_add.black;
+                }
+                if mana_to_add.red > 0 {
+                    player.mana_pool.red += mana_to_add.red;
+                }
+                if mana_to_add.green > 0 {
+                    player.mana_pool.green += mana_to_add.green;
+                }
+                if mana_to_add.colorless > 0 {
+                    player.mana_pool.colorless += mana_to_add.colorless;
+                }
+
+                self.undo_log.log(crate::undo::GameAction::AddMana { player_id, mana: mana_to_add });
+
+                // Log visible message
+                if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
+                    let card = self.cards.get(card_id).ok();
+                    let name = card.map(|c| c.name.as_str()).unwrap_or("Unknown");
+                    let message = format!("Tap {} for mana", name);
+                    self.logger.normal(&message);
+                }
+            }
+
+            return Ok(());
+        }
 
         // Add mana to player's pool based on land type
         // For basic lands and simple cases, check name
@@ -1274,19 +1401,19 @@ impl GameState {
 
         // Determine what colors this land can produce
         let mut available_colors = Vec::new();
-        if has_plains_subtype || land_name.contains("plains") {
+        if has_plains_subtype || card_name.contains("plains") {
             available_colors.push(crate::core::Color::White);
         }
-        if has_island_subtype || land_name.contains("island") {
+        if has_island_subtype || card_name.contains("island") {
             available_colors.push(crate::core::Color::Blue);
         }
-        if has_swamp_subtype || land_name.contains("swamp") {
+        if has_swamp_subtype || card_name.contains("swamp") {
             available_colors.push(crate::core::Color::Black);
         }
-        if has_mountain_subtype || land_name.contains("mountain") {
+        if has_mountain_subtype || card_name.contains("mountain") {
             available_colors.push(crate::core::Color::Red);
         }
-        if has_forest_subtype || land_name.contains("forest") {
+        if has_forest_subtype || card_name.contains("forest") {
             available_colors.push(crate::core::Color::Green);
         }
 
