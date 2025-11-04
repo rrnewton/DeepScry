@@ -944,7 +944,7 @@ impl<'a> GameLoop<'a> {
                     println!("  Hand contents:");
                     for &card_id in &zones.hand.cards {
                         if let Ok(card) = self.game.cards.get(card_id) {
-                            println!("    - {}", card.name);
+                            println!("    - {} ({})", card.name, card.mana_cost);
                         }
                     }
                 }
