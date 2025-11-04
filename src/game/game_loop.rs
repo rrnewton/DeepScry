@@ -2009,7 +2009,8 @@ impl<'a> GameLoop<'a> {
         };
 
         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-            println!("  {} ({}) resolves", card_name, spell_id);
+            let message = format!("{} ({}) resolves", card_name, spell_id);
+            self.game.logger.normal(&message);
         }
 
         // Resolve the spell (this modifies effects with target replacement)
@@ -2395,7 +2396,8 @@ impl<'a> GameLoop<'a> {
                                     mana_callback,
                                 ) {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                        eprintln!("  Error casting spell: {e}");
+                                        let message = format!("Error casting spell: {e}");
+                                        self.game.logger.normal(&message);
                                     }
                                     // Treat failed spell cast like passing priority to prevent infinite loops
                                     // This can happen if controller makes invalid choices or mana engine has stale state

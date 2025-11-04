@@ -193,6 +193,10 @@ struct FancyTuiState {
     valid_choices: Vec<CardId>,
     /// What kind of choice is being made
     choice_context: ChoiceContext,
+    /// Actions pane area (for mouse click detection)
+    actions_pane_area: Option<Rect>,
+    /// Hand pane area (for mouse click detection)
+    hand_pane_area: Option<Rect>,
 }
 
 impl FancyTuiState {
@@ -209,6 +213,8 @@ impl FancyTuiState {
             entity_positions: Vec::new(),
             valid_choices: Vec::new(),
             choice_context: ChoiceContext::None,
+            actions_pane_area: None,
+            hand_pane_area: None,
         }
     }
 }
@@ -220,6 +226,22 @@ pub struct FancyTuiController {
 }
 
 impl FancyTuiController {
+    // Minimum acceptable widths for each pane (in terminal columns)
+    const MIN_WIDTH_INFO_PANE: u16 = 40; // Combat/Log pane (left column top)
+    const MIN_WIDTH_ACTIONS_PANE: u16 = 40; // Prompt/Actions pane (left column bottom)
+    const MIN_WIDTH_CARD_DETAILS: u16 = 30; // Card details pane (right column top)
+    const MIN_WIDTH_HAND: u16 = 30; // Hand pane (right column middle)
+    const MIN_WIDTH_STACK: u16 = 30; // Stack pane (right column bottom)
+    const MIN_WIDTH_BATTLEFIELD: u16 = 60; // Battlefield pane (middle column)
+
+    // Default column percentages
+    const DEFAULT_LEFT_COLUMN_PCT: u16 = 25;
+    const DEFAULT_MIDDLE_COLUMN_PCT: u16 = 50;
+    const DEFAULT_RIGHT_COLUMN_PCT: u16 = 25;
+
+    // Boosted left column percentage (20% increase)
+    const BOOSTED_LEFT_COLUMN_PCT: u16 = 30; // 25 * 1.2 = 30
+
     /// Create a new fancy TUI controller
     pub fn new(player_id: PlayerId) -> io::Result<Self> {
         Ok(FancyTuiController {
@@ -329,20 +351,24 @@ impl FancyTuiController {
             .copied()
             .collect();
 
-        // Group cards: lands, creatures, other
-        let (lands, creatures, others): (Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut lands, mut creatures, mut others), &card_id| {
+        // Group cards: lands, creatures, artifacts, enchantments
+        let (lands, creatures, artifacts, enchantments): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
                 if let Some(card) = view.get_card(card_id) {
                     if card.is_land() {
                         lands.push(card_id);
                     } else if card.is_creature() {
                         creatures.push(card_id);
-                    } else {
-                        others.push(card_id);
+                    } else if card.is_artifact() {
+                        artifacts.push(card_id);
+                    } else if card.is_enchantment() {
+                        enchantments.push(card_id);
                     }
+                    // Note: Some cards might not fit any category (e.g., planeswalkers)
+                    // They will be omitted for now
                 }
-                (lands, creatures, others)
+                (lands, creatures, artifacts, enchantments)
             },
         );
 
@@ -350,7 +376,8 @@ impl FancyTuiController {
         let mut result = Vec::new();
         result.extend(lands);
         result.extend(creatures);
-        result.extend(others);
+        result.extend(artifacts);
+        result.extend(enchantments);
         result
     }
 
@@ -406,15 +433,50 @@ impl FancyTuiController {
         current_prompt: Option<&str>,
         choices: &[(String, bool)], // (text, is_highlighted)
     ) {
-        // Clear entity positions from previous frame
+        // Clear entity positions and pane areas from previous frame
         self.state.entity_positions.clear();
+        self.state.actions_pane_area = None;
+        self.state.hand_pane_area = None;
+
+        // Calculate optimal column widths
+        // Try to boost left column width by 20% if all panes remain above their minimums
+        let total_width = f.area().width;
+
+        // Calculate what the widths would be with boosted left column
+        let boosted_left_width = (total_width * Self::BOOSTED_LEFT_COLUMN_PCT) / 100;
+        let boosted_middle_width = (total_width * (Self::DEFAULT_MIDDLE_COLUMN_PCT - 5)) / 100; // Reduce middle by 5%
+        let boosted_right_width = total_width.saturating_sub(boosted_left_width + boosted_middle_width);
+
+        // Check if all panes would meet their minimum widths with boosted layout
+        let can_boost = boosted_left_width >= Self::MIN_WIDTH_INFO_PANE
+            && boosted_left_width >= Self::MIN_WIDTH_ACTIONS_PANE
+            && boosted_middle_width >= Self::MIN_WIDTH_BATTLEFIELD
+            && boosted_right_width >= Self::MIN_WIDTH_CARD_DETAILS
+            && boosted_right_width >= Self::MIN_WIDTH_HAND
+            && boosted_right_width >= Self::MIN_WIDTH_STACK;
+
+        // Use boosted layout if possible, otherwise use default
+        let (left_pct, middle_pct, right_pct) = if can_boost {
+            (
+                Self::BOOSTED_LEFT_COLUMN_PCT,
+                Self::DEFAULT_MIDDLE_COLUMN_PCT - 5,
+                Self::DEFAULT_RIGHT_COLUMN_PCT,
+            )
+        } else {
+            (
+                Self::DEFAULT_LEFT_COLUMN_PCT,
+                Self::DEFAULT_MIDDLE_COLUMN_PCT,
+                Self::DEFAULT_RIGHT_COLUMN_PCT,
+            )
+        };
+
         // Main layout: 3 columns
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(25), // Left panels
-                Constraint::Percentage(50), // Battlefields
-                Constraint::Percentage(25), // Right panels (Card Details + Hand + Stack)
+                Constraint::Percentage(left_pct),   // Left panels
+                Constraint::Percentage(middle_pct), // Battlefields
+                Constraint::Percentage(right_pct),  // Right panels (Card Details + Hand + Stack)
             ])
             .split(f.area());
 
@@ -427,23 +489,28 @@ impl FancyTuiController {
             ])
             .split(main_chunks[0]);
 
-        // Right column: split into Card Details, Hand, and Stack (33% each)
+        // Right column: split into Card Details, Stack, and Hand (bottom to top)
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Percentage(33), // Card Details
-                Constraint::Percentage(33), // Hand
-                Constraint::Percentage(34), // Stack (34% to account for rounding)
+                Constraint::Percentage(33), // Stack
+                Constraint::Percentage(34), // Hand (34% to account for rounding, on bottom)
             ])
             .split(main_chunks[2]);
 
         // Draw all panels
         self.draw_left_tabs(f, left_chunks[0], view);
         self.draw_prompt(f, left_chunks[1], view, current_prompt, choices);
+        // Track Actions pane area for mouse clicks
+        self.state.actions_pane_area = Some(left_chunks[1]);
+
         self.draw_battlefields(f, main_chunks[1], view);
         self.draw_card_details(f, right_chunks[0], view);
-        self.draw_hand(f, right_chunks[1], view);
-        self.draw_stack(f, right_chunks[2], view);
+        self.draw_stack(f, right_chunks[1], view);
+        self.draw_hand(f, right_chunks[2], view);
+        // Track Hand pane area for mouse clicks
+        self.state.hand_pane_area = Some(right_chunks[2]);
     }
 
     /// Draw the left tabbed panel (Stack|Combat|Log)
@@ -511,11 +578,14 @@ impl FancyTuiController {
         // Get logs from the game logger
         let logs = view.logger().logs();
 
-        // Take the last N logs that fit in the area
+        // Take the last N logs that fit in the area, in chronological order (oldest to newest)
+        // so the most recent messages appear at the bottom
+        let available_lines = area.height.saturating_sub(2) as usize; // Account for borders
+        let start_idx = logs.len().saturating_sub(available_lines);
+
         let items: Vec<ListItem> = logs
             .iter()
-            .rev()
-            .take(area.height as usize)
+            .skip(start_idx)
             .map(|entry| ListItem::new(entry.message.as_str()))
             .collect();
 
@@ -707,23 +777,34 @@ impl FancyTuiController {
             turn_display, turn_number
         );
         let phase_len = phase_text_plain.len() as u16;
-        let padding = inner_width.saturating_sub(stats_len + phase_len);
 
-        // Combine with spacing
-        let mut line_spans = vec![Span::raw(stats_text)];
-        line_spans.push(Span::raw(" ".repeat(padding as usize)));
-        line_spans.extend(phase_spans);
+        // Determine if we need to split into two lines
+        // Need at least a few spaces between stats and phase info
+        const MIN_SPACING: u16 = 3;
+        let fits_on_one_line = stats_len + phase_len + MIN_SPACING <= inner_width;
 
-        let line = Line::from(line_spans);
+        let text = if fits_on_one_line {
+            // Single line with spacing
+            let padding = inner_width.saturating_sub(stats_len + phase_len);
+            let mut line_spans = vec![Span::raw(stats_text)];
+            line_spans.push(Span::raw(" ".repeat(padding as usize)));
+            line_spans.extend(phase_spans);
+            Text::from(Line::from(line_spans))
+        } else {
+            // Two lines: stats on first line, turn info on second line
+            let stats_line = Line::from(Span::raw(stats_text));
+            let phase_line = Line::from(phase_spans);
+            Text::from(vec![stats_line, phase_line])
+        };
 
-        // Bold the entire line if this is the active player
+        // Bold the entire text if this is the active player
         let base_style = if is_active {
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
 
-        let paragraph = Paragraph::new(Text::from(line)).style(base_style).block(
+        let paragraph = Paragraph::new(text).style(base_style).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Gray)),
@@ -745,20 +826,24 @@ impl FancyTuiController {
             .copied()
             .collect();
 
-        // Group cards: lands, creatures, other
-        let (lands, creatures, others): (Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut lands, mut creatures, mut others), &card_id| {
+        // Group cards: lands, creatures, artifacts, enchantments
+        let (lands, creatures, artifacts, enchantments): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
                 if let Some(card) = view.get_card(card_id) {
                     if card.is_land() {
                         lands.push(card_id);
                     } else if card.is_creature() {
                         creatures.push(card_id);
-                    } else {
-                        others.push(card_id);
+                    } else if card.is_artifact() {
+                        artifacts.push(card_id);
+                    } else if card.is_enchantment() {
+                        enchantments.push(card_id);
                     }
+                    // Note: Some cards might not fit any category (e.g., planeswalkers)
+                    // They will be omitted for now
                 }
-                (lands, creatures, others)
+                (lands, creatures, artifacts, enchantments)
             },
         );
 
@@ -820,8 +905,11 @@ impl FancyTuiController {
         if !creatures.is_empty() {
             card_groups.push((creatures.clone(), "Creatures"));
         }
-        if !others.is_empty() {
-            card_groups.push((others.clone(), "Other"));
+        if !artifacts.is_empty() {
+            card_groups.push((artifacts.clone(), "Artifacts"));
+        }
+        if !enchantments.is_empty() {
+            card_groups.push((enchantments.clone(), "Enchants"));
         }
 
         // Calculate optimal card size for this battlefield
@@ -858,15 +946,29 @@ impl FancyTuiController {
             );
         }
 
-        if !others.is_empty() {
+        if !artifacts.is_empty() {
+            y_offset += self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &artifacts,
+                "Artifacts",
+                Color::Cyan,
+                card_width,
+                card_height,
+            );
+        }
+
+        if !enchantments.is_empty() {
             self.render_card_group(
                 f,
                 inner_area,
                 y_offset,
                 view,
-                &others,
-                "Other",
-                Color::Blue,
+                &enchantments,
+                "Enchants",
+                Color::Magenta,
                 card_width,
                 card_height,
             );
@@ -902,11 +1004,15 @@ impl FancyTuiController {
     }
 
     /// Get dimensions based on tapped state
-    /// Tapped entities swap width and height to simulate 90-degree rotation
+    /// Tapped entities are rendered wider and shorter to simulate 90-degree rotation
     fn get_dimensions_for_tapped_state(is_tapped: bool, base_width: u16, base_height: u16) -> (u16, u16) {
         if is_tapped {
-            // Swap dimensions for tapped cards (simulate rotation)
-            (base_height, base_width)
+            // Tapped cards should be WIDER and SHORTER to simulate horizontal rotation
+            // We exaggerate the dimensions to make the rotation effect clear
+            // width becomes roughly 1.5x the original dimensions, height becomes ~60%
+            let tapped_width = (base_width * 3 / 2).max(base_width);
+            let tapped_height = (base_height * 3 / 5).max(4); // Minimum height of 4
+            (tapped_width, tapped_height)
         } else {
             (base_width, base_height)
         }
@@ -1065,46 +1171,77 @@ impl FancyTuiController {
         // Group cards into entities
         let entities = Self::group_cards_into_entities(cards, view);
 
-        // Dynamic packing: pack entities left-to-right, wrapping when needed
-        let mut current_x = area.x;
-        let mut current_y = area.y + y_offset + rendered_height;
-        let mut row_height = 0u16;
+        // Pre-calculate rows to enable centering
+        let mut rows: Vec<Vec<(&Entity, u16, u16)>> = Vec::new();
+        let mut current_row: Vec<(&Entity, u16, u16)> = Vec::new();
+        let mut current_row_width = 0u16;
 
         for entity in &entities {
             let is_tapped = entity.is_tapped(view);
             let (card_w, card_h) = Self::get_dimensions_for_tapped_state(is_tapped, card_width, card_height);
 
+            let entity_width_with_spacing = card_w + Self::CARD_SPACING;
+
             // Check if entity fits on current row
-            if current_x + card_w > area.x + area.width && current_x > area.x {
-                // Wrap to next row
-                current_x = area.x;
-                current_y += row_height + Self::CARD_SPACING;
-                row_height = 0;
+            if !current_row.is_empty() && current_row_width + card_w > area.width {
+                // Start new row
+                rows.push(current_row);
+                current_row = Vec::new();
+                current_row_width = 0;
             }
 
+            current_row.push((entity, card_w, card_h));
+            current_row_width += entity_width_with_spacing;
+        }
+
+        // Add last row if not empty
+        if !current_row.is_empty() {
+            rows.push(current_row);
+        }
+
+        // Render rows with centering
+        let mut current_y = area.y + y_offset + rendered_height;
+
+        for row in &rows {
+            if row.is_empty() {
+                continue;
+            }
+
+            // Calculate total width of this row (without trailing spacing)
+            let row_width: u16 =
+                row.iter().map(|(_, w, _)| w).sum::<u16>() + (row.len().saturating_sub(1) as u16 * Self::CARD_SPACING);
+
+            // Calculate row height (max height in row)
+            let row_height: u16 = row.iter().map(|(_, _, h)| *h).max().unwrap_or(0);
+
             // Check if we have vertical space
-            if current_y + card_h > area.y + area.height {
+            if current_y + row_height > area.y + area.height {
                 break; // No more vertical space
             }
 
-            // Render this entity
-            let entity_area = Rect {
-                x: current_x,
-                y: current_y,
-                width: card_w,
-                height: card_h,
-            };
-            self.render_entity(f, entity_area, view, entity);
+            // Center the row
+            let x_offset = (area.width.saturating_sub(row_width)) / 2;
+            let mut current_x = area.x + x_offset;
 
-            // Update position for next entity
-            current_x += card_w + Self::CARD_SPACING;
-            row_height = row_height.max(card_h);
+            // Render entities in this row
+            for (entity, card_w, card_h) in row {
+                let entity_area = Rect {
+                    x: current_x,
+                    y: current_y,
+                    width: *card_w,
+                    height: *card_h,
+                };
+                self.render_entity(f, entity_area, view, entity);
+
+                current_x += card_w + Self::CARD_SPACING;
+            }
+
+            current_y += row_height + Self::CARD_SPACING;
         }
 
         // Total height used by this group
-        if current_x > area.x {
-            // We rendered at least one card on the last row
-            rendered_height = (current_y - (area.y + y_offset)) + row_height;
+        if !rows.is_empty() {
+            rendered_height = current_y - (area.y + y_offset);
         }
 
         rendered_height
@@ -1636,6 +1773,36 @@ impl FancyTuiController {
                         if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                             let (x, y) = (mouse_event.column, mouse_event.row);
 
+                            // Check if Actions pane was clicked
+                            if let Some(actions_area) = self.state.actions_pane_area {
+                                if x >= actions_area.x
+                                    && x < actions_area.x + actions_area.width
+                                    && y >= actions_area.y
+                                    && y < actions_area.y + actions_area.height
+                                {
+                                    self.state.focused_pane = FocusedPane::Actions;
+                                    return Ok(InputAction::Continue); // Redraw with new focus
+                                }
+                            }
+
+                            // Check if Hand pane was clicked
+                            if let Some(hand_area) = self.state.hand_pane_area {
+                                if x >= hand_area.x
+                                    && x < hand_area.x + hand_area.width
+                                    && y >= hand_area.y
+                                    && y < hand_area.y + hand_area.height
+                                {
+                                    self.state.focused_pane = FocusedPane::Hand;
+                                    // Initialize selection to first card if hand not empty
+                                    let hand = view.hand();
+                                    if !hand.is_empty() && self.state.selected_card_in_hand.is_none() {
+                                        self.state.selected_card_in_hand = Some(0);
+                                        self.state.selected_card_id = Some(hand[0]);
+                                    }
+                                    return Ok(InputAction::Continue); // Redraw with new focus
+                                }
+                            }
+
                             // Check if any entity was clicked
                             for entity_pos in &self.state.entity_positions {
                                 if x >= entity_pos.area.x
@@ -2003,6 +2170,10 @@ impl FancyTuiController {
                             _ => {}
                         }
                     }
+                    Event::Resize(_, _) => {
+                        // Terminal was resized - trigger a redraw
+                        return Ok(InputAction::Continue);
+                    }
                     _ => {}
                 }
             }
@@ -2110,6 +2281,29 @@ impl PlayerController for FancyTuiController {
             _ => None,
         };
 
+        // Log the choice
+        if let Some(ability) = &result {
+            let choice_description = match ability {
+                SpellAbility::PlayLand { card_id } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("play land: {}", name)
+                }
+                SpellAbility::CastSpell { card_id } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("cast spell: {}", name)
+                }
+                SpellAbility::ActivateAbility { card_id, .. } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("activate: {}", name)
+                }
+            };
+            view.logger()
+                .controller_choice("TUI", &format!("{} chose {}", player_name, choice_description));
+        } else {
+            view.logger()
+                .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
+        }
+
         // Clear choice context after making choice
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
@@ -2171,6 +2365,18 @@ impl PlayerController for FancyTuiController {
                 targets.push(valid_targets[idx - 1]);
             }
             _ => {}
+        }
+
+        // Log the choice
+        if targets.is_empty() {
+            view.logger().controller_choice("TUI", "chose no target");
+        } else {
+            let target_names: Vec<String> = targets
+                .iter()
+                .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id)))
+                .collect();
+            view.logger()
+                .controller_choice("TUI", &format!("chose target {}", target_names.join(", ")));
         }
 
         // Clear choice context after making choice
@@ -2244,6 +2450,26 @@ impl PlayerController for FancyTuiController {
             }
         }
 
+        // Log the choice
+        if attackers.is_empty() {
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose not to attack with {} available creatures",
+                    available_creatures.len()
+                ),
+            );
+        } else {
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose {} attackers from {} available creatures",
+                    attackers.len(),
+                    available_creatures.len()
+                ),
+            );
+        }
+
         // Clear choice context after making choice
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
@@ -2301,6 +2527,23 @@ impl PlayerController for FancyTuiController {
                 }
                 _ => break,
             }
+        }
+
+        // Log the choice
+        if blocks.is_empty() {
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose not to block (no favorable blocks among {} blockers vs {} attackers)",
+                    available_blockers.len(),
+                    attackers.len()
+                ),
+            );
+        } else {
+            view.logger().controller_choice(
+                "TUI",
+                &format!("chose {} blockers for {} attackers", blocks.len(), attackers.len()),
+            );
         }
 
         // Clear choice context after making choice

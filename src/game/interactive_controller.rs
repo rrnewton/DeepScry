@@ -415,22 +415,31 @@ impl PlayerController for InteractiveController {
 
             if choice == 0 {
                 println!("Passed priority.");
+                view.logger()
+                    .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                 return None; // Pass
             }
 
             // Acknowledge the chosen action
-            match &available[choice - 1] {
+            let ability = &available[choice - 1];
+            match ability {
                 SpellAbility::PlayLand { card_id } => {
                     let name = view.card_name(*card_id).unwrap_or_default();
                     println!("Playing land: {}", name);
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose play land: {}", player_name, name));
                 }
                 SpellAbility::CastSpell { card_id } => {
                     let name = view.card_name(*card_id).unwrap_or_default();
                     println!("Casting spell: {}", name);
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose cast spell: {}", player_name, name));
                 }
                 SpellAbility::ActivateAbility { card_id, .. } => {
                     let name = view.card_name(*card_id).unwrap_or_default();
                     println!("Activating ability: {}", name);
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
                 }
             }
 
@@ -491,20 +500,28 @@ impl PlayerController for InteractiveController {
                             SpellAbility::PlayLand { card_id } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} played land: {}", player_name, name);
+                                view.logger()
+                                    .controller_choice("TUI", &format!("{} chose play land: {}", player_name, name));
                             }
                             SpellAbility::CastSpell { card_id } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} cast spell: {}", player_name, name);
+                                view.logger()
+                                    .controller_choice("TUI", &format!("{} chose cast spell: {}", player_name, name));
                             }
                             SpellAbility::ActivateAbility { card_id, .. } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} activated ability: {}", player_name, name);
+                                view.logger()
+                                    .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
                             }
                         }
                         return Some(ability);
                     } else if trimmed == "p" || trimmed == "pass" {
                         // Explicit pass command
                         println!("  {} passed priority.", player_name);
+                        view.logger()
+                            .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                         return None;
                     } else {
                         // Rich command but no match found
@@ -519,6 +536,8 @@ impl PlayerController for InteractiveController {
                     Ok(0) => {
                         // Index 0 = pass
                         println!("  {} passed priority.", player_name);
+                        view.logger()
+                            .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                         return None;
                     }
                     Ok(choice) if choice <= available.len() => {
@@ -530,14 +549,20 @@ impl PlayerController for InteractiveController {
                             SpellAbility::PlayLand { card_id } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} played land: {}", player_name, name);
+                                view.logger()
+                                    .controller_choice("TUI", &format!("{} chose play land: {}", player_name, name));
                             }
                             SpellAbility::CastSpell { card_id } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} cast spell: {}", player_name, name);
+                                view.logger()
+                                    .controller_choice("TUI", &format!("{} chose cast spell: {}", player_name, name));
                             }
                             SpellAbility::ActivateAbility { card_id, .. } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} activated ability: {}", player_name, name);
+                                view.logger()
+                                    .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
                             }
                         }
                         return Some(available[action_index].clone());
@@ -604,6 +629,18 @@ impl PlayerController for InteractiveController {
             ) {
                 targets.push(valid_targets[choice]);
             }
+        }
+
+        // Log the choice
+        if targets.is_empty() {
+            view.logger().controller_choice("TUI", "chose no target");
+        } else {
+            let target_names: Vec<String> = targets
+                .iter()
+                .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id)))
+                .collect();
+            view.logger()
+                .controller_choice("TUI", &format!("chose target {}", target_names.join(", ")));
         }
 
         targets
@@ -761,6 +798,26 @@ impl PlayerController for InteractiveController {
             }
         }
 
+        // Log the choice
+        if attackers.is_empty() {
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose not to attack with {} available creatures",
+                    available_creatures.len()
+                ),
+            );
+        } else {
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose {} attackers from {} available creatures",
+                    attackers.len(),
+                    available_creatures.len()
+                ),
+            );
+        }
+
         attackers
     }
 
@@ -901,6 +958,23 @@ impl PlayerController for InteractiveController {
                     command
                 );
             }
+        }
+
+        // Log the choice
+        if blocks.is_empty() {
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose not to block (no favorable blocks among {} blockers vs {} attackers)",
+                    available_blockers.len(),
+                    attackers.len()
+                ),
+            );
+        } else {
+            view.logger().controller_choice(
+                "TUI",
+                &format!("chose {} blockers for {} attackers", blocks.len(), attackers.len()),
+            );
         }
 
         blocks

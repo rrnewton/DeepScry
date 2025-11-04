@@ -466,6 +466,30 @@ impl GameState {
                 rng_state,
             });
 
+            // Log turn transfer indicator with life totals
+            let new_turn_num = old_turn_number + 1;
+            let active_player_name = self
+                .get_player(next_player)
+                .map(|p| p.name.as_str())
+                .unwrap_or("Unknown");
+            let active_player_life = self.get_player(next_player).map(|p| p.life).unwrap_or(0);
+            let other_player_name = self
+                .get_other_player_id(next_player)
+                .and_then(|id| self.get_player(id).ok())
+                .map(|p| p.name.as_str())
+                .unwrap_or("Unknown");
+            let other_player_life = self
+                .get_other_player_id(next_player)
+                .and_then(|id| self.get_player(id).ok())
+                .map(|p| p.life)
+                .unwrap_or(0);
+
+            let turn_msg = format!(
+                ">>> T{} - {} {} ({} {})",
+                new_turn_num, active_player_name, active_player_life, other_player_name, other_player_life
+            );
+            self.logger.normal(&turn_msg);
+
             // Reset per-turn state
             if let Ok(player) = self.get_player_mut(next_player) {
                 player.reset_lands_played();

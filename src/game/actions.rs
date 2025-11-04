@@ -1157,11 +1157,19 @@ impl GameState {
             let player = self.get_player_mut(target_id)?;
             player.lose_life(amount);
 
+            // Get new life total for logging
+            let new_life = player.life;
+            let player_name = player.name.clone();
+
             // Log the life change
             self.undo_log.log(crate::undo::GameAction::ModifyLife {
                 player_id: target_id,
                 delta: -amount,
             });
+
+            // Log damage with new life total
+            let message = format!("{} takes {} damage (life: {})", player_name, amount, new_life);
+            self.logger.normal(&message);
 
             return Ok(());
         }
@@ -1172,13 +1180,14 @@ impl GameState {
     /// Deal damage to a creature
     pub fn deal_damage_to_creature(&mut self, target_id: CardId, amount: i32) -> Result<()> {
         // Get info about the creature first (without holding the borrow)
-        let (is_creature, toughness, owner, has_indestructible) = {
+        let (is_creature, toughness, owner, has_indestructible, creature_name) = {
             let card = self.cards.get(target_id)?;
             (
                 card.is_creature(),
                 card.current_toughness(),
                 card.owner,
                 card.has_indestructible(),
+                card.name.clone(),
             )
         };
 
@@ -1186,8 +1195,14 @@ impl GameState {
             // Mark damage (simplified - real MTG has damage tracking)
             // MTG Rules 702.12b: Permanents with indestructible aren't destroyed by lethal damage
             // For now, if damage >= toughness and creature doesn't have indestructible, creature dies
-            if amount >= toughness as i32 && !has_indestructible {
+            let dies = amount >= toughness as i32 && !has_indestructible;
+            if dies {
+                let message = format!("{} ({}) takes {} damage and dies", creature_name, target_id, amount);
+                self.logger.normal(&message);
                 self.move_card(target_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            } else {
+                let message = format!("{} ({}) takes {} damage", creature_name, target_id, amount);
+                self.logger.normal(&message);
             }
             return Ok(());
         }
