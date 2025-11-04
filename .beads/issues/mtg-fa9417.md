@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Proportionate card rectangles and 2D battlefield layout'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:35:32.051260815+00:00
-updated_at: 2025-11-04T00:49:01.268352052+00:00
+updated_at: 2025-11-04T01:18:38.794835057+00:00
 ---
 
 # Description
@@ -45,4 +45,8 @@ Refactored the aspect ratio calculation in src/game/fancy_tui_controller.rs:
 - Centralized calculation prevents future aspect ratio bugs
 - All 405 tests still passing
 
-Status: FIXED (2025-10-22_#162)
+## Fixed in commits
+- 2025-10-22_#162: Initial aspect ratio fix
+- 2025-11-04 (commit 01c1dd7): Further refinement - "Centralize aspect ratio calculation and scale by height in fancy TUI"
+
+Status: ✅ COMPLETED (2025-11-04)
