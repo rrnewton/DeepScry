@@ -611,29 +611,34 @@ impl GameState {
                 prior_log_size, action
             );
             match action {
-                crate::undo::GameAction::ChoicePoint { player_id, .. } => {
+                crate::undo::GameAction::ChoicePoint {
+                    player_id, choice_id, ..
+                } => {
                     eprintln!(
-                        "[UNDO DEBUG]     ChoicePoint for player {}. Choice count before decrement: {}",
+                        "[UNDO DEBUG]     ChoicePoint for player {}, choice_id={}. Current choice count: {}",
                         player_id.as_u32(),
-                        self.logger.choice_count()
-                    );
-                    // Decrement the choice counter for ANY choice point we encounter
-                    self.logger.decrement_choice_count();
-                    eprintln!(
-                        "[UNDO DEBUG]     Choice count after decrement: {}",
+                        choice_id,
                         self.logger.choice_count()
                     );
 
                     if player_id == requesting_player {
                         // Found a choice point for the requesting player! Save the log size and stop
+                        // Set choice_count to reflect choices made BEFORE this point
+                        // (If we're restoring to choice_id=3, then choices 1 and 2 were made, so count=2)
+                        let target_choice_count = choice_id.saturating_sub(1) as usize;
                         eprintln!(
-                            "[UNDO DEBUG]     *** Found target ChoicePoint! prior_log_size={}",
-                            prior_log_size
+                            "[UNDO DEBUG]     *** Found target ChoicePoint! Setting choice_count from {} to {}",
+                            self.logger.choice_count(),
+                            target_choice_count
                         );
+                        // Directly set the choice count instead of decrementing
+                        self.logger.set_choice_count(target_choice_count);
+                        eprintln!("[UNDO DEBUG]     *** prior_log_size={}", prior_log_size);
                         choice_log_size = Some(prior_log_size);
                         break;
                     }
                     // Otherwise, this was another player's choice - keep undoing
+                    // Don't decrement here - we'll set the correct count when we find the target
                     eprintln!("[UNDO DEBUG]     Different player's choice, continuing undo...");
                 }
                 _ => {

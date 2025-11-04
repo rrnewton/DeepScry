@@ -489,6 +489,14 @@ impl GameLogger {
             *self.choice_count.borrow_mut() = current - 1;
         }
     }
+
+    /// Set the choice counter to a specific value
+    ///
+    /// Used when restoring to a specific choice point during undo.
+    /// This directly sets the counter instead of incrementing/decrementing.
+    pub fn set_choice_count(&self, count: usize) {
+        *self.choice_count.borrow_mut() = count;
+    }
 }
 
 impl Default for GameLogger {
