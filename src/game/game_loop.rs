@@ -329,11 +329,17 @@ impl<'a> GameLoop<'a> {
     fn log_choice_point(&mut self, player_id: PlayerId, choice: Option<crate::game::ReplayChoice>) {
         self.choice_counter += 1;
 
-        self.game.undo_log.log(crate::undo::GameAction::ChoicePoint {
-            player_id,
-            choice_id: self.choice_counter,
-            choice,
-        });
+        // Capture log size before logging choice point
+        let prior_log_size = self.game.logger.log_count();
+
+        self.game.undo_log.log(
+            crate::undo::GameAction::ChoicePoint {
+                player_id,
+                choice_id: self.choice_counter,
+                choice,
+            },
+            prior_log_size,
+        );
 
         // If we're in replay mode, decrement counter
         // Note: Replay mode stays active until ALL choices are replayed, then cleared before

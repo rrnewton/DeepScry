@@ -245,6 +245,23 @@ impl GameLogger {
         self.format_bump.borrow_mut().reset();
     }
 
+    /// Truncate the log buffer to a specific size
+    ///
+    /// Removes all entries beyond the specified size.
+    /// If size >= current length, does nothing.
+    /// This is used to synchronize log removal with undo operations.
+    pub fn truncate_to(&mut self, size: usize) {
+        let mut buffer = self.log_buffer.borrow_mut();
+        if size < buffer.len() {
+            buffer.truncate(size);
+        }
+    }
+
+    /// Get the current number of log entries
+    pub fn log_count(&self) -> usize {
+        self.log_buffer.borrow().len()
+    }
+
     /// Set output format (Text or JSON)
     pub fn set_output_format(&mut self, format: OutputFormat) {
         self.output_format = format;

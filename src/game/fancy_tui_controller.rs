@@ -37,6 +37,8 @@ enum InputAction {
     Pass,
     /// Exit the game (Ctrl-C pressed)
     Exit,
+    /// Undo the most recent action (Z key pressed)
+    Undo,
 }
 
 /// Tab indices for left panels (Combat|Log only)
@@ -222,6 +224,8 @@ struct FancyTuiState {
     actions_pane_area: Option<Rect>,
     /// Hand pane area (for mouse click detection)
     hand_pane_area: Option<Rect>,
+    /// Rewind message to display after undo operation
+    rewind_message: Option<String>,
 }
 
 impl FancyTuiState {
@@ -240,6 +244,7 @@ impl FancyTuiState {
             choice_context: ChoiceContext::None,
             actions_pane_area: None,
             hand_pane_area: None,
+            rewind_message: None,
         }
     }
 }
@@ -752,7 +757,7 @@ impl FancyTuiController {
         &self,
         f: &mut Frame,
         area: Rect,
-        _view: &GameStateView,
+        view: &GameStateView,
         current_prompt: Option<&str>,
         choices: &[(String, bool)],
     ) {
@@ -780,15 +785,34 @@ impl FancyTuiController {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
+        // Reserve 1 line at bottom for status bar
+        let status_height = 1;
+        let content_height = inner_area.height.saturating_sub(status_height);
+
+        let content_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y,
+            width: inner_area.width,
+            height: content_height,
+        };
+
+        let status_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y + content_height,
+            width: inner_area.width,
+            height: status_height,
+        };
+
+        // Draw main content (prompt and choices)
         if let Some(prompt) = current_prompt {
             // Show prompt text
             let prompt_text = Text::from(prompt);
             let prompt_height = 3; // Reserve lines for prompt
             let prompt_area = Rect {
-                x: inner_area.x,
-                y: inner_area.y,
-                width: inner_area.width,
-                height: prompt_height.min(inner_area.height),
+                x: content_area.x,
+                y: content_area.y,
+                width: content_area.width,
+                height: prompt_height.min(content_area.height),
             };
             let paragraph = Paragraph::new(prompt_text)
                 .wrap(Wrap { trim: true })
@@ -798,10 +822,10 @@ impl FancyTuiController {
             // Show choices below prompt
             if !choices.is_empty() {
                 let choices_area = Rect {
-                    x: inner_area.x,
-                    y: inner_area.y + prompt_height,
-                    width: inner_area.width,
-                    height: inner_area.height.saturating_sub(prompt_height),
+                    x: content_area.x,
+                    y: content_area.y + prompt_height,
+                    width: content_area.width,
+                    height: content_area.height.saturating_sub(prompt_height),
                 };
 
                 let items: Vec<ListItem> = choices
@@ -825,8 +849,19 @@ impl FancyTuiController {
         } else {
             let text = Text::from("(Waiting for input...)");
             let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-            f.render_widget(paragraph, inner_area);
+            f.render_widget(paragraph, content_area);
         }
+
+        // Draw status bar at the bottom
+        let action_count = view.action_count();
+        let status_text = if let Some(ref msg) = self.state.rewind_message {
+            format!("{} actions in game | {}", action_count, msg)
+        } else {
+            format!("{} actions in game", action_count)
+        };
+
+        let status_paragraph = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(status_paragraph, status_area);
     }
 
     /// Draw both battlefields (opponent on top, player on bottom)
@@ -2544,6 +2579,10 @@ impl FancyTuiController {
                                 // No action needed here - the signal handler will suspend the process
                                 return Ok(InputAction::Continue);
                             }
+                            KeyCode::Char('Z') => {
+                                // Shift+Z: Undo the most recent action
+                                return Ok(InputAction::Undo);
+                            }
                             KeyCode::Char(c) if c.is_ascii_digit() => {
                                 // Digit selection only works when Actions pane is focused
                                 if self.state.focused_pane == FocusedPane::Actions {
@@ -2610,6 +2649,24 @@ impl FancyTuiController {
                     Self::restore_terminal(&mut terminal)?;
                     eprintln!("Exiting game (Ctrl-C pressed)");
                     std::process::exit(0);
+                }
+                InputAction::Undo => {
+                    // TODO: Implement undo functionality
+                    //
+                    // Architecture challenge: prompt_for_choice only has &GameStateView (read-only).
+                    // To implement undo, we need mutable access to GameState to call:
+                    //   - game.undo() -> Result<Option<usize>> to get prior_log_size
+                    //   - game.logger.truncate_to(prior_log_size)
+                    //   - Set rewind message in self.state
+                    //
+                    // Possible solutions:
+                    // 1. Modify PlayerController trait to support undo operations
+                    // 2. Add a mutable GameState parameter to prompt_for_choice
+                    // 3. Implement undo at the game loop level instead of controller level
+                    //
+                    // For now, just continue the loop (ignore the undo request)
+                    self.state.rewind_message = Some("Undo not yet implemented".to_string());
+                    continue;
                 }
             }
         }

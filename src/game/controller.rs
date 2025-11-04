@@ -467,6 +467,14 @@ impl<'a> GameStateView<'a> {
     pub fn combat(&self) -> &crate::game::CombatState {
         &self.game.combat
     }
+
+    /// Get the number of actions in the undo log
+    ///
+    /// Returns the count of reversible actions that have been performed.
+    /// Used by the fancy TUI to display action count status.
+    pub fn action_count(&self) -> usize {
+        self.game.undo_log.len()
+    }
 }
 
 /// Player controller interface

@@ -111,7 +111,12 @@ async fn test_full_game_undo_replay() -> Result<()> {
 
     for i in 0..rewind_count {
         let undone = game_loop.game.undo()?;
-        assert!(undone, "Should be able to undo action {} of {}", i + 1, rewind_count);
+        assert!(
+            undone.is_some(),
+            "Should be able to undo action {} of {}",
+            i + 1,
+            rewind_count
+        );
     }
 
     let actions_at_halfway = game_loop.game.undo_log.len();
@@ -197,7 +202,7 @@ async fn test_full_game_undo_replay() -> Result<()> {
     for i in 0..remaining_actions {
         let undone = game_loop.game.undo()?;
         assert!(
-            undone,
+            undone.is_some(),
             "Should be able to undo action {} of {}",
             i + 1,
             remaining_actions
@@ -667,7 +672,7 @@ async fn test_aggressive_undo_snapshots() -> Result<()> {
 
         for _ in 0..rewind_count {
             let undone = game_loop.game.undo()?;
-            assert!(undone, "Should be able to undo");
+            assert!(undone.is_some(), "Should be able to undo");
         }
 
         // Verify undo log size matches

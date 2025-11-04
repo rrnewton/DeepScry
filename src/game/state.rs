@@ -251,13 +251,17 @@ impl GameState {
             }
         }
 
-        // Log the action
-        self.undo_log.log(crate::undo::GameAction::MoveCard {
-            card_id,
-            from_zone: from,
-            to_zone: to,
-            owner,
-        });
+        // Log the action with prior log size for undo synchronization
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::MoveCard {
+                card_id,
+                from_zone: from,
+                to_zone: to,
+                owner,
+            },
+            prior_log_size,
+        );
 
         Ok(())
     }
@@ -284,13 +288,17 @@ impl GameState {
             if let Some(card_id) = zones.library.draw_top() {
                 zones.hand.add(card_id);
 
-                // Log the card movement for undo
-                self.undo_log.log(crate::undo::GameAction::MoveCard {
-                    card_id,
-                    from_zone: crate::zones::Zone::Library,
-                    to_zone: crate::zones::Zone::Hand,
-                    owner: player_id,
-                });
+                // Log the card movement for undo with prior log size
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::MoveCard {
+                        card_id,
+                        from_zone: crate::zones::Zone::Library,
+                        to_zone: crate::zones::Zone::Hand,
+                        owner: player_id,
+                    },
+                    prior_log_size,
+                );
 
                 return Ok(Some(card_id));
             }
@@ -352,13 +360,17 @@ impl GameState {
             zones.graveyard.add(spell_id);
         }
 
-        // Log the counter action
-        self.undo_log.log(crate::undo::GameAction::MoveCard {
-            card_id: spell_id,
-            from_zone: crate::zones::Zone::Stack,
-            to_zone: crate::zones::Zone::Graveyard,
-            owner: owner_id,
-        });
+        // Log the counter action with prior log size
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::MoveCard {
+                card_id: spell_id,
+                from_zone: crate::zones::Zone::Stack,
+                to_zone: crate::zones::Zone::Graveyard,
+                owner: owner_id,
+            },
+            prior_log_size,
+        );
 
         Ok(())
     }
@@ -369,11 +381,15 @@ impl GameState {
             if let Ok(card) = self.cards.get_mut(*card_id) {
                 if card.controller == player_id && card.tapped {
                     card.untap();
-                    // Log the untap action
-                    self.undo_log.log(crate::undo::GameAction::TapCard {
-                        card_id: *card_id,
-                        tapped: false,
-                    });
+                    // Log the untap action with prior log size
+                    let prior_log_size = self.logger.log_count();
+                    self.undo_log.log(
+                        crate::undo::GameAction::TapCard {
+                            card_id: *card_id,
+                            tapped: false,
+                        },
+                        prior_log_size,
+                    );
                 }
             }
         }
@@ -385,12 +401,16 @@ impl GameState {
         if let Ok(card) = self.cards.get_mut(card_id) {
             card.add_counter(counter_type, amount);
 
-            // Log the action
-            self.undo_log.log(crate::undo::GameAction::AddCounter {
-                card_id,
-                counter_type,
-                amount,
-            });
+            // Log the action with prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::AddCounter {
+                    card_id,
+                    counter_type,
+                    amount,
+                },
+                prior_log_size,
+            );
 
             Ok(())
         } else {
@@ -408,12 +428,16 @@ impl GameState {
         if let Ok(card) = self.cards.get_mut(card_id) {
             let removed = card.remove_counter(counter_type, amount);
 
-            // Log the action
-            self.undo_log.log(crate::undo::GameAction::RemoveCounter {
-                card_id,
-                counter_type,
-                amount: removed,
-            });
+            // Log the action with prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::RemoveCounter {
+                    card_id,
+                    counter_type,
+                    amount: removed,
+                },
+                prior_log_size,
+            );
 
             Ok(removed)
         } else {
@@ -458,13 +482,17 @@ impl GameState {
 
             self.turn.next_turn(next_player);
 
-            // Log the turn change with RNG state from before the turn change
-            self.undo_log.log(crate::undo::GameAction::ChangeTurn {
-                from_player,
-                to_player: next_player,
-                turn_number: old_turn_number + 1,
-                rng_state,
-            });
+            // Log the turn change with RNG state from before the turn change and prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::ChangeTurn {
+                    from_player,
+                    to_player: next_player,
+                    turn_number: old_turn_number + 1,
+                    rng_state,
+                },
+                prior_log_size,
+            );
 
             // Log turn transfer indicator with life totals
             let new_turn_num = old_turn_number + 1;
@@ -495,11 +523,15 @@ impl GameState {
                 player.reset_lands_played();
             }
         } else {
-            // Log the step advance
-            self.undo_log.log(crate::undo::GameAction::AdvanceStep {
-                from_step,
-                to_step: self.turn.current_step,
-            });
+            // Log the step advance with prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::AdvanceStep {
+                    from_step,
+                    to_step: self.turn.current_step,
+                },
+                prior_log_size,
+            );
         }
         Ok(())
     }
@@ -529,9 +561,9 @@ impl GameState {
     /// Undo the most recent action
     ///
     /// Pops the last action from the undo log and reverts it.
-    /// Returns Ok(true) if an action was undone, Ok(false) if log is empty.
-    pub fn undo(&mut self) -> Result<bool> {
-        if let Some(action) = self.undo_log.pop() {
+    /// Returns Ok(Some(prior_log_size)) to truncate logs to, Ok(None) if log is empty.
+    pub fn undo(&mut self) -> Result<Option<usize>> {
+        if let Some((action, prior_log_size)) = self.undo_log.pop() {
             match action {
                 crate::undo::GameAction::MoveCard {
                     card_id,
@@ -719,9 +751,9 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
             }
-            Ok(true)
+            Ok(Some(prior_log_size))
         } else {
-            Ok(false)
+            Ok(None)
         }
     }
 }
