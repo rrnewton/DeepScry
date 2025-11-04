@@ -1219,6 +1219,20 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 println!("  {source_name} ({source_id}) exiles {target_name} ({target})");
             }
+            Effect::SearchLibrary {
+                player,
+                card_type_filter,
+                destination,
+                enters_tapped,
+                shuffle: _,
+            } => {
+                let player_name = self.get_player_name(*player);
+                let tapped_text = if *enters_tapped { " tapped" } else { "" };
+                println!(
+                    "  {source_name} ({source_id}) searches {player_name}'s library for a {card_type_filter} card and puts it into {:?}{tapped_text}",
+                    destination
+                );
+            }
         }
     }
 

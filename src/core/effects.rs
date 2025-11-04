@@ -127,6 +127,22 @@ pub enum Effect {
     /// Example: "Exile target creature" (Swords to Plowshares)
     /// Moves a card from the battlefield to the exile zone
     ExilePermanent { target: CardId },
+
+    /// Search library for a card and put it into a zone
+    /// Example: "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle"
+    /// Corresponds to: AB$ ChangeZone | Origin$ Library | Destination$ Battlefield | ChangeType$ Land.Basic
+    SearchLibrary {
+        /// Player whose library to search
+        player: PlayerId,
+        /// Card type filter (e.g., "Land.Basic", "Creature", "Land")
+        card_type_filter: String,
+        /// Destination zone for the found card
+        destination: crate::zones::Zone,
+        /// Whether the card enters tapped (for battlefield)
+        enters_tapped: bool,
+        /// Whether to shuffle after searching
+        shuffle: bool,
+    },
 }
 
 /// Events that can trigger abilities

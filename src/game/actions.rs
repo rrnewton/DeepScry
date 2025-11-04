@@ -885,6 +885,96 @@ impl GameState {
                 let owner = self.cards.get(*target)?.owner;
                 self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
             }
+            Effect::SearchLibrary {
+                player,
+                card_type_filter,
+                destination,
+                enters_tapped,
+                shuffle,
+            } => {
+                // Search library for a card matching the filter and move it to destination
+                // MTG Rules 701.19a: To search a zone, a player looks at all cards in that zone
+
+                // Get the library zone for the player
+                let library_cards = self
+                    .player_zones
+                    .iter()
+                    .find(|(id, _)| *id == *player)
+                    .map(|(_, zones)| zones.library.cards.clone())
+                    .ok_or_else(|| MtgError::InvalidAction(format!("Player {:?} has no library", player)))?;
+
+                // Search for a card matching the filter
+                // For now, implement a simple filter matching algorithm
+                // Filter format examples: "Land.Basic", "Creature", "Artifact.Equipment"
+                let mut found_card = None;
+                for &card_id in &library_cards {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        // Parse the filter (e.g., "Land.Basic" means Land type + Basic subtype)
+                        let parts: Vec<&str> = card_type_filter.split('.').collect();
+                        let main_type = parts.first().unwrap_or(&"Card");
+                        let subtype = parts.get(1);
+
+                        // Check if card matches the main type
+                        let type_matches = match *main_type {
+                            "Card" => true, // Any card
+                            "Land" => card.is_land(),
+                            "Creature" => card.is_creature(),
+                            "Artifact" => card.is_artifact(),
+                            "Enchantment" => card.is_enchantment(),
+                            "Instant" => card.is_instant(),
+                            "Sorcery" => card.types.contains(&CardType::Sorcery),
+                            "Planeswalker" => card.types.contains(&CardType::Planeswalker),
+                            _ => false,
+                        };
+
+                        // Check if card matches the subtype (if specified)
+                        let subtype_matches = if let Some(sub) = subtype {
+                            if *sub == "Basic" {
+                                // Check for basic land subtypes
+                                card.subtypes.iter().any(|st| {
+                                    let st_str = st.as_str();
+                                    st_str == "Plains"
+                                        || st_str == "Island"
+                                        || st_str == "Swamp"
+                                        || st_str == "Mountain"
+                                        || st_str == "Forest"
+                                })
+                            } else {
+                                // Check for specific subtype
+                                card.subtypes.iter().any(|st| st.as_str() == *sub)
+                            }
+                        } else {
+                            true // No subtype specified, so any subtype matches
+                        };
+
+                        if type_matches && subtype_matches {
+                            found_card = Some(card_id);
+                            break;
+                        }
+                    }
+                }
+
+                // If we found a matching card, move it to the destination
+                if let Some(card_id) = found_card {
+                    // Move the card from library to destination
+                    self.move_card(card_id, Zone::Library, *destination, *player)?;
+
+                    // If destination is battlefield and enters_tapped is true, tap the card
+                    if *destination == Zone::Battlefield && *enters_tapped {
+                        let card = self.cards.get_mut(card_id)?;
+                        card.tap();
+
+                        // Log the tap
+                        self.undo_log
+                            .log(crate::undo::GameAction::TapCard { card_id, tapped: true });
+                    }
+                }
+
+                // Shuffle the library if required (MTG Rules 701.19b)
+                if *shuffle {
+                    self.shuffle_library(*player);
+                }
+            }
         }
         Ok(())
     }

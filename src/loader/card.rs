@@ -829,6 +829,46 @@ impl CardDefinition {
                 });
             }
 
+            // AB$ ChangeZone - Activated zone change ability (e.g., search library for card)
+            // Format: AB$ ChangeZone | Cost$ T Sac<1/CARDNAME> | Origin$ Library | Destination$ Battlefield |
+            //         Tapped$ True | ChangeType$ Land.Basic | SpellDescription$ ...
+            // Example: Vibrant Cityscape searches library for a basic land
+            if ability.contains("AB$ ChangeZone") && ability.contains("Origin$ Library") {
+                // Parse the destination zone
+                let destination = if ability.contains("Destination$ Battlefield") {
+                    crate::zones::Zone::Battlefield
+                } else if ability.contains("Destination$ Hand") {
+                    crate::zones::Zone::Hand
+                } else if ability.contains("Destination$ Graveyard") {
+                    crate::zones::Zone::Graveyard
+                } else {
+                    // Default to battlefield if not specified
+                    crate::zones::Zone::Battlefield
+                };
+
+                // Parse whether the card enters tapped
+                let enters_tapped = ability.contains("Tapped$ True");
+
+                // Parse the card type filter from ChangeType$ parameter
+                let card_type_filter = if let Some(type_str) = ability.split("ChangeType$").nth(1) {
+                    if let Some(type_part) = type_str.trim().split('|').next() {
+                        type_part.trim().to_string()
+                    } else {
+                        "Card".to_string() // Default to any card
+                    }
+                } else {
+                    "Card".to_string() // Default to any card
+                };
+
+                effects.push(Effect::SearchLibrary {
+                    player: crate::core::EntityId::new(0), // Placeholder
+                    card_type_filter,
+                    destination,
+                    enters_tapped,
+                    shuffle: true, // Library searches always shuffle (MTG Rules 701.19b)
+                });
+            }
+
             // Extract description
             let description = if let Some(desc_str) = ability.split("SpellDescription$").nth(1) {
                 desc_str.trim().to_string()
