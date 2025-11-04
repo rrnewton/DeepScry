@@ -1094,7 +1094,11 @@ impl<'a> GameLoop<'a> {
             Effect::DealDamage { target, amount } => match target {
                 TargetRef::Player(target_player_id) => {
                     let target_name = self.get_player_name(*target_player_id);
-                    println!("  {source_name} ({source_id}) deals {amount} damage to {target_name}");
+                    let new_life = self.game.get_player(*target_player_id)
+                        .map(|p| p.life)
+                        .unwrap_or(0);
+                    let message = format!("{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}");
+                    self.game.logger.normal(&message);
                 }
                 TargetRef::Permanent(target_card_id) => {
                     let target_name = self
@@ -1103,23 +1107,33 @@ impl<'a> GameLoop<'a> {
                         .get(*target_card_id)
                         .map(|c| c.name.as_str())
                         .unwrap_or("Unknown");
-                    println!("  {source_name} ({source_id}) deals {amount} damage to {target_name} ({target_card_id})");
+                    let message = format!("{source_name} ({source_id}) deals {amount} damage to {target_name} ({target_card_id})");
+                    self.game.logger.normal(&message);
                 }
                 TargetRef::None => {
                     // Target will be filled in by resolve_spell - log against opponent
                     if let Some(opponent_id) = self.game.players.iter().map(|p| p.id).find(|id| *id != _source_owner) {
                         let target_name = self.get_player_name(opponent_id);
-                        println!("  {source_name} ({source_id}) deals {amount} damage to {target_name}");
+                        let new_life = self.game.get_player(opponent_id)
+                            .map(|p| p.life)
+                            .unwrap_or(0);
+                        let message = format!("{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}");
+                        self.game.logger.normal(&message);
                     }
                 }
             },
             Effect::DrawCards { player, count } => {
                 let player_name = self.get_player_name(*player);
-                println!("  {source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
+                let message = format!("{source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
+                self.game.logger.normal(&message);
             }
             Effect::GainLife { player, amount } => {
                 let player_name = self.get_player_name(*player);
-                println!("  {source_name} ({source_id}) causes {player_name} to gain {amount} life");
+                let new_life = self.game.get_player(*player)
+                    .map(|p| p.life)
+                    .unwrap_or(0);
+                let message = format!("{source_name} ({source_id}) causes {player_name} to gain {amount} life - life: {new_life}");
+                self.game.logger.normal(&message);
             }
             Effect::DestroyPermanent { target } => {
                 let target_name = self
@@ -1128,7 +1142,8 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!("  {source_name} ({source_id}) destroys {target_name} ({target})");
+                let message = format!("{source_name} ({source_id}) destroys {target_name} ({target})");
+                self.game.logger.normal(&message);
             }
             Effect::TapPermanent { target } => {
                 let target_name = self
@@ -1137,7 +1152,8 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!("  {source_name} ({source_id}) taps {target_name} ({target})");
+                let message = format!("{source_name} ({source_id}) taps {target_name} ({target})");
+                self.game.logger.normal(&message);
             }
             Effect::UntapPermanent { target } => {
                 let target_name = self
@@ -1146,7 +1162,8 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!("  {source_name} ({source_id}) untaps {target_name} ({target})");
+                let message = format!("{source_name} ({source_id}) untaps {target_name} ({target})");
+                self.game.logger.normal(&message);
             }
             Effect::PumpCreature {
                 target,
@@ -1159,13 +1176,15 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!(
-                    "  {source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
+                let message = format!(
+                    "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
                 );
+                self.game.logger.normal(&message);
             }
             Effect::Mill { player, count } => {
                 let player_name = self.get_player_name(*player);
-                println!("  {source_name} ({source_id}) causes {player_name} to mill {count} card(s)");
+                let message = format!("{source_name} ({source_id}) causes {player_name} to mill {count} card(s)");
+                self.game.logger.normal(&message);
             }
             Effect::CounterSpell { target } => {
                 let target_name = self
@@ -1174,11 +1193,13 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!("  {source_name} ({source_id}) counters {target_name} ({target})");
+                let message = format!("{source_name} ({source_id}) counters {target_name} ({target})");
+                self.game.logger.normal(&message);
             }
             Effect::AddMana { player, mana } => {
                 let player_name = self.get_player_name(*player);
-                println!("  {source_name} ({source_id}) adds {mana} to {player_name}'s mana pool");
+                let message = format!("{source_name} ({source_id}) adds {mana} to {player_name}'s mana pool");
+                self.game.logger.normal(&message);
             }
             Effect::PutCounter {
                 target,
@@ -1553,14 +1574,15 @@ impl<'a> GameLoop<'a> {
                     if let Ok(card) = self.game.cards.get(*attacker_id) {
                         let power = card.power.unwrap_or(0);
                         let toughness = card.toughness.unwrap_or(0);
-                        println!(
-                            "  {} declares {} ({}) ({}/{}) as attacker",
+                        let message = format!(
+                            "{} declares {} ({}) ({}/{}) as attacker",
                             self.get_player_name(active_player),
                             card_name,
                             attacker_id,
                             power,
                             toughness
                         );
+                        self.game.logger.normal(&message);
                     }
                 }
             }
@@ -1668,12 +1690,13 @@ impl<'a> GameLoop<'a> {
                         .get(*attacker_id)
                         .map(|c| c.name.as_str())
                         .unwrap_or("Unknown");
-                    println!(
-                        "  {} blocks {} with {}",
+                    let message = format!(
+                        "{} blocks {} with {}",
                         self.get_player_name(defending_player),
                         attacker_name,
                         blocker_name
                     );
+                    self.game.logger.normal(&message);
                 }
             }
         }
@@ -1698,7 +1721,7 @@ impl<'a> GameLoop<'a> {
         if has_first_strike {
             // First strike damage step
             if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                println!("--- First Strike Combat Damage ---");
+                self.game.logger.normal("--- First Strike Combat Damage ---");
             }
             self.log_combat_damage(true)?;
             self.game.assign_combat_damage(controller1, controller2, true)?;
@@ -1709,7 +1732,7 @@ impl<'a> GameLoop<'a> {
 
         // Normal combat damage step (or only step if no first strike)
         if self.verbosity >= VerbosityLevel::Normal && has_first_strike && !self.replaying {
-            println!("--- Normal Combat Damage ---");
+            self.game.logger.normal("--- Normal Combat Damage ---");
         }
         self.log_combat_damage(false)?;
         self.game.assign_combat_damage(controller1, controller2, false)?;
@@ -1798,9 +1821,10 @@ impl<'a> GameLoop<'a> {
 
                             let blocker_power = blocker.current_power();
                             let blocker_name = &blocker.name;
-                            println!(
-                                "  Combat: {attacker_name} ({attacker_id}) ({power} damage) ↔ {blocker_name} ({blocker_id}) ({blocker_power} damage)"
+                            let message = format!(
+                                "Combat: {attacker_name} ({attacker_id}) ({power} damage) ↔ {blocker_name} ({blocker_id}) ({blocker_power} damage)"
                             );
+                            self.game.logger.normal(&message);
                         }
                     }
                 } else {
@@ -1808,7 +1832,8 @@ impl<'a> GameLoop<'a> {
                     if let Some(defending_player) = self.game.combat.get_defending_player(*attacker_id) {
                         let defender_name = self.get_player_name(defending_player);
                         if power > 0 {
-                            println!("  {attacker_name} ({attacker_id}) deals {power} damage to {defender_name}");
+                            let message = format!("{attacker_name} ({attacker_id}) deals {power} damage to {defender_name}");
+                            self.game.logger.normal(&message);
                         }
                     }
                 }
@@ -2054,13 +2079,14 @@ impl<'a> GameLoop<'a> {
             // Check if it's a permanent entering battlefield
             if let Ok(card) = self.game.cards.get(spell_id) {
                 if card.is_creature() {
-                    println!(
-                        "  {} ({}) enters the battlefield as a {}/{} creature",
+                    let message = format!(
+                        "{} ({}) enters the battlefield as a {}/{} creature",
                         card_name,
                         spell_id,
                         card.power.unwrap_or(0),
                         card.toughness.unwrap_or(0)
                     );
+                    self.game.logger.normal(&message);
                 }
             }
         }
@@ -2245,19 +2271,21 @@ impl<'a> GameLoop<'a> {
 
                                     if self.verbosity >= VerbosityLevel::Normal {
                                         if !self.replaying {
-                                            println!(
-                                                "  {} plays {} ({})",
+                                            let message = format!(
+                                                "{} plays {} ({})",
                                                 self.get_player_name(current_priority),
                                                 card_name,
                                                 card_id
                                             );
+                                            self.game.logger.normal(&message);
                                         } else if self.verbosity >= VerbosityLevel::Verbose {
-                                            println!(
-                                                "  [SUPPRESSED] {} plays {} ({})",
+                                            let message = format!(
+                                                "[SUPPRESSED] {} plays {} ({})",
                                                 self.get_player_name(current_priority),
                                                 card_name,
                                                 card_id
                                             );
+                                            self.game.logger.verbose(&message);
                                         }
                                     }
 
@@ -2291,19 +2319,21 @@ impl<'a> GameLoop<'a> {
 
                                 if self.verbosity >= VerbosityLevel::Normal {
                                     if !self.replaying {
-                                        println!(
-                                            "  {} casts {} ({}) (putting on stack)",
+                                        let message = format!(
+                                            "{} casts {} ({}) (putting on stack)",
                                             self.get_player_name(current_priority),
                                             card_name,
                                             card_id
                                         );
+                                        self.game.logger.normal(&message);
                                     } else if self.verbosity >= VerbosityLevel::Verbose {
-                                        println!(
-                                            "  [SUPPRESSED] {} casts {} ({}) (putting on stack)",
+                                        let message = format!(
+                                            "[SUPPRESSED] {} casts {} ({}) (putting on stack)",
                                             self.get_player_name(current_priority),
                                             card_name,
                                             card_id
                                         );
+                                        self.game.logger.verbose(&message);
                                     }
                                 }
 
@@ -2346,85 +2376,21 @@ impl<'a> GameLoop<'a> {
 
                                 let mana_callback = |game: &GameState, cost: &crate::core::ManaCost| {
                                     // Use ManaEngine to compute proper color-aware tap order
-                                    // Note: Create temporary engine here since we're in a closure
+                                    // Create temporary engine and update it with current game state
                                     use crate::game::mana_engine::ManaEngine;
+                                    use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
                                     let mut mana_engine = ManaEngine::new();
                                     mana_engine.update(game, current_priority);
 
-                                    // The mana engine already knows which sources to tap
-                                    // It uses the GreedyManaResolver internally to compute tap order
-                                    // TODO: Extract tap order from mana_engine instead of computing separately
-
-                                    // For now, use the same logic that get_castable_spells uses:
-                                    // Build ManaSource list and use GreedyManaResolver
-                                    use crate::game::mana_payment::{
-                                        GreedyManaResolver, ManaPaymentResolver, ManaSource,
-                                    };
-
-                                    let mut mana_sources = Vec::new();
-                                    for &card_id in &game.battlefield.cards {
-                                        if let Ok(card) = game.cards.get(card_id) {
-                                            if card.owner != current_priority {
-                                                continue; // Skip permanents we don't own
-                                            }
-
-                                            // Check if this is a mana-producing permanent (land or creature with mana ability)
-                                            // Must match the same logic as ManaEngine::update() to avoid inconsistencies
-                                            let is_mana_source = if card.is_land() {
-                                                true
-                                            } else if card.is_creature() {
-                                                // Check for creature mana abilities (Llanowar Elves, Birds of Paradise)
-                                                let text_lower = card.text.to_lowercase();
-                                                text_lower.contains("{t}: add")
-                                                    || (text_lower.contains("add") && text_lower.contains("mana"))
-                                            } else {
-                                                false
-                                            };
-
-                                            if !is_mana_source || card.tapped {
-                                                continue;
-                                            }
-
-                                            // Check summoning sickness for creatures
-                                            let has_summoning_sickness = if card.is_creature() {
-                                                if let Some(entered_turn) = card.turn_entered_battlefield {
-                                                    entered_turn == game.turn.turn_number
-                                                        && !card.has_keyword(&crate::core::Keyword::Haste)
-                                                } else {
-                                                    false
-                                                }
-                                            } else {
-                                                false
-                                            };
-
-                                            if has_summoning_sickness {
-                                                continue; // Skip summoning-sick creatures
-                                            }
-
-                                            // Determine mana production
-                                            let production = if let Some(prod) = Self::get_mana_production(card) {
-                                                Some(prod)
-                                            } else if card.is_creature() {
-                                                // Try creature mana production
-                                                Self::get_creature_mana_production_for_callback(card)
-                                            } else {
-                                                None
-                                            };
-
-                                            if let Some(prod) = production {
-                                                mana_sources.push(ManaSource {
-                                                    card_id,
-                                                    production: prod,
-                                                    is_tapped: card.tapped,
-                                                    has_summoning_sickness,
-                                                });
-                                            }
-                                        }
-                                    }
+                                    // Use the engine's mana sources directly - no need to rebuild the list!
+                                    // The engine has already scanned the battlefield and identified all mana-producing
+                                    // permanents (lands and creatures with mana abilities)
+                                    let mana_sources = mana_engine.all_sources();
 
                                     // Use GreedyManaResolver to compute proper tap order
                                     let resolver = GreedyManaResolver::new();
-                                    resolver.compute_tap_order(cost, &mana_sources).unwrap_or_else(Vec::new)
+                                    resolver.compute_tap_order(cost, mana_sources).unwrap_or_default()
                                 };
 
                                 // Cast using 8-step process
@@ -2470,7 +2436,8 @@ impl<'a> GameLoop<'a> {
                                 if let Some(ability) = ability {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                         let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
-                                        println!("  {} activates ability: {}", name, ability.description);
+                                        let message = format!("{} activates ability: {}", name, ability.description);
+                                        self.game.logger.normal(&message);
                                     }
 
                                     // Get valid targets for the ability (before paying costs)
@@ -3291,101 +3258,6 @@ impl<'a> GameLoop<'a> {
         card.effects
             .iter()
             .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.as_u32() == 0))
-    }
-
-    /// Determine mana production for a land card
-    /// Returns None if we don't know how to handle this land yet
-    fn get_mana_production(card: &crate::core::Card) -> Option<crate::game::mana_payment::ManaProduction> {
-        use crate::core::CardType;
-        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
-
-        // Must be a land
-        if !card.types.contains(&CardType::Land) {
-            return None;
-        }
-
-        // Check for basic lands first (simple sources)
-        let simple_color = match card.name.as_str() {
-            "Plains" => Some(ManaColor::White),
-            "Island" => Some(ManaColor::Blue),
-            "Swamp" => Some(ManaColor::Black),
-            "Mountain" => Some(ManaColor::Red),
-            "Forest" => Some(ManaColor::Green),
-            "Wastes" => return Some(ManaProduction::free(ManaProductionKind::Colorless)),
-            _ => None,
-        };
-
-        if let Some(color) = simple_color {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(color)));
-        }
-
-        // Check for dual lands by looking at basic land subtypes
-        let mut colors = Vec::new();
-        for subtype in &card.subtypes {
-            let color = match subtype.as_str() {
-                "Plains" => Some(ManaColor::White),
-                "Island" => Some(ManaColor::Blue),
-                "Swamp" => Some(ManaColor::Black),
-                "Mountain" => Some(ManaColor::Red),
-                "Forest" => Some(ManaColor::Green),
-                _ => None,
-            };
-            if let Some(c) = color {
-                colors.push(c);
-            }
-        }
-
-        // If we have exactly 2 basic land subtypes, it's a dual land
-        if colors.len() == 2 {
-            return Some(ManaProduction::free(ManaProductionKind::Choice(colors)));
-        }
-
-        // Check oracle text for any-color lands (City of Brass pattern)
-        let text_lower = card.text.to_lowercase();
-        if text_lower.contains("any color") {
-            return Some(ManaProduction::free(ManaProductionKind::AnyColor));
-        }
-
-        // Not a complex source we can handle yet
-        None
-    }
-
-    /// Determine mana production for a creature with mana abilities
-    /// Returns None if this creature doesn't produce mana
-    fn get_creature_mana_production_for_callback(
-        card: &crate::core::Card,
-    ) -> Option<crate::game::mana_payment::ManaProduction> {
-        use crate::game::mana_payment::{ManaColor, ManaProduction, ManaProductionKind};
-
-        let text_lower = card.text.to_lowercase();
-
-        // Check for any-color production (Birds of Paradise pattern)
-        if text_lower.contains("any color") {
-            return Some(ManaProduction::free(ManaProductionKind::AnyColor));
-        }
-
-        // Check for specific color production patterns
-        // Pattern: "{T}: Add {G}" or similar
-        if text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White)));
-        }
-        if text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)));
-        }
-        if text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black)));
-        }
-        if text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red)));
-        }
-        if text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}") {
-            return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)));
-        }
-        if text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}") {
-            return Some(ManaProduction::free(ManaProductionKind::Colorless));
-        }
-
-        None
     }
 }
 

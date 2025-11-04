@@ -1,0 +1,67 @@
+---
+title: 'game_loop: Replace println/eprintln with logger calls'
+status: closed
+priority: 3
+issue_type: task
+created_at: 2025-11-04T11:24:03.711987394+00:00
+updated_at: 2025-11-04T11:33:27.405020371+00:00
+---
+
+# Description
+
+## Description
+
+## Description
+
+Replace all println!/eprintln! in game_loop.rs with proper logger calls to ensure logs are captured in memory-only mode (fancy TUI).
+
+## Problem
+
+The fancy TUI log pane was very sparse because game_loop.rs uses println!/eprintln! instead of the logger. Messages go to stdout/stderr and are not captured in the fancy TUI's memory-only logging mode.
+
+## Missing logs identified
+
+- Damage logging (lines 1097, 1106, 1112)
+- Combat damage logging (lines 1787, 1797)  
+- Attack/block declarations (lines 1542, 1657)
+- Spell/land play logging (lines 2227, 2234, 2266, 2273)
+- Ability activation (line 2372)
+- Mana tapping (line 1208 in actions.rs)
+
+## Solution - COMPLETED
+
+### Centralized damage logging with life totals
+✅ Updated `log_effect_execution()` in game_loop.rs to:
+- Use `self.game.logger.normal()` instead of `println!`
+- Add life totals for player damage: "CardName deals X damage to Player - life: Y"
+- Add life totals for GainLife effects
+- All effect types updated (DealDamage, DrawCards, GainLife, DestroyPermanent, TapPermanent, UntapPermanent, PumpCreature, Mill, CounterSpell, AddMana)
+
+### Combat logging
+✅ Updated combat damage logging:
+- Blocked combat: "Combat: Attacker (id) (X dmg) ↔ Blocker (id) (Y dmg)"
+- Unblocked attackers: "Attacker (id) deals X damage to Player"
+- Combat step headers use logger
+
+### Action logging
+✅ Attack declarations: "Player declares CardName (id) (P/T) as attacker"
+✅ Block declarations: "Player blocks AttackerName with BlockerName"
+✅ Land plays: "Player plays LandName (id)"
+✅ Spell casts: "Player casts SpellName (id) (putting on stack)"
+✅ Ability activations: "CardName activates ability: description"
+✅ Mana tapping: "Tap CardName for {color}" (actions.rs)
+✅ Creature ETB: "CardName (id) enters battlefield as P/T creature"
+
+### Verified no stdout interference
+✅ Remaining println! calls are properly guarded:
+- `print_battlefield_state()` checks `should_print_to_stdout()` (line 916)
+- Returns false when output_mode is Memory (fancy TUI mode)
+- Debug/replay/snapshot messages intentionally go to stderr for user info
+
+## Test Results
+✅ All 276 tests passing
+
+## Commit
+✅ Commit f4a6938: "feat: Replace println/eprintln with logger in game actions"
+
+Part of: mtg-dba689

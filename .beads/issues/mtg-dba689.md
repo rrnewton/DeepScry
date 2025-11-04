@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T23:54:58.323097845+00:00
+updated_at: 2025-11-04T11:24:38.873295822+00:00
 ---
 
 # Description
@@ -31,99 +31,64 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-897dd0: Respect \n in card text display (commit 62cf104)
 - ✓ mtg-1af4f0: Smarter layout with variable sized cards (commits 964113e, edd041f)
 - ✓ Card rendering improvements: Aspect ratio and priority-based layout (commit 65ad5b3)
+- ✓ mtg-6326b9: Intelligent space usage with progressive compaction (2025-11-04)
+- ✓ Max card height limit (15 rows, configurable parameter for future)
+- ✓ mtg-cf6f3f: Simple stacking with multiplier prefix (e.g., "3x Island") - 2025-11-04
+- mtg-a07166: Visual stacking with diagonal offsets (depends on mtg-cf6f3f)
 
 **Interactive focus system:**
 - ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A, S)
 - ✓ Card navigation: Hand and Battlefield panes with arrow keys (commit c4d0e5c)
 - ✓ mtg-fa42e3: Populate Card Details pane on selection
-- mtg-1a7bae: Mouse support for card selection
+- ✓ mtg-1a7bae: Mouse support for card selection (2025-11-04)
 
 **Choice presentation:**
 - ✓ mtg-7bbb00: Show ownership and IDs in target choices
-- mtg-8a3ffb: Enhanced choice highlighting during gameplay
+- ✓ mtg-8a3ffb: Enhanced choice highlighting during gameplay (2025-11-04)
 
 **Infrastructure:**
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
 - ✓ mtg-f6b05f: Fix max mana calculation for dual lands (commits fb0b159, 8d61403)
+- ✓ mtg-7216cc: Replace println/eprintln with logger calls (commit f4a6938)
 
 **UI Reorganization:**
 - ✓ mtg-f567b1: Move Stack and Actions panes, remove Dock tab
 
-**Deferred improvements:**
-- mtg-6326b9: Card rendering improvements with intelligent space usage
+## Recent progress (2025-11-04)
 
-## Status
+Simple stacking (mtg-cf6f3f) - COMPLETED:
+- Phase 1: Trait abstraction with BattlefieldEntity trait (commit 97c1ef1)
+- Phase 2: Enable actual stacking with grouping logic (commit 22ac0c0)
+- Displays "3x Island" with cyan multiplier prefix
+- Groups cards by (name, tapped_state)
+- Aspect ratio fix for tapped stacks (commit 4d807df)
+- All 405 tests passing
 
-- [x] Initial fancy TUI implementation (commit 04dc7ed)
-- [x] Basic info enhancements (mtg-4d4e33, mtg-a862ff, mtg-a6f4ce, turn display)
-- [x] Initial visual polish (mtg-bc661f, mtg-b72100)
-- [x] Logging infrastructure (memory-only mode)
-- [x] 2D battlefield layout (mtg-fa9417) - major refactor
-- [x] Pane focus system (mtg-b3f1fe)
-- [x] Card navigation in Hand and Battlefield (commit c4d0e5c)
-- [x] Card Details population on selection (mtg-fa42e3)
-- [x] Max mana calculation fix (mtg-f6b05f)
-- [x] UI reorganization (mtg-f567b1)
-- [x] Turn display improvements (mtg-29343b) - commit 62cf104
-- [x] Card text newlines (mtg-897dd0) - commit 62cf104
-- [x] Smarter layout with variable sized cards (mtg-1af4f0) - commits 964113e, edd041f, 65ad5b3
-- [ ] Remaining interactive features (mtg-1a7bae: mouse support)
-- [ ] Advanced choice presentation (mtg-8a3ffb)
-
-## Recent progress (2025-11-03)
-
-Major card rendering improvements in today's session:
-- Commit 964113e: Phase 1 - Natural card tapping with dimension swapping
-- Commit edd041f: Phase 2 - Greedy card size optimization
-- Commit 65ad5b3: Aspect ratio fixes and priority-based card content layout
-- Commit 62cf104: Turn display and card text newline rendering
-
-Cards now:
-- Maintain proper aspect ratio (10:7) when resizing
-- Dynamically size to fill battlefield (greedy optimization)
-- Show detailed content (title, cost, tapped indicator, P/T, description, type)
-- Display P/T in bottom-right corner
-- Respect newlines in card text (Card Details pane)
-- Swap dimensions when tapped to simulate rotation
+Logging improvements (mtg-7216cc) - COMPLETED:
+- Replaced all println!/eprintln! with logger calls (commit f4a6938)
+- Centralized damage logging with life totals
+- All combat logs captured (attacks, blocks, damage)
+- All player actions logged (lands, spells, abilities, mana)
+- Verified no stdout interference in fancy TUI mode
+- All 276 tests passing
 
 ## Implementation order
 
-Updated order based on user priority:
+Completed phases:
 
-1. **COMPLETED - Quick wins:**
-   - ✓ mtg-4d4e33: Library count
-   - ✓ mtg-b72100: Dim borders
-   - ✓ mtg-a6f4ce: Signal handling
-   - ✓ mtg-a862ff: Turn/phase indicator
-   - ✓ mtg-bc661f: Card border colors
-   - ✓ mtg-7bbb00: Ownership/IDs in targets
-   - ✓ Logging fix: Memory-only mode
-   - ✓ Turn display: Player turn and global turn
+1. ✅ **Quick wins**: Library count, dim borders, signal handling, turn/phase indicator, card colors, ownership display, logging fix
+2. ✅ **Visual foundation**: 2D battlefield layout with proper aspect ratios
+3. ✅ **Pane focus and navigation**: Keyboard shortcuts (H/I/Y/O/A/S), arrow key navigation, card details
+4. ✅ **Critical bugs**: Max mana calculation, aspect ratio consistency
+5. ✅ **UI reorganization**: Stack/Actions panes repositioned
+6. ✅ **Card rendering enhancements**: Variable sized cards, turn display, card text newlines, intelligent layout, max height
+7. ✅ **Interactive features**: Mouse support, choice highlighting
+8. ✅ **Polish**: Intelligent space usage, progressive compaction
+9. ✅ **Simple stacking** (mtg-cf6f3f): Multiplier prefix for duplicate cards
+10. ✅ **Logging improvements** (mtg-7216cc): Centralize logging, add life totals, capture all actions
 
-2. **COMPLETED - Visual foundation:**
-   - ✓ mtg-fa9417: 2D battlefield layout (major refactor)
+Next priorities:
 
-3. **COMPLETED - Pane focus and navigation:**
-   - ✓ mtg-b3f1fe: Pane focus system
-   - ✓ Card navigation in Hand and Battlefield (c4d0e5c)
-   - ✓ mtg-fa42e3: Card Details population
+11. ⏸ **Visual stacking** (mtg-a07166): Diagonal offsets and partial rendering
 
-4. **COMPLETED - Critical bugs:**
-   - ✓ mtg-f6b05f: Max mana calculation bug (fb0b159, 8d61403)
-
-5. **COMPLETED - UI reorganization:**
-   - ✓ mtg-f567b1: Move Stack/Actions, remove Dock
-
-6. **COMPLETED - Card rendering enhancements:**
-   - ✓ mtg-1af4f0: Smarter layout with variable sized cards
-   - ✓ mtg-29343b: Turn display improvements (spacing, active player)
-   - ✓ mtg-897dd0: Card text newlines
-
-7. **Remaining interactive features:**
-   - mtg-1a7bae: Mouse support
-
-8. **Choice improvements:**
-   - mtg-8a3ffb: Enhanced choice highlighting
-
-9. **Polish (deferred):**
-   - mtg-6326b9: Further card rendering improvements
+The fancy TUI is feature-complete! All logging is centralized and working properly. Next: add visual stacking for even more polish.
