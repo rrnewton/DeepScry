@@ -793,6 +793,160 @@ fn bench_game_rewind(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: Rewind + replay with different paths
+/// Measures forward gameplay after rewind, exploring different game paths
+///
+/// This benchmark:
+/// 1. Plays a full game N turns (done once in setup)
+/// 2. For each iteration:
+///    - Rewinds to middle of game
+///    - Replays second half with new random seed (different path)
+/// 3. Measures allocation rate for forward play only (not counting rewind)
+///
+/// This is comparable to other benchmarks that measure forward gameplay.
+fn bench_game_rewind_play_again(c: &mut Criterion) {
+    // Check if test resources exist and load once
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping benchmark - failed to load resources: {e}");
+            return;
+        }
+    };
+
+    let mut group = c.benchmark_group("game_execution");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+
+    let initial_seed = 42u64;
+
+    // Accumulator for aggregating metrics
+    let mut aggregated = GameMetrics {
+        turns: 0,
+        actions: 0,
+        duration: Duration::ZERO,
+        bytes_allocated: 0,
+        bytes_deallocated: 0,
+    };
+    let mut iteration_count = 0;
+
+    // Lazy initialization - only create and run initial game on first iteration
+    let mut initial_game: Option<GameState> = None;
+    let mut rewind_target = 0;
+
+    group.bench_function("rewind_play_again", |b| {
+        b.iter(|| {
+            // Initialize on first iteration
+            if initial_game.is_none() {
+                let game_init = GameInitializer::new(&setup.card_db);
+                let mut game = setup
+                    .runtime
+                    .block_on(async {
+                        game_init
+                            .init_game(
+                                "Player 1".to_string(),
+                                &setup.deck1,
+                                "Player 2".to_string(),
+                                &setup.deck2,
+                                20,
+                            )
+                            .await
+                    })
+                    .expect("Failed to initialize game");
+
+                game.seed_rng(initial_seed);
+
+                // Play the game once to build the undo log
+                {
+                    let (p1_id, p2_id) = {
+                        let mut players_iter = game.players.iter().map(|p| p.id);
+                        (
+                            players_iter.next().expect("Should have player 1"),
+                            players_iter.next().expect("Should have player 2"),
+                        )
+                    };
+
+                    let mut controller1 = RandomController::with_seed(p1_id, 42);
+                    let mut controller2 = RandomController::with_seed(p2_id, 42);
+
+                    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+                    let _ = game_loop
+                        .run_game(&mut controller1, &mut controller2)
+                        .expect("Initial game should complete");
+                }
+
+                let actions_count = game.undo_log.len();
+                rewind_target = actions_count / 2; // Rewind to middle of game
+
+                eprintln!("\nRewind + Play Again mode (seed {initial_seed}):");
+                eprintln!("  Game completed with {} actions in undo log", actions_count);
+                eprintln!("  Will rewind to action {} (middle) for each iteration...", rewind_target);
+                eprintln!("  Then replay second half with different random seed per iteration");
+
+                initial_game = Some(game);
+            }
+
+            let game = initial_game.as_mut().unwrap();
+
+            // Rewind to middle (outside timing - not counting rewind cost)
+            let current_actions = game.undo_log.len();
+            let rewinds_needed = current_actions - rewind_target;
+            for _ in 0..rewinds_needed {
+                game.undo().expect("Undo should succeed");
+            }
+
+            // Use different seed for each iteration to explore different paths
+            let iteration_seed = initial_seed.wrapping_add(iteration_count as u64);
+            game.seed_rng(iteration_seed);
+
+            // Now measure forward gameplay for second half
+            let reg = Region::new(GLOBAL);
+            let start = std::time::Instant::now();
+
+            let (p1_id, p2_id) = {
+                let mut players_iter = game.players.iter().map(|p| p.id);
+                (
+                    players_iter.next().expect("Should have player 1"),
+                    players_iter.next().expect("Should have player 2"),
+                )
+            };
+
+            let mut controller1 = RandomController::with_seed(p1_id, iteration_seed);
+            let mut controller2 = RandomController::with_seed(p2_id, iteration_seed);
+
+            let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
+            let result = game_loop
+                .run_game(&mut controller1, &mut controller2)
+                .expect("Game should complete");
+
+            let duration = start.elapsed();
+            let stats = reg.change();
+
+            // Calculate actions played in second half
+            let total_actions_now = game.undo_log.len();
+            let actions_played = total_actions_now - rewind_target;
+
+            // Record metrics for the forward gameplay only
+            let metrics = GameMetrics {
+                turns: result.turns_played,
+                actions: actions_played,
+                duration,
+                bytes_allocated: stats.bytes_allocated,
+                bytes_deallocated: stats.bytes_deallocated,
+            };
+
+            aggregated += metrics;
+            iteration_count += 1;
+        });
+    });
+
+    if iteration_count > 0 {
+        print_aggregated_metrics("Rewind + Play Again", initial_seed, &aggregated, iteration_count);
+    }
+
+    group.finish();
+}
+
 /// Benchmark: Save snapshot to file
 fn bench_save_snapshot(c: &mut Criterion) {
     // Check if test resources exist and load once
@@ -1048,6 +1202,7 @@ criterion_group!(
     bench_game_fresh_with_stdout_logging,
     bench_game_snapshot,
     bench_game_rewind,
+    bench_game_rewind_play_again,
     bench_save_snapshot,
     bench_game_old_school_mono_black_vs_the_deck,
     bench_game_old_school_white_weenie_mirror,
