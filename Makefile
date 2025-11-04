@@ -117,7 +117,7 @@ validate-impl-sequential:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 .PHONY: validate-parallel-steps validate-impl-sequential validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step
-validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step deck_list
+validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step deck_list plot
 
 validate-fmt-check-step:
 	@$(MAKE) fmt-check
@@ -174,6 +174,9 @@ info:
 
 # Benchmarking
 # ==============================================================================
+
+plot:
+	./scripts/plot_performance.py
 
 # Run all performance benchmarks (takes a long time)
 full-benchmark:
