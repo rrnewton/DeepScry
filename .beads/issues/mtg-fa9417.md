@@ -4,67 +4,45 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:35:32.051260815+00:00
-updated_at: 2025-11-03T16:35:32.051260815+00:00
+updated_at: 2025-11-04T00:49:01.268352052+00:00
 ---
 
 # Description
 
-Part of: mtg-dba689
+Aspect ratio bug in fancy TUI card rendering - top row cards stretched vertically
 
-Display cards with aspect ratio close to real MTG cards (3.5:2.5 = 1.4:1) and arrange battlefield in 2D grid.
+## Problem
+Cards in the battlefield display were showing inconsistent aspect ratios:
+- Top row: cards stretched too tall relative to their width  
+- Second row: correct aspect ratio
 
-## Current implementation
+This was particularly noticeable when tapped cards (which swap width/height for rotation) appeared in the same battlefield as untapped cards.
 
-Cards are displayed as simple boxes in vertical groups:
-```
-Creatures:
-┌─────────────────┐
-│ Grizzly Bears   │
-│                 │
-└─────────────────┘
-```
+## Root Cause
+The `calculate_optimal_card_size()` greedy algorithm was:
+1. Incrementing WIDTH
+2. Computing height FROM width to maintain aspect ratio
 
-## Target implementation
+However, this approach could create subtle inconsistencies when tapped cards (dimensions swapped) were mixed with untapped cards in the layout calculation.
 
-Cards displayed at ~1.4:1 ratio (accounting for terminal character aspect ~2:1), arranged in grid:
+## Solution (2025-10-22)
+Refactored the aspect ratio calculation in src/game/fancy_tui_controller.rs:
 
-```
-Creatures:
-┌────────┐ ┌────────┐ ┌────────┐
-│Grizzly │ │Elvish  │ │Savannah│
-│Bears   │ │Warrior │ │Lions   │
-│  2/2   │ │  1/1   │ │  2/1   │
-└────────┘ └────────┘ └────────┘
-```
+1. **Centralized aspect ratio logic** - Created `compute_width_from_height()` helper function (lines 718-723):
+   - Single source of truth for aspect ratio calculation
+   - Computes width = height * (DEFAULT_WIDTH / DEFAULT_HEIGHT)
 
-For terminal display, this means cards should be approximately:
-- Width: ~10 characters
-- Height: ~7 lines (to approximate 1.4:1 accounting for terminal font aspect ratio)
+2. **Reversed greedy algorithm** in `calculate_optimal_card_size()` (lines 799-851):
+   - Now increments HEIGHT (not width)
+   - Computes width FROM height using centralized function
+   - Both growing and shrinking paths use consistent calculation
 
-## Implementation challenges
+3. **Maintained default 10:7 aspect ratio** throughout
 
-- Calculate optimal card dimensions based on available space
-- Implement 2D layout algorithm (rows and columns)
-- Handle varying numbers of cards (wrap to multiple rows)
-- Truncate card names if needed
-- Show P/T, tap status, etc. in compact form
-- Consider horizontal scrolling if too many cards
+## Result
+- All cards maintain correct 10:7 aspect ratio consistently
+- Tapped and untapped cards scale proportionally
+- Centralized calculation prevents future aspect ratio bugs
+- All 405 tests still passing
 
-## Layout algorithm
-
-1. Calculate available area (battlefield pane dimensions)
-2. Determine card dimensions (fixed or adaptive)
-3. Calculate max cards per row: `width / (card_width + spacing)`
-4. Arrange cards in rows, within each card type group
-5. Render each card at calculated position
-
-## Files to modify
-
-- `src/game/fancy_tui_controller.rs`:
-  - `render_card_group`: Change from vertical list to 2D grid
-  - `render_card_box`: Adjust dimensions to match new aspect ratio
-  - May need new helper: `calculate_card_layout`
-
-## Dependencies
-
-Should be done before: mtg-bc661f (card border colors) - easier to add colors to well-formatted cards
+Status: FIXED (2025-10-22_#162)

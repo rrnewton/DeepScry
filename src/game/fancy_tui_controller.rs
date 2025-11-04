@@ -715,6 +715,13 @@ impl FancyTuiController {
     const MIN_CARD_HEIGHT: u16 = 4;
     const CARD_SPACING: u16 = 1;
 
+    /// Compute card width from height while maintaining the default aspect ratio
+    /// This is the centralized function for all aspect ratio calculations
+    fn compute_width_from_height(height: u16) -> u16 {
+        ((height as f32 * Self::DEFAULT_CARD_WIDTH as f32) / Self::DEFAULT_CARD_HEIGHT as f32)
+            .round() as u16
+    }
+
     /// Get card dimensions based on tapped state and base size
     /// Tapped cards swap width and height to simulate 90-degree rotation
     fn get_card_dimensions_with_size(
@@ -791,6 +798,10 @@ impl FancyTuiController {
 
     /// Calculate optimal card size for battlefield
     /// Returns (width, height) that maximizes card size while fitting all cards
+    ///
+    /// This function uses a greedy algorithm that increments height and computes
+    /// width from height to maintain the correct aspect ratio. This ensures
+    /// consistent aspect ratios across all cards regardless of tapped state.
     fn calculate_optimal_card_size(
         area: Rect,
         card_groups: &[(Vec<CardId>, &str)],
@@ -805,16 +816,14 @@ impl FancyTuiController {
             Self::DEFAULT_CARD_HEIGHT,
         ) {
             // Try increasing size (greedy algorithm)
-            let mut width = Self::DEFAULT_CARD_WIDTH;
+            // Increment height and compute width to maintain aspect ratio
             let mut height = Self::DEFAULT_CARD_HEIGHT;
+            let mut width = Self::DEFAULT_CARD_WIDTH;
 
-            // Increment width, calculate proportional height to maintain exact aspect ratio
             loop {
-                let next_width = width + 1;
-                // Maintain exact ratio: next_width/next_height = DEFAULT_WIDTH/DEFAULT_HEIGHT
-                let next_height = ((next_width as f32 * Self::DEFAULT_CARD_HEIGHT as f32)
-                    / Self::DEFAULT_CARD_WIDTH as f32)
-                    .round() as u16;
+                let next_height = height + 1;
+                // Compute width from height using centralized aspect ratio function
+                let next_width = Self::compute_width_from_height(next_height);
 
                 if Self::test_card_size_fits(area, card_groups, view, next_width, next_height) {
                     width = next_width;
@@ -827,15 +836,14 @@ impl FancyTuiController {
             (width, height)
         } else {
             // Default doesn't fit, shrink down
-            let mut width = Self::DEFAULT_CARD_WIDTH;
+            // Decrement height and compute width to maintain aspect ratio
             let mut height = Self::DEFAULT_CARD_HEIGHT;
+            let mut width = Self::DEFAULT_CARD_WIDTH;
 
-            while !Self::test_card_size_fits(area, card_groups, view, width, height) && width > Self::MIN_CARD_WIDTH {
-                width -= 1;
-                // Maintain exact aspect ratio
-                height = ((width as f32 * Self::DEFAULT_CARD_HEIGHT as f32) / Self::DEFAULT_CARD_WIDTH as f32)
-                    .round()
-                    .max(Self::MIN_CARD_HEIGHT as f32) as u16;
+            while !Self::test_card_size_fits(area, card_groups, view, width, height) && height > Self::MIN_CARD_HEIGHT {
+                height -= 1;
+                // Compute width from height using centralized aspect ratio function
+                width = Self::compute_width_from_height(height).max(Self::MIN_CARD_WIDTH);
             }
 
             (width.max(Self::MIN_CARD_WIDTH), height.max(Self::MIN_CARD_HEIGHT))
