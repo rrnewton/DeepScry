@@ -635,9 +635,91 @@ impl FancyTuiController {
     }
 
     /// Draw the combat view
-    fn draw_combat_view(&self, f: &mut Frame, area: Rect, _view: &GameStateView) {
-        let text = Text::from("(No combat)");
-        let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+    fn draw_combat_view(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+        let combat = view.combat();
+
+        if !combat.combat_active {
+            let text = Text::from("(No combat)");
+            let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+            f.render_widget(paragraph, area);
+            return;
+        }
+
+        // Display combat information
+        let mut lines = Vec::new();
+
+        // Show attackers
+        let attackers = combat.attackers.iter().collect::<Vec<_>>();
+        if !attackers.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("Attackers ({})", attackers.len()),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+
+            for (&attacker_id, &defending_player) in attackers.iter() {
+                let name = view
+                    .card_name(attacker_id)
+                    .unwrap_or_else(|| format!("Card {:?}", attacker_id));
+                let defender_name = view.get_player_name_by_id(defending_player);
+
+                // Check if blocked
+                let blockers = combat.get_blockers(attacker_id);
+                let blocked_info = if blockers.is_empty() {
+                    Span::styled(" (unblocked)", Style::default().fg(Color::Green))
+                } else {
+                    Span::styled(
+                        format!(" (blocked by {})", blockers.len()),
+                        Style::default().fg(Color::Red),
+                    )
+                };
+
+                lines.push(Line::from(vec![
+                    Span::raw("  → "),
+                    Span::styled(name, Style::default().fg(Color::White)),
+                    Span::raw(format!(" attacking {}", defender_name)),
+                    blocked_info,
+                ]));
+            }
+        }
+
+        // Show blockers
+        let blockers = combat.blockers.iter().collect::<Vec<_>>();
+        if !blockers.is_empty() {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+
+            lines.push(Line::from(Span::styled(
+                format!("Blockers ({})", blockers.len()),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+
+            for (&blocker_id, blocking_attackers) in blockers.iter() {
+                let name = view
+                    .card_name(blocker_id)
+                    .unwrap_or_else(|| format!("Card {:?}", blocker_id));
+
+                // Show which attacker(s) this blocker is blocking
+                let attacker_names: Vec<String> = blocking_attackers
+                    .iter()
+                    .map(|&att_id| view.card_name(att_id).unwrap_or_else(|| format!("Card {:?}", att_id)))
+                    .collect();
+
+                let blocking_desc = if attacker_names.len() == 1 {
+                    attacker_names[0].clone()
+                } else {
+                    attacker_names.join(", ")
+                };
+
+                lines.push(Line::from(vec![
+                    Span::raw("  ← "),
+                    Span::styled(name, Style::default().fg(Color::White)),
+                    Span::raw(format!(" blocking {}", blocking_desc)),
+                ]));
+            }
+        }
+
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 

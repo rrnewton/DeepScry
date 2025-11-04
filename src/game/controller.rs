@@ -351,13 +351,18 @@ impl<'a> GameStateView<'a> {
 
     /// Get player's name
     pub fn player_name(&self) -> String {
+        self.get_player_name_by_id(self.player_id)
+    }
+
+    /// Get a specific player's name
+    pub fn get_player_name_by_id(&self, player_id: PlayerId) -> String {
         self.game
-            .get_player(self.player_id)
+            .get_player(player_id)
             .ok()
             .map(|p| p.name.to_string())
             .unwrap_or_else(|| {
                 // Use 1-based indexing for human-readable player numbers
-                let player_num = self.player_id.as_u32() + 1;
+                let player_num = player_id.as_u32() + 1;
                 format!("Player {}", player_num)
             })
     }
@@ -454,6 +459,13 @@ impl<'a> GameStateView<'a> {
     /// Returns cards on the stack in order (bottom to top).
     pub fn stack(&self) -> &[CardId] {
         &self.game.stack.cards
+    }
+
+    /// Get the current combat state
+    ///
+    /// Returns information about attackers, blockers, and combat phase status.
+    pub fn combat(&self) -> &crate::game::CombatState {
+        &self.game.combat
     }
 }
 
