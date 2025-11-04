@@ -898,6 +898,12 @@ impl FancyTuiController {
         base_height: u16,
     ) -> (u16, u16) {
         let is_tapped = view.is_tapped(card_id);
+        Self::get_dimensions_for_tapped_state(is_tapped, base_width, base_height)
+    }
+
+    /// Get dimensions based on tapped state
+    /// Tapped entities swap width and height to simulate 90-degree rotation
+    fn get_dimensions_for_tapped_state(is_tapped: bool, base_width: u16, base_height: u16) -> (u16, u16) {
         if is_tapped {
             // Swap dimensions for tapped cards (simulate rotation)
             (base_height, base_width)
@@ -1065,8 +1071,8 @@ impl FancyTuiController {
         let mut row_height = 0u16;
 
         for entity in &entities {
-            let card_id = entity.representative_card();
-            let (card_w, card_h) = Self::get_card_dimensions_with_size(view, card_id, card_width, card_height);
+            let is_tapped = entity.is_tapped(view);
+            let (card_w, card_h) = Self::get_dimensions_for_tapped_state(is_tapped, card_width, card_height);
 
             // Check if entity fits on current row
             if current_x + card_w > area.x + area.width && current_x > area.x {
