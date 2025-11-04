@@ -179,6 +179,11 @@ enum Commands {
         #[arg(long)]
         numeric_choices: bool,
 
+        // === Fancy TUI Options ===
+        /// Enable visual stacking with diagonal offsets for fancy TUI (default: simple stacking)
+        #[arg(long)]
+        visual_stacks: bool,
+
         /// Enable state hash debugging (prints hash before each action)
         #[arg(long)]
         debug_state_hash: bool,
@@ -321,6 +326,11 @@ enum Commands {
         #[arg(long)]
         numeric_choices: bool,
 
+        // === Fancy TUI Options ===
+        /// Enable visual stacking with diagonal offsets for fancy TUI (default: simple stacking)
+        #[arg(long)]
+        visual_stacks: bool,
+
         /// Enable state hash debugging (prints hash before each action)
         #[arg(long)]
         debug_state_hash: bool,
@@ -376,6 +386,7 @@ async fn main() -> Result<()> {
             load_all_cards,
             verbosity,
             numeric_choices,
+            visual_stacks,
             debug_state_hash,
             stop_on_choice,
             stop_when_fixed_exhausted,
@@ -410,6 +421,7 @@ async fn main() -> Result<()> {
                 load_all_cards,
                 verbosity,
                 numeric_choices,
+                visual_stacks,
                 debug_state_hash,
                 stop_on_choice,
                 stop_when_fixed_exhausted,
@@ -477,6 +489,7 @@ async fn main() -> Result<()> {
             override_seed_p2,
             verbosity,
             numeric_choices,
+            visual_stacks,
             debug_state_hash,
             stop_on_choice,
             stop_when_fixed_exhausted,
@@ -503,6 +516,7 @@ async fn main() -> Result<()> {
                 override_seed_p2,
                 verbosity,
                 numeric_choices,
+                visual_stacks,
                 debug_state_hash,
                 stop_on_choice,
                 stop_when_fixed_exhausted,
@@ -557,6 +571,7 @@ async fn run_tui(
     load_all_cards: bool,
     verbosity: VerbosityArg,
     numeric_choices: bool,
+    visual_stacks: bool,
     debug_state_hash: bool,
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
@@ -849,7 +864,7 @@ async fn run_tui(
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
         ControllerType::Fancy => Box::new(
-            FancyTuiController::new(p1_id)
+            FancyTuiController::new(p1_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
@@ -930,7 +945,7 @@ async fn run_tui(
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
         ControllerType::Fancy => Box::new(
-            FancyTuiController::new(p2_id)
+            FancyTuiController::new(p2_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
@@ -1352,6 +1367,7 @@ async fn run_resume(
     override_seed_p2: Option<SeedArg>,
     verbosity: VerbosityArg,
     numeric_choices: bool,
+    visual_stacks: bool,
     debug_state_hash: bool,
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
@@ -1546,7 +1562,7 @@ async fn run_resume(
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
         ControllerType::Fancy => Box::new(
-            FancyTuiController::new(p1_id)
+            FancyTuiController::new(p1_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
@@ -1620,7 +1636,7 @@ async fn run_resume(
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
         ControllerType::Fancy => Box::new(
-            FancyTuiController::new(p2_id)
+            FancyTuiController::new(p2_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),

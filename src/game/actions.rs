@@ -1358,7 +1358,10 @@ impl GameState {
                     player.mana_pool.colorless += mana_to_add.colorless;
                 }
 
-                self.undo_log.log(crate::undo::GameAction::AddMana { player_id, mana: mana_to_add });
+                self.undo_log.log(crate::undo::GameAction::AddMana {
+                    player_id,
+                    mana: mana_to_add,
+                });
 
                 // Log visible message
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {

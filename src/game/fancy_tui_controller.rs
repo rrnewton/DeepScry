@@ -248,6 +248,8 @@ impl FancyTuiState {
 pub struct FancyTuiController {
     player_id: PlayerId,
     state: FancyTuiState,
+    /// Whether to use visual stacking (diagonal offsets) or simple stacking
+    visual_stacks: bool,
 }
 
 impl FancyTuiController {
@@ -268,10 +270,11 @@ impl FancyTuiController {
     const BOOSTED_LEFT_COLUMN_PCT: u16 = 30; // 25 * 1.2 = 30
 
     /// Create a new fancy TUI controller
-    pub fn new(player_id: PlayerId) -> io::Result<Self> {
+    pub fn new(player_id: PlayerId, visual_stacks: bool) -> io::Result<Self> {
         Ok(FancyTuiController {
             player_id,
             state: FancyTuiState::new(),
+            visual_stacks,
         })
     }
 
@@ -408,93 +411,90 @@ impl FancyTuiController {
 
     /// Group cards into battlefield entities
     ///
-    /// Groups cards by (name, tapped_state) into stacks when multiple copies exist
-    /// With visual_stacking=true, creates VisualStack entities with diagonal offsets
-    fn group_cards_into_entities(cards: &[CardId], view: &GameStateView) -> Vec<Entity> {
+    /// Groups cards by name, then uses a mode-specific constructor to create entities.
+    /// With visual_stacks=true: creates VisualStack entities with diagonal offsets
+    /// With visual_stacks=false: creates separate SimpleStack entities for tapped/untapped
+    fn group_cards_into_entities(&self, cards: &[CardId], view: &GameStateView) -> Vec<Entity> {
         use std::collections::HashMap;
 
-        const ENABLE_VISUAL_STACKING: bool = true; // Toggle feature here
+        // Group cards by name only
+        let mut groups: HashMap<String, SmallVec<[CardId; 8]>> = HashMap::new();
 
-        if ENABLE_VISUAL_STACKING {
-            // Group cards by name only (not tapped state) for visual stacks
-            let mut groups: HashMap<String, SmallVec<[CardId; 8]>> = HashMap::new();
-
-            for &card_id in cards {
-                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-                groups.entry(name).or_default().push(card_id);
-            }
-
-            // Convert groups to visual stack entities
-            let mut entities: Vec<Entity> = groups
-                .into_iter()
-                .map(|(card_name, mut card_ids)| {
-                    if card_ids.len() > 1 {
-                        // Sort cards: untapped first, then tapped (tapped ones will be on top visually)
-                        card_ids.sort_by_key(|&id| view.is_tapped(id));
-
-                        // Count how many are tapped
-                        let tapped_count = card_ids.iter().filter(|&&id| view.is_tapped(id)).count();
-
-                        // Create visual stack
-                        Entity::VisualStack {
-                            card_ids,
-                            card_name,
-                            tapped_count,
-                        }
-                    } else {
-                        // Single card
-                        Entity::SingleCard { card_id: card_ids[0] }
-                    }
-                })
-                .collect();
-
-            // Sort for consistent ordering: single cards first, then stacks
-            entities.sort_by_key(|e| match e {
-                Entity::SingleCard { card_id } => (0, *card_id),
-                Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
-                Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
-            });
-
-            entities
-        } else {
-            // Original simple stacking logic
-            let mut groups: HashMap<(String, bool), SmallVec<[CardId; 8]>> = HashMap::new();
-
-            for &card_id in cards {
-                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-                let is_tapped = view.is_tapped(card_id);
-                let key = (name, is_tapped);
-
-                groups.entry(key).or_default().push(card_id);
-            }
-
-            // Convert groups to entities
-            let mut entities: Vec<Entity> = groups
-                .into_iter()
-                .map(|((card_name, is_tapped), card_ids)| {
-                    if card_ids.len() > 1 {
-                        // Create a simple stack
-                        Entity::SimpleStack {
-                            card_ids,
-                            card_name,
-                            is_tapped,
-                        }
-                    } else {
-                        // Single card
-                        Entity::SingleCard { card_id: card_ids[0] }
-                    }
-                })
-                .collect();
-
-            // Sort for consistent ordering: single cards first, then stacks
-            entities.sort_by_key(|e| match e {
-                Entity::SingleCard { card_id } => (0, *card_id),
-                Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
-                Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
-            });
-
-            entities
+        for &card_id in cards {
+            let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+            groups.entry(name).or_default().push(card_id);
         }
+
+        // Closure that takes tapped/untapped portions and constructs entities
+        let construct_entities = |card_name: String, mut card_ids: SmallVec<[CardId; 8]>| -> Vec<Entity> {
+            if self.visual_stacks {
+                // Visual stacking: create one VisualStack entity
+                if card_ids.len() > 1 {
+                    // Sort cards: untapped first, then tapped (tapped ones will be on top visually)
+                    card_ids.sort_by_key(|&id| view.is_tapped(id));
+
+                    // Count how many are tapped
+                    let tapped_count = card_ids.iter().filter(|&&id| view.is_tapped(id)).count();
+
+                    vec![Entity::VisualStack {
+                        card_ids,
+                        card_name,
+                        tapped_count,
+                    }]
+                } else {
+                    vec![Entity::SingleCard { card_id: card_ids[0] }]
+                }
+            } else {
+                // Simple stacking: create separate SimpleStack entities for tapped/untapped
+                let (tapped, untapped): (SmallVec<[CardId; 8]>, SmallVec<[CardId; 8]>) =
+                    card_ids.into_iter().partition(|&id| view.is_tapped(id));
+
+                let mut result = Vec::new();
+
+                // Create entity for untapped cards
+                if !untapped.is_empty() {
+                    if untapped.len() > 1 {
+                        result.push(Entity::SimpleStack {
+                            card_ids: untapped,
+                            card_name: card_name.clone(),
+                            is_tapped: false,
+                        });
+                    } else {
+                        result.push(Entity::SingleCard { card_id: untapped[0] });
+                    }
+                }
+
+                // Create entity for tapped cards
+                if !tapped.is_empty() {
+                    if tapped.len() > 1 {
+                        result.push(Entity::SimpleStack {
+                            card_ids: tapped,
+                            card_name,
+                            is_tapped: true,
+                        });
+                    } else {
+                        result.push(Entity::SingleCard { card_id: tapped[0] });
+                    }
+                }
+
+                result
+            }
+        };
+
+        // Convert groups to entities using the closure
+        let mut entities: Vec<Entity> = groups
+            .into_iter()
+            .flat_map(|(card_name, card_ids)| construct_entities(card_name, card_ids))
+            .collect();
+
+        // Sort for consistent ordering: single cards first, then stacks
+        entities.sort_by_key(|e| match e {
+            Entity::SingleCard { card_id } => (0, *card_id),
+            Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
+            Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
+        });
+
+        entities
     }
 
     /// Draw the complete UI with all panels
@@ -1347,7 +1347,7 @@ impl FancyTuiController {
         let mut rendered_height = 1; // Start after label
 
         // Group cards into entities
-        let entities = Self::group_cards_into_entities(cards, view);
+        let entities = self.group_cards_into_entities(cards, view);
 
         // Pre-calculate rows to enable centering
         let mut rows: Vec<Vec<(&Entity, u16, u16)>> = Vec::new();
@@ -1887,8 +1887,10 @@ impl FancyTuiController {
                 if !card.text.is_empty() {
                     lines.push(Line::from(""));
                     // Split card text on newlines for natural multi-paragraph display
-                    for text_line in card.text.split('\n') {
-                        lines.push(Line::from(text_line));
+                    // Handle both actual newlines '\n' and literal string "\\n"
+                    let text_with_newlines = card.text.replace("\\n", "\n");
+                    for text_line in text_with_newlines.split('\n') {
+                        lines.push(Line::from(text_line.to_string()));
                     }
                 }
 
