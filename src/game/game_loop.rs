@@ -2248,6 +2248,13 @@ impl<'a> GameLoop<'a> {
                                             );
                                         }
                                     }
+
+                                    // MTG Rules 116.3: "If a player takes a special action, that player receives priority afterward."
+                                    // MTG Rules 117.3c: "If a player has priority when they cast a spell, activate an ability,
+                                    //                     or take a special action, that player receives priority afterward."
+                                    // Playing a land is a special action, so the player retains priority.
+                                    // Continue loop with same current_priority to give player another action opportunity.
+                                    continue;
                                 }
                             }
                             crate::core::SpellAbility::CastSpell { card_id } => {
