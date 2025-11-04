@@ -629,23 +629,22 @@ impl GameState {
     /// - `player_id`: The player casting the spell
     /// - `card_id`: The spell card to cast
     /// - `choose_targets_fn`: Callback to choose targets (step 3)
-    /// - `choose_mana_sources_fn`: Callback to choose what to tap for mana (step 6)
+    /// - `mana_engine`: Pre-computed ManaEngine for mana payment (step 6)
     ///
     /// ## Java Forge Equivalent
     /// This matches `ComputerUtil.handlePlayingSpellAbility()` which:
     /// 1. Moves spell to stack (line 99)
     /// 2. Handles targeting
     /// 3. Pays costs with `CostPayment.payComputerCosts()` (line 125)
-    pub fn cast_spell_8_step<TargetFn, ManaFn>(
+    pub fn cast_spell_8_step<TargetFn>(
         &mut self,
         player_id: PlayerId,
         card_id: CardId,
         mut choose_targets_fn: TargetFn,
-        mut choose_mana_sources_fn: ManaFn,
+        mana_engine: &crate::game::mana_engine::ManaEngine,
     ) -> Result<()>
     where
         TargetFn: FnMut(&GameState, CardId) -> Vec<CardId>,
-        ManaFn: FnMut(&GameState, &crate::core::ManaCost) -> Vec<CardId>,
     {
         // Verify card is in hand
         if let Some(zones) = self.get_player_zones(player_id) {
@@ -677,7 +676,21 @@ impl GameState {
 
         // Step 6: Activate mana abilities
         // This is where mana gets tapped - AFTER the spell is on the stack
-        let sources_to_tap = choose_mana_sources_fn(self, &mana_cost);
+        // Use the pre-computed ManaEngine to determine tap order
+        use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+        let mana_sources = mana_engine.all_sources();
+        let resolver = GreedyManaResolver::new();
+        let mut sources_to_tap = Vec::new();
+
+        if !resolver.compute_tap_order(&mana_cost, mana_sources, &mut sources_to_tap) {
+            // Cannot pay the cost - unwind the spell cast
+            self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+            return Err(MtgError::InvalidAction(format!(
+                "Failed to pay mana cost {:?}: Insufficient mana",
+                mana_cost
+            )));
+        }
 
         // Track which sources we've successfully tapped for unwinding if needed
         let mut tapped_sources = Vec::new();

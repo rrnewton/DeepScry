@@ -2363,42 +2363,22 @@ impl<'a> GameLoop<'a> {
                                 // Clone for closure (which will move it)
                                 let targets_for_callback = chosen_targets_vec.clone();
 
-                                // Create callbacks for targeting and mana payment
+                                // Create targeting callback
                                 let targeting_callback = move |_game: &GameState, _spell_id: CardId| {
                                     // Return the pre-selected targets
                                     targets_for_callback.clone()
                                 };
 
-                                let mana_callback = |game: &GameState, cost: &crate::core::ManaCost| {
-                                    // Use ManaEngine to compute proper color-aware tap order
-                                    // Create temporary engine and update it with current game state
-                                    use crate::game::mana_engine::ManaEngine;
-                                    use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
-
-                                    let mut mana_engine = ManaEngine::new();
-                                    mana_engine.update(game, current_priority);
-
-                                    // Use the engine's mana sources directly - no need to rebuild the list!
-                                    // The engine has already scanned the battlefield and identified all mana-producing
-                                    // permanents (lands and creatures with mana abilities)
-                                    let mana_sources = mana_engine.all_sources();
-
-                                    // Use GreedyManaResolver to compute proper tap order
-                                    let resolver = GreedyManaResolver::new();
-                                    let mut tap_order = Vec::new();
-                                    if resolver.compute_tap_order(cost, mana_sources, &mut tap_order) {
-                                        tap_order
-                                    } else {
-                                        Vec::new()
-                                    }
-                                };
+                                // Pre-compute ManaEngine for mana payment (step 6)
+                                // This avoids allocating a new ManaEngine inside cast_spell_8_step
+                                self.mana_engine.update(self.game, current_priority);
 
                                 // Cast using 8-step process
                                 if let Err(e) = self.game.cast_spell_8_step(
                                     current_priority,
                                     card_id,
                                     targeting_callback,
-                                    mana_callback,
+                                    &self.mana_engine,
                                 ) {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                         let message = format!("Error casting spell: {e}");

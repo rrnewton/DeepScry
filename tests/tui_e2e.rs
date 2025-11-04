@@ -635,11 +635,15 @@ async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
 
     // Try to cast the spell without sufficient mana
     // This should fail and properly unwind
+    // Create an empty ManaEngine (no mana sources available)
+    let mut mana_engine = mtg_forge_rs::game::ManaEngine::new();
+    mana_engine.update(&game, p1_id);
+
     let result = game.cast_spell_8_step(
         p1_id,
         spell_id,
         |_state, _card_id| Vec::new(), // No targets
-        |_state, _cost| Vec::new(),    // No mana sources available
+        &mana_engine,                  // Empty mana engine (no sources)
     );
 
     // The cast should fail with an error

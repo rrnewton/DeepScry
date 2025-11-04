@@ -145,12 +145,17 @@ async fn main() {
         // Cast Sol Ring (artifact)
         println!("\n=== Alice casts Sol Ring (Artifact) ===");
 
+        // Create a ManaEngine for mana payment
+        use mtg_forge_rs::game::ManaEngine;
+        let mut mana_engine = ManaEngine::new();
+        mana_engine.update(&game, alice);
+
         // Use the 8-step spell casting process
         let cast_result = game.cast_spell_8_step(
             alice,
             sol_ring,
             |_game, _card_id| Vec::new(), // No targets needed
-            |_game, _cost| Vec::new(),    // No mana sources needed (already have mana)
+            &mana_engine,
         );
 
         match cast_result {
