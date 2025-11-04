@@ -1025,64 +1025,80 @@ impl FancyTuiController {
         // Build card content with priority-based layout
         let mut lines = Vec::new();
 
-        // Priority 1: Title (always included, elided if too long)
+        // Priority 1: Title (always included, prefer full name over truncation)
         let cost_str = card.as_ref().map(|c| c.mana_cost.to_string()).unwrap_or_default();
         let cost_len = cost_str.len();
 
-        // Elide title based on available width
-        let title_max_width = if cost_len > 0 && content_width > cost_len + 1 {
-            // Reserve space for cost on same line
-            content_width.saturating_sub(cost_len + 1)
+        let title_style = if is_selected {
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED)
         } else {
-            content_width
+            Style::default()
         };
 
-        let (display_name, title_style) = if name.len() > title_max_width {
-            // Elide title (use ".." unless <= 5 chars)
-            let elided = if title_max_width <= 5 {
-                name.chars().take(title_max_width).collect::<String>()
-            } else {
-                format!(
-                    "{}..",
-                    name.chars().take(title_max_width.saturating_sub(2)).collect::<String>()
-                )
-            };
-            if is_selected {
-                (
-                    elided,
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::UNDERLINED),
-                )
-            } else {
-                (elided, Style::default())
-            }
-        } else {
-            let styled = if is_selected {
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::UNDERLINED)
-            } else {
-                Style::default()
-            };
-            (name.clone(), styled)
-        };
+        // Strategy: Try to fit name + cost on one line
+        // If name would be truncated and we have vertical space, use two lines instead
+        let name_and_cost_fit = name.len() + cost_len < content_width;
+        let name_fits_alone = name.len() <= content_width;
+        let have_vertical_space = content_height >= 3; // Need at least 3 lines (name, cost, something else)
 
-        // Line 1: Title + Cost (if cost fits and title doesn't overflow)
-        if !cost_str.is_empty() && name.len() <= title_max_width && content_width > display_name.len() + cost_len {
-            let padding = content_width.saturating_sub(display_name.len() + cost_len);
+        if !cost_str.is_empty() && name_and_cost_fit {
+            // Both fit on one line - ideal case
+            let padding = content_width.saturating_sub(name.len() + cost_len);
             lines.push(Line::from(vec![
-                Span::styled(display_name, title_style),
+                Span::styled(name.clone(), title_style),
                 Span::raw(" ".repeat(padding)),
-                Span::raw(cost_str),
+                Span::raw(cost_str.clone()),
             ]));
+        } else if !cost_str.is_empty() && !name_fits_alone && have_vertical_space {
+            // Name would be truncated, but we have space for cost on separate line
+            // Truncate name minimally
+            let display_name = if name.len() > content_width {
+                if content_width <= 5 {
+                    name.chars().take(content_width).collect::<String>()
+                } else {
+                    format!(
+                        "{}..",
+                        name.chars().take(content_width.saturating_sub(2)).collect::<String>()
+                    )
+                }
+            } else {
+                name.clone()
+            };
+            lines.push(Line::from(Span::styled(display_name, title_style)));
+            lines.push(Line::from(cost_str.clone()));
+        } else if !cost_str.is_empty() && !name_and_cost_fit && name_fits_alone && have_vertical_space {
+            // Name fits, cost doesn't fit on same line, use two lines
+            lines.push(Line::from(Span::styled(name.clone(), title_style)));
+            lines.push(Line::from(cost_str.clone()));
         } else {
+            // Fallback: Single line with truncation if needed
+            let display_name = if name.len() > content_width {
+                if content_width <= 5 {
+                    name.chars().take(content_width).collect::<String>()
+                } else {
+                    format!(
+                        "{}..",
+                        name.chars().take(content_width.saturating_sub(2)).collect::<String>()
+                    )
+                }
+            } else {
+                name.clone()
+            };
             lines.push(Line::from(Span::styled(display_name, title_style)));
         }
 
         // Priority 2: Tapped indicator (only if tapped and room)
+        // Use compact "[T]" for narrow cards, full "[TAPPED]" only when we have plenty of space
         if is_tapped && lines.len() < content_height as usize {
-            let tapped_text = if content_width >= 8 { "[TAPPED]" } else { "[T]" };
+            let tapped_text = if content_width >= 12 {
+                "[TAPPED]"
+            } else if content_width >= 3 {
+                "[T]"
+            } else {
+                "T" // Ultra-compact for very narrow cards
+            };
             lines.push(Line::from(tapped_text));
         }
 
