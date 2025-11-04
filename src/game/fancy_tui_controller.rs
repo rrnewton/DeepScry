@@ -41,6 +41,14 @@ enum InputAction {
     Undo,
 }
 
+/// Result from prompting for a choice
+enum PromptResult {
+    /// User made a normal choice
+    Choice(Option<usize>),
+    /// User requested undo
+    Undo,
+}
+
 /// Tab indices for left panels (Combat|Log only)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -854,10 +862,11 @@ impl FancyTuiController {
 
         // Draw status bar at the bottom
         let action_count = view.action_count();
+        let choice_count = view.choice_count();
         let status_text = if let Some(ref msg) = self.state.rewind_message {
-            format!("{} actions in game | {}", action_count, msg)
+            format!("{} actions, {} choices in game | {}", action_count, choice_count, msg)
         } else {
-            format!("{} actions in game", action_count)
+            format!("{} actions, {} choices in game", action_count, choice_count)
         };
 
         let status_paragraph = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
@@ -2611,7 +2620,7 @@ impl FancyTuiController {
         view: &GameStateView,
         prompt: &str,
         choices: &[String],
-    ) -> io::Result<Option<usize>> {
+    ) -> io::Result<PromptResult> {
         self.state.highlighted_choice = 0;
 
         let mut terminal = Self::setup_terminal()?;
@@ -2638,11 +2647,11 @@ impl FancyTuiController {
                 }
                 InputAction::Select(choice) => {
                     Self::restore_terminal(&mut terminal)?;
-                    return Ok(Some(choice));
+                    return Ok(PromptResult::Choice(Some(choice)));
                 }
                 InputAction::Pass => {
                     Self::restore_terminal(&mut terminal)?;
-                    return Ok(None);
+                    return Ok(PromptResult::Choice(None));
                 }
                 InputAction::Exit => {
                     // Ctrl-C pressed - restore terminal and exit gracefully
@@ -2651,22 +2660,9 @@ impl FancyTuiController {
                     std::process::exit(0);
                 }
                 InputAction::Undo => {
-                    // TODO: Implement undo functionality
-                    //
-                    // Architecture challenge: prompt_for_choice only has &GameStateView (read-only).
-                    // To implement undo, we need mutable access to GameState to call:
-                    //   - game.undo() -> Result<Option<usize>> to get prior_log_size
-                    //   - game.logger.truncate_to(prior_log_size)
-                    //   - Set rewind message in self.state
-                    //
-                    // Possible solutions:
-                    // 1. Modify PlayerController trait to support undo operations
-                    // 2. Add a mutable GameState parameter to prompt_for_choice
-                    // 3. Implement undo at the game loop level instead of controller level
-                    //
-                    // For now, just continue the loop (ignore the undo request)
-                    self.state.rewind_message = Some("Undo not yet implemented".to_string());
-                    continue;
+                    // Return undo signal to be handled at controller trait method level
+                    Self::restore_terminal(&mut terminal)?;
+                    return Ok(PromptResult::Undo);
                 }
             }
         }
@@ -2718,40 +2714,56 @@ impl PlayerController for FancyTuiController {
             }))
             .collect();
 
-        let result = match self.prompt_for_choice(view, &prompt, &choices) {
-            Ok(Some(0)) | Ok(None) => None, // Pass
-            Ok(Some(idx)) if idx > 0 && idx <= available.len() => Some(available[idx - 1].clone()),
-            _ => None,
-        };
+        match self.prompt_for_choice(view, &prompt, &choices) {
+            Ok(PromptResult::Undo) => {
+                // Clear choice context
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                ChoiceResult::UndoRequest(1)
+            }
+            Ok(PromptResult::Choice(choice_opt)) => {
+                let result = match choice_opt {
+                    Some(0) | None => None, // Pass
+                    Some(idx) if idx > 0 && idx <= available.len() => Some(available[idx - 1].clone()),
+                    _ => None,
+                };
 
-        // Log the choice
-        if let Some(ability) = &result {
-            let choice_description = match ability {
-                SpellAbility::PlayLand { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("play land: {}", name)
+                // Log the choice
+                if let Some(ability) = &result {
+                    let choice_description = match ability {
+                        SpellAbility::PlayLand { card_id } => {
+                            let name = view.card_name(*card_id).unwrap_or_default();
+                            format!("play land: {}", name)
+                        }
+                        SpellAbility::CastSpell { card_id } => {
+                            let name = view.card_name(*card_id).unwrap_or_default();
+                            format!("cast spell: {}", name)
+                        }
+                        SpellAbility::ActivateAbility { card_id, .. } => {
+                            let name = view.card_name(*card_id).unwrap_or_default();
+                            format!("activate: {}", name)
+                        }
+                    };
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose {}", player_name, choice_description));
+                } else {
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                 }
-                SpellAbility::CastSpell { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("cast spell: {}", name)
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("activate: {}", name)
-                }
-            };
-            view.logger()
-                .controller_choice("TUI", &format!("{} chose {}", player_name, choice_description));
-        } else {
-            view.logger()
-                .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
+
+                // Clear choice context after making choice
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+
+                ChoiceResult::Ok(result)
+            }
+            Err(e) => {
+                // Clear choice context on error
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                ChoiceResult::Error(format!("Failed to prompt for choice: {}", e))
+            }
         }
-
-        // Clear choice context after making choice
-        self.state.choice_context = ChoiceContext::None;
-        self.state.valid_choices.clear();
-
-        ChoiceResult::Ok(result)
     }
 
     fn choose_targets(
@@ -2804,10 +2816,20 @@ impl PlayerController for FancyTuiController {
 
         let mut targets = SmallVec::new();
         match self.prompt_for_choice(view, &prompt, &choices) {
-            Ok(Some(idx)) if idx > 0 && idx <= valid_targets.len() => {
+            Ok(PromptResult::Undo) => {
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                return ChoiceResult::UndoRequest(1);
+            }
+            Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_targets.len() => {
                 targets.push(valid_targets[idx - 1]);
             }
-            _ => {}
+            Ok(PromptResult::Choice(_)) => {}
+            Err(e) => {
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                return ChoiceResult::Error(format!("Failed to prompt for choice: {}", e));
+            }
         }
 
         // Log the choice
@@ -2850,10 +2872,16 @@ impl PlayerController for FancyTuiController {
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(Some(idx)) if idx < available_sources.len() => {
+                Ok(PromptResult::Undo) => {
+                    return ChoiceResult::UndoRequest(1);
+                }
+                Ok(PromptResult::Choice(Some(idx))) if idx < available_sources.len() => {
                     sources.push(available_sources[idx]);
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    return ChoiceResult::Error(format!("Failed to prompt for mana source: {}", e));
+                }
             }
         }
 
@@ -2886,14 +2914,24 @@ impl PlayerController for FancyTuiController {
                 .collect();
 
             match self.prompt_for_choice(view, prompt, &choices) {
-                Ok(Some(0)) | Ok(None) => break,
-                Ok(Some(idx)) if idx > 0 && idx <= available_creatures.len() => {
+                Ok(PromptResult::Undo) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::UndoRequest(1);
+                }
+                Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => break,
+                Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= available_creatures.len() => {
                     let card_id = available_creatures[idx - 1];
                     if !attackers.contains(&card_id) {
                         attackers.push(card_id);
                     }
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::Error(format!("Failed to prompt for attackers: {}", e));
+                }
             }
         }
 
@@ -2968,11 +3006,21 @@ impl PlayerController for FancyTuiController {
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(Some(0)) | Ok(None) => continue,
-                Ok(Some(idx)) if idx > 0 && idx <= attackers.len() => {
+                Ok(PromptResult::Undo) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::UndoRequest(1);
+                }
+                Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => continue,
+                Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= attackers.len() => {
                     blocks.push((blocker_id, attackers[idx - 1]));
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::Error(format!("Failed to prompt for blockers: {}", e));
+                }
             }
         }
 
@@ -3032,7 +3080,10 @@ impl PlayerController for FancyTuiController {
             }
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(Some(idx)) if idx < hand.len() => {
+                Ok(PromptResult::Undo) => {
+                    return ChoiceResult::UndoRequest(1);
+                }
+                Ok(PromptResult::Choice(Some(idx))) if idx < hand.len() => {
                     let card_id = hand
                         .iter()
                         .filter(|&card_id| !discards.contains(card_id))
@@ -3042,7 +3093,10 @@ impl PlayerController for FancyTuiController {
                         discards.push(card_id);
                     }
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    return ChoiceResult::Error(format!("Failed to prompt for discard: {}", e));
+                }
             }
         }
 

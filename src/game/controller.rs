@@ -475,6 +475,14 @@ impl<'a> GameStateView<'a> {
     pub fn action_count(&self) -> usize {
         self.game.undo_log.len()
     }
+
+    /// Get the number of controller choices made
+    ///
+    /// Returns the count of times a controller has made a choice.
+    /// Used by the fancy TUI to display choice count status alongside action count.
+    pub fn choice_count(&self) -> usize {
+        self.game.logger.choice_count()
+    }
 }
 
 /// Result of a controller choice operation

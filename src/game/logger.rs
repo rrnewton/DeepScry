@@ -97,6 +97,9 @@ pub struct GameLogger {
 
     /// Captured log entries (owned strings)
     log_buffer: RefCell<Vec<LogEntry>>,
+
+    /// Count of controller choices made in the game
+    choice_count: RefCell<usize>,
 }
 
 impl GameLogger {
@@ -112,6 +115,7 @@ impl GameLogger {
             debug_state_hash: false,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         }
     }
 
@@ -127,6 +131,7 @@ impl GameLogger {
             debug_state_hash: false,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         }
     }
 
@@ -427,8 +432,12 @@ impl GameLogger {
     /// Controller-specific debug info goes to stderr when debug_state_hash is enabled.
     ///
     /// Uses bump allocator for temporary formatting to avoid intermediate allocations.
+    /// Increments the global choice counter for display in TUI status.
     #[inline]
     pub fn controller_choice(&self, controller_name: &str, message: &str) {
+        // Increment choice counter (always increment, regardless of logging)
+        *self.choice_count.borrow_mut() += 1;
+
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
         let should_log = self.numeric_choices || self.verbosity >= VerbosityLevel::Normal;
@@ -461,6 +470,14 @@ impl GameLogger {
             println!("  {}", formatted);
         }
     }
+
+    /// Get the current count of controller choices made
+    ///
+    /// Returns the total number of times controller_choice() has been called.
+    /// Used by the fancy TUI to display choice count status.
+    pub fn choice_count(&self) -> usize {
+        *self.choice_count.borrow()
+    }
 }
 
 impl Default for GameLogger {
@@ -491,6 +508,7 @@ impl Clone for GameLogger {
             debug_state_hash: self.debug_state_hash,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         }
     }
 }
@@ -537,6 +555,7 @@ impl<'de> Deserialize<'de> for GameLogger {
             debug_state_hash: false,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         })
     }
 }
