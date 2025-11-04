@@ -769,8 +769,13 @@ impl FancyTuiController {
             .map(|(idx, entry)| {
                 // Line number is start_idx + idx + 1 (1-based indexing)
                 let line_number = start_idx + idx + 1;
-                let formatted = format!("{:>width$} {}", line_number, entry.message, width = line_number_width);
-                ListItem::new(formatted)
+                // Format line number with grey color
+                let line_num_str = format!("{:>width$} ", line_number, width = line_number_width);
+                let line = Line::from(vec![
+                    Span::styled(line_num_str, Style::default().fg(Color::DarkGray)),
+                    Span::raw(&entry.message),
+                ]);
+                ListItem::new(line)
             })
             .collect();
 
