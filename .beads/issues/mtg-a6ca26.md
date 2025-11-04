@@ -65,40 +65,58 @@ Continue the work from mtg-2 to eliminate as much allocation as possible:
 
 **Success metric:** Reduce per-game allocation from 6.5KB to <2KB
 
-### Quick Win: Thread-Local Allocator (Target: 10-30x improvement)
+### Quick Win: Thread-Local Allocator (Experiment Results)
 
-Before implementing Phase 2, evaluate drop-in thread-local allocators:
+**⚠️  EXPERIMENT COMPLETE - DO NOT COMMIT** These changes are for measurement only.
 
-- **mimalloc**: Microsoft's allocator, easiest drop-in replacement
-- **jemalloc**: Facebook's allocator, also excellent for parallelism
-- **snmalloc**: Research allocator with message-passing design
+Tested mimalloc as drop-in replacement for system allocator.
 
-Just adding this to Cargo.toml should provide immediate dramatic improvement:
-```toml
-[dependencies]
-mimalloc = { version = "0.1", features = ["override"] }
-```
+**Results (2025-11-04):**
 
-Expected: 10-30x reduction in contention, bringing parallel efficiency from 1.5% to 15-45%.
+| Metric | glibc malloc | mimalloc | Improvement |
+|--------|--------------|----------|-------------|
+| **Sequential** | 44,920 games/sec | 54,871 games/sec | +22% |
+| **Parallel (16 threads)** | 10,441 games/sec | 21,967 games/sec | +110% |
+| **Per-thread efficiency** | 1.5% of sequential | 2.5% of sequential | +67% |
+| **Aggregate speedup** | 0.23x | 0.40x | Still <1.0x |
+
+**Analysis:**
+
+Mimalloc provides **2.1x improvement in parallel throughput** (110% faster), but:
+- Still slower than sequential (0.40x vs ideal 16x)
+- Per-thread efficiency only 2.5% (need >60%)
+- **Contention remains the dominant bottleneck**
+
+**Conclusion:** Mimalloc helps but is insufficient. The problem is not just allocator lock overhead, but the **high allocation frequency** itself (6.5KB per game). Even with thread-local allocators, this much allocation generates cache traffic and TLB pressure that degrades parallel performance.
+
+**Next steps:**
+- Phase 1 (zero-copy) is now **critical**, not optional
+- Target: <1KB per game (not just <2KB)
+- Only then will thread-local allocators show 10-30x gains
+- Phase 2 (bump allocators) will likely be necessary for 80-90% efficiency
 
 ### Phase 2: Per-Thread Bump Allocators (Target: 80-90% efficiency)
 
 Once allocations are minimized, switch remaining allocations to thread-local arenas:
 
-1. **Per-thread bumpalo arena**: Each MCTS worker gets its own arena
-   - All simulation state allocated in arena
-   - Zero contention (no shared state between threads)
-   - Extremely fast allocation (bump pointer)
-   - Bulk deallocation (drop entire arena after simulation batch)
+1. **Per-turn bump allocations in game engine**:
+   - Allocations that don't easily eliminate but don't survive the turn
+   - Each thread's game engine bump-allocates per-turn state
+   - Clear arena at end of turn (not per-game)
+   - Examples: temporary ability lists, combat calculations, effect stacks
 
-2. **Expand existing bumpalo usage**: We already use it in some places
-   - Extend to cover all MCTS search allocations
-   - Keep arenas alive across multiple simulations (reuse)
+2. **Per-game bump allocations for simulation threads**:
+   - For parallel simulations, parameterize GameState by allocator
+   - Each worker thread runs entire game in thread-local allocator
+   - Throw away all memory when game completes
+   - Zero contention across threads (no shared allocator state)
+   - Extremely fast allocation (bump pointer, no locks)
 
 3. **Thread pool with batching**: Persistent threads reduce spawn overhead
    - Maintain pool of N worker threads
    - Queue batches of simulations (e.g., 100 per batch)
-   - Each batch reuses same arena (clear between batches)
+   - Each batch reuses same arena (clear after game, not after turn for simulation threads)
+   - Threads never block on allocator - each has independent arena
 
 **Success metric:** Achieve 80-90% parallel efficiency (12-14x speedup on 16 cores)
 
