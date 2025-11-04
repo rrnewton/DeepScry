@@ -750,10 +750,25 @@ impl FancyTuiController {
         let available_lines = area.height.saturating_sub(2) as usize; // Account for borders
         let start_idx = logs.len().saturating_sub(available_lines);
 
+        // Calculate the width needed for line numbers based on the maximum visible line number
+        // Line numbers go from 1 to logs.len()
+        let max_line_number = logs.len();
+        let line_number_width = if max_line_number > 0 {
+            max_line_number.to_string().len()
+        } else {
+            1
+        };
+
         let items: Vec<ListItem> = logs
             .iter()
             .skip(start_idx)
-            .map(|entry| ListItem::new(entry.message.as_str()))
+            .enumerate()
+            .map(|(idx, entry)| {
+                // Line number is start_idx + idx + 1 (1-based indexing)
+                let line_number = start_idx + idx + 1;
+                let formatted = format!("{:>width$} {}", line_number, entry.message, width = line_number_width);
+                ListItem::new(formatted)
+            })
             .collect();
 
         let list = List::new(items);
