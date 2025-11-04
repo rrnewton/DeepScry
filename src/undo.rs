@@ -207,11 +207,9 @@ impl GameAction {
                 // ChangeTurn logs the NEW turn number, so previous is turn_number - 1
                 game.turn.turn_number = turn_number.saturating_sub(1);
 
-                // Restore RNG state if available
+                // Restore RNG state if available (now using bincode)
                 if let Some(rng_bytes) = rng_state {
-                    use serde::Deserialize;
-                    let mut deserializer = serde_json::Deserializer::from_slice(rng_bytes);
-                    if let Ok(rng) = rand_chacha::ChaCha12Rng::deserialize(&mut deserializer) {
+                    if let Ok(rng) = bincode::deserialize::<rand_chacha::ChaCha12Rng>(rng_bytes) {
                         *game.rng.borrow_mut() = rng;
                     } else {
                         return Err("Failed to deserialize RNG state".to_string());

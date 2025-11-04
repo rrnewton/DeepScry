@@ -451,9 +451,10 @@ impl GameState {
             // Serialize RNG state BEFORE changing turns
             // This captures the RNG state at the END of the current turn,
             // which will be the START of the next turn after next_turn() is called
+            // Using bincode for compact serialization (56 bytes vs 152 bytes for JSON)
             let rng_state = {
                 let rng = self.rng.borrow();
-                serde_json::to_vec(&*rng).ok()
+                bincode::serialize(&*rng).ok()
             };
 
             self.turn.next_turn(next_player);
@@ -694,9 +695,9 @@ impl GameState {
                     self.turn.active_player = from_player;
                     self.turn.turn_number = turn_number - 1;
 
-                    // Restore RNG state if available
+                    // Restore RNG state if available (now using bincode)
                     if let Some(rng_bytes) = rng_state {
-                        if let Ok(rng) = serde_json::from_slice::<ChaCha12Rng>(&rng_bytes) {
+                        if let Ok(rng) = bincode::deserialize::<ChaCha12Rng>(&rng_bytes) {
                             *self.rng.borrow_mut() = rng;
                         }
                     }
