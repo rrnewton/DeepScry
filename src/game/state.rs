@@ -570,22 +570,71 @@ impl GameState {
     ///
     /// Returns Ok(None) if no ChoicePoint for the specified player is found.
     pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
+        // Debug: Log initial state
+        eprintln!(
+            "[UNDO DEBUG] Starting undo_to_previous_choice_point for player {}",
+            requesting_player.as_u32()
+        );
+        eprintln!(
+            "[UNDO DEBUG]   Initial: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+            self.undo_log.len(),
+            self.logger.log_count(),
+            self.logger.choice_count()
+        );
+
+        // IMPORTANT: First check if there's a ChoicePoint for this player in the log
+        // We must do this BEFORE undoing anything, otherwise we corrupt state if none exists
+        let has_choice_point = self.undo_log.actions().iter().any(|action| {
+            matches!(action, crate::undo::GameAction::ChoicePoint { player_id, .. } if *player_id == requesting_player)
+        });
+
+        if !has_choice_point {
+            eprintln!(
+                "[UNDO DEBUG] No ChoicePoint found for player {} in undo log - returning early WITHOUT undoing",
+                requesting_player.as_u32()
+            );
+            return Ok(None);
+        }
+
+        eprintln!(
+            "[UNDO DEBUG] Found at least one ChoicePoint for player {}, proceeding with undo",
+            requesting_player.as_u32()
+        );
+
         let mut actions_undone = 0;
         let mut choice_log_size = None;
 
         // Keep undoing until we hit a ChoicePoint for the requesting player
         while let Some((action, prior_log_size)) = self.undo_log.pop() {
+            eprintln!(
+                "[UNDO DEBUG]   Popped action (prior_log_size={}): {:?}",
+                prior_log_size, action
+            );
             match action {
                 crate::undo::GameAction::ChoicePoint { player_id, .. } => {
+                    eprintln!(
+                        "[UNDO DEBUG]     ChoicePoint for player {}. Choice count before decrement: {}",
+                        player_id.as_u32(),
+                        self.logger.choice_count()
+                    );
                     // Decrement the choice counter for ANY choice point we encounter
                     self.logger.decrement_choice_count();
+                    eprintln!(
+                        "[UNDO DEBUG]     Choice count after decrement: {}",
+                        self.logger.choice_count()
+                    );
 
                     if player_id == requesting_player {
                         // Found a choice point for the requesting player! Save the log size and stop
+                        eprintln!(
+                            "[UNDO DEBUG]     *** Found target ChoicePoint! prior_log_size={}",
+                            prior_log_size
+                        );
                         choice_log_size = Some(prior_log_size);
                         break;
                     }
                     // Otherwise, this was another player's choice - keep undoing
+                    eprintln!("[UNDO DEBUG]     Different player's choice, continuing undo...");
                 }
                 _ => {
                     // Not a choice point - undo this action
@@ -739,14 +788,44 @@ impl GameState {
 
                     actions_undone += 1;
                     // Truncate logger to the prior size
+                    eprintln!(
+                        "[UNDO DEBUG]     Truncating logger from {} to {}",
+                        self.logger.log_count(),
+                        prior_log_size
+                    );
                     self.logger.truncate_to(prior_log_size);
+                    eprintln!(
+                        "[UNDO DEBUG]     Logger after truncate: log_count={}",
+                        self.logger.log_count()
+                    );
                 }
             }
         }
 
         if let Some(log_size) = choice_log_size {
+            eprintln!(
+                "[UNDO DEBUG] Undo complete: actions_undone={}, choice_log_size={}",
+                actions_undone, log_size
+            );
+            eprintln!(
+                "[UNDO DEBUG]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                self.undo_log.len(),
+                self.logger.log_count(),
+                self.logger.choice_count()
+            );
+            eprintln!("[UNDO DEBUG]   Will truncate logger to {} in caller", log_size);
             Ok(Some((actions_undone, log_size)))
         } else {
+            eprintln!(
+                "[UNDO DEBUG] Undo complete: No ChoicePoint found for player {}",
+                requesting_player.as_u32()
+            );
+            eprintln!(
+                "[UNDO DEBUG]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                self.undo_log.len(),
+                self.logger.log_count(),
+                self.logger.choice_count()
+            );
             Ok(None)
         }
     }

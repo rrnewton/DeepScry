@@ -326,11 +326,17 @@ impl<'a> GameLoop<'a> {
     /// # Arguments
     /// * `player_id` - The player who made the choice
     /// * `choice` - The actual choice made (for replay), or None if not available
-    fn log_choice_point(&mut self, player_id: PlayerId, choice: Option<crate::game::ReplayChoice>) {
+    /// * `prior_log_size` - The logger size BEFORE the controller logged its choice
+    fn log_choice_point(
+        &mut self,
+        player_id: PlayerId,
+        choice: Option<crate::game::ReplayChoice>,
+        prior_log_size: usize,
+    ) {
         self.choice_counter += 1;
 
-        // Capture log size before logging choice point
-        let prior_log_size = self.game.logger.log_count();
+        // Use the provided prior_log_size (captured BEFORE controller logged)
+        // This ensures undo restores to the state before the choice was logged
 
         self.game.undo_log.log(
             crate::undo::GameAction::ChoicePoint {
@@ -1544,6 +1550,8 @@ impl<'a> GameLoop<'a> {
 
             // Ask controller to choose all attackers at once (v2 interface)
             // Loop to allow undo/retry
+            // Capture log size BEFORE asking controller (before controller logs its choice)
+            let prior_log_size = self.game.logger.log_count();
             let attackers = loop {
                 let view = GameStateView::new(self.game, active_player);
                 let choice = controller.choose_attackers(&view, &available_creatures);
@@ -1552,7 +1560,7 @@ impl<'a> GameLoop<'a> {
 
             // Log this choice point for snapshot/replay
             let replay_choice = crate::game::ReplayChoice::Attackers(attackers.clone());
-            self.log_choice_point(active_player, Some(replay_choice));
+            self.log_choice_point(active_player, Some(replay_choice), prior_log_size);
 
             // Declare each chosen attacker
             for attacker_id in attackers.iter() {
@@ -1669,13 +1677,15 @@ impl<'a> GameLoop<'a> {
             // Ask controller to choose all blocker assignments at once (v2 interface)
             // Loop to allow undo/retry
             let blocks = loop {
+                // Capture log size BEFORE asking controller (before controller logs its choice)
+                let prior_log_size = self.game.logger.log_count();
                 let view = GameStateView::new(self.game, defending_player);
                 let choice = controller.choose_blockers(&view, &available_blockers, &attackers);
                 let blocks_value = handle_choice_result!(choice, self.game, defending_player);
 
                 // Log this choice point for snapshot/replay
                 let replay_choice = crate::game::ReplayChoice::Blockers(blocks_value.clone());
-                self.log_choice_point(defending_player, Some(replay_choice));
+                self.log_choice_point(defending_player, Some(replay_choice), prior_log_size);
 
                 break blocks_value;
             };
@@ -1944,6 +1954,8 @@ impl<'a> GameLoop<'a> {
                 // Ask controller which cards to discard
                 // Loop to allow undo/retry
                 let cards_to_discard = loop {
+                    // Capture log size BEFORE asking controller (before controller logs its choice)
+                    let prior_log_size = self.game.logger.log_count();
                     let view = GameStateView::new(self.game, player_id);
                     let hand = view.hand();
                     let choice = controller.choose_cards_to_discard(&view, hand, discard_count);
@@ -1951,7 +1963,7 @@ impl<'a> GameLoop<'a> {
 
                     // Log this choice point for snapshot/replay
                     let replay_choice = crate::game::ReplayChoice::Discard(discard_value.clone());
-                    self.log_choice_point(player_id, Some(replay_choice));
+                    self.log_choice_point(player_id, Some(replay_choice), prior_log_size);
 
                     break discard_value;
                 };
@@ -2222,13 +2234,15 @@ impl<'a> GameLoop<'a> {
                     } // Drop view before mutable borrow
 
                     // Ask controller to choose one (or None to pass)
+                    // Capture log size BEFORE asking controller (before controller logs its choice)
+                    let prior_log_size = self.game.logger.log_count();
                     let view = GameStateView::new(self.game, current_priority);
                     let choice_result = controller.choose_spell_ability_to_play(&view, &available);
                     let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
 
                     // Log this choice point for snapshot/replay
                     let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
-                    self.log_choice_point(current_priority, Some(replay_choice));
+                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
                     break choice_value;
                 };
@@ -2377,13 +2391,15 @@ impl<'a> GameLoop<'a> {
                                     // Multiple valid targets - ask controller to choose
                                     // Loop to allow undo/retry
                                     let chosen_targets = loop {
+                                        // Capture log size BEFORE asking controller (before controller logs its choice)
+                                        let prior_log_size = self.game.logger.log_count();
                                         let view = GameStateView::new(self.game, current_priority);
                                         let choice = controller.choose_targets(&view, card_id, &valid_targets);
                                         let targets_value = handle_choice_result!(choice, self.game, current_priority);
 
                                         // Log this choice point for snapshot/replay
                                         let replay_choice = crate::game::ReplayChoice::Targets(targets_value.clone());
-                                        self.log_choice_point(current_priority, Some(replay_choice));
+                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
                                         break targets_value;
                                     };
@@ -2485,6 +2501,8 @@ impl<'a> GameLoop<'a> {
                                         // Multiple valid targets - ask controller to choose
                                         // Loop to allow undo/retry
                                         let chosen_targets = loop {
+                                            // Capture log size BEFORE asking controller (before controller logs its choice)
+                                            let prior_log_size = self.game.logger.log_count();
                                             let view = GameStateView::new(self.game, current_priority);
                                             let choice = controller.choose_targets(&view, card_id, &valid_targets);
                                             let targets_value =
@@ -2493,7 +2511,11 @@ impl<'a> GameLoop<'a> {
                                             // Log this choice point for snapshot/replay
                                             let replay_choice =
                                                 crate::game::ReplayChoice::Targets(targets_value.clone());
-                                            self.log_choice_point(current_priority, Some(replay_choice));
+                                            self.log_choice_point(
+                                                current_priority,
+                                                Some(replay_choice),
+                                                prior_log_size,
+                                            );
 
                                             break targets_value;
                                         };
