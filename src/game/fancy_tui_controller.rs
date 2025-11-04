@@ -60,10 +60,67 @@ enum FocusedPane {
     Stack,
 }
 
-/// Card position for hit testing during mouse clicks
+/// Trait for entities that can be rendered on the battlefield
+trait BattlefieldEntity {
+    /// Get all card IDs represented by this entity
+    #[allow(dead_code)]
+    fn card_ids(&self) -> &[CardId];
+
+    /// Get a representative card ID for rendering details
+    fn representative_card(&self) -> CardId;
+
+    /// Get the count of cards in this entity (1 for single cards, N for stacks)
+    #[allow(dead_code)]
+    fn count(&self) -> usize;
+
+    /// Get the display name for this entity
+    fn display_name(&self, view: &GameStateView) -> String;
+
+    /// Check if this entity is tapped
+    fn is_tapped(&self, view: &GameStateView) -> bool;
+
+    /// Check if any card in this entity matches the given card_id
+    #[allow(dead_code)]
+    fn contains_card(&self, card_id: CardId) -> bool;
+}
+
+/// Concrete entity type wrapping a single card
 #[derive(Debug, Clone)]
-struct CardPosition {
+struct Entity {
     card_id: CardId,
+}
+
+impl BattlefieldEntity for Entity {
+    fn card_ids(&self) -> &[CardId] {
+        std::slice::from_ref(&self.card_id)
+    }
+
+    fn representative_card(&self) -> CardId {
+        self.card_id
+    }
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn display_name(&self, view: &GameStateView) -> String {
+        view.card_name(self.card_id)
+            .unwrap_or_else(|| format!("{:?}", self.card_id))
+    }
+
+    fn is_tapped(&self, view: &GameStateView) -> bool {
+        view.is_tapped(self.card_id)
+    }
+
+    fn contains_card(&self, card_id: CardId) -> bool {
+        self.card_id == card_id
+    }
+}
+
+/// Entity position for hit testing during mouse clicks
+#[derive(Debug, Clone)]
+struct EntityPosition {
+    entity: Entity,
     area: Rect,
 }
 
@@ -100,8 +157,8 @@ struct FancyTuiState {
     selected_card_in_your_bf: Option<CardId>,
     /// Selected card in opponent battlefield (for navigation)
     selected_card_in_opp_bf: Option<CardId>,
-    /// Card positions for mouse hit testing (cleared and rebuilt each frame)
-    card_positions: Vec<CardPosition>,
+    /// Entity positions for mouse hit testing (cleared and rebuilt each frame)
+    entity_positions: Vec<EntityPosition>,
     /// Cards that can currently be chosen (for highlighting)
     valid_choices: Vec<CardId>,
     /// What kind of choice is being made
@@ -119,7 +176,7 @@ impl FancyTuiState {
             selected_card_in_hand: None,
             selected_card_in_your_bf: None,
             selected_card_in_opp_bf: None,
-            card_positions: Vec::new(),
+            entity_positions: Vec::new(),
             valid_choices: Vec::new(),
             choice_context: ChoiceContext::None,
         }
@@ -267,6 +324,13 @@ impl FancyTuiController {
         result
     }
 
+    /// Group cards into battlefield entities
+    ///
+    /// Currently just wraps each card as an Entity (no stacking yet)
+    fn group_cards_into_entities(cards: &[CardId], _view: &GameStateView) -> Vec<Entity> {
+        cards.iter().map(|&card_id| Entity { card_id }).collect()
+    }
+
     /// Draw the complete UI with all panels
     fn draw_ui(
         &mut self,
@@ -275,8 +339,8 @@ impl FancyTuiController {
         current_prompt: Option<&str>,
         choices: &[(String, bool)], // (text, is_highlighted)
     ) {
-        // Clear card positions from previous frame
-        self.state.card_positions.clear();
+        // Clear entity positions from previous frame
+        self.state.entity_positions.clear();
         // Main layout: 3 columns
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -925,15 +989,19 @@ impl FancyTuiController {
 
         let mut rendered_height = 1; // Start after label
 
-        // Dynamic packing: pack cards left-to-right, wrapping when needed
+        // Group cards into entities
+        let entities = Self::group_cards_into_entities(cards, view);
+
+        // Dynamic packing: pack entities left-to-right, wrapping when needed
         let mut current_x = area.x;
         let mut current_y = area.y + y_offset + rendered_height;
         let mut row_height = 0u16;
 
-        for &card_id in cards {
+        for entity in &entities {
+            let card_id = entity.representative_card();
             let (card_w, card_h) = Self::get_card_dimensions_with_size(view, card_id, card_width, card_height);
 
-            // Check if card fits on current row
+            // Check if entity fits on current row
             if current_x + card_w > area.x + area.width && current_x > area.x {
                 // Wrap to next row
                 current_x = area.x;
@@ -946,16 +1014,16 @@ impl FancyTuiController {
                 break; // No more vertical space
             }
 
-            // Render this card
-            let card_area = Rect {
+            // Render this entity
+            let entity_area = Rect {
                 x: current_x,
                 y: current_y,
                 width: card_w,
                 height: card_h,
             };
-            self.render_card_box(f, card_area, view, card_id);
+            self.render_entity(f, entity_area, view, entity);
 
-            // Update position for next card
+            // Update position for next entity
             current_x += card_w + Self::CARD_SPACING;
             row_height = row_height.max(card_h);
         }
@@ -969,12 +1037,17 @@ impl FancyTuiController {
         rendered_height
     }
 
-    /// Render a single card as a box with priority-based content layout
-    fn render_card_box(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, card_id: CardId) {
-        // Track card position for mouse hit testing
-        self.state.card_positions.push(CardPosition { card_id, area });
-        let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-        let is_tapped = view.is_tapped(card_id);
+    /// Render a single entity as a box with priority-based content layout
+    fn render_entity(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, entity: &Entity) {
+        // Track entity position for mouse hit testing
+        self.state.entity_positions.push(EntityPosition {
+            entity: entity.clone(),
+            area,
+        });
+
+        let card_id = entity.representative_card();
+        let name = entity.display_name(view);
+        let is_tapped = entity.is_tapped(view);
         let card = view.get_card(card_id);
 
         // Check if this card is currently selected
@@ -1413,23 +1486,24 @@ impl FancyTuiController {
                         if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                             let (x, y) = (mouse_event.column, mouse_event.row);
 
-                            // Check if any card was clicked
-                            for card_pos in &self.state.card_positions {
-                                if x >= card_pos.area.x
-                                    && x < card_pos.area.x + card_pos.area.width
-                                    && y >= card_pos.area.y
-                                    && y < card_pos.area.y + card_pos.area.height
+                            // Check if any entity was clicked
+                            for entity_pos in &self.state.entity_positions {
+                                if x >= entity_pos.area.x
+                                    && x < entity_pos.area.x + entity_pos.area.width
+                                    && y >= entity_pos.area.y
+                                    && y < entity_pos.area.y + entity_pos.area.height
                                 {
-                                    // Card clicked! Select it and show details
-                                    self.state.selected_card_id = Some(card_pos.card_id);
+                                    // Entity clicked! Select its representative card and show details
+                                    let representative = entity_pos.entity.representative_card();
+                                    self.state.selected_card_id = Some(representative);
 
                                     // Update battlefield selection if it's in a battlefield
-                                    if let Some(card) = view.get_card(card_pos.card_id) {
+                                    if let Some(card) = view.get_card(representative) {
                                         if card.controller == view.player_id() {
-                                            self.state.selected_card_in_your_bf = Some(card_pos.card_id);
+                                            self.state.selected_card_in_your_bf = Some(representative);
                                             self.state.focused_pane = FocusedPane::YourBattlefield;
                                         } else {
-                                            self.state.selected_card_in_opp_bf = Some(card_pos.card_id);
+                                            self.state.selected_card_in_opp_bf = Some(representative);
                                             self.state.focused_pane = FocusedPane::OpponentBattlefield;
                                         }
                                     }
