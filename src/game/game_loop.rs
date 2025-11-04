@@ -2159,8 +2159,14 @@ impl<'a> GameLoop<'a> {
                         );
                     }
 
-                    // Create view and print prompt BEFORE checking stop conditions
-                    // so users see what choice was about to be made when using --stop-when-fixed-exhausted
+                    // PREAMBLE: Check stop conditions BEFORE printing menu
+                    // This ensures snapshots are taken BEFORE presenting the choice to the controller,
+                    // and prevents duplicate menu printing when resuming from snapshot.
+                    if let Some(result) = self.check_stop_conditions(controller, current_priority)? {
+                        return Ok(Some(result));
+                    }
+
+                    // Print prompt AFTER checking stop conditions to avoid duplicate output
                     {
                         let view = GameStateView::new(self.game, current_priority);
                         // Print spell ability menu (controlled by show_choice_menu flag)
@@ -2168,14 +2174,6 @@ impl<'a> GameLoop<'a> {
                             print!("{}", format_choice_menu(&view, &available));
                         }
                     } // Drop view before mutable borrow
-
-                    // PREAMBLE: Check stop conditions BEFORE asking for choice
-                    // This ensures snapshots are taken BEFORE presenting the next choice to the controller.
-                    // The controller can then review the game state up to this point and make their decision
-                    // when the game is resumed.
-                    if let Some(result) = self.check_stop_conditions(controller, current_priority)? {
-                        return Ok(Some(result));
-                    }
 
                     // Ask controller to choose one (or None to pass)
                     let view = GameStateView::new(self.game, current_priority);

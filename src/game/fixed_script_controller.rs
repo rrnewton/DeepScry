@@ -79,33 +79,38 @@ impl PlayerController for FixedScriptController {
     ) -> Option<SpellAbility> {
         let choice_index = self.next_choice();
 
-        // INVARIANT: Choice indices match menu display (0-based)
-        // Choice N selects available[N], where N is 0..available.len()
-        // Out of bounds values default to pass (None)
+        // INVARIANT: Choice indices match menu display
+        // Index 0 = Pass priority
+        // Index 1 to N = available[index - 1] (actions shifted by 1)
+        // Out of bounds values (index > N) also pass priority
 
-        if choice_index >= available.len() {
-            // Out of bounds (including when available is empty), pass priority
-            if available.is_empty() {
-                view.logger()
-                    .controller_choice("SCRIPT", "chose to pass priority (no actions available)");
-            } else {
-                view.logger().controller_choice(
-                    "SCRIPT",
-                    &format!(
-                        "chose {} (out of bounds, passing priority) from choices 0-{}",
-                        choice_index,
-                        available.len() - 1
-                    ),
-                );
-            }
+        if choice_index == 0 {
+            // Choice 0 is always pass
+            view.logger().controller_choice("SCRIPT", "chose [0] Pass priority");
+            return None;
+        }
+
+        // Convert displayed index to array index (subtract 1)
+        let action_index = choice_index - 1;
+
+        if action_index >= available.len() {
+            // Out of bounds, pass priority
+            view.logger().controller_choice(
+                "SCRIPT",
+                &format!(
+                    "chose {} (out of bounds, passing priority) from choices 0-{}",
+                    choice_index,
+                    available.len()
+                ),
+            );
             return None;
         }
 
         view.logger().controller_choice(
             "SCRIPT",
-            &format!("chose {} from choices 0-{}", choice_index, available.len() - 1),
+            &format!("chose [{}] from choices 0-{}", choice_index, available.len()),
         );
-        Some(available[choice_index].clone())
+        Some(available[action_index].clone())
     }
 
     fn choose_targets(
@@ -346,7 +351,7 @@ mod tests {
     #[test]
     fn test_choose_spell_ability() {
         let player_id = EntityId::new(1);
-        let mut controller = FixedScriptController::new(player_id, vec![0, 1]);
+        let mut controller = FixedScriptController::new(player_id, vec![1, 2]);
         let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
@@ -359,12 +364,12 @@ mod tests {
             },
         ];
 
-        // INVARIANT: Choice N selects available[N] (0-based indexing)
-        // First choice: index 0 → abilities[0] (first ability)
+        // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
+        // First choice: index 1 → abilities[0] (first ability)
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
         assert_eq!(choice1, Some(abilities[0].clone()));
 
-        // Second choice: index 1 → abilities[1] (second ability)
+        // Second choice: index 2 → abilities[1] (second ability)
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
         assert_eq!(choice2, Some(abilities[1].clone()));
     }
@@ -372,8 +377,8 @@ mod tests {
     #[test]
     fn test_choose_spell_ability_pass() {
         let player_id = EntityId::new(1);
-        // Choice index 2 or higher is out of bounds for 2 abilities, should pass
-        let mut controller = FixedScriptController::new(player_id, vec![2, 99]);
+        // Choice index 0 = pass, index 3+ out of bounds for 2 abilities also passes
+        let mut controller = FixedScriptController::new(player_id, vec![0, 99]);
         let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
@@ -386,10 +391,11 @@ mod tests {
             },
         ];
 
-        // Out of bounds choice should result in passing priority
+        // Index 0 = pass priority
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
         assert_eq!(choice1, None);
 
+        // Out of bounds choice (99) should also pass
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
         assert_eq!(choice2, None);
     }
@@ -452,17 +458,17 @@ mod tests {
             },
         ];
 
-        // INVARIANT: Choice N selects available[N] (0-based indexing)
-        // First choice: index 1 → abilities[1] (second ability)
+        // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
+        // First choice: index 1 → abilities[0] (first ability)
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, Some(abilities[1].clone()));
+        assert_eq!(choice1, Some(abilities[0].clone()));
 
-        // Script exhausted, should default to index 0 → abilities[0] (first ability)
+        // Script exhausted, should default to index 0 → pass priority
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, Some(abilities[0].clone()));
+        assert_eq!(choice2, None);
 
-        // Should keep returning abilities[0]
+        // Should keep passing
         let choice3 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice3, Some(abilities[0].clone()));
+        assert_eq!(choice3, None);
     }
 }

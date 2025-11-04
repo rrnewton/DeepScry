@@ -32,19 +32,24 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
 
     output.push_str(&format!("\n{} available actions:\n", player_name));
 
+    // Pass is ALWAYS option 0
+    output.push_str("  [0] Pass priority\n");
+
+    // Actions are indexed starting at 1
     for (idx, ability) in available.iter().enumerate() {
+        let display_idx = idx + 1; // Shift indices by 1 to make room for pass at 0
         match ability {
             SpellAbility::PlayLand { card_id } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] Play land: {}\n", idx, name));
+                output.push_str(&format!("  [{}] Play land: {}\n", display_idx, name));
             }
             SpellAbility::CastSpell { card_id } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] Cast spell: {}\n", idx, name));
+                output.push_str(&format!("  [{}] Cast spell: {}\n", display_idx, name));
             }
             SpellAbility::ActivateAbility { card_id, .. } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] Activate ability: {}\n", idx, name));
+                output.push_str(&format!("  [{}] Activate ability: {}\n", display_idx, name));
             }
         }
     }
