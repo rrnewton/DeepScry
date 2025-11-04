@@ -15,7 +15,7 @@ bincode = "1.3.3"
 rkyv = { version = "0.7", features = ["validation"] }
 
 # Collections
-smallvec = { version = "1.11", features = ["serde"] }
+smallvec = { version = "1.11", features = ["serde", "union"] }
 smallmap = { version = "1.4", features = ["serde"] }
 bumpalo = { version = "3.16", features = ["collections"] }
 typed-arena = "2.0"

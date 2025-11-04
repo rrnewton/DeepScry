@@ -452,9 +452,22 @@ impl GameState {
             // This captures the RNG state at the END of the current turn,
             // which will be the START of the next turn after next_turn() is called
             // Using bincode for compact serialization (56 bytes vs 152 bytes for JSON)
+            // SmallVec<[u8; 64]> fits ChaCha12Rng serialization (56 bytes, no heap allocation)
             let rng_state = {
                 let rng = self.rng.borrow();
-                bincode::serialize(&*rng).ok()
+                if let Ok(bytes) = bincode::serialize(&*rng) {
+                    // INVARIANT: ChaCha12Rng bincode serialization is exactly 56 bytes
+                    // This assertion will catch any future changes to RNG serialization
+                    assert_eq!(
+                        bytes.len(),
+                        56,
+                        "ChaCha12Rng bincode serialization changed from 56 bytes to {} bytes - update SmallVec<[u8; 64]> size!",
+                        bytes.len()
+                    );
+                    Some(smallvec::SmallVec::from_vec(bytes))
+                } else {
+                    None
+                }
             };
 
             self.turn.next_turn(next_player);
@@ -695,8 +708,9 @@ impl GameState {
                     self.turn.active_player = from_player;
                     self.turn.turn_number = turn_number - 1;
 
-                    // Restore RNG state if available (now using bincode)
+                    // Restore RNG state if available (using bincode + SmallVec)
                     if let Some(rng_bytes) = rng_state {
+                        // SmallVec derefs to &[u8], which is what bincode::deserialize expects
                         if let Ok(rng) = bincode::deserialize::<ChaCha12Rng>(&rng_bytes) {
                             *self.rng.borrow_mut() = rng;
                         }

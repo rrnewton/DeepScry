@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-04T19:30:54.806375283+00:00
+updated_at: 2025-11-04T20:00:12.915205784+00:00
 ---
 
 # Description
@@ -30,7 +30,7 @@ Track performance optimization work for MTG Forge Rust.
 
 Total allocations: 1.13 MB in 26,328 blocks (-39% from baseline 1.86 MB!)
 Top hotspots:
-1. GameState::advance_step - 150 KB (12.9%) - RNG serialization (FIXED, see mtg-437f88)
+1. GameState::advance_step - 150 KB (12.9%) - RNG serialization (FIXED, see mtg-437f88, mtg-02f1df)
 2. GameLoop::get_available_spell_abilities - 51.3 KB (4.4%) - helper function allocations
 3. Allocator overhead entries (~7-8% each, expected)
 
@@ -39,7 +39,8 @@ Top hotspots:
 - ✅ ManaEngine::update reserve: 70KB → 0KB (eliminated from top 20!)
 - ✅ GameLoop abilities buffer: 89KB → 51KB (-43% reduction)
 - ✅ RNG serialization: JSON→bincode, 152→56 bytes per turn (63% reduction, 96 bytes/turn saved)
-- **Total reduction: From 1.86 MB baseline to ~1.05 MB (est. -44% after RNG fix)**
+- ✅ RNG SmallVec: Eliminated heap allocation per turn (~40 allocations saved per game, 2.2KB per 40-turn game)
+- **Total reduction: From 1.86 MB baseline to ~1.05 MB (est. -44% after RNG fixes)**
 
 **Completed optimizations:**
 - ✅ mtg-6: Logging allocations (conditional compilation added)
@@ -55,6 +56,7 @@ Top hotspots:
 - ✅ mtg-mana-engine-dynamic: ManaEngine dynamic allocation elimination (600KB → 70KB, 3-24% faster)
 - ✅ mtg-buffer-reuse: GameLoop + ManaEngine buffer optimization (108KB eliminated, -5% total allocations)
 - ✅ mtg-437f88: RNG bincode serialization (96 bytes/turn saved, ~8% of advance_step allocations)
+- ✅ mtg-02f1df: RNG SmallVec inline storage (eliminates heap allocation per turn, 2.2KB saved per 40-turn game)
 
 **Low priority (remaining allocations):**
 - GameLoop::get_available_spell_abilities helper allocations - 51KB (4.4%)
@@ -76,9 +78,9 @@ Remaining hotspots are all below 5% and require extensive API refactoring for di
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 
 ---
-**Updated 2025-11-04_#709(62bb5fd)** - RNG serialization bincode optimization
-- Switched RNG serialization from JSON to bincode in advance_step
-- JSON: 152 bytes → bincode: 56 bytes (63.2% reduction, fixed size)
-- Saves 96 bytes per turn (~8% of advance_step allocations, 150KB→54KB expected)
-- All tests passing (408 tests including new rng_serialization_test)
-- **Cumulative achievement: ~810 KB eliminated across all optimization work!**
+**Updated 2025-11-04_#712(8c66293)** - RNG SmallVec inline storage optimization
+- Changed GameAction::ChangeTurn rng_state from Vec<u8> to SmallVec<[u8; 64]>
+- Eliminates heap allocation for 56-byte RNG state (saves ~40 allocations per game)
+- Added explicit size assertion (assert_eq!(bytes.len(), 56)) to catch future ChaCha12Rng serialization changes
+- All 412 tests passing
+- **Cumulative achievement: ~812 KB eliminated across all optimization work!**

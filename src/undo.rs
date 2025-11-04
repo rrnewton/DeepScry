@@ -6,6 +6,7 @@
 use crate::core::{CardId, CounterType, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::game::GameState;
 
@@ -69,7 +70,10 @@ pub enum GameAction {
         to_player: PlayerId,
         turn_number: u32,
         /// RNG state at the START of this turn (for snapshot rewind)
-        rng_state: Option<Vec<u8>>,
+        /// SmallVec<[u8; 64]> fits ChaCha12Rng bincode serialization (56 bytes, no heap allocation)
+        /// Size 64 chosen as smallest power-of-2 supported by smallvec that fits 56 bytes
+        /// INVARIANT: serialization code asserts exactly 56 bytes to catch future changes
+        rng_state: Option<SmallVec<[u8; 64]>>,
     },
 
     /// Pump creature (temporary stat modification)
@@ -207,9 +211,10 @@ impl GameAction {
                 // ChangeTurn logs the NEW turn number, so previous is turn_number - 1
                 game.turn.turn_number = turn_number.saturating_sub(1);
 
-                // Restore RNG state if available (now using bincode)
+                // Restore RNG state if available (using bincode + SmallVec)
                 if let Some(rng_bytes) = rng_state {
-                    if let Ok(rng) = bincode::deserialize::<rand_chacha::ChaCha12Rng>(rng_bytes) {
+                    // SmallVec derefs to &[u8], which is what bincode::deserialize expects
+                    if let Ok(rng) = bincode::deserialize::<rand_chacha::ChaCha12Rng>(&rng_bytes) {
                         *game.rng.borrow_mut() = rng;
                     } else {
                         return Err("Failed to deserialize RNG state".to_string());
