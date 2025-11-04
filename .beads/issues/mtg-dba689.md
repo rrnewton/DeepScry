@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T20:41:31.238373508+00:00
+updated_at: 2025-11-03T23:54:58.323097845+00:00
 ---
 
 # Description
@@ -22,13 +22,15 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-a862ff: Turn counter and phase indicator
 - ✓ mtg-a6f4ce: Ctrl-C and Ctrl-Z handling
 - ✓ Turn display: Show player turn and global turn (commit 2051ece)
-- mtg-29343b: Improve turn display with spacing and active player indication
+- ✓ mtg-29343b: Improve turn display with spacing and active player indication (commit 62cf104)
 
 **Card display improvements:**
 - ✓ mtg-fa9417: Proportionate card rectangles (3.5:2.5 ratio) and 2D battlefield layout
 - ✓ mtg-bc661f: Card border colors reflecting mana colors
 - ✓ mtg-b72100: Dim pane borders (grey instead of white)
-- mtg-897dd0: Respect \\n in card text display
+- ✓ mtg-897dd0: Respect \n in card text display (commit 62cf104)
+- ✓ mtg-1af4f0: Smarter layout with variable sized cards (commits 964113e, edd041f)
+- ✓ Card rendering improvements: Aspect ratio and priority-based layout (commit 65ad5b3)
 
 **Interactive focus system:**
 - ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A, S)
@@ -61,10 +63,28 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Card navigation in Hand and Battlefield (commit c4d0e5c)
 - [x] Card Details population on selection (mtg-fa42e3)
 - [x] Max mana calculation fix (mtg-f6b05f)
-- [x] UI reorganization (mtg-f567b1) ← COMPLETED
-- [ ] Remaining enhancements (mtg-29343b: turn display, mtg-897dd0: card text newlines)
+- [x] UI reorganization (mtg-f567b1)
+- [x] Turn display improvements (mtg-29343b) - commit 62cf104
+- [x] Card text newlines (mtg-897dd0) - commit 62cf104
+- [x] Smarter layout with variable sized cards (mtg-1af4f0) - commits 964113e, edd041f, 65ad5b3
 - [ ] Remaining interactive features (mtg-1a7bae: mouse support)
 - [ ] Advanced choice presentation (mtg-8a3ffb)
+
+## Recent progress (2025-11-03)
+
+Major card rendering improvements in today's session:
+- Commit 964113e: Phase 1 - Natural card tapping with dimension swapping
+- Commit edd041f: Phase 2 - Greedy card size optimization
+- Commit 65ad5b3: Aspect ratio fixes and priority-based card content layout
+- Commit 62cf104: Turn display and card text newline rendering
+
+Cards now:
+- Maintain proper aspect ratio (10:7) when resizing
+- Dynamically size to fill battlefield (greedy optimization)
+- Show detailed content (title, cost, tapped indicator, P/T, description, type)
+- Display P/T in bottom-right corner
+- Respect newlines in card text (Card Details pane)
+- Swap dimensions when tapped to simulate rotation
 
 ## Implementation order
 
@@ -94,13 +114,16 @@ Updated order based on user priority:
 5. **COMPLETED - UI reorganization:**
    - ✓ mtg-f567b1: Move Stack/Actions, remove Dock
 
-6. **Remaining enhancements:**
-   - mtg-29343b: Turn display improvements (priority 2)
-   - mtg-897dd0: Card text newlines (priority 3)
+6. **COMPLETED - Card rendering enhancements:**
+   - ✓ mtg-1af4f0: Smarter layout with variable sized cards
+   - ✓ mtg-29343b: Turn display improvements (spacing, active player)
+   - ✓ mtg-897dd0: Card text newlines
+
+7. **Remaining interactive features:**
    - mtg-1a7bae: Mouse support
 
-7. **Choice improvements:**
+8. **Choice improvements:**
    - mtg-8a3ffb: Enhanced choice highlighting
 
-8. **Polish (deferred):**
-   - mtg-6326b9: Improved card rendering
+9. **Polish (deferred):**
+   - mtg-6326b9: Further card rendering improvements

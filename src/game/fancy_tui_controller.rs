@@ -700,13 +700,13 @@ impl FancyTuiController {
     }
 
     /// Card size constants
+    /// Default size maintains MTG card aspect ratio: width/height = 10/7 ≈ 1.43
+    /// This accounts for terminal character aspect (~2:1) to create visually proportional cards
     const DEFAULT_CARD_WIDTH: u16 = 10;
     const DEFAULT_CARD_HEIGHT: u16 = 7;
     const MIN_CARD_WIDTH: u16 = 5;
     const MIN_CARD_HEIGHT: u16 = 4;
     const CARD_SPACING: u16 = 1;
-    /// Card aspect ratio (width/height) - based on MTG card proportions (roughly 3.5:2.5)
-    const ASPECT_RATIO: f32 = Self::DEFAULT_CARD_WIDTH as f32 / Self::DEFAULT_CARD_HEIGHT as f32;
 
     /// Get card dimensions based on tapped state and base size
     /// Tapped cards swap width and height to simulate 90-degree rotation
@@ -801,10 +801,13 @@ impl FancyTuiController {
             let mut width = Self::DEFAULT_CARD_WIDTH;
             let mut height = Self::DEFAULT_CARD_HEIGHT;
 
-            // Increment width, maintain aspect ratio for height
+            // Increment width, calculate proportional height to maintain exact aspect ratio
             loop {
                 let next_width = width + 1;
-                let next_height = ((next_width as f32) / Self::ASPECT_RATIO).round() as u16;
+                // Maintain exact ratio: next_width/next_height = DEFAULT_WIDTH/DEFAULT_HEIGHT
+                let next_height = ((next_width as f32 * Self::DEFAULT_CARD_HEIGHT as f32)
+                    / Self::DEFAULT_CARD_WIDTH as f32)
+                    .round() as u16;
 
                 if Self::test_card_size_fits(area, card_groups, view, next_width, next_height) {
                     width = next_width;
@@ -822,8 +825,8 @@ impl FancyTuiController {
 
             while !Self::test_card_size_fits(area, card_groups, view, width, height) && width > Self::MIN_CARD_WIDTH {
                 width -= 1;
-                // Maintain aspect ratio
-                height = ((width as f32) / Self::ASPECT_RATIO)
+                // Maintain exact aspect ratio
+                height = ((width as f32 * Self::DEFAULT_CARD_HEIGHT as f32) / Self::DEFAULT_CARD_WIDTH as f32)
                     .round()
                     .max(Self::MIN_CARD_HEIGHT as f32) as u16;
             }
