@@ -975,7 +975,7 @@ mod tests {
 
     #[test]
     fn test_player_name() {
-        let name = PlayerName::new("Alice");
-        assert_eq!(name.as_str(), "Alice");
+        let name = PlayerName::new("Player1");
+        assert_eq!(name.as_str(), "Player1");
     }
 }

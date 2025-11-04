@@ -339,7 +339,7 @@ mod tests {
     fn test_choose_spell_ability_empty() {
         let player_id = EntityId::new(1);
         let mut controller = RandomController::with_seed(player_id, 100);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         // With no available abilities, should return None
@@ -351,7 +351,7 @@ mod tests {
     fn test_choose_spell_ability() {
         let player_id = EntityId::new(1);
         let mut controller = RandomController::with_seed(player_id, 200);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let abilities = vec![
@@ -382,7 +382,7 @@ mod tests {
     fn test_choose_targets() {
         let player_id = EntityId::new(1);
         let mut controller = RandomController::with_seed(player_id, 300);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let spell_id = EntityId::new(100);
@@ -399,7 +399,7 @@ mod tests {
     fn test_choose_mana_sources() {
         let player_id = EntityId::new(1);
         let mut controller = RandomController::with_seed(player_id, 400);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let cost = ManaCost::from_string("2RR"); // CMC = 4
@@ -425,7 +425,7 @@ mod tests {
     fn test_choose_attackers() {
         let player_id = EntityId::new(1);
         let mut controller = RandomController::with_seed(player_id, 500);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let creatures = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
@@ -442,7 +442,7 @@ mod tests {
     fn test_choose_cards_to_discard() {
         let player_id = EntityId::new(1);
         let mut controller = RandomController::with_seed(player_id, 600);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let hand = vec![

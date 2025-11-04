@@ -352,7 +352,7 @@ mod tests {
     fn test_choose_spell_ability() {
         let player_id = EntityId::new(1);
         let mut controller = FixedScriptController::new(player_id, vec![1, 2]);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let abilities = vec![
@@ -379,7 +379,7 @@ mod tests {
         let player_id = EntityId::new(1);
         // Choice index 0 = pass, index 3+ out of bounds for 2 abilities also passes
         let mut controller = FixedScriptController::new(player_id, vec![0, 99]);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let abilities = vec![
@@ -404,7 +404,7 @@ mod tests {
     fn test_choose_targets() {
         let player_id = EntityId::new(1);
         let mut controller = FixedScriptController::new(player_id, vec![2, 0]);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let spell_id = EntityId::new(100);
@@ -426,7 +426,7 @@ mod tests {
         let player_id = EntityId::new(1);
         // Choose 2 attackers, then 0 attackers
         let mut controller = FixedScriptController::new(player_id, vec![2, 0]);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let creatures = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
@@ -446,7 +446,7 @@ mod tests {
     fn test_exhausted_script_defaults_to_zero() {
         let player_id = EntityId::new(1);
         let mut controller = FixedScriptController::new(player_id, vec![1]); // Only one choice
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let abilities = vec![

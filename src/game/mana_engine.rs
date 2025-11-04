@@ -57,7 +57,7 @@
 //! use mtg_forge_rs::game::{ManaEngine, GameState};
 //! use mtg_forge_rs::core::{ManaCost, PlayerId};
 //!
-//! let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+//! let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 //! let alice_id = game.players[0].id;
 //!
 //! // Create and update the mana engine

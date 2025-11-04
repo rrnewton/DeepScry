@@ -90,10 +90,10 @@ mod tests {
     #[test]
     fn test_player_creation() {
         let id = PlayerId::new(1);
-        let player = Player::new(id, "Alice", 20);
+        let player = Player::new(id, "Player1", 20);
 
         assert_eq!(player.id, id);
-        assert_eq!(player.name.as_str(), "Alice");
+        assert_eq!(player.name.as_str(), "Player1");
         assert_eq!(player.life, 20);
         assert!(!player.has_lost);
     }
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn test_player_life() {
         let id = PlayerId::new(1);
-        let mut player = Player::new(id, "Bob", 20);
+        let mut player = Player::new(id, "Player2", 20);
 
         player.lose_life(5);
         assert_eq!(player.life, 15);

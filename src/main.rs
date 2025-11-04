@@ -136,12 +136,12 @@ enum Commands {
         #[arg(long, value_enum, default_value = "heuristic")]
         p2: ControllerType,
 
-        /// Player 1 name (default: Alice)
-        #[arg(long, default_value = "Alice")]
+        /// Player 1 name (default: Player1)
+        #[arg(long, default_value = "Player1")]
         p1_name: String,
 
-        /// Player 2 name (default: Bob)
-        #[arg(long, default_value = "Bob")]
+        /// Player 2 name (default: Player2)
+        #[arg(long, default_value = "Player2")]
         p2_name: String,
 
         /// Fixed script input for player 1 (space or comma separated indices, e.g., "1 1 2" or "1,1,2")

@@ -118,7 +118,7 @@ mod tests {
         // Initialize game
         let initializer = GameInitializer::new(&db);
         let game = initializer
-            .init_game("Alice".to_string(), &deck, "Bob".to_string(), &deck, 20)
+            .init_game("Player1".to_string(), &deck, "Player2".to_string(), &deck, 20)
             .await
             .unwrap();
 
@@ -151,7 +151,7 @@ mod tests {
 
         let initializer = GameInitializer::new(&db);
         let result = initializer
-            .init_game("Alice".to_string(), &deck, "Bob".to_string(), &deck, 20)
+            .init_game("Player1".to_string(), &deck, "Player2".to_string(), &deck, 20)
             .await;
 
         assert!(result.is_err());

@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn test_game_creation() {
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
         assert_eq!(game.players.len(), 2);
         assert_eq!(game.player_zones.len(), 2);
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_draw_card() {
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
         // Create a card and add it to library
         let p1_id = game.players.first().unwrap().id; // Copy the ID
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_game_over() {
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
         assert!(!game.is_game_over());
         assert_eq!(game.get_winner(), None);
@@ -765,7 +765,7 @@ mod tests {
     fn test_undo_log_integration() {
         use crate::core::CardType;
 
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let p1_id = game.players.first().unwrap().id;
 
         assert_eq!(game.undo_log.len(), 0);

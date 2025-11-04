@@ -5369,7 +5369,7 @@ mod tests {
         use crate::loader::CardDatabase;
         use std::path::PathBuf;
 
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
         let alice_id = players[0];
         let bob_id = players[1];
@@ -5390,13 +5390,13 @@ mod tests {
             .expect("Failed to get card")
             .expect("Counterspell not found");
 
-        // Alice casts Lightning Bolt targeting Bob
+        // Player1 casts Lightning Bolt targeting Player2
         let bolt_id = game.next_card_id();
         let bolt = bolt_def.instantiate(bolt_id, alice_id);
         game.cards.insert(bolt_id, bolt);
         game.stack.add(bolt_id);
 
-        // Bob responds with Counterspell targeting Lightning Bolt
+        // Player2 responds with Counterspell targeting Lightning Bolt
         let counter_id = game.next_card_id();
         let mut counterspell = counter_def.instantiate(counter_id, bob_id);
         // Manually set the target since we're bypassing the full casting process
@@ -5433,9 +5433,9 @@ mod tests {
             );
         }
 
-        // Verify Bob didn't take damage (Lightning Bolt was countered)
+        // Verify Player2 didn't take damage (Lightning Bolt was countered)
         let bob = game.get_player(bob_id).unwrap();
-        assert_eq!(bob.life, 20, "Bob should still have 20 life");
+        assert_eq!(bob.life, 20, "Player2 should still have 20 life");
     }
 
     #[test]

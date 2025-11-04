@@ -5,7 +5,7 @@ use crate::game::GameState;
 
 #[test]
 fn test_put_counter_effect() {
-    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
     // Create a creature on the battlefield
@@ -35,7 +35,7 @@ fn test_put_counter_effect() {
 
 #[test]
 fn test_remove_counter_effect() {
-    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
     // Create a creature with counters
@@ -65,7 +65,7 @@ fn test_remove_counter_effect() {
 
 #[test]
 fn test_counter_undo() {
-    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
     // Create a creature on the battlefield
@@ -98,7 +98,7 @@ fn test_counter_undo() {
 
 #[test]
 fn test_counter_annihilation_through_effects() {
-    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
     // Create a creature on the battlefield
@@ -136,7 +136,7 @@ fn test_counter_annihilation_through_effects() {
 
 #[test]
 fn test_multiple_counter_types() {
-    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
     // Create a permanent on the battlefield
@@ -160,7 +160,7 @@ fn test_multiple_counter_types() {
 
 #[test]
 fn test_remove_counter_undo() {
-    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
     // Create a creature with counters

@@ -399,7 +399,7 @@ mod tests {
         let player_id = EntityId::new(1);
         // Use 0-based indexing: choice "0" selects first ability (index 0)
         let mut controller = RichInputController::new(player_id, vec!["0".to_string()]);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let abilities = vec![SpellAbility::PlayLand {
@@ -414,7 +414,7 @@ mod tests {
     fn test_pass_command() {
         let player_id = EntityId::new(1);
         let mut controller = RichInputController::new(player_id, vec!["pass".to_string()]);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let choice = controller.choose_spell_ability_to_play(&view, &[]);

@@ -3239,13 +3239,13 @@ mod tests {
 
     #[test]
     fn test_game_loop_creation() {
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let _game_loop = GameLoop::new(&mut game);
     }
 
     #[test]
     fn test_untap_step() {
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let alice = { game.players.iter().map(|p| p.id).next().expect("Should have player 1") };
 
         // Create a tapped land on battlefield
@@ -3267,7 +3267,7 @@ mod tests {
 
     #[test]
     fn test_draw_step() {
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let (alice, bob) = {
             let mut players_iter = game.players.iter().map(|p| p.id);
             (
@@ -3276,7 +3276,7 @@ mod tests {
             )
         };
 
-        // Add a card to Alice's library
+        // Add a card to Player1's library
         let card_id = game.next_card_id();
         let card = crate::core::Card::new(card_id, "Test Card".to_string(), alice);
         game.cards.insert(card_id, card);
@@ -3304,14 +3304,14 @@ mod tests {
 
     #[test]
     fn test_check_win_condition_life() {
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let bob = {
             let mut players_iter = game.players.iter().map(|p| p.id);
             let _alice = players_iter.next().expect("Should have player 1");
             players_iter.next().expect("Should have player 2")
         };
 
-        // Set Bob's life to 0
+        // Set Player2's life to 0
         game.get_player_mut(bob).unwrap().life = 0;
 
         let game_loop = GameLoop::new(&mut game);

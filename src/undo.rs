@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn test_rewind_to_turn_start() {
         let mut log = UndoLog::new();
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
         // Simulate turn 1 starting
         log.log(GameAction::ChangeTurn {
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn test_rewind_to_turn_start_no_turn() {
         let mut log = UndoLog::new();
-        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
         // Add some actions but no ChangeTurn
         log.log(GameAction::ModifyLife {

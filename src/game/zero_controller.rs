@@ -149,7 +149,7 @@ mod tests {
     fn test_choose_spell_ability_empty() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         // With no available abilities, should return None
@@ -161,7 +161,7 @@ mod tests {
     fn test_choose_spell_ability_land() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let abilities = vec![
@@ -188,7 +188,7 @@ mod tests {
     fn test_choose_targets() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let spell_id = EntityId::new(100);
@@ -204,7 +204,7 @@ mod tests {
     fn test_choose_targets_empty() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let spell_id = EntityId::new(100);
@@ -218,7 +218,7 @@ mod tests {
     fn test_choose_mana_sources() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let cost = ManaCost::from_string("2RR"); // CMC = 4
@@ -244,7 +244,7 @@ mod tests {
     fn test_choose_attackers() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let creatures = vec![EntityId::new(30), EntityId::new(31), EntityId::new(32)];
@@ -261,7 +261,7 @@ mod tests {
     fn test_choose_blockers() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let blockers = vec![EntityId::new(40), EntityId::new(41)];
@@ -278,7 +278,7 @@ mod tests {
     fn test_choose_cards_to_discard() {
         let player_id = EntityId::new(1);
         let mut controller = ZeroController::new(player_id);
-        let game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let hand = vec![
