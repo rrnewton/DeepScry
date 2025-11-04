@@ -4,7 +4,7 @@
 //! with separate panels for battlefield, hand, card details, prompts, and game state.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{GameStateView, PlayerController};
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::Step;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
@@ -2682,9 +2682,9 @@ impl PlayerController for FancyTuiController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         if available.is_empty() {
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         // Set choice context and valid choices for highlighting
@@ -2751,7 +2751,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        result
+        ChoiceResult::Ok(result)
     }
 
     fn choose_targets(
@@ -2759,9 +2759,9 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Set choice context and valid choices for highlighting
@@ -2826,7 +2826,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -2834,12 +2834,12 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         let mut sources = SmallVec::new();
         let needed = cost.cmc() as usize;
 
         if needed == 0 || available_sources.is_empty() {
-            return sources;
+            return ChoiceResult::Ok(sources);
         }
 
         for i in 0..needed {
@@ -2857,12 +2857,12 @@ impl PlayerController for FancyTuiController {
             }
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Set choice context and valid choices for highlighting
@@ -2917,7 +2917,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -2925,9 +2925,9 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if attackers.is_empty() || available_blockers.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Set choice context: both blockers and attackers are valid choices
@@ -2993,7 +2993,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -3001,10 +3001,10 @@ impl PlayerController for FancyTuiController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // For simplicity, just return blockers in order
         // TODO: implement UI for reordering
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -3012,7 +3012,7 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         let mut discards = SmallVec::new();
 
         for i in 0..count {
@@ -3042,7 +3042,7 @@ impl PlayerController for FancyTuiController {
             }
         }
 
-        discards
+        ChoiceResult::Ok(discards)
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

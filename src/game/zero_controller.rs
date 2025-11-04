@@ -10,8 +10,7 @@
 //! - Discards the first N cards from hand
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::GameStateView;
-use crate::game::controller::PlayerController;
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
 /// A controller that uses simple "first choice" heuristics
@@ -41,9 +40,9 @@ impl PlayerController for ZeroController {
         &mut self,
         _view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         // Play the first available ability
-        available.first().cloned()
+        ChoiceResult::Ok(available.first().cloned())
     }
 
     fn choose_targets(
@@ -51,15 +50,16 @@ impl PlayerController for ZeroController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Choose the first valid target if any
-        if let Some(&first_target) = valid_targets.first() {
+        let result = if let Some(&first_target) = valid_targets.first() {
             let mut targets = SmallVec::new();
             targets.push(first_target);
             targets
         } else {
             SmallVec::new()
-        }
+        };
+        ChoiceResult::Ok(result)
     }
 
     fn choose_mana_sources_to_pay(
@@ -67,15 +67,15 @@ impl PlayerController for ZeroController {
         _view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Tap the first N sources needed to pay the cost
         let needed = cost.cmc() as usize;
-        available_sources.iter().take(needed).copied().collect()
+        ChoiceResult::Ok(available_sources.iter().take(needed).copied().collect())
     }
 
-    fn choose_attackers(&mut self, _view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(&mut self, _view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Attack with all available creatures
-        available_creatures.iter().copied().collect()
+        ChoiceResult::Ok(available_creatures.iter().copied().collect())
     }
 
     fn choose_blockers(
@@ -83,7 +83,7 @@ impl PlayerController for ZeroController {
         _view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Block each attacker with one blocker (if available)
         let mut blocks = SmallVec::new();
 
@@ -96,7 +96,7 @@ impl PlayerController for ZeroController {
             }
         }
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -104,9 +104,9 @@ impl PlayerController for ZeroController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Keep blockers in the order they were provided
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -114,9 +114,9 @@ impl PlayerController for ZeroController {
         _view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Discard the first N cards from hand
-        hand.iter().take(count.min(hand.len())).copied().collect()
+        ChoiceResult::Ok(hand.iter().take(count.min(hand.len())).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

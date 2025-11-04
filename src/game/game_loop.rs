@@ -26,7 +26,7 @@ use crate::game::controller::{
 };
 use crate::game::phase::Step;
 use crate::game::GameState;
-use crate::{MtgError, Result};
+use crate::{handle_choice_result, MtgError, Result};
 
 // Legacy v1 action type (kept for compatibility with dead code)
 #[allow(dead_code)]
@@ -1543,8 +1543,12 @@ impl<'a> GameLoop<'a> {
             }
 
             // Ask controller to choose all attackers at once (v2 interface)
-            let view = GameStateView::new(self.game, active_player);
-            let attackers = controller.choose_attackers(&view, &available_creatures);
+            // Loop to allow undo/retry
+            let attackers = loop {
+                let view = GameStateView::new(self.game, active_player);
+                let choice = controller.choose_attackers(&view, &available_creatures);
+                break handle_choice_result!(choice, self.game);
+            };
 
             // Log this choice point for snapshot/replay
             let replay_choice = crate::game::ReplayChoice::Attackers(attackers.clone());
@@ -1663,12 +1667,18 @@ impl<'a> GameLoop<'a> {
             }
 
             // Ask controller to choose all blocker assignments at once (v2 interface)
-            let view = GameStateView::new(self.game, defending_player);
-            let blocks = controller.choose_blockers(&view, &available_blockers, &attackers);
+            // Loop to allow undo/retry
+            let blocks = loop {
+                let view = GameStateView::new(self.game, defending_player);
+                let choice = controller.choose_blockers(&view, &available_blockers, &attackers);
+                let blocks_value = handle_choice_result!(choice, self.game);
 
-            // Log this choice point for snapshot/replay
-            let replay_choice = crate::game::ReplayChoice::Blockers(blocks.clone());
-            self.log_choice_point(defending_player, Some(replay_choice));
+                // Log this choice point for snapshot/replay
+                let replay_choice = crate::game::ReplayChoice::Blockers(blocks_value.clone());
+                self.log_choice_point(defending_player, Some(replay_choice));
+
+                break blocks_value;
+            };
 
             // Declare each blocking assignment
             for (blocker_id, attacker_id) in blocks.iter() {
@@ -1932,13 +1942,19 @@ impl<'a> GameLoop<'a> {
                 }
 
                 // Ask controller which cards to discard
-                let view = GameStateView::new(self.game, player_id);
-                let hand = view.hand();
-                let cards_to_discard = controller.choose_cards_to_discard(&view, hand, discard_count);
+                // Loop to allow undo/retry
+                let cards_to_discard = loop {
+                    let view = GameStateView::new(self.game, player_id);
+                    let hand = view.hand();
+                    let choice = controller.choose_cards_to_discard(&view, hand, discard_count);
+                    let discard_value = handle_choice_result!(choice, self.game);
 
-                // Log this choice point for snapshot/replay
-                let replay_choice = crate::game::ReplayChoice::Discard(cards_to_discard.clone());
-                self.log_choice_point(player_id, Some(replay_choice));
+                    // Log this choice point for snapshot/replay
+                    let replay_choice = crate::game::ReplayChoice::Discard(discard_value.clone());
+                    self.log_choice_point(player_id, Some(replay_choice));
+
+                    break discard_value;
+                };
 
                 // Verify correct number of cards
                 if cards_to_discard.len() != discard_count {
@@ -2148,15 +2164,18 @@ impl<'a> GameLoop<'a> {
                     controller2
                 };
 
-                // Get all available spell abilities for this player
-                let available = self.get_available_spell_abilities(current_priority);
+                // Loop to allow undo/retry for spell ability choices
+                let choice = loop {
+                    // Get all available spell abilities for this player
+                    let available = self.get_available_spell_abilities(current_priority);
 
-                // If no actions available, automatically pass priority without asking controller
-                // Only invoke controller when there's an actual choice to make
-                let choice = if available.is_empty() {
-                    // No available actions - automatically pass priority
-                    None
-                } else {
+                    // If no actions available, automatically pass priority without asking controller
+                    // Only invoke controller when there's an actual choice to make
+                    if available.is_empty() {
+                        // No available actions - automatically pass priority
+                        break None;
+                    }
+
                     // Clear replay mode if all choices have been replayed
                     // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT
                     // include the upcoming choice (which hasn't been presented yet)
@@ -2204,13 +2223,14 @@ impl<'a> GameLoop<'a> {
 
                     // Ask controller to choose one (or None to pass)
                     let view = GameStateView::new(self.game, current_priority);
-                    let choice = controller.choose_spell_ability_to_play(&view, &available);
+                    let choice_result = controller.choose_spell_ability_to_play(&view, &available);
+                    let choice_value = handle_choice_result!(choice_result, self.game);
 
                     // Log this choice point for snapshot/replay
-                    let replay_choice = crate::game::ReplayChoice::SpellAbility(choice.clone());
+                    let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
                     self.log_choice_point(current_priority, Some(replay_choice));
 
-                    choice
+                    break choice_value;
                 };
 
                 match choice {
@@ -2355,13 +2375,18 @@ impl<'a> GameLoop<'a> {
                                     vec![valid_targets[0]]
                                 } else {
                                     // Multiple valid targets - ask controller to choose
-                                    let view = GameStateView::new(self.game, current_priority);
+                                    // Loop to allow undo/retry
+                                    let chosen_targets = loop {
+                                        let view = GameStateView::new(self.game, current_priority);
+                                        let choice = controller.choose_targets(&view, card_id, &valid_targets);
+                                        let targets_value = handle_choice_result!(choice, self.game);
 
-                                    let chosen_targets = controller.choose_targets(&view, card_id, &valid_targets);
+                                        // Log this choice point for snapshot/replay
+                                        let replay_choice = crate::game::ReplayChoice::Targets(targets_value.clone());
+                                        self.log_choice_point(current_priority, Some(replay_choice));
 
-                                    // Log this choice point for snapshot/replay
-                                    let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
-                                    self.log_choice_point(current_priority, Some(replay_choice));
+                                        break targets_value;
+                                    };
 
                                     chosen_targets.into_iter().collect()
                                 };
@@ -2458,13 +2483,18 @@ impl<'a> GameLoop<'a> {
                                         vec![valid_targets[0]]
                                     } else {
                                         // Multiple valid targets - ask controller to choose
-                                        let view = GameStateView::new(self.game, current_priority);
+                                        // Loop to allow undo/retry
+                                        let chosen_targets = loop {
+                                            let view = GameStateView::new(self.game, current_priority);
+                                            let choice = controller.choose_targets(&view, card_id, &valid_targets);
+                                            let targets_value = handle_choice_result!(choice, self.game);
 
-                                        let chosen_targets = controller.choose_targets(&view, card_id, &valid_targets);
+                                            // Log this choice point for snapshot/replay
+                                            let replay_choice = crate::game::ReplayChoice::Targets(targets_value.clone());
+                                            self.log_choice_point(current_priority, Some(replay_choice));
 
-                                        // Log this choice point for snapshot/replay
-                                        let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
-                                        self.log_choice_point(current_priority, Some(replay_choice));
+                                            break targets_value;
+                                        };
 
                                         chosen_targets.into_iter().collect()
                                     };

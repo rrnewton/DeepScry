@@ -4,8 +4,7 @@
 //! generic action choices. Makes random choices from available options.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::GameStateView;
-use crate::game::controller::PlayerController;
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use smallvec::SmallVec;
@@ -68,7 +67,7 @@ impl PlayerController for RandomController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         // INVARIANT: Choice 0 = pass priority (always available)
         //            Choice N (N > 0) = available[N-1]
 
@@ -79,7 +78,7 @@ impl PlayerController for RandomController {
             let player_name = view.player_name();
             view.logger()
                 .controller_choice("RANDOM", &format!("{} chose 'p' (pass priority)", player_name));
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         // Randomly choose one of the available spell abilities
@@ -103,7 +102,7 @@ impl PlayerController for RandomController {
             "RANDOM",
             &format!("{} chose {} - {}", player_name, ability_index, choice_description),
         );
-        Some(available[ability_index].clone())
+        ChoiceResult::Ok(Some(available[ability_index].clone()))
     }
 
     fn choose_targets(
@@ -111,10 +110,10 @@ impl PlayerController for RandomController {
         view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // For now, just pick a random target if any are available
         // TODO: Improve targeting logic based on spell requirements
-        if valid_targets.is_empty() {
+        let result = if valid_targets.is_empty() {
             // Only log when there are no targets (could be meaningful)
             view.logger()
                 .controller_choice("RANDOM", "chose no targets (none available)");
@@ -134,7 +133,8 @@ impl PlayerController for RandomController {
             let mut targets = SmallVec::new();
             targets.push(valid_targets[index]);
             targets
-        }
+        };
+        ChoiceResult::Ok(result)
     }
 
     fn choose_mana_sources_to_pay(
@@ -142,7 +142,7 @@ impl PlayerController for RandomController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Simple greedy approach: tap sources until we have enough mana
         // TODO: Improve to consider mana colors and optimization
         let mut sources = SmallVec::new();
@@ -168,10 +168,10 @@ impl PlayerController for RandomController {
             sources.push(source_id);
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Randomly decide whether each creature attacks
         let mut attackers = SmallVec::new();
 
@@ -200,7 +200,7 @@ impl PlayerController for RandomController {
             );
         }
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -208,14 +208,14 @@ impl PlayerController for RandomController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Randomly assign blockers to attackers
         let mut blocks = SmallVec::new();
 
         if attackers.is_empty() {
             view.logger()
                 .controller_choice("RANDOM", "chose no blockers (no attackers to block)");
-            return blocks;
+            return ChoiceResult::Ok(blocks);
         }
 
         for (blocker_idx, &blocker_id) in available_blockers.iter().enumerate() {
@@ -243,7 +243,7 @@ impl PlayerController for RandomController {
             );
         }
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -251,7 +251,7 @@ impl PlayerController for RandomController {
         view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Randomly shuffle the blockers to create a damage assignment order
         let mut ordered_blockers: Vec<CardId> = blockers.to_vec();
         ordered_blockers.shuffle(&mut self.rng);
@@ -264,7 +264,7 @@ impl PlayerController for RandomController {
             );
         }
 
-        ordered_blockers.into_iter().collect()
+        ChoiceResult::Ok(ordered_blockers.into_iter().collect())
     }
 
     fn choose_cards_to_discard(
@@ -272,7 +272,7 @@ impl PlayerController for RandomController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Randomly choose cards to discard from hand
         let mut hand_vec: Vec<CardId> = hand.to_vec();
         hand_vec.shuffle(&mut self.rng);
@@ -291,7 +291,7 @@ impl PlayerController for RandomController {
             );
         }
 
-        hand_vec.iter().take(num_discarding).copied().collect()
+        ChoiceResult::Ok(hand_vec.iter().take(num_discarding).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

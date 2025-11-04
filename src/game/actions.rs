@@ -3,7 +3,7 @@
 use crate::core::{CardId, CardType, Cost, Effect, Keyword, PlayerId, TargetRef, TriggerEvent};
 use crate::game::GameState;
 use crate::zones::Zone;
-use crate::{MtgError, Result};
+use crate::{handle_choice_result, MtgError, Result};
 use smallvec::SmallVec;
 
 /// Types of game actions
@@ -1746,8 +1746,9 @@ impl GameState {
         // First pass: collect all damage assignment orders for attackers with multiple blockers
         let mut damage_orders: HashMap<CardId, SmallVec<[CardId; 4]>> = HashMap::new();
 
-        // Use iterator to avoid Vec allocation for attackers
-        for attacker_id in self.combat.attackers_iter() {
+        // Collect attackers to avoid borrow conflict with undo in handle_choice_result!
+        let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
+        for attacker_id in attackers {
             if self.combat.is_blocked(attacker_id) {
                 let blockers = self.combat.get_blockers(attacker_id);
 
@@ -1755,12 +1756,16 @@ impl GameState {
                 if blockers.len() > 1 {
                     let attacker = self.cards.get(attacker_id)?;
                     let attacker_owner = attacker.owner;
-                    let view = GameStateView::new(self, attacker_owner);
 
-                    let ordered_blockers = if attacker_owner == attacker_controller.player_id() {
-                        attacker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
-                    } else {
-                        blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
+                    // Loop to allow undo/retry
+                    let ordered_blockers = loop {
+                        let view = GameStateView::new(self, attacker_owner);
+                        let choice = if attacker_owner == attacker_controller.player_id() {
+                            attacker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
+                        } else {
+                            blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
+                        };
+                        break handle_choice_result!(choice, self);
                     };
 
                     damage_orders.insert(attacker_id, ordered_blockers);

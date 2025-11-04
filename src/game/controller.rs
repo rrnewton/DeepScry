@@ -477,6 +477,80 @@ impl<'a> GameStateView<'a> {
     }
 }
 
+/// Result of a controller choice operation
+///
+/// This enum allows controllers to return not just a choice, but also
+/// special requests like undo, exit, or error conditions.
+#[derive(Debug, Clone)]
+pub enum ChoiceResult<T> {
+    /// Normal choice made successfully
+    Ok(T),
+    /// Request to undo N actions
+    UndoRequest(usize),
+    /// Request to cleanly exit the game
+    ExitGame,
+    /// Error in the controller
+    Error(String),
+}
+
+impl<T> ChoiceResult<T> {
+    /// Helper to check if this is an Ok variant
+    pub fn is_ok(&self) -> bool {
+        matches!(self, ChoiceResult::Ok(_))
+    }
+
+    /// Helper to unwrap the Ok value (panics if not Ok)
+    pub fn unwrap(self) -> T {
+        match self {
+            ChoiceResult::Ok(value) => value,
+            _ => panic!("Called unwrap on non-Ok ChoiceResult"),
+        }
+    }
+
+    /// Convert to Result for easier handling
+    pub fn into_result(self) -> Result<T, String> {
+        match self {
+            ChoiceResult::Ok(value) => Ok(value),
+            ChoiceResult::Error(msg) => Err(msg),
+            ChoiceResult::UndoRequest(n) => Err(format!("Undo request for {} actions", n)),
+            ChoiceResult::ExitGame => Err("Exit game requested".to_string()),
+        }
+    }
+}
+
+/// Macro for uniform handling of ChoiceResult at call sites
+///
+/// This macro reduces verbosity when handling ChoiceResult values in the game loop.
+/// It handles all the special cases (UndoRequest, ExitGame, Error) uniformly.
+///
+/// Usage: `handle_choice_result!(choice_result, game_state, error_context)`
+#[macro_export]
+macro_rules! handle_choice_result {
+    ($result:expr, $game:expr) => {
+        match $result {
+            $crate::game::controller::ChoiceResult::Ok(value) => value,
+            $crate::game::controller::ChoiceResult::UndoRequest(n) => {
+                // Perform undo
+                for _ in 0..n {
+                    if let Ok(Some(prior_log_size)) = $game.undo() {
+                        $game.logger.truncate_to(prior_log_size);
+                    } else {
+                        break; // No more actions to undo
+                    }
+                }
+                // After undo, continue the loop to re-prompt for choice
+                continue;
+            }
+            $crate::game::controller::ChoiceResult::ExitGame => {
+                return Err($crate::MtgError::InvalidAction("Game exit requested by controller".to_string()));
+            }
+            $crate::game::controller::ChoiceResult::Error(msg) => {
+                return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
+            }
+        }
+    };
+}
+
 /// Player controller interface
 ///
 /// This trait defines the decision-making interface for players (AI or human).
@@ -504,7 +578,8 @@ pub trait PlayerController {
     /// - Castable spells (if have mana and in appropriate phase)
     /// - Activated abilities (if can activate)
     ///
-    /// Returns the chosen ability, or None to pass priority.
+    /// Returns ChoiceResult with the chosen ability (or None to pass priority),
+    /// or a special request (UndoRequest, ExitGame, Error).
     ///
     /// Controllers that need randomness should maintain their own RNG
     /// (seeded independently from the game engine's RNG).
@@ -517,7 +592,7 @@ pub trait PlayerController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility>;
+    ) -> ChoiceResult<Option<SpellAbility>>;
 
     /// Choose targets for a spell or ability
     ///
@@ -527,6 +602,9 @@ pub trait PlayerController {
     /// For spells with no targets, this may not be called, or valid_targets
     /// will be empty.
     ///
+    /// Returns ChoiceResult with the chosen targets, or a special request
+    /// (UndoRequest, ExitGame, Error).
+    ///
     /// ## Java Forge Equivalent
     /// Matches `PlayerController.chooseTargetsFor(SpellAbility)`
     fn choose_targets(
@@ -534,7 +612,7 @@ pub trait PlayerController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]>;
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>>;
 
     /// Choose which mana sources to tap to pay a cost
     ///
@@ -542,7 +620,8 @@ pub trait PlayerController {
     /// At this point, the spell is already on the stack.
     ///
     /// The controller must choose which permanents to tap for mana to pay
-    /// the given cost. Returns the card IDs to tap in order.
+    /// the given cost. Returns ChoiceResult with the card IDs to tap in order,
+    /// or a special request (UndoRequest, ExitGame, Error).
     ///
     /// ## Java Forge Equivalent
     /// This is part of `PlayerController.payManaCost(...)` which the AI
@@ -552,25 +631,26 @@ pub trait PlayerController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]>;
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
     /// Choose which creatures to declare as attackers
     ///
     /// Called during the declare attackers step.
-    /// Returns a list of creature card IDs that should attack.
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]>;
+    /// Returns ChoiceResult with a list of creature card IDs that should attack,
+    /// or a special request (UndoRequest, ExitGame, Error).
+    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
     /// Choose how to block attacking creatures
     ///
     /// Called during the declare blockers step.
-    /// Returns pairs of (blocker, attacker) indicating which creature
-    /// blocks which attacker.
+    /// Returns ChoiceResult with pairs of (blocker, attacker) indicating which creature
+    /// blocks which attacker, or a special request (UndoRequest, ExitGame, Error).
     fn choose_blockers(
         &mut self,
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]>;
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>>;
 
     /// Choose the damage assignment order for blockers
     ///
@@ -578,19 +658,22 @@ pub trait PlayerController {
     /// The attacker's controller chooses the order in which damage will be assigned to blockers.
     /// MTG Rules 509.2: The attacking player announces the damage assignment order.
     ///
-    /// Returns the blockers in the order damage should be assigned. All blockers must be included.
+    /// Returns ChoiceResult with the blockers in the order damage should be assigned.
+    /// All blockers must be included. Can also return special requests (UndoRequest, ExitGame, Error).
     fn choose_damage_assignment_order(
         &mut self,
         view: &GameStateView,
         attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]>;
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>>;
 
     /// Choose cards to discard to maximum hand size
     ///
     /// Called during cleanup step if hand size exceeds maximum.
+    /// Returns ChoiceResult with the cards to discard, or a special request
+    /// (UndoRequest, ExitGame, Error).
     fn choose_cards_to_discard(&mut self, view: &GameStateView, hand: &[CardId], count: usize)
-        -> SmallVec<[CardId; 7]>;
+        -> ChoiceResult<SmallVec<[CardId; 7]>>;
 
     /// Notification that priority was passed
     ///

@@ -5,8 +5,7 @@
 //! to choosing the first option (index 0).
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::GameStateView;
-use crate::game::controller::PlayerController;
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
 /// A controller that follows a fixed script of choices for testing
@@ -76,7 +75,7 @@ impl PlayerController for FixedScriptController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         let choice_index = self.next_choice();
 
         // INVARIANT: Choice indices match menu display
@@ -87,7 +86,7 @@ impl PlayerController for FixedScriptController {
         if choice_index == 0 {
             // Choice 0 is always pass
             view.logger().controller_choice("SCRIPT", "chose [0] Pass priority");
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         // Convert displayed index to array index (subtract 1)
@@ -103,14 +102,14 @@ impl PlayerController for FixedScriptController {
                     available.len()
                 ),
             );
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         view.logger().controller_choice(
             "SCRIPT",
             &format!("chose [{}] from choices 0-{}", choice_index, available.len()),
         );
-        Some(available[action_index].clone())
+        ChoiceResult::Ok(Some(available[action_index].clone()))
     }
 
     fn choose_targets(
@@ -118,18 +117,18 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "chose no targets (none available)");
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         if valid_targets.len() == 1 {
             // Only one target available - no choice to make, don't log or consume script
             let mut targets = SmallVec::new();
             targets.push(valid_targets[0]);
-            return targets;
+            return ChoiceResult::Ok(targets);
         }
 
         // Multiple targets - use script
@@ -159,7 +158,7 @@ impl PlayerController for FixedScriptController {
 
         let mut targets = SmallVec::new();
         targets.push(valid_targets[clamped_index]);
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -167,7 +166,7 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Simple greedy approach: take sources in order until we have enough
         // Script controller doesn't use randomness, just takes first N sources
         let mut sources = SmallVec::new();
@@ -188,14 +187,14 @@ impl PlayerController for FixedScriptController {
             sources.push(source_id);
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "chose no attackers (none available)");
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Use script to decide how many creatures to attack with
@@ -217,7 +216,7 @@ impl PlayerController for FixedScriptController {
             attackers.push(creature_id);
         }
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -225,11 +224,11 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if attackers.is_empty() || available_blockers.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "chose no blockers (none available or no attackers)");
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Use script to decide how many blockers to use
@@ -251,7 +250,7 @@ impl PlayerController for FixedScriptController {
             blocks.push((blocker_id, attackers[0]));
         }
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -259,7 +258,7 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Just return blockers in the order they were provided
         // Script controller doesn't reorder
         if blockers.len() >= 2 {
@@ -272,7 +271,7 @@ impl PlayerController for FixedScriptController {
             );
         }
 
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -280,7 +279,7 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Discard first N cards from hand
         let num_discarding = count.min(hand.len());
 
@@ -295,7 +294,7 @@ impl PlayerController for FixedScriptController {
             );
         }
 
-        hand.iter().take(num_discarding).copied().collect()
+        ChoiceResult::Ok(hand.iter().take(num_discarding).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {
