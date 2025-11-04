@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-04T01:15:30.550472105+00:00
+updated_at: 2025-11-04T01:27:41.624019464+00:00
 ---
 
 # Description
@@ -40,7 +40,7 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 
 **Choice presentation:**
 - ✓ mtg-7bbb00: Show ownership and IDs in target choices
-- mtg-8a3ffb: Enhanced choice highlighting during gameplay
+- ✓ mtg-8a3ffb: Enhanced choice highlighting during gameplay (2025-11-04)
 
 **Infrastructure:**
 - ✓ Logging interference fix: Memory-only mode for fancy TUI to prevent screen flickering
@@ -68,11 +68,18 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Card text newlines (mtg-897dd0) - commit 62cf104
 - [x] Smarter layout with variable sized cards (mtg-1af4f0) - commits 964113e, edd041f, 65ad5b3
 - [x] Mouse support (mtg-1a7bae) - 2025-11-04
-- [ ] Advanced choice presentation (mtg-8a3ffb)
+- [x] Enhanced choice highlighting (mtg-8a3ffb) - 2025-11-04
 
 ## Recent progress (2025-11-04)
 
-Added mouse support (mtg-1a7bae):
+Enhanced choice highlighting (mtg-8a3ffb):
+- Added ChoiceContext enum (PlayingSpell, DeclareAttackers, DeclareBlockers, TargetSelection)
+- Tracks valid_choices for each decision context
+- Highlights playable cards (bright white), dims unplayable cards (dark gray)
+- Applied to all choice methods: spell/ability selection, attackers, blockers, targets
+- Instant visual feedback shows what's possible at each decision point
+
+Mouse support (mtg-1a7bae):
 - Enabled mouse capture in terminal setup/restore
 - Implemented card position tracking during rendering
 - Added mouse click hit testing in input loop
@@ -121,9 +128,7 @@ Updated order based on user priority:
 
 7. **COMPLETED - Interactive features:**
    - ✓ mtg-1a7bae: Mouse support (2025-11-04)
+   - ✓ mtg-8a3ffb: Enhanced choice highlighting (2025-11-04)
 
-8. **Choice improvements:**
-   - mtg-8a3ffb: Enhanced choice highlighting
-
-9. **Polish (deferred):**
+8. **Polish (deferred):**
    - mtg-6326b9: Further card rendering improvements

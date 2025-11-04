@@ -67,6 +67,21 @@ struct CardPosition {
     area: Rect,
 }
 
+/// Context for what kind of choice is being made
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChoiceContext {
+    /// Playing a spell or activating an ability
+    PlayingSpell,
+    /// Declaring attackers
+    DeclareAttackers,
+    /// Declaring blockers
+    DeclareBlockers,
+    /// Selecting a target for a spell/ability
+    TargetSelection,
+    /// No active choice context
+    None,
+}
+
 /// Application state for the fancy TUI
 struct FancyTuiState {
     /// Currently selected left tab
@@ -87,6 +102,10 @@ struct FancyTuiState {
     selected_card_in_opp_bf: Option<CardId>,
     /// Card positions for mouse hit testing (cleared and rebuilt each frame)
     card_positions: Vec<CardPosition>,
+    /// Cards that can currently be chosen (for highlighting)
+    valid_choices: Vec<CardId>,
+    /// What kind of choice is being made
+    choice_context: ChoiceContext,
 }
 
 impl FancyTuiState {
@@ -101,6 +120,8 @@ impl FancyTuiState {
             selected_card_in_your_bf: None,
             selected_card_in_opp_bf: None,
             card_positions: Vec::new(),
+            valid_choices: Vec::new(),
+            choice_context: ChoiceContext::None,
         }
     }
 }
@@ -981,7 +1002,21 @@ impl FancyTuiController {
             Style::default().fg(border_color)
         };
 
-        let text_style = if is_tapped {
+        // Determine if card is in valid choices list
+        let is_valid_choice = self.state.valid_choices.contains(&card_id);
+        let has_choice_context = self.state.choice_context != ChoiceContext::None;
+
+        // Apply highlighting/dimming based on choice context
+        let text_style = if has_choice_context {
+            if is_valid_choice {
+                // Valid choice: bright/normal
+                Style::default().fg(Color::White)
+            } else {
+                // Invalid choice: dimmed
+                Style::default().fg(Color::DarkGray)
+            }
+        } else if is_tapped {
+            // No choice context: show tapped state as usual
             Style::default().fg(Color::Gray)
         } else {
             Style::default().fg(Color::White)
@@ -1791,6 +1826,17 @@ impl PlayerController for FancyTuiController {
             return None;
         }
 
+        // Set choice context and valid choices for highlighting
+        self.state.choice_context = ChoiceContext::PlayingSpell;
+        self.state.valid_choices = available
+            .iter()
+            .map(|ability| match ability {
+                SpellAbility::PlayLand { card_id } => *card_id,
+                SpellAbility::CastSpell { card_id } => *card_id,
+                SpellAbility::ActivateAbility { card_id, .. } => *card_id,
+            })
+            .collect();
+
         let player_name = view.player_name();
         let prompt = format!("Priority {}: Choose action", player_name);
 
@@ -1811,11 +1857,17 @@ impl PlayerController for FancyTuiController {
             }))
             .collect();
 
-        match self.prompt_for_choice(view, &prompt, &choices) {
+        let result = match self.prompt_for_choice(view, &prompt, &choices) {
             Ok(Some(0)) | Ok(None) => None, // Pass
             Ok(Some(idx)) if idx > 0 && idx <= available.len() => Some(available[idx - 1].clone()),
             _ => None,
-        }
+        };
+
+        // Clear choice context after making choice
+        self.state.choice_context = ChoiceContext::None;
+        self.state.valid_choices.clear();
+
+        result
     }
 
     fn choose_targets(
@@ -1827,6 +1879,10 @@ impl PlayerController for FancyTuiController {
         if valid_targets.is_empty() {
             return SmallVec::new();
         }
+
+        // Set choice context and valid choices for highlighting
+        self.state.choice_context = ChoiceContext::TargetSelection;
+        self.state.valid_choices = valid_targets.to_vec();
 
         let spell_name = view.card_name(spell).unwrap_or_default();
         let prompt = format!("Choose target for: {}", spell_name);
@@ -1870,6 +1926,10 @@ impl PlayerController for FancyTuiController {
             _ => {}
         }
 
+        // Clear choice context after making choice
+        self.state.choice_context = ChoiceContext::None;
+        self.state.valid_choices.clear();
+
         targets
     }
 
@@ -1909,6 +1969,10 @@ impl PlayerController for FancyTuiController {
             return SmallVec::new();
         }
 
+        // Set choice context and valid choices for highlighting
+        self.state.choice_context = ChoiceContext::DeclareAttackers;
+        self.state.valid_choices = available_creatures.to_vec();
+
         let mut attackers = SmallVec::new();
 
         loop {
@@ -1933,6 +1997,10 @@ impl PlayerController for FancyTuiController {
             }
         }
 
+        // Clear choice context after making choice
+        self.state.choice_context = ChoiceContext::None;
+        self.state.valid_choices.clear();
+
         attackers
     }
 
@@ -1945,6 +2013,10 @@ impl PlayerController for FancyTuiController {
         if attackers.is_empty() || available_blockers.is_empty() {
             return SmallVec::new();
         }
+
+        // Set choice context: both blockers and attackers are valid choices
+        self.state.choice_context = ChoiceContext::DeclareBlockers;
+        self.state.valid_choices = available_blockers.iter().chain(attackers.iter()).copied().collect();
 
         let mut blocks = SmallVec::new();
 
@@ -1983,6 +2055,10 @@ impl PlayerController for FancyTuiController {
                 _ => break,
             }
         }
+
+        // Clear choice context after making choice
+        self.state.choice_context = ChoiceContext::None;
+        self.state.valid_choices.clear();
 
         blocks
     }
