@@ -117,7 +117,7 @@ impl PlayerController for RandomController {
         if valid_targets.is_empty() {
             // Only log when there are no targets (could be meaningful)
             view.logger()
-                .controller_choice("RANDOM", "chose no targets (none available)");
+                .controller_choice("RANDOM", "Chose no targets (none available)");
             SmallVec::new()
         } else if valid_targets.len() == 1 {
             // Only one target available - no choice to make, don't log
@@ -129,7 +129,7 @@ impl PlayerController for RandomController {
             let index = self.rng.gen_range(0..valid_targets.len());
             view.logger().controller_choice(
                 "RANDOM",
-                &format!("chose target {} out of choices 0-{}", index, valid_targets.len() - 1),
+                &format!("Chose target {} out of choices 0-{}", index, valid_targets.len() - 1),
             );
             let mut targets = SmallVec::new();
             targets.push(valid_targets[index]);
@@ -157,7 +157,7 @@ impl PlayerController for RandomController {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!(
-                    "chose {} mana sources (shuffled from {} available sources)",
+                    "Chose {} mana sources (shuffled from {} available sources)",
                     needed.min(available_sources.len()),
                     available_sources.len()
                 ),
@@ -181,7 +181,7 @@ impl PlayerController for RandomController {
                 view.logger().controller_choice(
                     "RANDOM",
                     &format!(
-                        "chose creature {} to attack (50% probability) out of {} available creatures",
+                        "Chose creature {} to attack (50% probability) out of {} available creatures",
                         idx,
                         available_creatures.len()
                     ),
@@ -194,7 +194,7 @@ impl PlayerController for RandomController {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!(
-                    "chose no attackers from {} available creatures",
+                    "Chose no attackers from {} available creatures",
                     available_creatures.len()
                 ),
             );
@@ -214,7 +214,7 @@ impl PlayerController for RandomController {
 
         if attackers.is_empty() {
             view.logger()
-                .controller_choice("RANDOM", "chose no blockers (no attackers to block)");
+                .controller_choice("RANDOM", "Chose no blockers (no attackers to block)");
             return blocks;
         }
 
@@ -226,7 +226,7 @@ impl PlayerController for RandomController {
                 view.logger().controller_choice(
                     "RANDOM",
                     &format!(
-                        "chose blocker {} (50% probability) to block attacker {} out of {} attackers",
+                        "Chose blocker {} (50% probability) to block attacker {} out of {} attackers",
                         blocker_idx,
                         attacker_idx,
                         attackers.len()
@@ -239,7 +239,7 @@ impl PlayerController for RandomController {
         if blocks.is_empty() && !available_blockers.is_empty() {
             view.logger().controller_choice(
                 "RANDOM",
-                &format!("chose no blockers from {} available blockers", available_blockers.len()),
+                &format!("Chose no blockers from {} available blockers", available_blockers.len()),
             );
         }
 
@@ -260,7 +260,7 @@ impl PlayerController for RandomController {
         if blockers.len() >= 2 {
             view.logger().controller_choice(
                 "RANDOM",
-                &format!("chose damage assignment order (shuffled {} blockers)", blockers.len()),
+                &format!("Chose damage assignment order (shuffled {} blockers)", blockers.len()),
             );
         }
 
@@ -284,7 +284,7 @@ impl PlayerController for RandomController {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!(
-                    "chose {} cards to discard (shuffled from {} cards in hand)",
+                    "Chose {} cards to discard (shuffled from {} cards in hand)",
                     num_discarding,
                     hand.len()
                 ),

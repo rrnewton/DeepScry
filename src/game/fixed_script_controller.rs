@@ -86,7 +86,7 @@ impl PlayerController for FixedScriptController {
 
         if choice_index == 0 {
             // Choice 0 is always pass
-            view.logger().controller_choice("SCRIPT", "chose [0] Pass priority");
+            view.logger().controller_choice("SCRIPT", "Chose [0] Pass priority");
             return None;
         }
 
@@ -121,7 +121,7 @@ impl PlayerController for FixedScriptController {
     ) -> SmallVec<[CardId; 4]> {
         if valid_targets.is_empty() {
             view.logger()
-                .controller_choice("SCRIPT", "chose no targets (none available)");
+                .controller_choice("SCRIPT", "Chose no targets (none available)");
             return SmallVec::new();
         }
 
@@ -194,7 +194,7 @@ impl PlayerController for FixedScriptController {
     fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
         if available_creatures.is_empty() {
             view.logger()
-                .controller_choice("SCRIPT", "chose no attackers (none available)");
+                .controller_choice("SCRIPT", "Chose no attackers (none available)");
             return SmallVec::new();
         }
 
@@ -228,7 +228,7 @@ impl PlayerController for FixedScriptController {
     ) -> SmallVec<[(CardId, CardId); 8]> {
         if attackers.is_empty() || available_blockers.is_empty() {
             view.logger()
-                .controller_choice("SCRIPT", "chose no blockers (none available or no attackers)");
+                .controller_choice("SCRIPT", "Chose no blockers (none available or no attackers)");
             return SmallVec::new();
         }
 

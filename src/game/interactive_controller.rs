@@ -633,7 +633,7 @@ impl PlayerController for InteractiveController {
 
         // Log the choice
         if targets.is_empty() {
-            view.logger().controller_choice("TUI", "chose no target");
+            view.logger().controller_choice("TUI", "Chose no target");
         } else {
             let target_names: Vec<String> = targets
                 .iter()
