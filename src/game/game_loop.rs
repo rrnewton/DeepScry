@@ -918,14 +918,10 @@ impl<'a> GameLoop<'a> {
         }
 
         // Print state for each player
-        for (idx, player) in self.game.players.iter().enumerate() {
+        for player in self.game.players.iter() {
             let is_active = player.id == self.game.turn.active_player;
             let marker = if is_active { " (active)" } else { "" };
 
-            // Add spacing before player (but not before the first one)
-            if idx > 0 {
-                println!();
-            }
             println!("{}{}: ", player.name, marker);
             println!("  Life: {}", player.life);
 
@@ -1014,11 +1010,6 @@ impl<'a> GameLoop<'a> {
                         println!("    {} ({}){}", card.name, card_id, tap_status);
                     }
                 }
-            }
-
-            // Add spacing between players (but not after the last one)
-            if idx < self.game.players.len() - 1 {
-                println!();
             }
         }
         println!();

@@ -99,12 +99,16 @@ impl InteractiveController {
                         self.display_help();
                         continue; // Re-prompt
                     }
-                    "v" => {
+                    "b" => {
                         self.display_battlefield_view(game_view);
                         continue; // Re-prompt
                     }
                     "g" => {
                         self.display_graveyard_view(game_view);
+                        continue; // Re-prompt
+                    }
+                    "v" => {
+                        self.display_card_view(game_view);
                         continue; // Re-prompt
                     }
                     _ => {} // Not a special command, continue with normal parsing
@@ -145,8 +149,9 @@ impl InteractiveController {
         println!("\n=== Help ===");
         println!("Available commands:");
         println!("  ?  - Show this help menu");
-        println!("  v  - View battlefield");
+        println!("  b  - View battlefield");
         println!("  g  - View graveyard");
+        println!("  v  - View card details");
         println!("\nGame actions:");
         if self.numeric_choices {
             println!("  Enter a number to choose an action");
@@ -228,6 +233,123 @@ impl InteractiveController {
         }
 
         println!();
+    }
+
+    /// Display card details view with selectable card menu
+    fn display_card_view(&self, view: &GameStateView) {
+        println!("\n=== Card Details ===");
+
+        // Collect all distinct cards from hand and battlefield
+        let mut card_names_to_ids: std::collections::HashMap<String, Vec<CardId>> = std::collections::HashMap::new();
+
+        // Add cards from hand
+        for &card_id in view.hand() {
+            if let Some(name) = view.card_name(card_id) {
+                card_names_to_ids.entry(name.clone()).or_default().push(card_id);
+            }
+        }
+
+        // Add cards from battlefield (all players)
+        for &card_id in view.battlefield() {
+            if let Some(name) = view.card_name(card_id) {
+                card_names_to_ids.entry(name.clone()).or_default().push(card_id);
+            }
+        }
+
+        // Sort card names alphabetically
+        let mut card_names: Vec<_> = card_names_to_ids.keys().collect();
+        card_names.sort();
+
+        if card_names.is_empty() {
+            println!("  No cards visible.");
+            println!();
+            return;
+        }
+
+        // Display menu of cards
+        println!("Select a card to view details:");
+        for (idx, name) in card_names.iter().enumerate() {
+            let count = card_names_to_ids[*name].len();
+            let count_str = if count > 1 {
+                format!(" (x{})", count)
+            } else {
+                String::new()
+            };
+            println!("  [{}] {}{}", idx, name, count_str);
+        }
+
+        // Get user selection
+        print!("Enter card number (or press Enter to cancel): ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            return;
+        }
+
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return; // Canceled
+        }
+
+        // Parse selection
+        if let Ok(choice) = trimmed.parse::<usize>() {
+            if choice < card_names.len() {
+                let card_name = card_names[choice];
+                if let Some(card_ids) = card_names_to_ids.get(card_name) {
+                    // Get the first card with this name to display details
+                    if let Some(&card_id) = card_ids.first() {
+                        Self::print_card_details(view, card_id);
+                    }
+                }
+            } else {
+                eprintln!("Invalid selection: {}", choice);
+            }
+        } else {
+            eprintln!("Invalid input: {}", trimmed);
+        }
+
+        println!();
+    }
+
+    /// Print detailed information about a card
+    ///
+    /// This method shares the same formatting logic as the Fancy TUI's Card Details panel
+    fn print_card_details(view: &GameStateView, card_id: CardId) {
+        if let Some(card) = view.get_card(card_id) {
+            println!("\n────────────────────────────────────────");
+            println!("{}", card.name);
+            println!("────────────────────────────────────────");
+
+            // Card type line
+            let types_str = card
+                .types
+                .iter()
+                .map(|t| format!("{:?}", t))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("Type: {}", types_str);
+
+            // Mana cost
+            println!("Cost: {}", card.mana_cost);
+
+            // Power/Toughness for creatures
+            if card.is_creature() {
+                println!("P/T: {}/{}", card.power.unwrap_or(0), card.toughness.unwrap_or(0));
+            }
+
+            // Card text
+            if !card.text.is_empty() {
+                println!();
+                for line in card.text.split('\n') {
+                    println!("{}", line);
+                }
+            }
+
+            println!("────────────────────────────────────────");
+        } else {
+            println!("  Card not found: {:?}", card_id);
+        }
     }
 
     /// Helper: display a list of cards with indices
@@ -337,12 +459,16 @@ impl PlayerController for InteractiveController {
                         self.display_help();
                         continue; // Re-prompt
                     }
-                    "v" => {
+                    "b" => {
                         self.display_battlefield_view(view);
                         continue; // Re-prompt
                     }
                     "g" => {
                         self.display_graveyard_view(view);
+                        continue; // Re-prompt
+                    }
+                    "v" => {
+                        self.display_card_view(view);
                         continue; // Re-prompt
                     }
                     _ => {} // Not a special command, continue with parsing
