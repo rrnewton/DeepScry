@@ -1094,10 +1094,10 @@ impl<'a> GameLoop<'a> {
             Effect::DealDamage { target, amount } => match target {
                 TargetRef::Player(target_player_id) => {
                     let target_name = self.get_player_name(*target_player_id);
-                    let new_life = self.game.get_player(*target_player_id)
-                        .map(|p| p.life)
-                        .unwrap_or(0);
-                    let message = format!("{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}");
+                    let new_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
+                    let message = format!(
+                        "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}"
+                    );
                     self.game.logger.normal(&message);
                 }
                 TargetRef::Permanent(target_card_id) => {
@@ -1107,17 +1107,19 @@ impl<'a> GameLoop<'a> {
                         .get(*target_card_id)
                         .map(|c| c.name.as_str())
                         .unwrap_or("Unknown");
-                    let message = format!("{source_name} ({source_id}) deals {amount} damage to {target_name} ({target_card_id})");
+                    let message = format!(
+                        "{source_name} ({source_id}) deals {amount} damage to {target_name} ({target_card_id})"
+                    );
                     self.game.logger.normal(&message);
                 }
                 TargetRef::None => {
                     // Target will be filled in by resolve_spell - log against opponent
                     if let Some(opponent_id) = self.game.players.iter().map(|p| p.id).find(|id| *id != _source_owner) {
                         let target_name = self.get_player_name(opponent_id);
-                        let new_life = self.game.get_player(opponent_id)
-                            .map(|p| p.life)
-                            .unwrap_or(0);
-                        let message = format!("{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}");
+                        let new_life = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
+                        let message = format!(
+                            "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}"
+                        );
                         self.game.logger.normal(&message);
                     }
                 }
@@ -1129,10 +1131,10 @@ impl<'a> GameLoop<'a> {
             }
             Effect::GainLife { player, amount } => {
                 let player_name = self.get_player_name(*player);
-                let new_life = self.game.get_player(*player)
-                    .map(|p| p.life)
-                    .unwrap_or(0);
-                let message = format!("{source_name} ({source_id}) causes {player_name} to gain {amount} life - life: {new_life}");
+                let new_life = self.game.get_player(*player).map(|p| p.life).unwrap_or(0);
+                let message = format!(
+                    "{source_name} ({source_id}) causes {player_name} to gain {amount} life - life: {new_life}"
+                );
                 self.game.logger.normal(&message);
             }
             Effect::DestroyPermanent { target } => {
@@ -1832,7 +1834,8 @@ impl<'a> GameLoop<'a> {
                     if let Some(defending_player) = self.game.combat.get_defending_player(*attacker_id) {
                         let defender_name = self.get_player_name(defending_player);
                         if power > 0 {
-                            let message = format!("{attacker_name} ({attacker_id}) deals {power} damage to {defender_name}");
+                            let message =
+                                format!("{attacker_name} ({attacker_id}) deals {power} damage to {defender_name}");
                             self.game.logger.normal(&message);
                         }
                     }
@@ -2472,40 +2475,18 @@ impl<'a> GameLoop<'a> {
                                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
                                         // Use ManaEngine to compute proper color-aware tap order
                                         use crate::game::mana_engine::ManaEngine;
-                                        use crate::game::mana_payment::{
-                                            GreedyManaResolver, ManaPaymentResolver, ManaSource,
-                                        };
+                                        use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
 
                                         let mut mana_engine = ManaEngine::new();
                                         mana_engine.update(self.game, current_priority);
 
-                                        // Build ManaSource list for resolver
-                                        let mut mana_sources = Vec::new();
-                                        for &source_card_id in &self.game.battlefield.cards {
-                                            if let Ok(card) = self.game.cards.get(source_card_id) {
-                                                if card.owner == current_priority && card.is_land() && !card.tapped {
-                                                    // Determine mana production for this land
-                                                    let production = if let Some(prod) = Self::get_mana_production(card)
-                                                    {
-                                                        prod
-                                                    } else {
-                                                        continue; // Skip lands we don't know how to tap yet
-                                                    };
-
-                                                    mana_sources.push(ManaSource {
-                                                        card_id: source_card_id,
-                                                        production,
-                                                        is_tapped: card.tapped,
-                                                        has_summoning_sickness: false, // Lands don't have summoning sickness
-                                                    });
-                                                }
-                                            }
-                                        }
+                                        // Get ManaSource list from engine (already built with proper production info)
+                                        let mana_sources = mana_engine.all_sources();
 
                                         // Use GreedyManaResolver to compute proper tap order
                                         let resolver = GreedyManaResolver::new();
                                         let sources_to_tap = resolver
-                                            .compute_tap_order(mana_cost, &mana_sources)
+                                            .compute_tap_order(mana_cost, mana_sources)
                                             .unwrap_or_else(Vec::new);
 
                                         // Tap lands to add mana to pool
