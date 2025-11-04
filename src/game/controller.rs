@@ -542,7 +542,9 @@ macro_rules! handle_choice_result {
                 continue;
             }
             $crate::game::controller::ChoiceResult::ExitGame => {
-                return Err($crate::MtgError::InvalidAction("Game exit requested by controller".to_string()));
+                return Err($crate::MtgError::InvalidAction(
+                    "Game exit requested by controller".to_string(),
+                ));
             }
             $crate::game::controller::ChoiceResult::Error(msg) => {
                 return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
@@ -638,7 +640,11 @@ pub trait PlayerController {
     /// Called during the declare attackers step.
     /// Returns ChoiceResult with a list of creature card IDs that should attack,
     /// or a special request (UndoRequest, ExitGame, Error).
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>>;
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
     /// Choose how to block attacking creatures
     ///
@@ -672,8 +678,12 @@ pub trait PlayerController {
     /// Called during cleanup step if hand size exceeds maximum.
     /// Returns ChoiceResult with the cards to discard, or a special request
     /// (UndoRequest, ExitGame, Error).
-    fn choose_cards_to_discard(&mut self, view: &GameStateView, hand: &[CardId], count: usize)
-        -> ChoiceResult<SmallVec<[CardId; 7]>>;
+    fn choose_cards_to_discard(
+        &mut self,
+        view: &GameStateView,
+        hand: &[CardId],
+        count: usize,
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>>;
 
     /// Notification that priority was passed
     ///

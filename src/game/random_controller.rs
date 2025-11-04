@@ -171,7 +171,11 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Randomly decide whether each creature attacks
         let mut attackers = SmallVec::new();
 
@@ -344,7 +348,7 @@ mod tests {
 
         // With no available abilities, should return None
         let choice = controller.choose_spell_ability_to_play(&view, &[]);
-        assert_eq!(choice, None);
+        assert_eq!(choice.unwrap(), None);
     }
 
     #[test]
@@ -368,7 +372,7 @@ mod tests {
         let mut found_choice = false;
         for _ in 0..20 {
             let choice = controller.choose_spell_ability_to_play(&view, &abilities);
-            if let Some(chosen) = choice {
+            if let Some(chosen) = choice.unwrap() {
                 found_choice = true;
                 // The choice should be one of the available abilities
                 assert!(abilities.contains(&chosen));
@@ -388,11 +392,12 @@ mod tests {
         let spell_id = EntityId::new(100);
         let valid_targets = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
         let targets = controller.choose_targets(&view, spell_id, &valid_targets);
+        let targets_val = targets.unwrap();
 
         // Should choose exactly one target
-        assert_eq!(targets.len(), 1);
+        assert_eq!(targets_val.len(), 1);
         // Target should be from the valid list
-        assert!(valid_targets.contains(&targets[0]));
+        assert!(valid_targets.contains(&targets_val[0]));
     }
 
     #[test]
@@ -412,11 +417,12 @@ mod tests {
         ];
 
         let sources = controller.choose_mana_sources_to_pay(&view, &cost, &available);
+        let sources_val = sources.unwrap();
 
         // Should choose exactly 4 sources (equal to CMC)
-        assert_eq!(sources.len(), 4);
+        assert_eq!(sources_val.len(), 4);
         // All sources should be from the available list
-        for source in sources.iter() {
+        for source in sources_val.iter() {
             assert!(available.contains(source));
         }
     }
@@ -430,10 +436,11 @@ mod tests {
 
         let creatures = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
         let attackers = controller.choose_attackers(&view, &creatures);
+        let attackers_val = attackers.unwrap();
 
         // Should return a SmallVec (possibly empty)
         // All attackers should be from the available creatures
-        for attacker in attackers.iter() {
+        for attacker in attackers_val.iter() {
             assert!(creatures.contains(attacker));
         }
     }
@@ -453,12 +460,13 @@ mod tests {
         ];
 
         let discards = controller.choose_cards_to_discard(&view, &hand, 2);
+        let discards_val = discards.unwrap();
 
         // Should discard exactly 2 cards
-        assert_eq!(discards.len(), 2);
+        assert_eq!(discards_val.len(), 2);
 
         // All discarded cards should be from hand
-        for card in discards.iter() {
+        for card in discards_val.iter() {
             assert!(hand.contains(card));
         }
     }

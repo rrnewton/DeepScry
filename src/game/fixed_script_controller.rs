@@ -190,7 +190,11 @@ impl PlayerController for FixedScriptController {
         ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "chose no attackers (none available)");
@@ -366,11 +370,11 @@ mod tests {
         // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
         // First choice: index 1 → abilities[0] (first ability)
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, Some(abilities[0].clone()));
+        assert_eq!(choice1.unwrap(), Some(abilities[0].clone()));
 
         // Second choice: index 2 → abilities[1] (second ability)
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, Some(abilities[1].clone()));
+        assert_eq!(choice2.unwrap(), Some(abilities[1].clone()));
     }
 
     #[test]
@@ -392,11 +396,11 @@ mod tests {
 
         // Index 0 = pass priority
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, None);
+        assert_eq!(choice1.unwrap(), None);
 
         // Out of bounds choice (99) should also pass
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, None);
+        assert_eq!(choice2.unwrap(), None);
     }
 
     #[test]
@@ -411,13 +415,15 @@ mod tests {
 
         // First choice: index 2 (third target)
         let targets1 = controller.choose_targets(&view, spell_id, &valid_targets);
-        assert_eq!(targets1.len(), 1);
-        assert_eq!(targets1[0], valid_targets[2]);
+        let targets1_val = targets1.unwrap();
+        assert_eq!(targets1_val.len(), 1);
+        assert_eq!(targets1_val[0], valid_targets[2]);
 
         // Second choice: index 0 (first target)
         let targets2 = controller.choose_targets(&view, spell_id, &valid_targets);
-        assert_eq!(targets2.len(), 1);
-        assert_eq!(targets2[0], valid_targets[0]);
+        let targets2_val = targets2.unwrap();
+        assert_eq!(targets2_val.len(), 1);
+        assert_eq!(targets2_val[0], valid_targets[0]);
     }
 
     #[test]
@@ -432,13 +438,15 @@ mod tests {
 
         // First choice: 2 attackers
         let attackers1 = controller.choose_attackers(&view, &creatures);
-        assert_eq!(attackers1.len(), 2);
-        assert_eq!(attackers1[0], creatures[0]);
-        assert_eq!(attackers1[1], creatures[1]);
+        let attackers1_val = attackers1.unwrap();
+        assert_eq!(attackers1_val.len(), 2);
+        assert_eq!(attackers1_val[0], creatures[0]);
+        assert_eq!(attackers1_val[1], creatures[1]);
 
         // Second choice: 0 attackers
         let attackers2 = controller.choose_attackers(&view, &creatures);
-        assert_eq!(attackers2.len(), 0);
+        let attackers2_val = attackers2.unwrap();
+        assert_eq!(attackers2_val.len(), 0);
     }
 
     #[test]
@@ -460,14 +468,14 @@ mod tests {
         // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
         // First choice: index 1 → abilities[0] (first ability)
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, Some(abilities[0].clone()));
+        assert_eq!(choice1.unwrap(), Some(abilities[0].clone()));
 
         // Script exhausted, should default to index 0 → pass priority
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, None);
+        assert_eq!(choice2.unwrap(), None);
 
         // Should keep passing
         let choice3 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice3, None);
+        assert_eq!(choice3.unwrap(), None);
     }
 }

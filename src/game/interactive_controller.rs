@@ -696,7 +696,11 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }

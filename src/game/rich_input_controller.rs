@@ -186,7 +186,11 @@ impl PlayerController for RichInputController {
         ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }
@@ -407,7 +411,7 @@ mod tests {
         }];
 
         let choice = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert!(choice.is_some());
+        assert!(choice.unwrap().is_some());
     }
 
     #[test]
@@ -418,6 +422,6 @@ mod tests {
         let view = GameStateView::new(&game, player_id);
 
         let choice = controller.choose_spell_ability_to_play(&view, &[]);
-        assert!(choice.is_none());
+        assert!(choice.unwrap().is_none());
     }
 }

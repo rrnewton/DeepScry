@@ -171,7 +171,11 @@ impl PlayerController for ReplayController {
         self.inner.choose_mana_sources_to_pay(view, cost, available_sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Try to consume a replay choice first
         if let Some(attackers) = self.consume_replay_choice(|c| {
             if let ReplayChoice::Attackers(a) = c {
@@ -300,12 +304,12 @@ mod tests {
         // First call should return the replayed choice
         assert!(replay.has_replay_choice());
         let choice1 = replay.choose_spell_ability_to_play(&view, &[]);
-        assert!(choice1.is_some());
+        assert!(choice1.unwrap().is_some());
 
         // Second call should return the second replayed choice
         assert!(replay.has_replay_choice());
         let choice2 = replay.choose_spell_ability_to_play(&view, &[]);
-        assert!(choice2.is_none()); // Second choice was None (pass priority)
+        assert!(choice2.unwrap().is_none()); // Second choice was None (pass priority)
 
         // After exhausting replay choices, should delegate to inner controller
         assert!(!replay.has_replay_choice());

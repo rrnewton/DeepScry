@@ -1518,7 +1518,7 @@ impl<'a> GameLoop<'a> {
                 );
                 self.replaying = false;
                 if self.verbosity >= VerbosityLevel::Verbose {
-                    println!("✅ REPLAY MODE COMPLETE - will present attacker choice to controller");
+                    eprintln!("✅ REPLAY MODE COMPLETE - will present attacker choice to controller");
                 }
             } else if self.replaying {
                 eprintln!(
@@ -2490,7 +2490,8 @@ impl<'a> GameLoop<'a> {
                                             let targets_value = handle_choice_result!(choice, self.game);
 
                                             // Log this choice point for snapshot/replay
-                                            let replay_choice = crate::game::ReplayChoice::Targets(targets_value.clone());
+                                            let replay_choice =
+                                                crate::game::ReplayChoice::Targets(targets_value.clone());
                                             self.log_choice_point(current_priority, Some(replay_choice));
 
                                             break targets_value;

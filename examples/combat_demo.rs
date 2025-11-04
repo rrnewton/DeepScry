@@ -11,6 +11,7 @@
 //! Uses classic cards from Limited/Alpha/Beta/4th Edition
 
 use mtg_forge_rs::core::{Card, CardId, CardType, EntityId, ManaCost, Player, PlayerId, SpellAbility};
+use mtg_forge_rs::game::controller::ChoiceResult;
 use mtg_forge_rs::game::controller::PlayerController;
 use mtg_forge_rs::game::{GameLoop, GameState, GameStateView, Step};
 use smallvec::SmallVec;
@@ -43,8 +44,8 @@ impl PlayerController for AliceController {
         &mut self,
         _view: &GameStateView,
         _available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
-        None // Alice doesn't take actions in this demo (combat-only)
+    ) -> ChoiceResult<Option<SpellAbility>> {
+        ChoiceResult::Ok(None) // Alice doesn't take actions in this demo (combat-only)
     }
 
     fn choose_targets(
@@ -52,8 +53,8 @@ impl PlayerController for AliceController {
         _view: &GameStateView,
         _spell: CardId,
         _valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
-        SmallVec::new() // Alice doesn't cast spells in this demo
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        ChoiceResult::Ok(SmallVec::new()) // Alice doesn't cast spells in this demo
     }
 
     fn choose_mana_sources_to_pay(
@@ -61,11 +62,15 @@ impl PlayerController for AliceController {
         _view: &GameStateView,
         _cost: &ManaCost,
         _available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
-        SmallVec::new() // Alice doesn't tap for mana in this demo
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        ChoiceResult::Ok(SmallVec::new()) // Alice doesn't tap for mana in this demo
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Attack with all our creatures that are in the list
         let mut attackers = SmallVec::new();
         for &creature_id in available_creatures {
@@ -80,7 +85,7 @@ impl PlayerController for AliceController {
         if !attackers.is_empty() {
             println!("  Alice finishes declaring attackers");
         }
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -88,8 +93,8 @@ impl PlayerController for AliceController {
         _view: &GameStateView,
         _available_blockers: &[CardId],
         _attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
-        SmallVec::new() // Alice doesn't block in this demo
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
+        ChoiceResult::Ok(SmallVec::new()) // Alice doesn't block in this demo
     }
 
     fn choose_damage_assignment_order(
@@ -97,9 +102,9 @@ impl PlayerController for AliceController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Keep blockers in the order they were provided
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -107,9 +112,9 @@ impl PlayerController for AliceController {
         _view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Alice discards the first N cards in hand
-        hand.iter().take(count).copied().collect()
+        ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {}
@@ -149,8 +154,8 @@ impl PlayerController for BobController {
         &mut self,
         _view: &GameStateView,
         _available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
-        None // Bob doesn't take actions in this demo (combat-only)
+    ) -> ChoiceResult<Option<SpellAbility>> {
+        ChoiceResult::Ok(None) // Bob doesn't take actions in this demo (combat-only)
     }
 
     fn choose_targets(
@@ -158,8 +163,8 @@ impl PlayerController for BobController {
         _view: &GameStateView,
         _spell: CardId,
         _valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
-        SmallVec::new() // Bob doesn't cast spells in this demo
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        ChoiceResult::Ok(SmallVec::new()) // Bob doesn't cast spells in this demo
     }
 
     fn choose_mana_sources_to_pay(
@@ -167,12 +172,16 @@ impl PlayerController for BobController {
         _view: &GameStateView,
         _cost: &ManaCost,
         _available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
-        SmallVec::new() // Bob doesn't tap for mana in this demo
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        ChoiceResult::Ok(SmallVec::new()) // Bob doesn't tap for mana in this demo
     }
 
-    fn choose_attackers(&mut self, _view: &GameStateView, _available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
-        SmallVec::new() // Bob doesn't attack in this demo
+    fn choose_attackers(
+        &mut self,
+        _view: &GameStateView,
+        _available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        ChoiceResult::Ok(SmallVec::new()) // Bob doesn't attack in this demo
     }
 
     fn choose_blockers(
@@ -180,7 +189,7 @@ impl PlayerController for BobController {
         view: &GameStateView,
         available_blockers: &[CardId],
         _attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Block according to our plan
         let mut blocks = SmallVec::new();
         for (blocker_id, attacker_id) in &self.blocking_assignments {
@@ -198,7 +207,7 @@ impl PlayerController for BobController {
         if !blocks.is_empty() {
             println!("  Bob finishes declaring blockers");
         }
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -206,9 +215,9 @@ impl PlayerController for BobController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Keep blockers in the order they were provided
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -216,9 +225,9 @@ impl PlayerController for BobController {
         _view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Bob discards the first N cards in hand
-        hand.iter().take(count).copied().collect()
+        ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {}

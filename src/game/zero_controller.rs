@@ -73,7 +73,11 @@ impl PlayerController for ZeroController {
         ChoiceResult::Ok(available_sources.iter().take(needed).copied().collect())
     }
 
-    fn choose_attackers(&mut self, _view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        _view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Attack with all available creatures
         ChoiceResult::Ok(available_creatures.iter().copied().collect())
     }
@@ -154,7 +158,7 @@ mod tests {
 
         // With no available abilities, should return None
         let choice = controller.choose_spell_ability_to_play(&view, &[]);
-        assert_eq!(choice, None);
+        assert_eq!(choice.unwrap(), None);
     }
 
     #[test]
@@ -177,7 +181,7 @@ mod tests {
 
         // Should choose the first ability (PlayLand)
         assert_eq!(
-            chosen,
+            chosen.unwrap(),
             Some(SpellAbility::PlayLand {
                 card_id: EntityId::new(10)
             })
@@ -194,10 +198,11 @@ mod tests {
         let spell_id = EntityId::new(100);
         let valid_targets = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
         let targets = controller.choose_targets(&view, spell_id, &valid_targets);
+        let targets_val = targets.unwrap();
 
         // Should choose the first target
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0], EntityId::new(20));
+        assert_eq!(targets_val.len(), 1);
+        assert_eq!(targets_val[0], EntityId::new(20));
     }
 
     #[test]
@@ -209,9 +214,10 @@ mod tests {
 
         let spell_id = EntityId::new(100);
         let targets = controller.choose_targets(&view, spell_id, &[]);
+        let targets_val = targets.unwrap();
 
         // No targets available
-        assert_eq!(targets.len(), 0);
+        assert_eq!(targets_val.len(), 0);
     }
 
     #[test]
@@ -231,13 +237,14 @@ mod tests {
         ];
 
         let sources = controller.choose_mana_sources_to_pay(&view, &cost, &available);
+        let sources_val = sources.unwrap();
 
         // Should choose first 4 sources (equal to CMC)
-        assert_eq!(sources.len(), 4);
-        assert_eq!(sources[0], EntityId::new(10));
-        assert_eq!(sources[1], EntityId::new(11));
-        assert_eq!(sources[2], EntityId::new(12));
-        assert_eq!(sources[3], EntityId::new(13));
+        assert_eq!(sources_val.len(), 4);
+        assert_eq!(sources_val[0], EntityId::new(10));
+        assert_eq!(sources_val[1], EntityId::new(11));
+        assert_eq!(sources_val[2], EntityId::new(12));
+        assert_eq!(sources_val[3], EntityId::new(13));
     }
 
     #[test]
@@ -249,12 +256,13 @@ mod tests {
 
         let creatures = vec![EntityId::new(30), EntityId::new(31), EntityId::new(32)];
         let attackers = controller.choose_attackers(&view, &creatures);
+        let attackers_val = attackers.unwrap();
 
         // Should attack with all creatures
-        assert_eq!(attackers.len(), 3);
-        assert_eq!(attackers[0], EntityId::new(30));
-        assert_eq!(attackers[1], EntityId::new(31));
-        assert_eq!(attackers[2], EntityId::new(32));
+        assert_eq!(attackers_val.len(), 3);
+        assert_eq!(attackers_val[0], EntityId::new(30));
+        assert_eq!(attackers_val[1], EntityId::new(31));
+        assert_eq!(attackers_val[2], EntityId::new(32));
     }
 
     #[test]
@@ -267,11 +275,12 @@ mod tests {
         let blockers = vec![EntityId::new(40), EntityId::new(41)];
         let attackers = vec![EntityId::new(50), EntityId::new(51), EntityId::new(52)];
         let blocks = controller.choose_blockers(&view, &blockers, &attackers);
+        let blocks_val = blocks.unwrap();
 
         // Should block first 2 attackers (limited by blocker count)
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0], (EntityId::new(40), EntityId::new(50)));
-        assert_eq!(blocks[1], (EntityId::new(41), EntityId::new(51)));
+        assert_eq!(blocks_val.len(), 2);
+        assert_eq!(blocks_val[0], (EntityId::new(40), EntityId::new(50)));
+        assert_eq!(blocks_val[1], (EntityId::new(41), EntityId::new(51)));
     }
 
     #[test]
@@ -289,10 +298,11 @@ mod tests {
         ];
 
         let discards = controller.choose_cards_to_discard(&view, &hand, 2);
+        let discards_val = discards.unwrap();
 
         // Should discard first 2 cards
-        assert_eq!(discards.len(), 2);
-        assert_eq!(discards[0], EntityId::new(60));
-        assert_eq!(discards[1], EntityId::new(61));
+        assert_eq!(discards_val.len(), 2);
+        assert_eq!(discards_val[0], EntityId::new(60));
+        assert_eq!(discards_val[1], EntityId::new(61));
     }
 }

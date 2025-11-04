@@ -2495,7 +2495,11 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Port of Java's AiAttackController.declareAttackers()
         // Reference: AiAttackController.java:818
 
