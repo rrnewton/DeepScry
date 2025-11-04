@@ -53,6 +53,7 @@ jwalk = "0.8"
 
 # Parallel execution
 rayon = "1.10"
+num_cpus = "1.16"
 
 [dev-dependencies]
 criterion = "0.5"

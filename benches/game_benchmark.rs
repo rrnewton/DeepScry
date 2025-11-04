@@ -990,6 +990,13 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     use rayon::prelude::*;
     use std::sync::{Arc, Mutex};
 
+    // Configure rayon to use only physical cores (not hyperthreads)
+    let num_physical_cores = num_cpus::get_physical();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_physical_cores)
+        .build_global()
+        .ok(); // Ignore error if already initialized
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -1004,7 +1011,8 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
 
     let initial_seed = 42u64;
-    let num_threads = rayon::current_num_threads();
+    // Use only physical cores (not hyperthreads) to isolate allocator contention
+    let num_threads = num_physical_cores;
 
     // Accumulator for aggregating metrics
     let aggregated = Arc::new(Mutex::new(GameMetrics {
