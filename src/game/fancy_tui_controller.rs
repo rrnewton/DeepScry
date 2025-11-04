@@ -139,9 +139,16 @@ impl FancyTuiController {
 
     /// Restore the terminal to normal mode
     fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        use std::io::Write;
+
+        // Restore terminal state in reverse order of setup
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
+
+        // Flush all pending operations to ensure terminal is fully restored
+        terminal.backend_mut().flush()?;
+
         Ok(())
     }
 

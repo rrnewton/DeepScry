@@ -1018,7 +1018,9 @@ async fn run_tui(
     // Enable log tail mode if requested (captures logs to buffer)
     // Must be done BEFORE creating game loop since loop borrows game mutably
     if log_tail.is_some() {
-        game.logger.enable_capture();
+        // Use Both mode to capture AND output to stdout (not Memory which suppresses stdout)
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
     }
 
     // Enable memory-only logging if fancy TUI is being used (prevents screen flickering)
@@ -1689,7 +1691,9 @@ async fn run_resume(
     // Enable log tail mode if requested (captures logs to buffer)
     // Must be done BEFORE creating game loop since loop borrows game mutably
     if log_tail.is_some() {
-        game.logger.enable_capture();
+        // Use Both mode to capture AND output to stdout (not Memory which suppresses stdout)
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
     }
 
     // Enable memory-only logging if fancy TUI is being used (prevents screen flickering)
