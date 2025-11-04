@@ -1,28 +1,51 @@
 #!/usr/bin/env bash
 # Continue an agent play session with one more choice
-# Usage: ./agentplay/continue_game.sh <choice>  OR  ./agentplay/continue_game.sh --p1 <choice>  OR  ./agentplay/continue_game.sh --p2 <choice>
+# Usage: ./agentplay/continue_game.sh [--game-dir=path] <choice>
+#        ./agentplay/continue_game.sh [--game-dir=path] --p1 <choice>
+#        ./agentplay/continue_game.sh [--game-dir=path] --p2 <choice>
 #
 # The script auto-detects whose turn it is from the snapshot.
 # You can optionally specify --p1 or --p2 for sanity checking.
 #
 # Examples:
-#   ./agentplay/continue_game.sh "1"                # Auto-detect whose turn
+#   ./agentplay/continue_game.sh "1"                # Auto-detect whose turn (uses current.game)
 #   ./agentplay/continue_game.sh --p1 "1"           # Assert it's P1's turn
 #   ./agentplay/continue_game.sh --p2 "0"           # Assert it's P2's turn
 #   ./agentplay/continue_game.sh --p1 "play mountain"
+#   ./agentplay/continue_game.sh --game-dir=042.game "1"  # Continue specific game
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GAME_DIR="$SCRIPT_DIR/current.game"
 
 # Parse arguments
+GAME_DIR=""
 PLAYER_OVERRIDE=""  # Set if user explicitly specifies --p1 or --p2
 CHOICE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --game-dir=*)
+            GAME_DIR="${1#*=}"
+            # Convert relative path to absolute
+            if [[ ! "$GAME_DIR" = /* ]]; then
+                GAME_DIR="$SCRIPT_DIR/$GAME_DIR"
+            fi
+            shift
+            ;;
+        --game-dir)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --game-dir requires a value"
+                exit 1
+            fi
+            GAME_DIR="$2"
+            # Convert relative path to absolute
+            if [[ ! "$GAME_DIR" = /* ]]; then
+                GAME_DIR="$SCRIPT_DIR/$GAME_DIR"
+            fi
+            shift 2
+            ;;
         --p1)
             PLAYER_OVERRIDE="p1"
             shift
@@ -50,7 +73,7 @@ while [[ $# -gt 0 ]]; do
                 shift
             else
                 echo "Error: Unknown argument: $1"
-                echo "Usage: $0 <choice>  OR  $0 --p1 <choice>  OR  $0 --p2 <choice>"
+                echo "Usage: $0 [--game-dir=path] <choice>  OR  $0 [--game-dir=path] --p1 <choice>  OR  $0 [--game-dir=path] --p2 <choice>"
                 exit 1
             fi
             ;;
@@ -59,29 +82,39 @@ done
 
 if [[ -z "$CHOICE" ]]; then
     echo "Error: Must provide a choice"
-    echo "Usage: $0 <choice>  OR  $0 --p1 <choice>  OR  $0 --p2 <choice>"
+    echo "Usage: $0 [--game-dir=path] <choice>  OR  $0 [--game-dir=path] --p1 <choice>  OR  $0 [--game-dir=path] --p2 <choice>"
     echo "Examples:"
-    echo "  $0 \"1\"                # Auto-detect whose turn"
+    echo "  $0 \"1\"                # Auto-detect whose turn (uses current.game)"
     echo "  $0 --p1 \"1\"           # Assert it's P1's turn"
     echo "  $0 --p2 \"0\"           # Assert it's P2's turn"
+    echo "  $0 --game-dir=042.game \"1\"  # Continue specific game"
     exit 1
+fi
+
+# Default to current.game if --game-dir not specified
+if [[ -z "$GAME_DIR" ]]; then
+    GAME_DIR="$SCRIPT_DIR/current.game"
 fi
 
 # Check that we have a game directory
 if [[ ! -d "$GAME_DIR" ]]; then
-    echo "Error: No current.game found. Run start_game.sh first."
+    echo "Error: Game directory not found: $GAME_DIR"
+    if [[ "$GAME_DIR" == "$SCRIPT_DIR/current.game" ]]; then
+        echo "Hint: Run start_game.sh first to create a game."
+    fi
     exit 1
 fi
 
 # Check that we have initial args
 if [[ ! -f "$GAME_DIR/initial_args.txt" ]]; then
-    echo "Error: initial_args.txt not found. Run start_game.sh first."
+    echo "Error: initial_args.txt not found in $GAME_DIR"
+    echo "This doesn't appear to be a valid game directory."
     exit 1
 fi
 
 # Check that we have choice files
 if [[ ! -f "$GAME_DIR/p1_choices.txt" ]] || [[ ! -f "$GAME_DIR/p2_choices.txt" ]]; then
-    echo "Error: Choice files not found. Run start_game.sh first."
+    echo "Error: Choice files not found in $GAME_DIR"
     exit 1
 fi
 
@@ -160,13 +193,13 @@ else
     P2_CHOICES=""
 fi
 
-# Read initial game arguments
-INITIAL_ARGS=$(cat "$GAME_DIR/initial_args.txt")
+# Read initial game arguments - handle multiline format
+mapfile -t INITIAL_ARGS < "$GAME_DIR/initial_args.txt"
 
 # Build the mtg command - start from scratch with all choices accumulated so far
 CMD=(
     cargo run --release --bin mtg -- tui
-    $INITIAL_ARGS  # Note: no quotes to allow word splitting
+    "${INITIAL_ARGS[@]}"
     --p1=fixed
     --p2=fixed
     --p1-fixed-inputs="$P1_CHOICES"
@@ -179,7 +212,7 @@ CMD=(
 )
 
 # Build reproducer command (without cargo run for cleaner output)
-REPRODUCER_CMD="mtg tui $INITIAL_ARGS --p1=fixed --p2=fixed --p1-fixed-inputs=\"$P1_CHOICES\" --p2-fixed-inputs=\"$P2_CHOICES\" --stop-on-choice=\"$NEXT_STOP\" --seed=42 --json --log-tail=100"
+REPRODUCER_CMD="mtg tui ${INITIAL_ARGS[*]} --p1=fixed --p2=fixed --p1-fixed-inputs=\"$P1_CHOICES\" --p2-fixed-inputs=\"$P2_CHOICES\" --stop-on-choice=\"$NEXT_STOP\" --seed=42 --json --log-tail=100"
 
 # Update the reproduce_game.sh script with current state
 cat > "$GAME_DIR/reproduce_game.sh" <<EOF
@@ -192,7 +225,7 @@ set -euo pipefail
 REPO_ROOT="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "\$REPO_ROOT"
 
-cargo run --release --bin mtg -- tui $INITIAL_ARGS \\
+cargo run --release --bin mtg -- tui ${INITIAL_ARGS[*]} \\
     --p1=fixed \\
     --p2=fixed \\
     --p1-fixed-inputs="$P1_CHOICES" \\
@@ -206,6 +239,7 @@ chmod +x "$GAME_DIR/reproduce_game.sh"
 
 echo "============================================"
 echo "Continuing agent play session"
+echo "Game directory: $(basename "$GAME_DIR")"
 echo "Choice for $PLAYER: $CHOICE"
 echo "P1 choices so far: $P1_COUNT | P2 choices so far: $P2_COUNT"
 echo "Will stop after choice #$NEXT_STOP"
@@ -222,4 +256,4 @@ cd "$REPO_ROOT"
 echo ""
 echo "Use ./agentplay/continue_game.sh <choice> to add another choice (auto-detects turn)."
 echo "Or use --p1/--p2 flags for explicit turn specification."
-echo "Or run ./agentplay/current.game/reproduce_game.sh to replay the full session."
+echo "Or run $(basename "$GAME_DIR")/reproduce_game.sh to replay the full session."

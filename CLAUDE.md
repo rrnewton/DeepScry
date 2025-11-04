@@ -161,7 +161,7 @@ Finally, also before committing reanalyze the relationship between (1) what you 
 Commit message justifies game play logic with real games
 --------------------------------------------------------
 
-Except for purely internal fixes that don't directly affect MTG gameplay, in every commit you will need to justify changes with real gameplay logs. Add a section to the commit message which provides evidence for the correct behavior of the fix in the form of a log snippet from a real `mtg tui` CLI game, ideally with a runnable reproducer CLI command.
+Except for purely internal fixes that don't directly affect MTG gameplay, in every commit you will need to justify changes with real gameplay logs. Add a section to the commit message which provides evidence for the correct behavior of the fix in the form of a log snippet from a real `agentplay/*.sh`/`mtg tui` CLI game, ideally with a runnable reproducer CLI command.
 
 - We will reason about the behavior of the game in terms of the log messages of game actions.
 - Compare against the rules of MTG (and cite the rule numbers where applicable). Keep an eye out for for missing behaviors, contradictory information, or impossible events.
@@ -169,6 +169,6 @@ Except for purely internal fixes that don't directly affect MTG gameplay, in eve
 
 Runnable commands included in the message should refer to actual `.dck` files in the repository so that the user can indeed reproduce them and see the logs cited.
 
-See the file `ai_docs/HOWTO_AGENTPLAY+REPRODUCERS.md` for instructions on playing the game as an agent to observe engine behaviors without writing new code.
+See the file `docs/HOWTO_AGENTPLAY+REPRODUCERS.md` for instructions on playing the game as an agent to observe engine behaviors without writing new code.
 
 
