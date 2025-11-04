@@ -314,31 +314,13 @@ impl PlayerController for InteractiveController {
 
             Some(available[choice - 1].clone())
         } else {
-            // Original mode: indices match array, 'p' to pass, OR rich text commands
-            println!("\nAvailable actions:");
-            for (idx, ability) in available.iter().enumerate() {
-                match ability {
-                    SpellAbility::PlayLand { card_id } => {
-                        let name = view.card_name(*card_id).unwrap_or_default();
-                        println!("  [{}] Play {}", idx, name);
-                    }
-                    SpellAbility::CastSpell { card_id } => {
-                        let name = view.card_name(*card_id).unwrap_or_default();
-                        println!("  [{}] Cast {}", idx, name);
-                    }
-                    SpellAbility::ActivateAbility { card_id, .. } => {
-                        let name = view.card_name(*card_id).unwrap_or_default();
-                        println!("  [{}] Activate {}", idx, name);
-                    }
-                }
-            }
+            // Non-numeric mode: Index 0 = Pass, 1+ = actions, OR rich text commands
+            // Use shared format_choice_menu for consistency
+            print!("{}", crate::game::controller::format_choice_menu(view, available));
 
             // Read user input and try rich command parsing first
             loop {
-                print!(
-                    "Choose action (0-{}, 'p' to pass, or ? for help): ",
-                    available.len() - 1
-                );
+                print!("Choose action (0-{}, or ? for help): ", available.len());
                 io::stdout().flush().unwrap();
 
                 let mut input = String::new();
@@ -406,10 +388,19 @@ impl PlayerController for InteractiveController {
                 }
 
                 // Try numeric parsing
+                // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
                 match trimmed.parse::<usize>() {
-                    Ok(choice) if choice < available.len() => {
+                    Ok(0) => {
+                        // Index 0 = pass
+                        println!("  {} passed priority.", player_name);
+                        return None;
+                    }
+                    Ok(choice) if choice <= available.len() => {
+                        // Index 1 to N maps to available[0] to available[N-1]
+                        let action_index = choice - 1;
+
                         // Acknowledge the chosen action
-                        match &available[choice] {
+                        match &available[action_index] {
                             SpellAbility::PlayLand { card_id } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} played land: {}", player_name, name);
@@ -423,12 +414,12 @@ impl PlayerController for InteractiveController {
                                 println!("  {} activated ability: {}", player_name, name);
                             }
                         }
-                        return Some(available[choice].clone());
+                        return Some(available[action_index].clone());
                     }
                     _ => {
                         eprintln!(
-                            "Invalid choice. Enter 0-{}, 'play X', 'cast Y', or 'p' to pass.",
-                            available.len() - 1
+                            "Invalid choice. Enter 0 to pass, 1-{} for actions, or 'play X', 'cast Y' commands.",
+                            available.len()
                         );
                     }
                 }
