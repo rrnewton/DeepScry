@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-03T16:34:35.049692113+00:00
-updated_at: 2025-11-03T23:54:58.323097845+00:00
+updated_at: 2025-11-04T01:15:30.550472105+00:00
 ---
 
 # Description
@@ -36,7 +36,7 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - ✓ mtg-b3f1fe: Pane focus with keyboard shortcuts (H, I, Y, O, A, S)
 - ✓ Card navigation: Hand and Battlefield panes with arrow keys (commit c4d0e5c)
 - ✓ mtg-fa42e3: Populate Card Details pane on selection
-- mtg-1a7bae: Mouse support for card selection
+- ✓ mtg-1a7bae: Mouse support for card selection (2025-11-04)
 
 **Choice presentation:**
 - ✓ mtg-7bbb00: Show ownership and IDs in target choices
@@ -67,24 +67,24 @@ This tracks the evolution from the initial implementation to a fully-featured, p
 - [x] Turn display improvements (mtg-29343b) - commit 62cf104
 - [x] Card text newlines (mtg-897dd0) - commit 62cf104
 - [x] Smarter layout with variable sized cards (mtg-1af4f0) - commits 964113e, edd041f, 65ad5b3
-- [ ] Remaining interactive features (mtg-1a7bae: mouse support)
+- [x] Mouse support (mtg-1a7bae) - 2025-11-04
 - [ ] Advanced choice presentation (mtg-8a3ffb)
 
-## Recent progress (2025-11-03)
+## Recent progress (2025-11-04)
 
-Major card rendering improvements in today's session:
+Added mouse support (mtg-1a7bae):
+- Enabled mouse capture in terminal setup/restore
+- Implemented card position tracking during rendering
+- Added mouse click hit testing in input loop
+- Click cards in battlefield to select and view details
+- Automatic pane focus switching when clicking cards
+- Selected cards highlighted with bold border
+
+Previous progress (2025-11-03):
 - Commit 964113e: Phase 1 - Natural card tapping with dimension swapping
 - Commit edd041f: Phase 2 - Greedy card size optimization
 - Commit 65ad5b3: Aspect ratio fixes and priority-based card content layout
 - Commit 62cf104: Turn display and card text newline rendering
-
-Cards now:
-- Maintain proper aspect ratio (10:7) when resizing
-- Dynamically size to fill battlefield (greedy optimization)
-- Show detailed content (title, cost, tapped indicator, P/T, description, type)
-- Display P/T in bottom-right corner
-- Respect newlines in card text (Card Details pane)
-- Swap dimensions when tapped to simulate rotation
 
 ## Implementation order
 
@@ -119,8 +119,8 @@ Updated order based on user priority:
    - ✓ mtg-29343b: Turn display improvements (spacing, active player)
    - ✓ mtg-897dd0: Card text newlines
 
-7. **Remaining interactive features:**
-   - mtg-1a7bae: Mouse support
+7. **COMPLETED - Interactive features:**
+   - ✓ mtg-1a7bae: Mouse support (2025-11-04)
 
 8. **Choice improvements:**
    - mtg-8a3ffb: Enhanced choice highlighting

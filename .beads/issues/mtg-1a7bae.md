@@ -1,10 +1,10 @@
 ---
 title: 'Fancy TUI: Mouse support for card selection'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2025-11-03T16:36:35.032190062+00:00
-updated_at: 2025-11-03T16:36:35.032190062+00:00
+updated_at: 2025-11-04T01:15:06.279563428+00:00
 ---
 
 # Description
@@ -13,80 +13,65 @@ Part of: mtg-dba689
 
 Add mouse support for selecting cards and viewing details.
 
-## Features
+## Status
 
-### Click on card
-- Click any card in Hand or Battlefield -> select it and show in Card Details pane
-- Clicked card is highlighted (bold text or different border)
-
-### Click in panes
-- Optionally: Click in a pane to focus it (complementing keyboard shortcuts)
-
-### Visual feedback
-- Highlighted/selected card shown with bold text
-- Or use different border style for selected card
+✅ **COMPLETED** (2025-11-04)
 
 ## Implementation
 
-### Enable mouse events
+### Mouse capture enabled
+- `setup_terminal()`: Enabled `EnableMouseCapture`
+- `restore_terminal()`: Disabled `DisableMouseCapture`
 
-In `setup_terminal`:
-```rust
-use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
+### Card position tracking
+- Added `CardPosition` struct to track card ID and screen area
+- Added `card_positions: Vec<CardPosition>` to `FancyTuiState`
+- Positions cleared at start of each frame in `draw_ui()`
+- Positions recorded during `render_card_box()` for each rendered card
 
-execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-```
+### Mouse event handling
+- Added mouse event handling in `wait_for_choice_input()`
+- Left mouse button click performs hit testing against all tracked card positions
+- Clicking a card:
+  - Sets `selected_card_id` to show in Card Details pane
+  - Updates battlefield selection (`selected_card_in_your_bf` or `selected_card_in_opp_bf`)
+  - Switches focus to appropriate battlefield pane
+  - Card is highlighted with bold border
+  - Triggers redraw to show selection
 
-In `restore_terminal`:
-```rust
-execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-```
+### Signature changes
+- Changed `draw_ui()`, `draw_battlefields()`, `draw_battlefield()`, `render_card_group()`, and `render_card_box()` from `&self` to `&mut self` to support position tracking
 
-### Handle mouse events
-
-In input event loop:
-```rust
-if let Event::Mouse(mouse_event) = event::read()? {
-    match mouse_event.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            let (x, y) = (mouse_event.column, mouse_event.row);
-            // Determine which pane was clicked
-            // Determine which card (if any) was clicked
-            // Update selected_card_id
-            return Ok(InputAction::Continue); // Redraw with new selection
-        }
-        _ => {}
-    }
-}
-```
-
-### Hit testing
-
-Need to track the screen positions of rendered cards:
-```rust
-struct CardPosition {
-    card_id: CardId,
-    area: Rect,
-}
-
-// Store during rendering, use during click handling
-```
-
-## Challenges
-
-- Tracking card positions during rendering
-- Hit testing: which card is at (x, y)?
-- Works best after 2D battlefield layout (mtg-fa9417)
-
-## Dependencies
-
-- Requires: mtg-b3f1fe (pane focus) - mouse clicks should update focus state
-- Works better with: mtg-fa9417 (2D battlefield) - easier to click individual cards
-
-## Files to modify
+## Files modified
 
 - `src/game/fancy_tui_controller.rs`:
-  - Enable/disable mouse capture in setup/restore
-  - Add mouse event handling
+  - Imports: Added `MouseButton`, `MouseEventKind`, `EnableMouseCapture`, `DisableMouseCapture`
+  - Added `CardPosition` struct
+  - Added `card_positions` field to `FancyTuiState`
+  - Modified setup/restore terminal functions
+  - Added mouse event handling in input loop
   - Track card positions during rendering
-  - Implement hit testing
+
+## Test Results
+
+All tests passing:
+- 363 unit tests (mtg_forge_rs)
+- 42 AI heuristic tests
+- 6 shell script tests (including controlled_draw_e2e)
+- 8 TUI e2e tests
+- 3 undo e2e tests
+Total: 405 tests passed
+
+## Features
+
+✅ Click on cards in battlefield to select and view details
+✅ Automatic pane focus switching when clicking cards
+✅ Selected card highlighted with bold border
+✅ Card Details pane updates with clicked card info
+✅ Works alongside existing keyboard navigation
+
+## Future enhancements (not in scope)
+
+- Click in Hand pane to select cards
+- Click in panes to focus them (in addition to keyboard shortcuts)
+- Different visual feedback for clicked vs keyboard-selected cards

@@ -7,7 +7,7 @@ use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{GameStateView, PlayerController};
 use crate::game::Step;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -60,6 +60,13 @@ enum FocusedPane {
     Stack,
 }
 
+/// Card position for hit testing during mouse clicks
+#[derive(Debug, Clone)]
+struct CardPosition {
+    card_id: CardId,
+    area: Rect,
+}
+
 /// Application state for the fancy TUI
 struct FancyTuiState {
     /// Currently selected left tab
@@ -78,6 +85,8 @@ struct FancyTuiState {
     selected_card_in_your_bf: Option<CardId>,
     /// Selected card in opponent battlefield (for navigation)
     selected_card_in_opp_bf: Option<CardId>,
+    /// Card positions for mouse hit testing (cleared and rebuilt each frame)
+    card_positions: Vec<CardPosition>,
 }
 
 impl FancyTuiState {
@@ -91,6 +100,7 @@ impl FancyTuiState {
             selected_card_in_hand: None,
             selected_card_in_your_bf: None,
             selected_card_in_opp_bf: None,
+            card_positions: Vec::new(),
         }
     }
 }
@@ -130,20 +140,23 @@ impl FancyTuiController {
 
     /// Initialize the terminal for TUI mode
     fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
+        use crossterm::event::EnableMouseCapture;
+
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         Terminal::new(backend)
     }
 
     /// Restore the terminal to normal mode
     fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        use crossterm::event::DisableMouseCapture;
         use std::io::Write;
 
         // Restore terminal state in reverse order of setup
         disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
         terminal.show_cursor()?;
 
         // Flush all pending operations to ensure terminal is fully restored
@@ -235,12 +248,14 @@ impl FancyTuiController {
 
     /// Draw the complete UI with all panels
     fn draw_ui(
-        &self,
+        &mut self,
         f: &mut Frame,
         view: &GameStateView,
         current_prompt: Option<&str>,
         choices: &[(String, bool)], // (text, is_highlighted)
     ) {
+        // Clear card positions from previous frame
+        self.state.card_positions.clear();
         // Main layout: 3 columns
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -439,7 +454,7 @@ impl FancyTuiController {
     }
 
     /// Draw both battlefields (opponent on top, player on bottom)
-    fn draw_battlefields(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+    fn draw_battlefields(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         // Split into opponent and player battlefields
         let bf_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -566,7 +581,7 @@ impl FancyTuiController {
     }
 
     /// Draw a single battlefield
-    fn draw_battlefield(&self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, _title: &str) {
+    fn draw_battlefield(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, _title: &str) {
         let battlefield = view.battlefield();
         let player_cards: Vec<CardId> = battlefield
             .iter()
@@ -718,8 +733,7 @@ impl FancyTuiController {
     /// Compute card width from height while maintaining the default aspect ratio
     /// This is the centralized function for all aspect ratio calculations
     fn compute_width_from_height(height: u16) -> u16 {
-        ((height as f32 * Self::DEFAULT_CARD_WIDTH as f32) / Self::DEFAULT_CARD_HEIGHT as f32)
-            .round() as u16
+        ((height as f32 * Self::DEFAULT_CARD_WIDTH as f32) / Self::DEFAULT_CARD_HEIGHT as f32).round() as u16
     }
 
     /// Get card dimensions based on tapped state and base size
@@ -853,7 +867,7 @@ impl FancyTuiController {
     /// Render a group of cards (lands, creatures, others) with dynamic packing
     #[allow(clippy::too_many_arguments)]
     fn render_card_group(
-        &self,
+        &mut self,
         f: &mut Frame,
         area: Rect,
         y_offset: u16,
@@ -928,7 +942,9 @@ impl FancyTuiController {
     }
 
     /// Render a single card as a box with priority-based content layout
-    fn render_card_box(&self, f: &mut Frame, area: Rect, view: &GameStateView, card_id: CardId) {
+    fn render_card_box(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, card_id: CardId) {
+        // Track card position for mouse hit testing
+        self.state.card_positions.push(CardPosition { card_id, area });
         let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
         let is_tapped = view.is_tapped(card_id);
         let card = view.get_card(card_id);
@@ -1333,166 +1349,178 @@ impl FancyTuiController {
     fn wait_for_choice_input(&mut self, num_choices: usize, view: &GameStateView) -> io::Result<InputAction> {
         loop {
             if event::poll(std::time::Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        // Pane focus switching (H, I, Y, O, A)
-                        KeyCode::Char('h') | KeyCode::Char('H') => {
-                            self.state.focused_pane = FocusedPane::Hand;
-                            // Initialize selection to first card if hand not empty
-                            let hand = view.hand();
-                            if !hand.is_empty() && self.state.selected_card_in_hand.is_none() {
-                                self.state.selected_card_in_hand = Some(0);
-                                self.state.selected_card_id = Some(hand[0]);
+                let event = event::read()?;
+                match event {
+                    Event::Mouse(mouse_event) => {
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                            let (x, y) = (mouse_event.column, mouse_event.row);
+
+                            // Check if any card was clicked
+                            for card_pos in &self.state.card_positions {
+                                if x >= card_pos.area.x
+                                    && x < card_pos.area.x + card_pos.area.width
+                                    && y >= card_pos.area.y
+                                    && y < card_pos.area.y + card_pos.area.height
+                                {
+                                    // Card clicked! Select it and show details
+                                    self.state.selected_card_id = Some(card_pos.card_id);
+
+                                    // Update battlefield selection if it's in a battlefield
+                                    if let Some(card) = view.get_card(card_pos.card_id) {
+                                        if card.controller == view.player_id() {
+                                            self.state.selected_card_in_your_bf = Some(card_pos.card_id);
+                                            self.state.focused_pane = FocusedPane::YourBattlefield;
+                                        } else {
+                                            self.state.selected_card_in_opp_bf = Some(card_pos.card_id);
+                                            self.state.focused_pane = FocusedPane::OpponentBattlefield;
+                                        }
+                                    }
+
+                                    return Ok(InputAction::Continue); // Redraw with new selection
+                                }
                             }
-                            return Ok(InputAction::Continue); // Redraw needed
                         }
-                        KeyCode::Char('i') | KeyCode::Char('I') => {
-                            self.state.focused_pane = FocusedPane::Info;
-                            return Ok(InputAction::Continue); // Redraw needed
-                        }
-                        KeyCode::Char('y') | KeyCode::Char('Y') => {
-                            self.state.focused_pane = FocusedPane::YourBattlefield;
-                            // Initialize selection to first card if battlefield not empty
-                            let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
-                            if !bf_cards.is_empty() && self.state.selected_card_in_your_bf.is_none() {
-                                self.state.selected_card_in_your_bf = Some(bf_cards[0]);
-                                self.state.selected_card_id = Some(bf_cards[0]);
+                    }
+                    Event::Key(key) => {
+                        match key.code {
+                            // Pane focus switching (H, I, Y, O, A)
+                            KeyCode::Char('h') | KeyCode::Char('H') => {
+                                self.state.focused_pane = FocusedPane::Hand;
+                                // Initialize selection to first card if hand not empty
+                                let hand = view.hand();
+                                if !hand.is_empty() && self.state.selected_card_in_hand.is_none() {
+                                    self.state.selected_card_in_hand = Some(0);
+                                    self.state.selected_card_id = Some(hand[0]);
+                                }
+                                return Ok(InputAction::Continue); // Redraw needed
                             }
-                            return Ok(InputAction::Continue); // Redraw needed
-                        }
-                        KeyCode::Char('o') | KeyCode::Char('O') => {
-                            self.state.focused_pane = FocusedPane::OpponentBattlefield;
-                            // Initialize selection to first card if battlefield not empty
-                            if let Some(opp_id) = view.opponents().next() {
-                                let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
-                                if !bf_cards.is_empty() && self.state.selected_card_in_opp_bf.is_none() {
-                                    self.state.selected_card_in_opp_bf = Some(bf_cards[0]);
+                            KeyCode::Char('i') | KeyCode::Char('I') => {
+                                self.state.focused_pane = FocusedPane::Info;
+                                return Ok(InputAction::Continue); // Redraw needed
+                            }
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                self.state.focused_pane = FocusedPane::YourBattlefield;
+                                // Initialize selection to first card if battlefield not empty
+                                let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
+                                if !bf_cards.is_empty() && self.state.selected_card_in_your_bf.is_none() {
+                                    self.state.selected_card_in_your_bf = Some(bf_cards[0]);
                                     self.state.selected_card_id = Some(bf_cards[0]);
                                 }
+                                return Ok(InputAction::Continue); // Redraw needed
                             }
-                            return Ok(InputAction::Continue); // Redraw needed
-                        }
-                        KeyCode::Char('a') | KeyCode::Char('A') => {
-                            self.state.focused_pane = FocusedPane::Actions;
-                            return Ok(InputAction::Continue); // Redraw needed
-                        }
-                        KeyCode::Char('s') | KeyCode::Char('S') => {
-                            self.state.focused_pane = FocusedPane::Stack;
-                            return Ok(InputAction::Continue); // Redraw needed
-                        }
-                        // Arrow key navigation - route based on focused pane
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            match self.state.focused_pane {
-                                FocusedPane::Actions => {
-                                    // Navigate choices in Actions pane
-                                    if self.state.highlighted_choice > 0 {
-                                        self.state.highlighted_choice -= 1;
+                            KeyCode::Char('o') | KeyCode::Char('O') => {
+                                self.state.focused_pane = FocusedPane::OpponentBattlefield;
+                                // Initialize selection to first card if battlefield not empty
+                                if let Some(opp_id) = view.opponents().next() {
+                                    let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                    if !bf_cards.is_empty() && self.state.selected_card_in_opp_bf.is_none() {
+                                        self.state.selected_card_in_opp_bf = Some(bf_cards[0]);
+                                        self.state.selected_card_id = Some(bf_cards[0]);
                                     }
-                                    return Ok(InputAction::Continue);
                                 }
-                                FocusedPane::Hand => {
-                                    // Navigate cards in Hand pane
-                                    let hand = view.hand();
-                                    if !hand.is_empty() {
-                                        let current = self.state.selected_card_in_hand.unwrap_or(0);
-                                        if current > 0 {
-                                            self.state.selected_card_in_hand = Some(current - 1);
-                                            self.state.selected_card_id = Some(hand[current - 1]);
+                                return Ok(InputAction::Continue); // Redraw needed
+                            }
+                            KeyCode::Char('a') | KeyCode::Char('A') => {
+                                self.state.focused_pane = FocusedPane::Actions;
+                                return Ok(InputAction::Continue); // Redraw needed
+                            }
+                            KeyCode::Char('s') | KeyCode::Char('S') => {
+                                self.state.focused_pane = FocusedPane::Stack;
+                                return Ok(InputAction::Continue); // Redraw needed
+                            }
+                            // Arrow key navigation - route based on focused pane
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                match self.state.focused_pane {
+                                    FocusedPane::Actions => {
+                                        // Navigate choices in Actions pane
+                                        if self.state.highlighted_choice > 0 {
+                                            self.state.highlighted_choice -= 1;
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
-                                }
-                                FocusedPane::YourBattlefield => {
-                                    // Navigate cards in Your Battlefield (2D: move up one row)
-                                    let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
-                                    if !bf_cards.is_empty() {
-                                        let current_card = self.state.selected_card_in_your_bf;
-                                        if let Some(current_idx) =
-                                            current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                        {
-                                            const CARDS_PER_ROW: usize = 4; // Estimate based on typical terminal width
-                                            if current_idx >= CARDS_PER_ROW {
-                                                let new_idx = current_idx - CARDS_PER_ROW;
-                                                let new_card = bf_cards[new_idx];
-                                                self.state.selected_card_in_your_bf = Some(new_card);
-                                                self.state.selected_card_id = Some(new_card);
+                                    FocusedPane::Hand => {
+                                        // Navigate cards in Hand pane
+                                        let hand = view.hand();
+                                        if !hand.is_empty() {
+                                            let current = self.state.selected_card_in_hand.unwrap_or(0);
+                                            if current > 0 {
+                                                self.state.selected_card_in_hand = Some(current - 1);
+                                                self.state.selected_card_id = Some(hand[current - 1]);
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
-                                }
-                                FocusedPane::OpponentBattlefield => {
-                                    // Navigate cards in Opponent Battlefield (2D: move up one row)
-                                    if let Some(opp_id) = view.opponents().next() {
-                                        let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                    FocusedPane::YourBattlefield => {
+                                        // Navigate cards in Your Battlefield (2D: move up one row)
+                                        let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
                                         if !bf_cards.is_empty() {
-                                            let current_card = self.state.selected_card_in_opp_bf;
+                                            let current_card = self.state.selected_card_in_your_bf;
                                             if let Some(current_idx) =
                                                 current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
                                             {
-                                                const CARDS_PER_ROW: usize = 4;
+                                                const CARDS_PER_ROW: usize = 4; // Estimate based on typical terminal width
                                                 if current_idx >= CARDS_PER_ROW {
                                                     let new_idx = current_idx - CARDS_PER_ROW;
                                                     let new_card = bf_cards[new_idx];
-                                                    self.state.selected_card_in_opp_bf = Some(new_card);
+                                                    self.state.selected_card_in_your_bf = Some(new_card);
                                                     self.state.selected_card_id = Some(new_card);
                                                 }
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
-                                }
-                                _ => {
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            match self.state.focused_pane {
-                                FocusedPane::Actions => {
-                                    // Navigate choices in Actions pane
-                                    if self.state.highlighted_choice + 1 < num_choices {
-                                        self.state.highlighted_choice += 1;
-                                    }
-                                    return Ok(InputAction::Continue);
-                                }
-                                FocusedPane::Hand => {
-                                    // Navigate cards in Hand pane
-                                    let hand = view.hand();
-                                    if !hand.is_empty() {
-                                        let current = self.state.selected_card_in_hand.unwrap_or(0);
-                                        if current + 1 < hand.len() {
-                                            self.state.selected_card_in_hand = Some(current + 1);
-                                            self.state.selected_card_id = Some(hand[current + 1]);
-                                        }
-                                    }
-                                    return Ok(InputAction::Continue);
-                                }
-                                FocusedPane::YourBattlefield => {
-                                    // Navigate cards in Your Battlefield (2D: move down one row)
-                                    let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
-                                    if !bf_cards.is_empty() {
-                                        let current_card = self.state.selected_card_in_your_bf;
-                                        if let Some(current_idx) =
-                                            current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                        {
-                                            const CARDS_PER_ROW: usize = 4;
-                                            let new_idx = current_idx + CARDS_PER_ROW;
-                                            if new_idx < bf_cards.len() {
-                                                let new_card = bf_cards[new_idx];
-                                                self.state.selected_card_in_your_bf = Some(new_card);
-                                                self.state.selected_card_id = Some(new_card);
+                                    FocusedPane::OpponentBattlefield => {
+                                        // Navigate cards in Opponent Battlefield (2D: move up one row)
+                                        if let Some(opp_id) = view.opponents().next() {
+                                            let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                            if !bf_cards.is_empty() {
+                                                let current_card = self.state.selected_card_in_opp_bf;
+                                                if let Some(current_idx) =
+                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                                {
+                                                    const CARDS_PER_ROW: usize = 4;
+                                                    if current_idx >= CARDS_PER_ROW {
+                                                        let new_idx = current_idx - CARDS_PER_ROW;
+                                                        let new_card = bf_cards[new_idx];
+                                                        self.state.selected_card_in_opp_bf = Some(new_card);
+                                                        self.state.selected_card_id = Some(new_card);
+                                                    }
+                                                }
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
+                                    _ => {
+                                        return Ok(InputAction::Continue);
+                                    }
                                 }
-                                FocusedPane::OpponentBattlefield => {
-                                    // Navigate cards in Opponent Battlefield (2D: move down one row)
-                                    if let Some(opp_id) = view.opponents().next() {
-                                        let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                match self.state.focused_pane {
+                                    FocusedPane::Actions => {
+                                        // Navigate choices in Actions pane
+                                        if self.state.highlighted_choice + 1 < num_choices {
+                                            self.state.highlighted_choice += 1;
+                                        }
+                                        return Ok(InputAction::Continue);
+                                    }
+                                    FocusedPane::Hand => {
+                                        // Navigate cards in Hand pane
+                                        let hand = view.hand();
+                                        if !hand.is_empty() {
+                                            let current = self.state.selected_card_in_hand.unwrap_or(0);
+                                            if current + 1 < hand.len() {
+                                                self.state.selected_card_in_hand = Some(current + 1);
+                                                self.state.selected_card_id = Some(hand[current + 1]);
+                                            }
+                                        }
+                                        return Ok(InputAction::Continue);
+                                    }
+                                    FocusedPane::YourBattlefield => {
+                                        // Navigate cards in Your Battlefield (2D: move down one row)
+                                        let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
                                         if !bf_cards.is_empty() {
-                                            let current_card = self.state.selected_card_in_opp_bf;
+                                            let current_card = self.state.selected_card_in_your_bf;
                                             if let Some(current_idx) =
                                                 current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
                                             {
@@ -1500,55 +1528,46 @@ impl FancyTuiController {
                                                 let new_idx = current_idx + CARDS_PER_ROW;
                                                 if new_idx < bf_cards.len() {
                                                     let new_card = bf_cards[new_idx];
-                                                    self.state.selected_card_in_opp_bf = Some(new_card);
+                                                    self.state.selected_card_in_your_bf = Some(new_card);
                                                     self.state.selected_card_id = Some(new_card);
                                                 }
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
-                                }
-                                _ => {
-                                    return Ok(InputAction::Continue);
+                                    FocusedPane::OpponentBattlefield => {
+                                        // Navigate cards in Opponent Battlefield (2D: move down one row)
+                                        if let Some(opp_id) = view.opponents().next() {
+                                            let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                            if !bf_cards.is_empty() {
+                                                let current_card = self.state.selected_card_in_opp_bf;
+                                                if let Some(current_idx) =
+                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                                {
+                                                    const CARDS_PER_ROW: usize = 4;
+                                                    let new_idx = current_idx + CARDS_PER_ROW;
+                                                    if new_idx < bf_cards.len() {
+                                                        let new_card = bf_cards[new_idx];
+                                                        self.state.selected_card_in_opp_bf = Some(new_card);
+                                                        self.state.selected_card_id = Some(new_card);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        return Ok(InputAction::Continue);
+                                    }
+                                    _ => {
+                                        return Ok(InputAction::Continue);
+                                    }
                                 }
                             }
-                        }
-                        KeyCode::Left => {
-                            match self.state.focused_pane {
-                                FocusedPane::YourBattlefield => {
-                                    // Navigate left in Your Battlefield (2D: move left with wrapping)
-                                    let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
-                                    if !bf_cards.is_empty() {
-                                        let current_card = self.state.selected_card_in_your_bf;
-                                        if let Some(current_idx) =
-                                            current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                        {
-                                            const CARDS_PER_ROW: usize = 4;
-                                            let row = current_idx / CARDS_PER_ROW;
-                                            let col = current_idx % CARDS_PER_ROW;
-
-                                            let new_idx = if col > 0 {
-                                                // Move left within the row
-                                                current_idx - 1
-                                            } else {
-                                                // Wrap to end of current row
-                                                let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
-                                                row_end - 1
-                                            };
-
-                                            let new_card = bf_cards[new_idx];
-                                            self.state.selected_card_in_your_bf = Some(new_card);
-                                            self.state.selected_card_id = Some(new_card);
-                                        }
-                                    }
-                                    return Ok(InputAction::Continue);
-                                }
-                                FocusedPane::OpponentBattlefield => {
-                                    // Navigate left in Opponent Battlefield (2D: move left with wrapping)
-                                    if let Some(opp_id) = view.opponents().next() {
-                                        let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                            KeyCode::Left => {
+                                match self.state.focused_pane {
+                                    FocusedPane::YourBattlefield => {
+                                        // Navigate left in Your Battlefield (2D: move left with wrapping)
+                                        let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
                                         if !bf_cards.is_empty() {
-                                            let current_card = self.state.selected_card_in_opp_bf;
+                                            let current_card = self.state.selected_card_in_your_bf;
                                             if let Some(current_idx) =
                                                 current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
                                             {
@@ -1557,61 +1576,61 @@ impl FancyTuiController {
                                                 let col = current_idx % CARDS_PER_ROW;
 
                                                 let new_idx = if col > 0 {
+                                                    // Move left within the row
                                                     current_idx - 1
                                                 } else {
+                                                    // Wrap to end of current row
                                                     let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
                                                     row_end - 1
                                                 };
 
                                                 let new_card = bf_cards[new_idx];
-                                                self.state.selected_card_in_opp_bf = Some(new_card);
+                                                self.state.selected_card_in_your_bf = Some(new_card);
                                                 self.state.selected_card_id = Some(new_card);
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
-                                }
-                                _ => {
-                                    return Ok(InputAction::Continue);
+                                    FocusedPane::OpponentBattlefield => {
+                                        // Navigate left in Opponent Battlefield (2D: move left with wrapping)
+                                        if let Some(opp_id) = view.opponents().next() {
+                                            let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                            if !bf_cards.is_empty() {
+                                                let current_card = self.state.selected_card_in_opp_bf;
+                                                if let Some(current_idx) =
+                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                                {
+                                                    const CARDS_PER_ROW: usize = 4;
+                                                    let row = current_idx / CARDS_PER_ROW;
+                                                    let col = current_idx % CARDS_PER_ROW;
+
+                                                    let new_idx = if col > 0 {
+                                                        current_idx - 1
+                                                    } else {
+                                                        let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
+                                                        row_end - 1
+                                                    };
+
+                                                    let new_card = bf_cards[new_idx];
+                                                    self.state.selected_card_in_opp_bf = Some(new_card);
+                                                    self.state.selected_card_id = Some(new_card);
+                                                }
+                                            }
+                                        }
+                                        return Ok(InputAction::Continue);
+                                    }
+                                    _ => {
+                                        return Ok(InputAction::Continue);
+                                    }
                                 }
                             }
-                        }
-                        KeyCode::Right => {
-                            match self.state.focused_pane {
-                                FocusedPane::YourBattlefield => {
-                                    // Navigate right in Your Battlefield (2D: move right with wrapping)
-                                    let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
-                                    if !bf_cards.is_empty() {
-                                        let current_card = self.state.selected_card_in_your_bf;
-                                        if let Some(current_idx) =
-                                            current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                        {
-                                            const CARDS_PER_ROW: usize = 4;
-                                            let row = current_idx / CARDS_PER_ROW;
-                                            let row_start = row * CARDS_PER_ROW;
-                                            let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
-
-                                            let new_idx = if current_idx + 1 < row_end {
-                                                // Move right within the row
-                                                current_idx + 1
-                                            } else {
-                                                // Wrap to start of current row
-                                                row_start
-                                            };
-
-                                            let new_card = bf_cards[new_idx];
-                                            self.state.selected_card_in_your_bf = Some(new_card);
-                                            self.state.selected_card_id = Some(new_card);
-                                        }
-                                    }
-                                    return Ok(InputAction::Continue);
-                                }
-                                FocusedPane::OpponentBattlefield => {
-                                    // Navigate right in Opponent Battlefield (2D: move right with wrapping)
-                                    if let Some(opp_id) = view.opponents().next() {
-                                        let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                            KeyCode::Right => {
+                                match self.state.focused_pane {
+                                    FocusedPane::YourBattlefield => {
+                                        // Navigate right in Your Battlefield (2D: move right with wrapping)
+                                        let bf_cards = Self::get_battlefield_cards_in_order(view, view.player_id());
                                         if !bf_cards.is_empty() {
-                                            let current_card = self.state.selected_card_in_opp_bf;
+                                            let current_card = self.state.selected_card_in_your_bf;
                                             if let Some(current_idx) =
                                                 current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
                                             {
@@ -1621,57 +1640,88 @@ impl FancyTuiController {
                                                 let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
 
                                                 let new_idx = if current_idx + 1 < row_end {
+                                                    // Move right within the row
                                                     current_idx + 1
                                                 } else {
+                                                    // Wrap to start of current row
                                                     row_start
                                                 };
 
                                                 let new_card = bf_cards[new_idx];
-                                                self.state.selected_card_in_opp_bf = Some(new_card);
+                                                self.state.selected_card_in_your_bf = Some(new_card);
                                                 self.state.selected_card_id = Some(new_card);
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
                                     }
-                                    return Ok(InputAction::Continue);
-                                }
-                                _ => {
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                        }
-                        KeyCode::Enter => {
-                            // Enter only selects when Actions pane is focused
-                            if self.state.focused_pane == FocusedPane::Actions {
-                                return Ok(InputAction::Select(self.state.highlighted_choice));
-                            }
-                            // TODO: In other panes, Enter could select a card for details
-                            return Ok(InputAction::Continue);
-                        }
-                        KeyCode::Char('p') | KeyCode::Esc => {
-                            return Ok(InputAction::Pass);
-                        }
-                        KeyCode::Char('q') => {
-                            return Ok(InputAction::Pass);
-                        }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            return Ok(InputAction::Exit);
-                        }
-                        KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            // TODO: Full suspend/resume (SIGTSTP/SIGCONT) would require signal-hook crate
-                            // For now, treat Ctrl-Z as graceful exit
-                            return Ok(InputAction::Exit);
-                        }
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
-                            // Digit selection only works when Actions pane is focused
-                            if self.state.focused_pane == FocusedPane::Actions {
-                                let digit = c.to_digit(10).unwrap() as usize;
-                                if digit < num_choices {
-                                    return Ok(InputAction::Select(digit));
+                                    FocusedPane::OpponentBattlefield => {
+                                        // Navigate right in Opponent Battlefield (2D: move right with wrapping)
+                                        if let Some(opp_id) = view.opponents().next() {
+                                            let bf_cards = Self::get_battlefield_cards_in_order(view, opp_id);
+                                            if !bf_cards.is_empty() {
+                                                let current_card = self.state.selected_card_in_opp_bf;
+                                                if let Some(current_idx) =
+                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
+                                                {
+                                                    const CARDS_PER_ROW: usize = 4;
+                                                    let row = current_idx / CARDS_PER_ROW;
+                                                    let row_start = row * CARDS_PER_ROW;
+                                                    let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
+
+                                                    let new_idx = if current_idx + 1 < row_end {
+                                                        current_idx + 1
+                                                    } else {
+                                                        row_start
+                                                    };
+
+                                                    let new_card = bf_cards[new_idx];
+                                                    self.state.selected_card_in_opp_bf = Some(new_card);
+                                                    self.state.selected_card_id = Some(new_card);
+                                                }
+                                            }
+                                        }
+                                        return Ok(InputAction::Continue);
+                                    }
+                                    _ => {
+                                        return Ok(InputAction::Continue);
+                                    }
                                 }
                             }
+                            KeyCode::Enter => {
+                                // Enter only selects when Actions pane is focused
+                                if self.state.focused_pane == FocusedPane::Actions {
+                                    return Ok(InputAction::Select(self.state.highlighted_choice));
+                                }
+                                // TODO: In other panes, Enter could select a card for details
+                                return Ok(InputAction::Continue);
+                            }
+                            KeyCode::Char('p') | KeyCode::Esc => {
+                                return Ok(InputAction::Pass);
+                            }
+                            KeyCode::Char('q') => {
+                                return Ok(InputAction::Pass);
+                            }
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                return Ok(InputAction::Exit);
+                            }
+                            KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                // TODO: Full suspend/resume (SIGTSTP/SIGCONT) would require signal-hook crate
+                                // For now, treat Ctrl-Z as graceful exit
+                                return Ok(InputAction::Exit);
+                            }
+                            KeyCode::Char(c) if c.is_ascii_digit() => {
+                                // Digit selection only works when Actions pane is focused
+                                if self.state.focused_pane == FocusedPane::Actions {
+                                    let digit = c.to_digit(10).unwrap() as usize;
+                                    if digit < num_choices {
+                                        return Ok(InputAction::Select(digit));
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
