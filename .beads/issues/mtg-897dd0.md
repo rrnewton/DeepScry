@@ -1,0 +1,33 @@
+---
+title: Respect \n in card text display
+status: closed
+priority: 2
+issue_type: task
+created_at: 2025-11-03T20:40:42.970638894+00:00
+updated_at: 2025-11-03T22:59:32.212405878+00:00
+closed_at: 2025-11-03T22:59:32.212405718+00:00
+---
+
+# Description
+
+## Problem
+
+Card text in the Card Details pane shows "\n" literally instead of actual line breaks.
+
+## Expected behavior
+
+The Card Details pane should render actual line breaks for natural reading of multi-paragraph card text.
+
+## Location
+
+src/game/fancy_tui_controller.rs: draw_card_details() method (lines 815-868)
+
+## Implementation
+
+Replace string literal "\n" with actual newlines when rendering card text. The Paragraph widget should already support multi-line text.
+
+Example:
+```rust
+// Current: shows "First line\nSecond line"
+// Expected: shows two lines with natural line breaks
+```

@@ -5,8 +5,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use mtg_forge_rs::{
     game::{
-        random_controller::RandomController, zero_controller::ZeroController, GameLoop, GameSnapshot,
-        HeuristicController, InteractiveController, RichInputController, StopCondition, VerbosityLevel,
+        random_controller::RandomController, zero_controller::ZeroController, FancyTuiController, GameLoop,
+        GameSnapshot, HeuristicController, InteractiveController, RichInputController, StopCondition, VerbosityLevel,
     },
     loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
@@ -23,6 +23,8 @@ enum ControllerType {
     Random,
     /// Text UI controller for human play via stdin
     Tui,
+    /// Full-featured TUI with ratatui (multi-panel interface)
+    Fancy,
     /// Heuristic AI controller with strategic decision making
     Heuristic,
     /// Fixed script controller with predetermined choices (requires --fixed-inputs)
@@ -846,6 +848,10 @@ async fn run_tui(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p1_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
@@ -923,6 +929,10 @@ async fn run_tui(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p2_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
@@ -1022,7 +1032,16 @@ async fn run_tui(
     // Enable log tail mode if requested (captures logs to buffer)
     // Must be done BEFORE creating game loop since loop borrows game mutably
     if log_tail.is_some() {
-        game.logger.enable_capture();
+        // Use Both mode to capture AND output to stdout (not Memory which suppresses stdout)
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
+    }
+
+    // Enable memory-only logging if fancy TUI is being used (prevents screen flickering)
+    let is_fancy_tui = matches!(p1_type, ControllerType::Fancy) || matches!(p2_type, ControllerType::Fancy);
+    if is_fancy_tui {
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
     }
 
     let mut game_loop = GameLoop::new(&mut game)
@@ -1216,6 +1235,32 @@ async fn run_tui(
             if verbosity >= VerbosityLevel::Verbose {
                 println!("\nFinal game state saved to: {}", final_state_path.display());
             }
+        }
+    }
+
+    // Save buffered logs to file if fancy TUI was used (run_tui function)
+    if is_fancy_tui {
+        use std::io::Write;
+        let logs = game.logger.logs();
+        let log_count = logs.len();
+
+        if log_count > 0 {
+            // Create temp file for logs
+            let temp_dir = std::env::temp_dir();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let log_path = temp_dir.join(format!("mtg_forge_game_{}.log", timestamp));
+
+            // Write logs to file
+            let mut file = std::fs::File::create(&log_path)?;
+            for entry in logs.iter() {
+                writeln!(file, "{}", entry.message)?;
+            }
+
+            eprintln!("\n>>> Game log saved: {} lines written to:", log_count);
+            eprintln!("    {}", log_path.display());
         }
     }
 
@@ -1500,6 +1545,10 @@ async fn run_resume(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p1_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
@@ -1570,6 +1619,10 @@ async fn run_resume(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
+        ControllerType::Fancy => Box::new(
+            FancyTuiController::new(p2_id)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+        ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
@@ -1652,7 +1705,16 @@ async fn run_resume(
     // Enable log tail mode if requested (captures logs to buffer)
     // Must be done BEFORE creating game loop since loop borrows game mutably
     if log_tail.is_some() {
-        game.logger.enable_capture();
+        // Use Both mode to capture AND output to stdout (not Memory which suppresses stdout)
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
+    }
+
+    // Enable memory-only logging if fancy TUI is being used (prevents screen flickering)
+    let is_fancy_tui_resume = matches!(p1_type, ControllerType::Fancy) || matches!(p2_type, ControllerType::Fancy);
+    if is_fancy_tui_resume {
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
     }
 
     // Run the game loop
@@ -1833,6 +1895,32 @@ async fn run_resume(
             if verbosity >= VerbosityLevel::Verbose {
                 println!("\nFinal game state saved to: {}", final_state_path.display());
             }
+        }
+    }
+
+    // Save buffered logs to file if fancy TUI was used (run_resume function)
+    if is_fancy_tui_resume {
+        use std::io::Write;
+        let logs = game.logger.logs();
+        let log_count = logs.len();
+
+        if log_count > 0 {
+            // Create temp file for logs
+            let temp_dir = std::env::temp_dir();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let log_path = temp_dir.join(format!("mtg_forge_game_{}.log", timestamp));
+
+            // Write logs to file
+            let mut file = std::fs::File::create(&log_path)?;
+            for entry in logs.iter() {
+                writeln!(file, "{}", entry.message)?;
+            }
+
+            eprintln!("\n>>> Game log saved: {} lines written to:", log_count);
+            eprintln!("    {}", log_path.display());
         }
     }
 

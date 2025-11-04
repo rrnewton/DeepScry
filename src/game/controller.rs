@@ -252,6 +252,14 @@ impl<'a> GameStateView<'a> {
             .unwrap_or(&[])
     }
 
+    /// Get cards in a specific player's library
+    pub fn player_library(&self, player_id: PlayerId) -> &[CardId] {
+        self.game
+            .get_player_zones(player_id)
+            .map(|zones| zones.library.cards.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Check if a card is in a specific zone
     pub fn is_card_in_zone(&self, card_id: CardId, zone: Zone) -> bool {
         match zone {
@@ -299,6 +307,11 @@ impl<'a> GameStateView<'a> {
     /// Get the current turn number
     pub fn turn_number(&self) -> u32 {
         self.game.turn.turn_number
+    }
+
+    /// Get the active player (whose turn it is)
+    pub fn active_player(&self) -> PlayerId {
+        self.game.turn.active_player
     }
 
     /// Get a card's name (convenience method)
@@ -386,6 +399,40 @@ impl<'a> GameStateView<'a> {
                 )
             })
             .unwrap_or((0, 0, 0, 0, 0, 0))
+    }
+
+    /// Get maximum mana capacity for this player
+    ///
+    /// Returns the maximum amount of mana of each color that could be produced
+    /// if all untapped mana sources were tapped. This accounts for:
+    /// - Basic lands (produce one specific color)
+    /// - Dual lands (produce choice of X or Y, counted in both colors)
+    /// - Any-color lands (counted in all colors)
+    /// - Mana creatures like Llanowar Elves (if not summoning sick)
+    ///
+    /// The return value is (total_sources, W, U, B, R, G, C) where total_sources
+    /// is the count of untapped sources, and each color is the max of that color
+    /// we could produce.
+    ///
+    /// Note: For dual lands, they count +1 for both colors but only +1 to total.
+    pub fn max_mana_capacity(&self) -> (u8, u8, u8, u8, u8, u8, u8) {
+        use crate::game::ManaEngine;
+
+        let mut engine = ManaEngine::new();
+        engine.update(self.game, self.player_id);
+
+        let capacity = engine.max_mana_capacity();
+        let total = engine.simple_sources().len() + engine.complex_sources().len();
+
+        (
+            total as u8,
+            capacity.white,
+            capacity.blue,
+            capacity.black,
+            capacity.red,
+            capacity.green,
+            capacity.colorless,
+        )
     }
 
     /// Check if player can play lands this turn

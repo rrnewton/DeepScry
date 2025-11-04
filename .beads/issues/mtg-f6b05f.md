@@ -1,0 +1,39 @@
+---
+title: Fix max mana calculation for dual lands
+status: closed
+priority: 2
+issue_type: task
+created_at: 2025-11-03T20:12:30.062966344+00:00
+updated_at: 2025-11-03T20:19:57.967153138+00:00
+closed_at: 2025-11-03T20:19:57.967152927+00:00
+---
+
+# Description
+
+## Problem
+
+The max mana calculation in fancy TUI is showing incorrect numbers for dual lands.
+
+**Current behavior:**
+- Playing a dual land (e.g., "R or B") increases ALL colored mana production by 1
+- 4 dual lands show as producing 4 of EACH color, which is wrong
+- Dual lands are being treated as "any color" sources instead of "X or Y"
+
+**Expected behavior:**
+- Dual lands should contribute to only the colors they can produce
+- A (R or B) land should only contribute to R or B pools, not all colors
+
+## Root cause
+
+The current implementation in fancy_tui_controller.rs uses a simple card name-based calculation that doesn't properly handle dual lands' "X or Y" mana production.
+
+This may indicate a deeper bug in complex mana handling where we treat dual lands as "any color" instead of properly representing their choice-based production.
+
+## Solution
+
+Use the existing method from the mana calculation system (mana_engine.rs). The max total mana is already computed as part of our Yes/No/Maybe can-pay-cost computation.
+
+## Files
+
+- fancy_tui_controller.rs: Currently has buggy calculate_max_mana() 
+- mana_engine.rs: Has correct mana calculation infrastructure
