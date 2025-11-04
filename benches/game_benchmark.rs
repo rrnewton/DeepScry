@@ -335,6 +335,62 @@ where
     Ok(metrics)
 }
 
+/// Run forward gameplay from mid-game snapshot and collect metrics
+///
+/// This helper function is used by both sequential and parallel rewind benchmarks.
+/// It plays the second half of a game from a mid-game state with a specific RNG seed.
+///
+/// # Parameters
+/// - `thread_game`: Mutable reference to the game state (at mid-game point)
+/// - `thread_seed`: RNG seed for this playthrough
+/// - `rewind_target`: Number of actions at the rewind point (for calculating actions_played)
+///
+/// # Returns
+/// GameMetrics for the forward gameplay (excluding rewind cost)
+fn run_forward_gameplay_from_snapshot(
+    thread_game: &mut GameState,
+    thread_seed: u64,
+    rewind_target: usize,
+) -> GameMetrics {
+    thread_game.seed_rng(thread_seed);
+
+    // Now measure forward gameplay for second half
+    let reg = Region::new(GLOBAL);
+    let start = std::time::Instant::now();
+
+    let (p1_id, p2_id) = {
+        let mut players_iter = thread_game.players.iter().map(|p| p.id);
+        (
+            players_iter.next().expect("Should have player 1"),
+            players_iter.next().expect("Should have player 2"),
+        )
+    };
+
+    let mut controller1 = RandomController::with_seed(p1_id, thread_seed);
+    let mut controller2 = RandomController::with_seed(p2_id, thread_seed);
+
+    let mut game_loop = GameLoop::new(thread_game).with_verbosity(VerbosityLevel::Silent);
+    let result = game_loop
+        .run_game(&mut controller1, &mut controller2)
+        .expect("Game should complete");
+
+    let duration = start.elapsed();
+    let stats = reg.change();
+
+    // Calculate actions played in second half
+    let total_actions_now = thread_game.undo_log.len();
+    let actions_played = total_actions_now - rewind_target;
+
+    // Record metrics for the forward gameplay only
+    GameMetrics {
+        turns: result.turns_played,
+        actions: actions_played,
+        duration,
+        bytes_allocated: stats.bytes_allocated,
+        bytes_deallocated: stats.bytes_deallocated,
+    }
+}
+
 /// Helper function to print aggregated metrics
 ///
 /// Note: The "Avg duration/game" shown here is a naive average (total_time / iterations).
@@ -900,44 +956,9 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 
             // Use different seed for each iteration to explore different paths
             let iteration_seed = initial_seed.wrapping_add(iteration_count as u64);
-            game.seed_rng(iteration_seed);
 
-            // Now measure forward gameplay for second half
-            let reg = Region::new(GLOBAL);
-            let start = std::time::Instant::now();
-
-            let (p1_id, p2_id) = {
-                let mut players_iter = game.players.iter().map(|p| p.id);
-                (
-                    players_iter.next().expect("Should have player 1"),
-                    players_iter.next().expect("Should have player 2"),
-                )
-            };
-
-            let mut controller1 = RandomController::with_seed(p1_id, iteration_seed);
-            let mut controller2 = RandomController::with_seed(p2_id, iteration_seed);
-
-            let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
-            let result = game_loop
-                .run_game(&mut controller1, &mut controller2)
-                .expect("Game should complete");
-
-            let duration = start.elapsed();
-            let stats = reg.change();
-
-            // Calculate actions played in second half
-            let total_actions_now = game.undo_log.len();
-            let actions_played = total_actions_now - rewind_target;
-
-            // Record metrics for the forward gameplay only
-            // Note: result.turns_played is the number of turns in THIS GameLoop session (correct!)
-            let metrics = GameMetrics {
-                turns: result.turns_played,
-                actions: actions_played,
-                duration,
-                bytes_allocated: stats.bytes_allocated,
-                bytes_deallocated: stats.bytes_deallocated,
-            };
+            // Run forward gameplay using shared helper function
+            let metrics = run_forward_gameplay_from_snapshot(game, iteration_seed, rewind_target);
 
             aggregated += metrics;
             iteration_count += 1;
@@ -1083,43 +1104,9 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
                     // Thread-specific seed: mix in iteration count and thread ID
                     let thread_seed = initial_seed
                         .wrapping_add((iter_count * num_threads + thread_id) as u64);
-                    thread_game.seed_rng(thread_seed);
 
-                    // Now measure forward gameplay for second half
-                    let reg = Region::new(GLOBAL);
-                    let start = std::time::Instant::now();
-
-                    let (p1_id, p2_id) = {
-                        let mut players_iter = thread_game.players.iter().map(|p| p.id);
-                        (
-                            players_iter.next().expect("Should have player 1"),
-                            players_iter.next().expect("Should have player 2"),
-                        )
-                    };
-
-                    let mut controller1 = RandomController::with_seed(p1_id, thread_seed);
-                    let mut controller2 = RandomController::with_seed(p2_id, thread_seed);
-
-                    let mut game_loop = GameLoop::new(&mut thread_game).with_verbosity(VerbosityLevel::Silent);
-                    let result = game_loop
-                        .run_game(&mut controller1, &mut controller2)
-                        .expect("Game should complete");
-
-                    let duration = start.elapsed();
-                    let stats = reg.change();
-
-                    // Calculate actions played in second half
-                    let total_actions_now = thread_game.undo_log.len();
-                    let actions_played = total_actions_now - rewind_target;
-
-                    // Record metrics for the forward gameplay only
-                    GameMetrics {
-                        turns: result.turns_played,
-                        actions: actions_played,
-                        duration,
-                        bytes_allocated: stats.bytes_allocated,
-                        bytes_deallocated: stats.bytes_deallocated,
-                    }
+                    // Run forward gameplay using shared helper function
+                    run_forward_gameplay_from_snapshot(&mut thread_game, thread_seed, rewind_target)
                 })
                 .collect();
 
