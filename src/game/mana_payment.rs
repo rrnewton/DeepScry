@@ -158,6 +158,99 @@ impl ManaColor {
     }
 }
 
+/// Shared bounds checking logic for mana payment
+///
+/// This function performs fast rejection tests to determine if a cost is
+/// provably impossible to pay with the given sources. It returns:
+/// - `PaymentResult::No` if we can prove it's impossible
+/// - `PaymentResult::Maybe` if bounds check passes (might be possible)
+///
+/// This never returns `Yes` - that requires constructing an actual solution.
+fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
+    // Check total available mana (accounting for activation costs via net delta)
+    let mut available_delta: i16 = 0;
+    for source in sources {
+        if !source.is_tapped && !source.has_summoning_sickness {
+            available_delta += source.production.net_delta() as i16;
+        }
+    }
+
+    let needed = cost
+        .white
+        .saturating_add(cost.blue)
+        .saturating_add(cost.black)
+        .saturating_add(cost.red)
+        .saturating_add(cost.green)
+        .saturating_add(cost.colorless)
+        .saturating_add(cost.generic);
+
+    // Can only prove "No" if the total delta is insufficient
+    if available_delta < needed as i16 {
+        return PaymentResult::No;
+    }
+
+    // Check if we can produce enough of each required color
+    // NOTE: For color checking, we IGNORE activation costs (optimistic approximation)
+    // This lets us prove impossibility when color requirements can't be met even with free mana
+    let mut max_white = 0u8;
+    let mut max_blue = 0u8;
+    let mut max_black = 0u8;
+    let mut max_red = 0u8;
+    let mut max_green = 0u8;
+    let mut max_colorless = 0u8;
+
+    for source in sources {
+        if source.is_tapped || source.has_summoning_sickness {
+            continue;
+        }
+
+        match &source.production.kind {
+            ManaProductionKind::Fixed(color) => match color {
+                ManaColor::White => max_white += 1,
+                ManaColor::Blue => max_blue += 1,
+                ManaColor::Black => max_black += 1,
+                ManaColor::Red => max_red += 1,
+                ManaColor::Green => max_green += 1,
+            },
+            ManaProductionKind::Colorless => max_colorless += 1,
+            ManaProductionKind::Choice(colors) => {
+                // Choice lands count toward each color they can produce
+                for color in colors {
+                    match color {
+                        ManaColor::White => max_white += 1,
+                        ManaColor::Blue => max_blue += 1,
+                        ManaColor::Black => max_black += 1,
+                        ManaColor::Red => max_red += 1,
+                        ManaColor::Green => max_green += 1,
+                    }
+                }
+            }
+            ManaProductionKind::AnyColor => {
+                // Any-color lands count toward all colors
+                max_white += 1;
+                max_blue += 1;
+                max_black += 1;
+                max_red += 1;
+                max_green += 1;
+            }
+        }
+    }
+
+    // If we can't produce enough of a specific color, it's provably impossible
+    if cost.white > max_white
+        || cost.blue > max_blue
+        || cost.black > max_black
+        || cost.red > max_red
+        || cost.green > max_green
+        || cost.colorless > max_colorless
+    {
+        return PaymentResult::No;
+    }
+
+    // Bounds check passed - might be possible
+    PaymentResult::Maybe
+}
+
 /// Trait for mana payment resolution strategies
 ///
 /// Different implementations can provide different algorithms for determining
@@ -179,11 +272,8 @@ pub trait ManaPaymentResolver {
     ///
     /// This never returns `Yes` - use `check_payment()` for that.
     fn quick_check(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
-        // Default implementation: just do full check
-        match self.check_payment(cost, sources) {
-            PaymentResult::Yes(_) => PaymentResult::Maybe,
-            other => other,
-        }
+        // Default implementation uses shared bounds checking
+        bounds_check_payment(cost, sources)
     }
 
     /// Check if a mana cost can be paid with the given sources
@@ -234,85 +324,28 @@ impl Default for SimpleManaResolver {
 
 impl ManaPaymentResolver for SimpleManaResolver {
     fn check_payment(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
-        // Count available mana by color (only untapped, fixed-color sources)
-        let mut white = 0u8;
-        let mut blue = 0u8;
-        let mut black = 0u8;
-        let mut red = 0u8;
-        let mut green = 0u8;
-        let mut colorless = 0u8;
-        let mut has_complex = false;
+        // Check if we have any complex sources - SimpleManaResolver doesn't handle them
+        let has_complex = sources.iter().any(|s| {
+            !s.is_tapped
+                && !s.has_summoning_sickness
+                && !matches!(
+                    s.production.kind,
+                    ManaProductionKind::Fixed(_) | ManaProductionKind::Colorless
+                )
+        });
 
-        for source in sources {
-            if source.is_tapped || source.has_summoning_sickness {
-                continue;
-            }
-
-            match &source.production.kind {
-                ManaProductionKind::Fixed(color) => match color {
-                    ManaColor::White => white += 1,
-                    ManaColor::Blue => blue += 1,
-                    ManaColor::Black => black += 1,
-                    ManaColor::Red => red += 1,
-                    ManaColor::Green => green += 1,
-                },
-                ManaProductionKind::Colorless => colorless += 1,
-                _ => {
-                    // SimpleManaResolver doesn't handle complex sources
-                    // If we encounter any, we return Maybe (backtracking might help)
-                    has_complex = true;
-                }
-            }
-        }
-
-        // If we have complex sources, we can't be certain
         if has_complex {
             return PaymentResult::Maybe;
         }
 
-        // Check specific color requirements - these are definite "No" proofs
-        if cost.white > white {
-            return PaymentResult::No;
-        }
-        if cost.blue > blue {
-            return PaymentResult::No;
-        }
-        if cost.black > black {
-            return PaymentResult::No;
-        }
-        if cost.red > red {
-            return PaymentResult::No;
-        }
-        if cost.green > green {
-            return PaymentResult::No;
-        }
-        if cost.colorless > colorless {
-            return PaymentResult::No;
+        // Use shared bounds checking (this handles the detailed color/total checks)
+        match bounds_check_payment(cost, sources) {
+            PaymentResult::No => return PaymentResult::No,
+            PaymentResult::Maybe => {} // Continue to tap order computation
+            PaymentResult::Yes(_) => unreachable!("bounds_check never returns Yes"),
         }
 
-        // Check if we have enough total mana for generic requirement
-        let total = white
-            .saturating_add(blue)
-            .saturating_add(black)
-            .saturating_add(red)
-            .saturating_add(green)
-            .saturating_add(colorless);
-
-        let used = cost
-            .white
-            .saturating_add(cost.blue)
-            .saturating_add(cost.black)
-            .saturating_add(cost.red)
-            .saturating_add(cost.green)
-            .saturating_add(cost.colorless);
-
-        let remaining = total.saturating_sub(used);
-
-        if remaining < cost.generic {
-            return PaymentResult::No;
-        }
-
-        // We can pay! Now compute the tap order
+        // Bounds check passed and we have only simple sources, compute tap order
         let mut tap_order = Vec::new();
         let mut remaining_cost = *cost;
 
@@ -444,106 +477,15 @@ impl Default for GreedyManaResolver {
 
 impl ManaPaymentResolver for GreedyManaResolver {
     fn check_payment(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
-        // First, do bounds checking to see if we can prove "No"
-
-        // Check total available mana (accounting for activation costs)
-        // Use net delta: production - cost for each source
-        // For example, Celestial Prism ({2}, {T}: Add one mana of any color) has delta of -1
-        let mut available_delta: i16 = 0; // Use i16 to handle negative deltas
-        for source in sources {
-            if !source.is_tapped && !source.has_summoning_sickness {
-                available_delta += source.production.net_delta() as i16;
-            }
-        }
-
-        let needed = cost
-            .white
-            .saturating_add(cost.blue)
-            .saturating_add(cost.black)
-            .saturating_add(cost.red)
-            .saturating_add(cost.green)
-            .saturating_add(cost.colorless)
-            .saturating_add(cost.generic);
-
-        // Can only prove "No" if the total delta is negative and insufficient
-        // If available_delta < needed, we definitely can't pay
-        if available_delta < needed as i16 {
-            return PaymentResult::No; // Provably impossible - not enough total mana (accounting for costs)
-        }
-
-        // Check if we can produce enough of each required color
-        // NOTE: For upper bound color checking, we IGNORE activation costs
-        // (treating all sources as free). This is an optimistic approximation
-        // that allows us to prove impossibility when we can't even meet the
-        // color requirements with free mana.
-        let mut max_white = 0u8;
-        let mut max_blue = 0u8;
-        let mut max_black = 0u8;
-        let mut max_red = 0u8;
-        let mut max_green = 0u8;
-        let mut max_colorless = 0u8;
-
-        for source in sources {
-            if source.is_tapped || source.has_summoning_sickness {
-                continue;
-            }
-
-            match &source.production.kind {
-                ManaProductionKind::Fixed(color) => match color {
-                    ManaColor::White => max_white += 1,
-                    ManaColor::Blue => max_blue += 1,
-                    ManaColor::Black => max_black += 1,
-                    ManaColor::Red => max_red += 1,
-                    ManaColor::Green => max_green += 1,
-                },
-                ManaProductionKind::Colorless => max_colorless += 1,
-                ManaProductionKind::Choice(colors) => {
-                    // Choice lands count toward each color they can produce
-                    for color in colors {
-                        match color {
-                            ManaColor::White => max_white += 1,
-                            ManaColor::Blue => max_blue += 1,
-                            ManaColor::Black => max_black += 1,
-                            ManaColor::Red => max_red += 1,
-                            ManaColor::Green => max_green += 1,
-                        }
-                    }
-                }
-                ManaProductionKind::AnyColor => {
-                    // Any-color lands count toward all colors
-                    max_white += 1;
-                    max_blue += 1;
-                    max_black += 1;
-                    max_red += 1;
-                    max_green += 1;
-                }
-            }
-        }
-
-        // If we can't produce enough of a specific color, it's provably impossible
-        if cost.white > max_white {
-            return PaymentResult::No;
-        }
-        if cost.blue > max_blue {
-            return PaymentResult::No;
-        }
-        if cost.black > max_black {
-            return PaymentResult::No;
-        }
-        if cost.red > max_red {
-            return PaymentResult::No;
-        }
-        if cost.green > max_green {
-            return PaymentResult::No;
-        }
-        if cost.colorless > max_colorless {
-            return PaymentResult::No;
+        // Use shared bounds checking to see if we can prove "No"
+        match bounds_check_payment(cost, sources) {
+            PaymentResult::No => return PaymentResult::No,
+            PaymentResult::Maybe => {} // Continue to greedy algorithm
+            PaymentResult::Yes(_) => unreachable!("bounds_check never returns Yes"),
         }
 
         // Bounds check passed, now try greedy algorithm
-        let tap_order_result = self.try_greedy_payment(cost, sources);
-
-        match tap_order_result {
+        match self.try_greedy_payment(cost, sources) {
             Some(tap_order) => PaymentResult::Yes(tap_order),
             None => {
                 // Greedy failed but bounds check says it might be possible
@@ -553,86 +495,7 @@ impl ManaPaymentResolver for GreedyManaResolver {
         }
     }
 
-    fn quick_check(&self, cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
-        // Same bounds checks as check_payment, but don't try greedy algorithm
-
-        // Check total available mana using net delta (accounting for activation costs)
-        let mut available_delta: i16 = 0;
-        for source in sources {
-            if !source.is_tapped && !source.has_summoning_sickness {
-                available_delta += source.production.net_delta() as i16;
-            }
-        }
-
-        let needed = cost
-            .white
-            .saturating_add(cost.blue)
-            .saturating_add(cost.black)
-            .saturating_add(cost.red)
-            .saturating_add(cost.green)
-            .saturating_add(cost.colorless)
-            .saturating_add(cost.generic);
-
-        if available_delta < needed as i16 {
-            return PaymentResult::No;
-        }
-
-        // Quick color bounds check (simplified - just check if impossible)
-        let mut max_white = 0u8;
-        let mut max_blue = 0u8;
-        let mut max_black = 0u8;
-        let mut max_red = 0u8;
-        let mut max_green = 0u8;
-        let mut max_colorless = 0u8;
-
-        for source in sources {
-            if source.is_tapped || source.has_summoning_sickness {
-                continue;
-            }
-
-            match &source.production.kind {
-                ManaProductionKind::Fixed(color) => match color {
-                    ManaColor::White => max_white += 1,
-                    ManaColor::Blue => max_blue += 1,
-                    ManaColor::Black => max_black += 1,
-                    ManaColor::Red => max_red += 1,
-                    ManaColor::Green => max_green += 1,
-                },
-                ManaProductionKind::Colorless => max_colorless += 1,
-                ManaProductionKind::Choice(colors) => {
-                    for color in colors {
-                        match color {
-                            ManaColor::White => max_white += 1,
-                            ManaColor::Blue => max_blue += 1,
-                            ManaColor::Black => max_black += 1,
-                            ManaColor::Red => max_red += 1,
-                            ManaColor::Green => max_green += 1,
-                        }
-                    }
-                }
-                ManaProductionKind::AnyColor => {
-                    max_white += 1;
-                    max_blue += 1;
-                    max_black += 1;
-                    max_red += 1;
-                    max_green += 1;
-                }
-            }
-        }
-
-        if cost.white > max_white
-            || cost.blue > max_blue
-            || cost.black > max_black
-            || cost.red > max_red
-            || cost.green > max_green
-            || cost.colorless > max_colorless
-        {
-            return PaymentResult::No;
-        }
-
-        // Might be possible, need full check
-        PaymentResult::Maybe
-    }
+    // Note: quick_check uses the default implementation (shared bounds_check_payment)
 }
 
 impl GreedyManaResolver {

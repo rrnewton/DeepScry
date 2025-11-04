@@ -1,10 +1,11 @@
 ---
 title: TUI shows wrong player names and incorrect available actions
-status: open
+status: closed
 priority: 2
 issue_type: bug
-created_at: "2025-10-27T01:59:56Z"
-updated_at: "2025-10-27T09:24:06-04:00"
+created_at: 2025-10-27T01:59:56+00:00
+updated_at: 2025-11-04T15:25:44.180508770+00:00
+closed_at: 2025-11-04T15:25:44.180508589+00:00
 ---
 
 # Description

@@ -1,10 +1,11 @@
 ---
 title: TUI multi-select prompts ignore --numeric-choices flag
-status: open
+status: closed
 priority: 2
 issue_type: bug
-created_at: "2025-10-27T01:23:14Z"
-updated_at: "2025-10-27T09:24:06-04:00"
+created_at: 2025-10-27T01:23:14+00:00
+updated_at: 2025-11-04T15:25:44.178809639+00:00
+closed_at: 2025-11-04T15:25:44.178809399+00:00
 ---
 
 # Description
