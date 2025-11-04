@@ -84,36 +84,66 @@ trait BattlefieldEntity {
     fn contains_card(&self, card_id: CardId) -> bool;
 }
 
-/// Concrete entity type wrapping a single card
+/// Concrete entity type - single card or simple stack
 #[derive(Debug, Clone)]
-struct Entity {
-    card_id: CardId,
+enum Entity {
+    SingleCard {
+        card_id: CardId,
+    },
+    SimpleStack {
+        card_ids: SmallVec<[CardId; 8]>,
+        card_name: String,
+        is_tapped: bool,
+    },
 }
 
 impl BattlefieldEntity for Entity {
     fn card_ids(&self) -> &[CardId] {
-        std::slice::from_ref(&self.card_id)
+        match self {
+            Entity::SingleCard { card_id } => std::slice::from_ref(card_id),
+            Entity::SimpleStack { card_ids, .. } => card_ids,
+        }
     }
 
     fn representative_card(&self) -> CardId {
-        self.card_id
+        match self {
+            Entity::SingleCard { card_id } => *card_id,
+            Entity::SimpleStack { card_ids, .. } => card_ids[0],
+        }
     }
 
     fn count(&self) -> usize {
-        1
+        match self {
+            Entity::SingleCard { .. } => 1,
+            Entity::SimpleStack { card_ids, .. } => card_ids.len(),
+        }
     }
 
     fn display_name(&self, view: &GameStateView) -> String {
-        view.card_name(self.card_id)
-            .unwrap_or_else(|| format!("{:?}", self.card_id))
+        match self {
+            Entity::SingleCard { card_id } => view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id)),
+            Entity::SimpleStack {
+                card_name, card_ids, ..
+            } => {
+                let count = card_ids.len();
+                if count > 1 {
+                    format!("{}x {}", count, card_name)
+                } else {
+                    card_name.clone()
+                }
+            }
+        }
     }
 
     fn is_tapped(&self, view: &GameStateView) -> bool {
-        view.is_tapped(self.card_id)
+        match self {
+            Entity::SingleCard { card_id } => view.is_tapped(*card_id),
+            Entity::SimpleStack { is_tapped, .. } => *is_tapped,
+        }
     }
 
     fn contains_card(&self, card_id: CardId) -> bool {
-        self.card_id == card_id
+        self.card_ids().contains(&card_id)
     }
 }
 
@@ -326,9 +356,46 @@ impl FancyTuiController {
 
     /// Group cards into battlefield entities
     ///
-    /// Currently just wraps each card as an Entity (no stacking yet)
-    fn group_cards_into_entities(cards: &[CardId], _view: &GameStateView) -> Vec<Entity> {
-        cards.iter().map(|&card_id| Entity { card_id }).collect()
+    /// Groups cards by (name, tapped_state) into stacks when multiple copies exist
+    fn group_cards_into_entities(cards: &[CardId], view: &GameStateView) -> Vec<Entity> {
+        use std::collections::HashMap;
+
+        // Group cards by (name, is_tapped)
+        let mut groups: HashMap<(String, bool), SmallVec<[CardId; 8]>> = HashMap::new();
+
+        for &card_id in cards {
+            let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+            let is_tapped = view.is_tapped(card_id);
+            let key = (name, is_tapped);
+
+            groups.entry(key).or_default().push(card_id);
+        }
+
+        // Convert groups to entities
+        let mut entities: Vec<Entity> = groups
+            .into_iter()
+            .map(|((card_name, is_tapped), card_ids)| {
+                if card_ids.len() > 1 {
+                    // Create a stack
+                    Entity::SimpleStack {
+                        card_ids,
+                        card_name,
+                        is_tapped,
+                    }
+                } else {
+                    // Single card
+                    Entity::SingleCard { card_id: card_ids[0] }
+                }
+            })
+            .collect();
+
+        // Sort for consistent ordering: single cards first, then stacks
+        entities.sort_by_key(|e| match e {
+            Entity::SingleCard { card_id } => (0, *card_id),
+            Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
+        });
+
+        entities
     }
 
     /// Draw the complete UI with all panels
@@ -1117,6 +1184,21 @@ impl FancyTuiController {
             Style::default()
         };
 
+        // Check if name starts with multiplier (e.g., "3x Island")
+        // If so, split it and colorize the multiplier in cyan
+        let (multiplier_prefix, card_name_part) = if let Some(x_pos) = name.find("x ") {
+            let prefix = &name[..x_pos + 1]; // "3x"
+            let rest = &name[x_pos + 1..]; // " Island"
+                                           // Check if prefix is all digits followed by 'x'
+            if prefix.len() >= 2 && prefix[..prefix.len() - 1].chars().all(|c| c.is_ascii_digit()) {
+                (Some(prefix.to_string()), rest.to_string())
+            } else {
+                (None, name.clone())
+            }
+        } else {
+            (None, name.clone())
+        };
+
         // Strategy: Try to fit name + cost on one line
         // If name would be truncated and we have vertical space, use two lines instead
         let name_and_cost_fit = name.len() + cost_len < content_width;
@@ -1126,11 +1208,16 @@ impl FancyTuiController {
         if !cost_str.is_empty() && name_and_cost_fit {
             // Both fit on one line - ideal case
             let padding = content_width.saturating_sub(name.len() + cost_len);
-            lines.push(Line::from(vec![
-                Span::styled(name.clone(), title_style),
-                Span::raw(" ".repeat(padding)),
-                Span::raw(cost_str.clone()),
-            ]));
+            let mut title_spans = vec![];
+            if let Some(mult) = multiplier_prefix.as_ref() {
+                title_spans.push(Span::styled(mult.clone(), Style::default().fg(Color::Cyan)));
+                title_spans.push(Span::styled(card_name_part.clone(), title_style));
+            } else {
+                title_spans.push(Span::styled(name.clone(), title_style));
+            }
+            title_spans.push(Span::raw(" ".repeat(padding)));
+            title_spans.push(Span::raw(cost_str.clone()));
+            lines.push(Line::from(title_spans));
         } else if !cost_str.is_empty() && !name_fits_alone && have_vertical_space {
             // Name would be truncated, but we have space for cost on separate line
             // Truncate name minimally
@@ -1146,11 +1233,43 @@ impl FancyTuiController {
             } else {
                 name.clone()
             };
-            lines.push(Line::from(Span::styled(display_name, title_style)));
+            if let Some(mult) = multiplier_prefix.as_ref() {
+                let card_name_truncated = if card_name_part.len() > content_width.saturating_sub(mult.len()) {
+                    if content_width.saturating_sub(mult.len()) <= 5 {
+                        card_name_part
+                            .chars()
+                            .take(content_width.saturating_sub(mult.len()))
+                            .collect::<String>()
+                    } else {
+                        format!(
+                            "{}..",
+                            card_name_part
+                                .chars()
+                                .take(content_width.saturating_sub(mult.len() + 2))
+                                .collect::<String>()
+                        )
+                    }
+                } else {
+                    card_name_part.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(mult.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name_truncated, title_style),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(display_name, title_style)));
+            }
             lines.push(Line::from(cost_str.clone()));
         } else if !cost_str.is_empty() && !name_and_cost_fit && name_fits_alone && have_vertical_space {
             // Name fits, cost doesn't fit on same line, use two lines
-            lines.push(Line::from(Span::styled(name.clone(), title_style)));
+            if let Some(mult) = multiplier_prefix.as_ref() {
+                lines.push(Line::from(vec![
+                    Span::styled(mult.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name_part.clone(), title_style),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(name.clone(), title_style)));
+            }
             lines.push(Line::from(cost_str.clone()));
         } else {
             // Fallback: Single line with truncation if needed
@@ -1166,7 +1285,32 @@ impl FancyTuiController {
             } else {
                 name.clone()
             };
-            lines.push(Line::from(Span::styled(display_name, title_style)));
+            if let Some(mult) = multiplier_prefix {
+                let card_name_truncated = if card_name_part.len() > content_width.saturating_sub(mult.len()) {
+                    if content_width.saturating_sub(mult.len()) <= 5 {
+                        card_name_part
+                            .chars()
+                            .take(content_width.saturating_sub(mult.len()))
+                            .collect::<String>()
+                    } else {
+                        format!(
+                            "{}..",
+                            card_name_part
+                                .chars()
+                                .take(content_width.saturating_sub(mult.len() + 2))
+                                .collect::<String>()
+                        )
+                    }
+                } else {
+                    card_name_part
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(mult, Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name_truncated, title_style),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(display_name, title_style)));
+            }
         }
 
         // Priority 2: Tapped indicator (only if tapped and room)
