@@ -2449,11 +2449,44 @@ impl FancyTuiController {
                                 }
                             }
                             KeyCode::Enter => {
-                                // Enter only selects when Actions pane is focused
+                                // In Actions pane, select the highlighted choice
                                 if self.state.focused_pane == FocusedPane::Actions {
                                     return Ok(InputAction::Select(self.state.highlighted_choice));
                                 }
-                                // TODO: In other panes, Enter could select a card for details
+
+                                // In other panes, Enter selects a card to view in Card Details
+                                match self.state.focused_pane {
+                                    FocusedPane::Hand => {
+                                        if let Some(idx) = self.state.selected_card_in_hand {
+                                            let hand = view.hand();
+                                            if idx < hand.len() {
+                                                self.state.selected_card_id = Some(hand[idx]);
+                                            }
+                                        }
+                                    }
+                                    FocusedPane::YourBattlefield => {
+                                        if let Some(card_id) = self.state.selected_card_in_your_bf {
+                                            self.state.selected_card_id = Some(card_id);
+                                        }
+                                    }
+                                    FocusedPane::OpponentBattlefield => {
+                                        if let Some(card_id) = self.state.selected_card_in_opp_bf {
+                                            self.state.selected_card_id = Some(card_id);
+                                        }
+                                    }
+                                    FocusedPane::Stack => {
+                                        // Select top of stack (most recent spell)
+                                        let stack = view.stack();
+                                        if !stack.is_empty() {
+                                            self.state.selected_card_id = Some(stack[stack.len() - 1]);
+                                        }
+                                    }
+                                    FocusedPane::Info | FocusedPane::Actions => {
+                                        // Info pane doesn't have cards to select
+                                        // Actions already handled above
+                                    }
+                                }
+
                                 return Ok(InputAction::Continue);
                             }
                             KeyCode::Char('p') | KeyCode::Esc => {
