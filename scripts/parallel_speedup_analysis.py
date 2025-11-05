@@ -100,7 +100,7 @@ class BenchmarkResult:
 class ParallelSpeedupAnalyzer:
     """Analyze parallel speedup across allocators and thread counts"""
 
-    def __init__(self, workspace_root: Path):
+    def __init__(self, workspace_root: Path, quick_mode: bool = False):
         self.workspace_root = workspace_root
         self.results_dir = workspace_root / "experiment_results"
         self.plots_dir = self.results_dir / "plots"
@@ -108,6 +108,7 @@ class ParallelSpeedupAnalyzer:
 
         # Get number of physical cores
         self.num_physical_cores = self._get_physical_cores()
+        self.quick_mode = quick_mode
 
         # Allocator configurations
         self.allocators = [
@@ -131,6 +132,27 @@ class ParallelSpeedupAnalyzer:
             # Fallback: assume half of logical cores are physical
             import os
             return (os.cpu_count() or 1) // 2
+
+    def _get_thread_counts(self) -> List[int]:
+        """Get list of thread counts to test"""
+        if self.quick_mode:
+            # Quick mode: 1, 25%, 50%, 75%, 100% of available threads
+            counts = [
+                1,
+                max(1, self.num_physical_cores // 4),  # 25%
+                max(1, self.num_physical_cores // 2),  # 50%
+                max(1, 3 * self.num_physical_cores // 4),  # 75%
+                self.num_physical_cores  # 100%
+            ]
+            # Remove duplicates and sort
+            return sorted(set(counts))
+        else:
+            # Full mode: all thread counts from 1 to num_physical_cores
+            return list(range(1, self.num_physical_cores + 1))
+
+    def _get_measurement_time(self) -> int:
+        """Get measurement time in seconds for Criterion"""
+        return 1 if self.quick_mode else 10
 
     def _get_git_info(self) -> Tuple[str, str]:
         """Get current git commit hash and depth"""
@@ -172,14 +194,16 @@ class ParallelSpeedupAnalyzer:
         # Add filter to run only the pinned parallel benchmark
         cmd.append("pinned_par_rewind_play_again")
 
-        # Set thread count via environment variable (benchmark reads BENCH_NUM_THREADS)
+        # Set thread count and measurement time via environment variables
+        measurement_time = self._get_measurement_time()
         env = {
             "BENCH_NUM_THREADS": str(num_threads),
+            "BENCH_MEASUREMENT_TIME_SECS": str(measurement_time),
             **subprocess.os.environ.copy()
         }
 
         print(f"  Command: {' '.join(cmd)}")
-        print(f"  Env: BENCH_NUM_THREADS={num_threads}")
+        print(f"  Env: BENCH_NUM_THREADS={num_threads}, BENCH_MEASUREMENT_TIME_SECS={measurement_time}s")
 
         if dry_run:
             print("  [Would run benchmark here]")
@@ -253,12 +277,18 @@ class ParallelSpeedupAnalyzer:
         """Run benchmarks for all allocators and thread counts"""
         results = []
 
+        thread_counts = self._get_thread_counts()
+        mode_str = "Quick Mode" if self.quick_mode else "Full Analysis"
+        measurement_time = self._get_measurement_time()
+
         print(f"\n{'='*70}")
-        print(f"Parallel Speedup Analysis")
+        print(f"Parallel Speedup Analysis - {mode_str}")
         print(f"{'='*70}")
         print(f"Physical cores: {self.num_physical_cores}")
-        print(f"Thread counts: 1 to {self.num_physical_cores}")
+        print(f"Thread counts to test: {thread_counts}")
+        print(f"Measurement time: {measurement_time}s per benchmark")
         print(f"Allocators: {', '.join(a[0] for a in self.allocators)}")
+        print(f"Total runs: {len(self.allocators)} allocators × {len(thread_counts)} thread counts = {len(self.allocators) * len(thread_counts)}")
         print(f"{'='*70}\n")
 
         for allocator_name, feature in self.allocators:
@@ -266,7 +296,7 @@ class ParallelSpeedupAnalyzer:
             print(f"Allocator: {allocator_name}")
             print(f"{'='*70}")
 
-            for num_threads in range(1, self.num_physical_cores + 1):
+            for num_threads in thread_counts:
                 result = self.run_benchmark(
                     allocator_name,
                     feature,
@@ -413,6 +443,8 @@ def main():
                        help="Run benchmarks for all allocators and thread counts")
     parser.add_argument("--dry-run", action="store_true",
                        help="Show what would be run without actually running benchmarks")
+    parser.add_argument("--quick", action="store_true",
+                       help="Quick mode: 1s per benchmark, test only 1/25%%/50%%/75%%/100%% thread counts")
     parser.add_argument("--plot", action="store_true",
                        help="Generate speedup plot (requires matplotlib)")
     parser.add_argument("--input", type=Path,
@@ -428,7 +460,7 @@ def main():
     script_dir = Path(__file__).parent
     workspace_root = script_dir.parent
 
-    analyzer = ParallelSpeedupAnalyzer(workspace_root)
+    analyzer = ParallelSpeedupAnalyzer(workspace_root, quick_mode=args.quick)
 
     results = []
 

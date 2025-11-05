@@ -53,7 +53,17 @@ macro_rules! get_stats {
 }
 
 /// Benchmark measurement time in seconds (used by all benchmarks)
+/// Can be overridden via BENCH_MEASUREMENT_TIME_SECS environment variable
 const BENCHMARK_TIME_SECS: u64 = 10;
+
+/// Get benchmark measurement time from environment or default
+fn get_benchmark_measurement_time() -> Duration {
+    let secs = std::env::var("BENCH_MEASUREMENT_TIME_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(BENCHMARK_TIME_SECS);
+    Duration::from_secs(secs)
+}
 
 /// Helper function to ensure we're in the correct working directory
 ///
@@ -571,7 +581,7 @@ fn bench_game_fresh(c: &mut Criterion) {
 
     // Configure for long-running benchmarks
     group.sample_size(10); // Reduce sample size since games can be long
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
 
@@ -634,7 +644,7 @@ fn bench_game_fresh_with_logging(c: &mut Criterion) {
 
     // Configure for long-running benchmarks
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
 
@@ -697,7 +707,7 @@ fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
 
     // Configure for long-running benchmarks
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
 
@@ -788,7 +798,7 @@ fn bench_game_snapshot(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
 
@@ -863,7 +873,7 @@ fn bench_game_rewind(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
 
@@ -1009,7 +1019,7 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let initial_seed = 42u64;
 
@@ -1117,7 +1127,7 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let initial_seed = 42u64;
 
@@ -1268,7 +1278,7 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let initial_seed = 42u64;
     let num_threads = num_physical_cores;
@@ -1417,7 +1427,7 @@ fn bench_save_snapshot(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("snapshot_serialization");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
 
@@ -1493,7 +1503,7 @@ fn bench_game_old_school_mono_black_vs_the_deck(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("old_school_matchups");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
     let mut aggregated = GameMetrics {
@@ -1550,7 +1560,7 @@ fn bench_game_old_school_white_weenie_mirror(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("old_school_matchups");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
     let mut aggregated = GameMetrics {
@@ -1610,7 +1620,7 @@ fn bench_game_old_school_jeskai_vs_troll_disk(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("old_school_matchups");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+    group.measurement_time(get_benchmark_measurement_time());
 
     let seed = 42u64;
     let mut aggregated = GameMetrics {
