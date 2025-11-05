@@ -5,10 +5,12 @@
 //!
 //! ## Feature flags
 //!
-//! - `bench-stats-alloc`: Use stats_alloc with allocation tracking (default)
+//! - `bench-stats-alloc`: Use stats_alloc with allocation tracking
 //! - `bench-mimalloc`: Use mimalloc for maximum performance (no tracking)
+//! - `bench-jemalloc`: Use jemalloc with optional statistics support
 //!
 //! These features are mutually exclusive - only one can be enabled at a time.
+//! If no feature is enabled, the system default allocator (glibc malloc) is used.
 //!
 //! ## Usage
 //!
@@ -22,9 +24,15 @@
 //! println!("Allocated: {} bytes", stats.bytes_allocated);
 //! ```
 
-// Compile-time check: ensure features are mutually exclusive
+// Compile-time checks: ensure features are mutually exclusive
 #[cfg(all(feature = "bench-stats-alloc", feature = "bench-mimalloc"))]
 compile_error!("Features 'bench-stats-alloc' and 'bench-mimalloc' are mutually exclusive. Enable only one.");
+
+#[cfg(all(feature = "bench-stats-alloc", feature = "bench-jemalloc"))]
+compile_error!("Features 'bench-stats-alloc' and 'bench-jemalloc' are mutually exclusive. Enable only one.");
+
+#[cfg(all(feature = "bench-mimalloc", feature = "bench-jemalloc"))]
+compile_error!("Features 'bench-mimalloc' and 'bench-jemalloc' are mutually exclusive. Enable only one.");
 
 // Import allocator types
 #[cfg(feature = "bench-stats-alloc")]
@@ -40,6 +48,10 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 #[cfg(feature = "bench-mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "bench-jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// Allocation statistics - works with or without tracking
 #[derive(Debug, Clone, Copy, Default)]
@@ -163,9 +175,17 @@ pub fn allocator_name() -> &'static str {
     {
         "mimalloc (high performance, no tracking)"
     }
-    #[cfg(not(any(feature = "bench-stats-alloc", feature = "bench-mimalloc")))]
+    #[cfg(feature = "bench-jemalloc")]
     {
-        "system default"
+        "jemalloc (high performance, optional stats)"
+    }
+    #[cfg(not(any(
+        feature = "bench-stats-alloc",
+        feature = "bench-mimalloc",
+        feature = "bench-jemalloc"
+    )))]
+    {
+        "system default (glibc malloc)"
     }
 }
 

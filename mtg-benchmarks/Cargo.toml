@@ -14,6 +14,8 @@ criterion = "0.5"
 # Allocation tracking and profiling
 stats_alloc = "0.1"
 mimalloc = "0.1"
+tikv-jemallocator = "0.6"
+tikv-jemalloc-ctl = "0.6"
 dhat = "0.3"
 
 # Required for benchmark code
@@ -40,7 +42,10 @@ harness = false
 
 [features]
 # Benchmark allocator selection (mutually exclusive)
-# Default: bench-mimalloc for maximum performance
-# Use bench-stats-alloc for allocation tracking
+# Default: system allocator (glibc malloc)
+# bench-stats-alloc: System allocator with allocation tracking
+# bench-mimalloc: mimalloc for maximum performance (no tracking)
+# bench-jemalloc: jemalloc with optional stats support
 bench-stats-alloc = []
 bench-mimalloc = []
+bench-jemalloc = []

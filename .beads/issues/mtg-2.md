@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-04T20:49:40.072642078+00:00
+updated_at: 2025-11-05T15:40:58.117398477+00:00
 ---
 
 # Description
@@ -30,6 +30,27 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 3. Per-thread bump allocators (target 80-90% efficiency)
 
 **Impact on MCTS:** Without fixing this, parallel MCTS will be slower than sequential MCTS!
+
+---
+
+## Infrastructure Improvements (2025-11-05_#715)
+
+✅ **CI fixed for workspace structure** (eaa7d8dc)
+- Updated GitHub Actions to use `--workspace` flag for tests
+- Split clippy into separate package commands to avoid feature conflicts
+- Updated run_examples.sh to use `-p mtg-forge-rs` flag
+- All CI jobs now pass with workspace structure
+
+✅ **Benchmark refactoring** (db075f6f)
+- Abstracted midgame state initialization into helper function
+- Added win rate tracking to parallel benchmarks
+- Cleared undo log at midpoint (only track 50%-100% gameplay)
+- AtomicUsize counters for thread-safe win tracking
+
+🚧 **Next: Alternative allocator testing**
+- Add jemalloc as third allocator option
+- Compare system/mimalloc/jemalloc performance
+- Document allocator stats support for each
 
 ---
 
@@ -82,6 +103,11 @@ Top hotspots:
 **Parallel optimization (new focus):**
 - 🚧 mtg-a6ca26: Epic tracking parallel MCTS optimization (allocator contention fixes)
 
+**Infrastructure:**
+- ✅ Workspace refactoring (split into mtg-engine + mtg-benchmarks packages)
+- ✅ CI fixes for workspace structure
+- ✅ Parallel benchmark refactoring (win rate tracking, cleaner code)
+
 **Low priority (remaining allocations):**
 - GameLoop::get_available_spell_abilities helper allocations - 51KB (4.6%)
   - get_lands_in_hand, get_castable_spells return Vecs
@@ -105,9 +131,4 @@ likely due to improved cache locality and reduced allocator pressure.
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 
 ---
-**Updated 2025-11-04_#713(1961e96)** - Benchmark and DHAT results after RNG SmallVec optimization
-- DHAT: 1.13MB → 1.10MB (-2.6% bytes), 26,328 → 27,968 blocks (+6.2%)
-- Rewind mode: 195,963 → 298,854 games/sec (+52.5% improvement!)
-- RNG advance_step hotspot eliminated from top allocators
-- Blocks increased because SmallVec initialization counts as "allocation" even though it's inline
-- **Cumulative achievement: ~760 KB eliminated from baseline (41% reduction)**
+**Updated 2025-11-05_#715(eaa7d8dc)** - CI fixes and benchmark refactoring complete, starting jemalloc work
