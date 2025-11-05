@@ -221,4 +221,182 @@ mod tests {
             assert_eq!(v2.len(), 3);
         });
     }
+
+    // ========================================================================
+    // Box<T, A> Verification Tests (mtg-154)
+    // ========================================================================
+
+    #[test]
+    fn test_box_with_bump_allocator() {
+        let bump = Bump::new();
+
+        // Basic Box allocation with custom allocator
+        let boxed = Box::new_in(42, &bump);
+        assert_eq!(*boxed, 42);
+
+        // Box with struct
+        #[derive(Debug, PartialEq)]
+        struct Data {
+            value: i32,
+            name: &'static str,
+        }
+
+        let boxed_struct = Box::new_in(
+            Data {
+                value: 100,
+                name: "test",
+            },
+            &bump,
+        );
+        assert_eq!(boxed_struct.value, 100);
+        assert_eq!(boxed_struct.name, "test");
+    }
+
+    #[test]
+    fn test_box_trait_object_with_allocator() {
+        let bump = Bump::new();
+
+        // Box trait objects with custom allocator
+        let trait_obj: Box<dyn std::fmt::Display, _> = Box::new_in(42, &bump);
+        assert_eq!(format!("{}", trait_obj), "42");
+
+        let trait_obj2: Box<dyn std::fmt::Display, _> = Box::new_in("hello", &bump);
+        assert_eq!(format!("{}", trait_obj2), "hello");
+    }
+
+    #[test]
+    fn test_box_error_with_allocator() {
+        let bump = Bump::new();
+
+        // Box<dyn Error> pattern common in error handling
+        let err: Box<dyn std::fmt::Display, _> = Box::new_in("test error", &bump);
+        assert_eq!(format!("{}", err), "test error");
+
+        // Box with Debug trait
+        let debug_box: Box<dyn std::fmt::Debug, _> = Box::new_in(vec![1, 2, 3], &bump);
+        assert_eq!(format!("{:?}", debug_box), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_box_recursive_type_with_allocator() {
+        let bump = Bump::new();
+
+        // Recursive type (linked list) using Box<T, A>
+        #[allow(dead_code)]
+        enum List<A: std::alloc::Allocator> {
+            Nil,
+            Cons(i32, Box<List<A>, A>),
+        }
+
+        let list = List::Cons(1, Box::new_in(List::Cons(2, Box::new_in(List::Nil, &bump)), &bump));
+
+        // Verify structure
+        match list {
+            List::Cons(val, next) => {
+                assert_eq!(val, 1);
+                match *next {
+                    List::Cons(val2, ref next2) => {
+                        assert_eq!(val2, 2);
+                        assert!(matches!(**next2, List::Nil));
+                    }
+                    _ => panic!("Expected Cons"),
+                }
+            }
+            _ => panic!("Expected Cons"),
+        }
+    }
+
+    #[test]
+    fn test_box_dyn_controller_pattern() {
+        let bump = Bump::new();
+
+        // Simulate the Controller trait pattern from the codebase
+        trait Controller {
+            fn choose_action(&self) -> i32;
+        }
+
+        struct RandomController {
+            seed: u64,
+        }
+
+        impl Controller for RandomController {
+            fn choose_action(&self) -> i32 {
+                (self.seed % 10) as i32
+            }
+        }
+
+        struct HeuristicController {
+            depth: u32,
+        }
+
+        impl Controller for HeuristicController {
+            fn choose_action(&self) -> i32 {
+                self.depth as i32 * 2
+            }
+        }
+
+        // Box<dyn Controller> with custom allocator
+        let controller1: Box<dyn Controller, _> =
+            Box::new_in(RandomController { seed: 42 }, &bump);
+        assert_eq!(controller1.choose_action(), 2);
+
+        let controller2: Box<dyn Controller, _> =
+            Box::new_in(HeuristicController { depth: 5 }, &bump);
+        assert_eq!(controller2.choose_action(), 10);
+    }
+
+    #[test]
+    fn test_box_with_multiple_trait_objects() {
+        let bump = Bump::new();
+
+        // Vec of Box<dyn Trait> - common pattern in game engine
+        let mut controllers: Vec<Box<dyn std::fmt::Display, _>, _> = Vec::new_in(&bump);
+
+        controllers.push(Box::new_in(42, &bump));
+        controllers.push(Box::new_in("test", &bump));
+        controllers.push(Box::new_in(3.14, &bump));
+
+        assert_eq!(format!("{}", controllers[0]), "42");
+        assert_eq!(format!("{}", controllers[1]), "test");
+        assert_eq!(format!("{}", controllers[2]), "3.14");
+    }
+
+    #[test]
+    fn test_box_leak_with_allocator() {
+        let bump = Bump::new();
+
+        // Test Box::leak() behavior with custom allocator
+        let boxed = Box::new_in(vec![1, 2, 3], &bump);
+        let leaked: &mut Vec<i32> = Box::leak(boxed);
+
+        leaked.push(4);
+        assert_eq!(leaked.len(), 4);
+        assert_eq!(leaked[3], 4);
+
+        // Memory remains in bump arena until reset/drop
+    }
+
+    #[test]
+    fn test_box_large_allocation() {
+        let bump = Bump::new();
+
+        // Large Box allocation
+        let large_vec = vec![0u8; 10000];
+        let boxed = Box::new_in(large_vec, &bump);
+
+        assert_eq!(boxed.len(), 10000);
+        assert_eq!(boxed[5000], 0);
+    }
+
+    #[test]
+    fn test_box_nested_with_vec() {
+        let bump = Bump::new();
+
+        // Box containing Vec with same allocator
+        let inner_vec = Vec::new_in(&bump);
+        let boxed_vec: Box<Vec<i32, _>, _> = Box::new_in(inner_vec, &bump);
+
+        // Both Box and Vec use the same bump allocator
+        assert_eq!(boxed_vec.len(), 0);
+    }
 }
