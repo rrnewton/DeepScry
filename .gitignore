@@ -27,7 +27,7 @@ test_logs/
 # Legacy patterns (in case files are created in root by mistake)
 *.svg
 *.zst
-perf.data*
+perf*.data*
 flamegraph.svg
 *.gz
 heaptrack_analysis.*.txt
