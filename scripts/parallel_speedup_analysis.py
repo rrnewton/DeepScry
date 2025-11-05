@@ -7,19 +7,27 @@ and thread counts for the pinned thread pool benchmark.
 
 ## Usage
 
-### Full Analysis (requires benchmark runs)
+### Quick Mode (recommended for testing - completes in minutes)
 ```bash
+# Dry-run to see what would execute (15 runs: 3 allocators × 5 thread counts)
+python3 scripts/parallel_speedup_analysis.py --dry-run --quick
+
+# Run quick benchmarks with plotting (1s per benchmark, tests 1/25%/50%/75%/100% threads)
+python3 scripts/parallel_speedup_analysis.py --run-benchmarks --quick --plot
+```
+
+### Full Analysis (comprehensive - may take hours)
+```bash
+# Dry-run to see what would execute (96 runs: 3 allocators × 32 thread counts)
+python3 scripts/parallel_speedup_analysis.py --dry-run
+
+# Run all benchmarks with plotting (10s per benchmark, tests all thread counts)
 python3 scripts/parallel_speedup_analysis.py --run-benchmarks --plot
 ```
 
 ### Plot Only (from existing data)
 ```bash
-python3 scripts/parallel_speedup_analysis.py --plot
-```
-
-### Dry Run (show commands without running)
-```bash
-python3 scripts/parallel_speedup_analysis.py --dry-run
+python3 scripts/parallel_speedup_analysis.py --input experiment_results/parallel_speedup_*.csv --plot
 ```
 
 ## Output
@@ -31,36 +39,31 @@ python3 scripts/parallel_speedup_analysis.py --dry-run
 
 The script collects data for:
 - Allocators: system (default), mimalloc, jemalloc
-- Thread counts: 1 to num_physical_cores
+- Thread counts:
+  - Quick mode: 1, 25%, 50%, 75%, 100% of physical cores
+  - Full mode: 1 to num_physical_cores (all thread counts)
 - Benchmark: pinned_par_rewind_play_again
+- Measurement time:
+  - Quick mode: 1 second per benchmark
+  - Full mode: 10 seconds per benchmark
 
-## Implementation Notes
+## Implementation
 
-Currently, the benchmark is hardcoded to use all physical cores. To fully implement
-this script, we need to:
+The benchmark supports parameterization via environment variables:
+- BENCH_NUM_THREADS: Number of threads to use
+- BENCH_MEASUREMENT_TIME_SECS: Criterion measurement duration
 
-1. **Modify benchmark to accept thread count parameter**
-   Options:
-   a) Environment variable: BENCH_NUM_THREADS
-   b) Feature flag: bench-threads-N (requires many features)
-   c) Separate benchmark functions: pinned_par_rewind_play_again_1, _2, etc.
-   d) External harness that calls the benchmark function directly
+Timing data is extracted from Criterion's JSON output:
+- Mean estimate and standard deviation
+- Confidence intervals
+- Throughput calculations (turns/sec)
 
-2. **Extract timing data**
-   Currently Criterion's JSON output provides:
-   - Mean estimate
-   - Standard deviation
-   - Confidence intervals
+## Metrics Calculated
 
-3. **Calculate metrics**
-   - Turns/sec at each thread count
-   - Speedup relative to single-threaded
-   - Parallel efficiency = speedup / num_threads
-   - Bytes allocated per turn (from allocator stats)
-
-## Future Work
-
-See tracking issue mtg-2 for current status and next steps.
+- Turns/sec at each thread count
+- Speedup relative to single-threaded
+- Parallel efficiency = speedup / num_threads
+- Perfect linear speedup reference line
 """
 
 import argparse
