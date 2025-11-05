@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-05T15:40:58.117398477+00:00
+updated_at: 2025-11-05T16:41:34.685598643+00:00
 ---
 
 # Description
@@ -33,24 +33,48 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 
 ---
 
-## Infrastructure Improvements (2025-11-05_#715)
+## Infrastructure Improvements (2025-11-05_#759)
+
+✅ **Pinned thread pool infrastructure** (6834503b)
+- Created custom thread pool with core affinity (core_affinity crate)
+- Thread pinning to physical cores for consistent performance
+- Spin barriers for precise synchronization (ready/go flags)
+- Last-thread-records-time pattern for microsecond-accurate measurements
+- Main thread participates as worker 0 (fork N-1 threads)
+
+✅ **Integrated pinned thread pool into benchmark** (7f4266b1)
+- New bench_game_pinned_par_rewind_play_again() function
+- Custom thread pool replaces Rayon for precise timing
+- Win rate tracking across parallel games
+- Ready for performance comparison vs Rayon
+
+✅ **Parallel speedup analysis script** (6fd56dd1)
+- Framework for running benchmarks with varying thread counts
+- Support for all three allocators (system, mimalloc, jemalloc)
+- CSV output for results + matplotlib plotting
+- Dry-run mode shows: 3 allocators × 32 cores = 96 benchmark runs
+
+✅ **Jemalloc allocator support** (7259bc22)
+- Added tikv-jemallocator as third allocator option
+- Compile-time mutual exclusion with other allocators
+- Feature flag: bench-jemalloc
+- All four allocator modes tested and working
 
 ✅ **CI fixed for workspace structure** (eaa7d8dc)
 - Updated GitHub Actions to use `--workspace` flag for tests
 - Split clippy into separate package commands to avoid feature conflicts
 - Updated run_examples.sh to use `-p mtg-forge-rs` flag
-- All CI jobs now pass with workspace structure
 
-✅ **Benchmark refactoring** (db075f6f)
-- Abstracted midgame state initialization into helper function
+✅ **Benchmark refactoring** (96346c0a)
+- Abstracted midgame state initialization
 - Added win rate tracking to parallel benchmarks
 - Cleared undo log at midpoint (only track 50%-100% gameplay)
-- AtomicUsize counters for thread-safe win tracking
 
-🚧 **Next: Alternative allocator testing**
-- Add jemalloc as third allocator option
-- Compare system/mimalloc/jemalloc performance
-- Document allocator stats support for each
+🚧 **Next: Run parallel speedup analysis**
+- Modify benchmark to accept BENCH_NUM_THREADS env var
+- Run analysis script across all allocators and thread counts
+- Generate speedup plots and document findings
+- Update mtg-a6ca26 with allocator comparison results
 
 ---
 
@@ -100,7 +124,10 @@ Top hotspots:
 - ✅ mtg-02f1df: RNG SmallVec inline storage (heap allocation eliminated, +52% Rewind mode performance!)
 - ✅ mtg-a60157: Parallel benchmark implementation (exposed allocator contention bottleneck)
 
-**Parallel optimization (new focus):**
+**Parallel optimization infrastructure:**
+- ✅ Pinned thread pool for precise parallel timing
+- ✅ Jemalloc allocator support
+- ✅ Parallel speedup analysis script
 - 🚧 mtg-a6ca26: Epic tracking parallel MCTS optimization (allocator contention fixes)
 
 **Infrastructure:**
@@ -131,4 +158,4 @@ likely due to improved cache locality and reduced allocator pressure.
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 
 ---
-**Updated 2025-11-05_#715(eaa7d8dc)** - CI fixes and benchmark refactoring complete, starting jemalloc work
+**Updated 2025-11-05_#759(6fd56dd1)** - Pinned thread pool complete, analysis script ready, next: run speedup analysis
