@@ -1,0 +1,49 @@
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.07s
+     Running benches/game_benchmark.rs (target/release/deps/game_benchmark-7cd749c99cf610d6)
+Benchmarking game_execution/rewind_play_again
+Benchmarking game_execution/rewind_play_again: Warming up for 3.0000 s
+
+Rewind + Play Again mode (seed 42):
+  Game completed with 193 actions in undo log
+  Will rewind to action 96 (middle) for each iteration...
+  Then replay second half with different random seed per iteration
+Benchmarking game_execution/rewind_play_again: Collecting 10 samples in estimated 10.001 s (445k iterations)
+Benchmarking game_execution/rewind_play_again: Analyzing
+game_execution/rewind_play_again
+                        time:   [21.919 µs 22.000 µs 22.139 µs]
+
+=== Aggregated Metrics - Rewind + Play Again Mode (seed 42, 706983 games) ===
+  Total turns: 2827944
+  Total actions: 73059740
+  Total duration: 14.498054547s
+  Avg turns/game: 4.00
+  Avg actions/game: 103.34
+  Avg duration/game (naive): 20.51µs
+  Games/sec: 48763.99
+  Actions/sec: 5039278.87
+  Turns/sec: 195056.79
+  Actions/turn: 25.83
+  Total bytes allocated: 4612027768
+  Total bytes deallocated: 4374481809
+  Net bytes: 237545959
+  Avg bytes/game: 6523.53
+  Bytes/turn: 1630.88
+  Bytes/sec: 318113561.59
+
+Note: For authoritative per-iteration timing, see Criterion's estimate above.
+
+
+Parallel Rewind + Play Again mode (seed 42, 32 threads):
+  Game completed with 193 actions in undo log
+  Will start from action 96 (middle) for each batch
+  Then replay second half in parallel with thread-specific RNG seeds
+  NOTE: Using iter_custom - clone time NOT included in measurements
+Benchmarking game_execution/par_rewind_play_again
+Benchmarking game_execution/par_rewind_play_again: Warming up for 3.0000 s
+Benchmarking game_execution/par_rewind_play_again: Collecting 10 samples in estimated 10.000 s (854k iterations)
+Benchmarking game_execution/par_rewind_play_again: Analyzing
+game_execution/par_rewind_play_again
+                        time:   [11.356 µs 11.386 µs 11.427 µs]
+                        change: [-0.6326% -0.2013% +0.1979%] (p = 0.38 > 0.05)
+                        No change in performance detected.
+
