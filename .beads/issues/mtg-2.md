@@ -140,6 +140,10 @@ Top hotspots:
 - ✅ Jemalloc allocator support
 - ✅ Parallel speedup analysis script
 - 🚧 mtg-a6ca26: Epic tracking parallel MCTS optimization (allocator contention fixes)
+- 🚧 **mtg-151: Allocator API implementation** (per-game and per-turn arenas)
+  - Phase 0 complete: BumpAllocator wrapper (commit c5380c53)
+  - Phase 1 in planning: Audit allocation sites, plan refactorings
+  - Target: 5.6% → 70-80% parallel efficiency
 
 **Infrastructure:**
 - ✅ Workspace refactoring (split into mtg-engine + mtg-benchmarks packages)
