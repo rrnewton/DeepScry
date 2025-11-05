@@ -1,0 +1,74 @@
+Running benchmark: jemalloc with 32 threads
+  Command: cargo bench --bench game_benchmark --features bench-jemalloc pinned_par_rewind_play_again
+  Env: BENCH_NUM_THREADS=32, BENCH_MEASUREMENT_TIME_SECS=10s
+  Warning: Could not extract turns/game, using games/sec
+  ✓ 32 threads: 0.00ms
+    → Written to /home/newton/work/mtg-forge-rs/experiment_results/parallel_speedup_2025-11-05.csv
+
+Running benchmark: jemalloc with 48 threads
+  Command: cargo bench --bench game_benchmark --features bench-jemalloc pinned_par_rewind_play_again
+  Env: BENCH_NUM_THREADS=48, BENCH_MEASUREMENT_TIME_SECS=10s
+  Warning: Could not extract turns/game, using games/sec
+  ✓ 48 threads: 0.00ms
+    → Written to /home/newton/work/mtg-forge-rs/experiment_results/parallel_speedup_2025-11-05.csv
+
+Running benchmark: jemalloc with 64 threads
+  Command: cargo bench --bench game_benchmark --features bench-jemalloc pinned_par_rewind_play_again
+  Env: BENCH_NUM_THREADS=64, BENCH_MEASUREMENT_TIME_SECS=10s
+  Warning: Could not extract turns/game, using games/sec
+  ✓ 64 threads: 0.00ms
+    → Written to /home/newton/work/mtg-forge-rs/experiment_results/parallel_speedup_2025-11-05.csv
+
+======================================================================
+✓ All benchmarks completed and written to CSV
+======================================================================
+
+======================================================================
+MAXIMUM THROUGHPUT ANALYSIS
+======================================================================
+
+SINGLE-THREADED PERFORMANCE
+----------------------------------------------------------------------
+  jemalloc       11,666,397.41 turns/sec (0.3% slower)
+  mimalloc       11,556,414.03 turns/sec (1.3% slower)
+  system         11,703,114.41 turns/sec 👑 WINNER
+
+PARALLEL PERFORMANCE (Maximum Throughput)
+----------------------------------------------------------------------
+  jemalloc       60,605,363.01 turns/sec at 64 threads 👑 WINNER
+  mimalloc       60,028,462.16 turns/sec at 64 threads (1.0% slower)
+  system         55,343,261.60 turns/sec at 64 threads (8.7% slower)
+
+DETAILED RESULTS BY ALLOCATOR
+----------------------------------------------------------------------
+
+jemalloc:
+  Maximum throughput: 60,605,363.01 turns/sec
+  Achieved at: 64 threads
+  Mean time: 0.0000 ms
+  Std dev: ±0.0000 ms
+  Speedup vs 1 thread: 5.19x
+  Parallel efficiency: 8.1%
+
+mimalloc:
+  Maximum throughput: 60,028,462.16 turns/sec
+  Achieved at: 64 threads
+  Mean time: 0.0000 ms
+  Std dev: ±0.0000 ms
+  Speedup vs 1 thread: 5.19x
+  Parallel efficiency: 8.1%
+
+system:
+  Maximum throughput: 55,343,261.60 turns/sec
+  Achieved at: 64 threads
+  Mean time: 0.0000 ms
+  Std dev: ±0.0000 ms
+  Speedup vs 1 thread: 4.73x
+  Parallel efficiency: 7.4%
+
+======================================================================
+SUMMARY
+======================================================================
+Single-threaded winner: system (11,703,114.41 turns/sec)
+Parallel winner: jemalloc (60,605,363.01 turns/sec at 64 threads)
+======================================================================
