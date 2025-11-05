@@ -172,8 +172,7 @@ class ParallelSpeedupAnalyzer:
         # Add filter to run only the pinned parallel benchmark
         cmd.append("pinned_par_rewind_play_again")
 
-        # TODO: Set thread count via environment variable
-        # This requires modifying the benchmark to read this env var
+        # Set thread count via environment variable (benchmark reads BENCH_NUM_THREADS)
         env = {
             "BENCH_NUM_THREADS": str(num_threads),
             **subprocess.os.environ.copy()
