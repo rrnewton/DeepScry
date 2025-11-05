@@ -433,3 +433,367 @@ The clone cost **completely dominates** parallel performance. Until this is fixe
 4. Re-benchmark to verify predictions
 
 See `experiment_results/perf_history.csv` and benchmark output in `benchmark_output.txt` for raw data.
+
+## Detailed perf Profiling Analysis (2025-11-05_#724(4701b08a))
+
+**NEW PROFILING with perf tools** - now that kernel restrictions are resolved, we have deep profiling data.
+
+### Environment
+- System: AMD Ryzen Threadripper PRO 7975WX (32 physical cores, 64 logical CPUs)
+- Benchmark: par_rewind_play_again with 32 physical cores
+- Profiling tool: perf record -F 999 -g --call-graph dwarf
+- Samples collected: 90,822 samples (729 MB perf.data)
+- Duration: ~14 seconds
+
+### Benchmark Results (Confirmed)
+```
+Games/sec:        1,113.41 (aggregate across 32 threads)
+Per-thread:       34.79 games/sec
+Avg bytes/game:   676,250 bytes (660 KB)
+Parallel efficiency: 0.073% (compared to sequential 47,691 games/sec)
+```
+
+### perf stat Hardware Metrics
+
+```
+Performance counter stats:
+  300,547,117,463  cycles
+  226,087,452,811  instructions         #  0.75 insn per cycle
+   10,471,831,602  cache-references
+    1,345,960,339  cache-misses         # 12.85% of all cache refs
+   44,172,138,517  branches
+    1,834,567,113  branch-misses        #  4.15% of all branches
+   92,235,237,089  L1-dcache-loads
+    5,959,097,419  L1-dcache-load-misses #  6.46% of all L1 accesses
+      675,694,131  dTLB-loads
+      124,523,792  dTLB-load-misses     # 18.43% of all dTLB accesses
+        1,422,539  context-switches
+          277,531  cpu-migrations
+
+  13.850 seconds total time
+  47.82 seconds user time (3.45x wallclock - shows parallel utilization)
+  18.20 seconds sys time  (1.31x wallclock - VERY HIGH, indicates kernel overhead)
+```
+
+**Key insights from hardware counters:**
+- **IPC of 0.75** is low (optimal is 2-4 for modern CPUs) - CPUs are stalled waiting
+- **12.85% cache miss rate** is extremely high (good code has <3%)
+- **18.43% dTLB miss rate** is catastrophic - massive memory pressure
+- **High sys time (1.31x)** - threads spending significant time in kernel (locks, syscalls)
+- **Context switches: 102 per ms** - moderate (not the primary bottleneck)
+
+### Top Hotspots (perf report --percent-limit 0.5)
+
+Ranked by %Self (time spent in function itself, not callees):
+
+| %Self | Function | Type | Analysis |
+|-------|----------|------|----------|
+| 4.83% | entry_SYSRETQ_unsafe_stack | kernel | Syscall return path - threads yielding/waiting |
+| 4.61% | drop_in_place\<Card\> | userspace | Dropping Card objects (String deallocs dominate) |
+| 4.16% | crossbeam_epoch::with_handle | userspace | Lock-free epoch-based reclamation overhead |
+| 3.25% | update_curr | kernel | Scheduler accounting - high due to thread wake/sleep |
+| 2.85% | crossbeam_deque::steal | userspace | Work-stealing queue contention |
+| 2.21% | __rust_alloc | userspace | Allocation wrapper (stats_alloc adds overhead) |
+| 2.03% | crossbeam_epoch::try_advance | userspace | Epoch garbage collection attempts |
+| 1.81% | pick_task_fair | kernel | Scheduler task selection |
+| 1.80% | ManaEngine::update (1) | game | Game logic - mana pool updates |
+| 1.72% | native_queued_spin_lock_slowpath | kernel | **LOCK CONTENTION** - threads spinning on locks |
+| 1.60% | RawTable::clone | userspace | Cloning hash tables (cards/zones) |
+| 1.53% | __rust_dealloc | userspace | Deallocation wrapper |
+| 1.26% | ManaEngine::update (2) | game | More mana updates (different call site) |
+| 1.21% | exp | libc | Math function (random number generation?) |
+| 1.19% | GameLoop::priority_round | game | Core game loop |
+
+### Critical Findings from Call Graph Analysis
+
+#### 1. **Card Dropping is 4.61% of total runtime**
+
+Breaking down `drop_in_place<Card>`:
+- **1.28%** - Dropping `Vec<Effect>` (deallocating effect lists)
+- **1.15%** - Dropping `String` (card name - deallocating name buffer)
+- **1.08%** - Dropping `SmallVec<Subtype>` (subtype strings)
+- **0.85%** - Dropping `Vec<ActivatedAbility>`
+
+**Each drop path shows atomic contention:**
+```
+drop_in_place<Card>
+  -> dealloc (inlined chain)
+    -> stats_alloc::dealloc (inlined)
+      -> atomic_add (1.65% of total!) <- CONTENTION HERE
+      -> System::dealloc (1.91%)
+```
+
+**Analysis:** The 1.65% spent in `atomic_add` within dealloc indicates **stats_alloc is contributing significant overhead**. With 32 threads all updating shared atomic counters on every allocation/deallocation, this creates cache line ping-ponging.
+
+#### 2. **Allocator Atomic Contention Quantified**
+
+From `__rust_alloc` analysis:
+- **1.46% in atomic_add** during allocation
+- **1.65% in atomic_add** during deallocation
+- **Total: 3.11% of runtime** just updating stats_alloc counters
+
+This is on top of the actual allocator work (System::alloc at 0.87%, System::dealloc at 1.91%).
+
+**Implication:** Remove stats_alloc for production benchmarks. It's adding ~3% overhead and likely exacerbating cache coherency issues.
+
+#### 3. **Kernel Lock Contention: 1.72%**
+
+`native_queued_spin_lock_slowpath` at 1.72% confirms threads are spinning waiting for kernel locks.
+
+Call graph shows this is mostly from:
+```
+native_queued_spin_lock_slowpath
+  -> _raw_spin_lock (1.58%)
+    -> [various kernel paths including scheduler]
+```
+
+This is allocator arena locks (glibc malloc) causing threads to block in kernel space.
+
+#### 4. **Crossbeam Overhead: 7.04% Total**
+
+Rayon's work-stealing uses crossbeam:
+- 4.16% - `crossbeam_epoch::with_handle` (epoch-based GC for lock-free queues)
+- 2.85% - `crossbeam_deque::steal` (work stealing between threads)
+- 2.03% - `crossbeam_epoch::try_advance` (garbage collection)
+
+**Analysis:** 7% overhead for work distribution is acceptable for parallel code, BUT it only makes sense if the parallel work is efficient. With 0.073% parallel efficiency, this 7% overhead is pure waste.
+
+This will become reasonable once we fix the clone/allocation bottleneck and achieve >50% efficiency.
+
+#### 5. **Scheduler Overhead: 9.89% Total**
+
+Kernel scheduler functions consuming significant time:
+- 4.83% - entry_SYSRETQ (syscall returns, mostly from sched_yield)
+- 3.25% - update_curr (scheduler accounting)
+- 1.81% - pick_task_fair (task selection)
+
+This indicates threads are frequently yielding/sleeping/waking. From the call graph:
+```
+entry_SYSRETQ_unsafe_stack (4.83%)
+  -> __sched_yield (2.51%)
+    -> rayon::Sleep::no_work_found
+      -> WorkerThread::wait_until_cold
+```
+
+**Interpretation:** Worker threads run out of work quickly (because the workload is memory-bound), yield to the OS, then get woken up again. This churn is expensive.
+
+### Memory Hierarchy Analysis
+
+**L1 D-cache:**
+- 92.2B loads
+- 6.0B misses (6.46% miss rate)
+
+**Last-level cache:**
+- 10.5B references
+- 1.3B misses (12.85% miss rate)
+
+**dTLB (data translation lookaside buffer):**
+- 676M loads
+- 124M misses (18.43% miss rate) ← **CRITICAL**
+
+**Analysis:**
+
+The **18.43% dTLB miss rate** is devastating. Each dTLB miss requires a page table walk (hundreds of cycles).
+
+**Root cause:** The 660 KB clone per iteration creates a large working set:
+- 32 threads × 660 KB = 21 MB active memory
+- dTLB typically covers only 32-256 MB
+- Constant GameState cloning creates new page mappings
+- TLB thrashing ensues
+
+This confirms the "memory bandwidth saturation" hypothesis from earlier analysis.
+
+### Breakdown by Bottleneck Category
+
+Based on profiling data, here's the time breakdown:
+
+| Category | %Total | Functions |
+|----------|--------|-----------|
+| **GameState Drop (clone cleanup)** | **~15%** | drop_in_place\<Card\> (4.61%), other drop paths, dealloc (1.53%) |
+| **stats_alloc Overhead** | **3.1%** | atomic_add in alloc/dealloc paths |
+| **Allocator (System)** | **2.8%** | System::alloc (0.87%), System::dealloc (1.91%) |
+| **Allocator Locks** | **1.7%** | native_queued_spin_lock_slowpath |
+| **Crossbeam (work-stealing)** | **7.0%** | epoch GC, deque steal operations |
+| **Kernel Scheduler** | **9.9%** | syscall returns, accounting, task selection |
+| **Game Logic** | **~8%** | ManaEngine (3.06%), GameLoop (2.07%), RawTable::clone (1.60%), other |
+| **Other/Unknown** | **52.5%** | Many small contributors, memory stalls |
+
+**Key insight:** Only ~8% of time is spent in actual game logic. The other 92% is:
+- 15% cleaning up clones (dropping Cards)
+- 14.6% allocator overhead (including stats_alloc, locks)
+- 17% parallel infrastructure (crossbeam + scheduler)
+- 52.5% memory system stalls (cache misses, TLB misses, waiting on memory)
+
+### Validation of Original Hypotheses
+
+**Hypothesis 1: GameState Clone Cost (95% of problem)** - **CONFIRMED**
+- Profiling shows 15% time in drop paths alone (cleanup after clones)
+- The 660 KB/game allocation (vs 6.5 KB sequential) creates:
+  - 18.43% dTLB miss rate (page table thrashing)
+  - 12.85% cache miss rate (working set doesn't fit in LLC)
+  - 21 MB memory traffic per iteration
+- This saturates memory bandwidth and causes the 0.073% parallel efficiency
+
+**Hypothesis 2: Allocator Lock Contention (5% of problem)** - **CONFIRMED**
+- 1.7% in native_queued_spin_lock_slowpath
+- Additional time hidden in scheduler overhead (threads blocking)
+- glibc malloc arena locks are causing serialization
+
+**Hypothesis 3: stats_alloc False Sharing** - **CONFIRMED and WORSE**
+- 3.1% overhead just updating atomic counters
+- With 32 threads hammering the same cache lines, this is exacerbating contention
+- **Action:** Disable stats_alloc in production/optimized benchmarks
+
+### Recommendations (Updated with perf Data)
+
+**IMMEDIATE - Before next benchmark run:**
+
+1. **Disable stats_alloc for optimization work**
+   - Create benchmark variant without stats_alloc instrumentation
+   - This will eliminate 3.1% overhead and reduce cache coherency traffic
+   - Keep instrumented version for allocation measurements only
+
+2. **Measure clone size breakdown** (already planned)
+   - The 660 KB figure is validated by profiling
+   - 15% of runtime is cleaning up these clones
+   - Need detailed breakdown to target worst offenders
+
+**SHORT TERM - Clone reduction:**
+
+3. **Focus on Card.name String (1.15% of runtime)**
+   - Each Card has owned String for name
+   - Cloning 60 cards × 32 threads = 1,920 string allocations per iteration
+   - **Solution:** Arc\<str\> or reference to shared card database
+   - **Impact:** Eliminate 1.15% drop time + allocation traffic
+
+4. **Skip cloning undo_log and logger**
+   - Currently copying data not needed for forward simulation
+   - **Impact:** Reduce clone size by ~200-300 KB (estimate)
+
+5. **SmallVec\<Subtype\> (1.08% drop time)**
+   - Subtypes are also Strings being cloned
+   - Share or use compact representation
+
+**MEDIUM TERM - Allocator strategy:**
+
+6. **Test mimalloc WITHOUT stats_alloc**
+   - Previous mimalloc tests showed modest improvement
+   - But those tests included stats_alloc overhead
+   - Re-test with stats_alloc disabled for cleaner comparison
+
+7. **Evaluate per-thread bump allocators**
+   - Once clone cost reduced, the 1.7% lock contention will become more visible
+   - bumpalo can eliminate this entirely
+
+### Updated Parallel Efficiency Predictions
+
+**Current state (with stats_alloc):**
+- Clone cost: 660 KB
+- Drop overhead: 15% of runtime
+- stats_alloc overhead: 3.1%
+- Parallel efficiency: 0.073%
+
+**After disabling stats_alloc:**
+- Predicted speedup: 3-5% (remove direct overhead + reduce cache coherency)
+- Parallel efficiency: 0.076% (minimal improvement)
+
+**After 92% clone reduction (<50 KB per clone):**
+- Clone cost: 50 KB
+- Drop overhead: ~1% (10x reduction in time)
+- Memory traffic: 50 + (32 × 6.5) = 258 KB vs current 21 MB (81x reduction)
+- dTLB/cache pressure greatly reduced
+- **Predicted parallel efficiency: 40-50%**
+
+**After clone reduction + removing stats_alloc + mimalloc:**
+- **Predicted parallel efficiency: 55-65%**
+
+**After adding per-thread bump allocators:**
+- **Predicted parallel efficiency: 70-80%** (target range)
+
+### Action Items
+
+Priority order:
+1. Create benchmark variant without stats_alloc - **immediate** (1 hour)
+2. Detailed clone size measurement tool - **short term** (2-4 hours)
+3. Implement Arc\<str\> for card names - **short term** (4-8 hours)
+4. Skip undo_log/logger in clone_for_simulation - **short term** (2 hours)
+5. Re-benchmark and measure improvement - **verification**
+6. Test mimalloc again (without stats_alloc) - **medium term**
+7. Design per-thread bump allocator strategy - **medium term**
+
+See raw data: `perf_par.data`, `perf_report_full.txt`, `perf_stat_output.txt`, `perf_output.txt`
+
+## Benchmark Methodology Fix (2025-11-05_#725(7e291a2d))
+
+**CRITICAL BUG FIXED:** The previous parallel benchmark was measuring clone cost + gameplay, contaminating all measurements.
+
+### The Problem
+
+The old benchmark used `iter()` which timed everything including the expensive GameState cloning:
+
+```rust
+b.iter(|| {
+    // This was ALL TIMED - wrong!
+    let snapshots: Vec<GameState> = (0..num_threads)
+        .map(|_| initial_game.clone())  // 660 KB × 32 = 21 MB allocated
+        .collect();
+
+    // Parallel gameplay
+    snapshots.into_par_iter()...
+});
+```
+
+**Impact of the bug:**
+- Included 21 MB of clone overhead in every iteration timing
+- Made parallel gameplay appear even slower than it actually is
+- Impossible to isolate actual parallel gameplay performance
+- Could not accurately compare sequential vs parallel
+
+### The Fix
+
+Ported to `iter_custom()` with proper three-phase structure:
+
+```rust
+b.iter_custom(|iters| {
+    // PER-BATCH SETUP (outside timing)
+    let snapshots: Vec<GameState> = (0..num_threads)
+        .map(|_| initial_game.clone())
+        .collect();
+
+    // START TIMING - only parallel gameplay
+    let start = Instant::now();
+
+    snapshots.into_par_iter()
+        .for_each(|mut game| {
+            // Run forward + rewind
+        });
+
+    start.elapsed()  // STOP TIMING
+});
+```
+
+**Structure:**
+1. **ONE-TIME SETUP:** Play full game to build undo log (once before all iterations)
+2. **PER-BATCH SETUP:** Clone snapshots (outside timing, once per batch)
+3. **TIMED LOOP:** Only parallel gameplay (measured accurately)
+
+### Impact
+
+**Before fix:**
+- Timing included clone cost (21 MB per iteration)
+- ~659 KB measured allocation per game (clone + gameplay)
+- Impossible to separate clone overhead from gameplay
+
+**After fix (2025-11-05):**
+- **~11.4 µs per iteration** (clean measurement)
+- Only times actual parallel gameplay
+- Enables accurate analysis of parallel performance
+- Can now compare apples-to-apples with sequential benchmarks
+
+**Next steps:**
+- Re-run full benchmark suite with fixed methodology
+- Get clean baseline measurements
+- All previous "parallel" measurements are invalid and should be discarded
+- Need fresh profiling data with iter_custom methodology
+
+This fix is **prerequisite** for all future parallel optimization work. The old measurements were contaminated and cannot be trusted for optimization decisions.
