@@ -63,6 +63,7 @@ similar-asserts = "1.5"
 libc = "0.2"
 tempfile = "3.10.1"
 dhat = "0.3"
+mimalloc = "0.1"
 
 # Performance benchmarks
 [[bench]]

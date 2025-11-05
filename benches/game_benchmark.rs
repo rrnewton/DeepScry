@@ -9,6 +9,11 @@
 //!
 //! The benchmark is based on RandomController vs RandomController playing
 //! with simple_bolt.dck (Mountains + Lightning Bolts).
+//!
+//! ## Allocator Configuration
+//!
+//! Set ENABLE_STATS_ALLOC to true to use stats_alloc (tracks allocations, slower)
+//! Set ENABLE_STATS_ALLOC to false to use mimalloc (faster, no allocation tracking)
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
@@ -16,15 +21,60 @@ use mtg_forge_rs::{
     loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer},
     Result,
 };
-use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
-use std::alloc::System;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
+// Flag to control allocator choice and allocation tracking
+const ENABLE_STATS_ALLOC: bool = false;
+
+// Import stats_alloc (always available for struct compatibility)
+use stats_alloc::{Region, StatsAlloc, Stats, INSTRUMENTED_SYSTEM};
+use std::alloc::System;
+
+// Global allocator - switch by commenting/uncommenting
+// #[global_allocator]
+// static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;  // stats_alloc (with tracking)
+
 #[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;  // mimalloc (fast, no tracking)
+
+/// Zero stats (used when stats_alloc is disabled)
+const ZERO_STATS: Stats = Stats {
+    bytes_allocated: 0,
+    bytes_deallocated: 0,
+    bytes_reallocated: 0,
+    reallocations: 0,
+    allocations: 0,
+    deallocations: 0,
+};
+
+/// Helper macro to create stats region or dummy
+macro_rules! stats_region {
+    () => {{
+        if ENABLE_STATS_ALLOC {
+            Some(Region::new(&INSTRUMENTED_SYSTEM))
+        } else {
+            None
+        }
+    }};
+}
+
+/// Helper macro to get stats from region or return zeros
+macro_rules! get_stats {
+    ($reg:expr) => {{
+        if ENABLE_STATS_ALLOC {
+            if let Some(ref r) = $reg {
+                r.change()
+            } else {
+                ZERO_STATS
+            }
+        } else {
+            ZERO_STATS
+        }
+    }};
+}
 
 /// Benchmark measurement time in seconds (used by all benchmarks)
 const BENCHMARK_TIME_SECS: u64 = 10;
@@ -157,7 +207,7 @@ fn run_game_with_metrics<F>(seed: u64, game_init_fn: F) -> Result<GameMetrics>
 where
     F: FnOnce() -> Result<mtg_forge_rs::game::GameState>,
 {
-    let reg = Region::new(GLOBAL);
+    let reg = stats_region!();
     let start = std::time::Instant::now();
 
     // Initialize game using provided function
@@ -184,7 +234,7 @@ where
 
     // Collect metrics
     let actions = game_loop.game.undo_log.len();
-    let stats = reg.change();
+    let stats = get_stats!(reg);
 
     let metrics = GameMetrics {
         turns: result.turns_played,
@@ -205,7 +255,7 @@ where
     use std::fs::OpenOptions;
     use std::os::fd::AsRawFd;
 
-    let reg = Region::new(GLOBAL);
+    let reg = stats_region!();
     let start = std::time::Instant::now();
 
     // Initialize game using provided function
@@ -252,7 +302,7 @@ where
 
     // Collect metrics
     let actions = game_loop.game.undo_log.len();
-    let stats = reg.change();
+    let stats = get_stats!(reg);
 
     let metrics = GameMetrics {
         turns: result.turns_played,
@@ -277,7 +327,7 @@ where
     use std::fs::OpenOptions;
     use std::os::fd::AsRawFd;
 
-    let reg = Region::new(GLOBAL);
+    let reg = stats_region!();
     let start = std::time::Instant::now();
 
     // Initialize game using provided function
@@ -322,7 +372,7 @@ where
 
     // Collect metrics
     let actions = game_loop.game.undo_log.len();
-    let stats = reg.change();
+    let stats = get_stats!(reg);
 
     let metrics = GameMetrics {
         turns: result.turns_played,
@@ -355,7 +405,7 @@ fn run_forward_gameplay_from_snapshot(
     thread_game.seed_rng(thread_seed);
 
     // Now measure forward gameplay for second half
-    let reg = Region::new(GLOBAL);
+    let reg = stats_region!();
     let start = std::time::Instant::now();
 
     let (p1_id, p2_id) = {
@@ -375,7 +425,7 @@ fn run_forward_gameplay_from_snapshot(
         .expect("Game should complete");
 
     let duration = start.elapsed();
-    let stats = reg.change();
+    let stats = get_stats!(reg);
 
     // Calculate actions played in second half
     let total_actions_now = thread_game.undo_log.len();
@@ -796,7 +846,7 @@ fn bench_game_rewind(c: &mut Criterion) {
 
             let game = initial_game.as_mut().unwrap();
 
-            let reg = Region::new(GLOBAL);
+            let reg = stats_region!();
             let start = std::time::Instant::now();
 
             // Rewind all actions to get back to initial state
@@ -806,7 +856,7 @@ fn bench_game_rewind(c: &mut Criterion) {
             }
 
             let duration = start.elapsed();
-            let stats = reg.change();
+            let stats = get_stats!(reg);
 
             // Record metrics for the rewind operation
             let metrics = GameMetrics {

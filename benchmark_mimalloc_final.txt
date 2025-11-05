@@ -1,0 +1,100 @@
+   Compiling mtg-forge-rs v0.1.0 (/mtg-forge-rs-fedora)
+warning: unused import: `StatsAlloc`
+  --> benches/game_benchmark.rs:33:27
+   |
+33 | use stats_alloc::{Region, StatsAlloc, Stats, INSTRUMENTED_SYSTEM};
+   |                           ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::alloc::System`
+  --> benches/game_benchmark.rs:34:5
+   |
+34 | use std::alloc::System;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: `mtg-forge-rs` (bench "game_benchmark") generated 2 warnings (run `cargo fix --bench "game_benchmark" -p mtg-forge-rs` to apply 2 suggestions)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 2.34s
+     Running benches/game_benchmark.rs (target/release/deps/game_benchmark-9d24828e58c5b80e)
+
+Parallel Rewind + Play Again mode (seed 42, 32 threads):
+  Game completed with 193 actions in undo log
+  Will start from action 96 (middle) for each batch
+  Then replay second half in parallel with thread-specific RNG seeds
+  NOTE: Using iter_custom - clone time NOT included in measurements
+
+=== BATCH TIMING LOG ===
+Benchmarking game_execution/par_rewind_play_again
+Benchmarking game_execution/par_rewind_play_again: Warming up for 3.0000 s
+[BATCH-1] INIT: 0.166ms (from benchmark start)
+[BATCH-1] SETUP: 0.834ms (clone 32 snapshots)
+[BATCH-1] EXEC: 0.497ms (1 iters, 496.764µs/iter)
+[BATCH-2] SETUP: 0.775ms (clone 32 snapshots)
+[BATCH-2] EXEC: 0.440ms (2 iters, 219.859µs/iter)
+[BATCH-3] SETUP: 1.386ms (clone 32 snapshots)
+[BATCH-3] EXEC: 0.499ms (4 iters, 124.775µs/iter)
+[BATCH-4] SETUP: 1.259ms (clone 32 snapshots)
+[BATCH-4] EXEC: 0.590ms (8 iters, 73.718µs/iter)
+[BATCH-5] SETUP: 1.173ms (clone 32 snapshots)
+[BATCH-5] EXEC: 0.610ms (16 iters, 38.102µs/iter)
+[BATCH-6] SETUP: 1.095ms (clone 32 snapshots)
+[BATCH-6] EXEC: 0.552ms (32 iters, 17.235µs/iter)
+[BATCH-7] SETUP: 0.986ms (clone 32 snapshots)
+[BATCH-7] EXEC: 0.535ms (64 iters, 8.352µs/iter)
+[BATCH-8] SETUP: 1.036ms (clone 32 snapshots)
+[BATCH-8] EXEC: 0.694ms (128 iters, 5.424µs/iter)
+[BATCH-9] SETUP: 1.024ms (clone 32 snapshots)
+[BATCH-9] EXEC: 0.888ms (256 iters, 3.467µs/iter)
+[BATCH-10] SETUP: 1.022ms (clone 32 snapshots)
+[BATCH-10] EXEC: 1.167ms (512 iters, 2.280µs/iter)
+[BATCH-11] SETUP: 0.954ms (clone 32 snapshots)
+[BATCH-11] EXEC: 2.005ms (1024 iters, 1.958µs/iter)
+[BATCH-12] SETUP: 0.862ms (clone 32 snapshots)
+[BATCH-12] EXEC: 3.137ms (2048 iters, 1.532µs/iter)
+[BATCH-13] SETUP: 1.006ms (clone 32 snapshots)
+[BATCH-13] EXEC: 5.816ms (4096 iters, 1.420µs/iter)
+[BATCH-14] SETUP: 1.047ms (clone 32 snapshots)
+[BATCH-14] EXEC: 11.403ms (8192 iters, 1.392µs/iter)
+[BATCH-15] SETUP: 1.081ms (clone 32 snapshots)
+[BATCH-15] EXEC: 22.459ms (16384 iters, 1.371µs/iter)
+[BATCH-16] SETUP: 1.191ms (clone 32 snapshots)
+[BATCH-16] EXEC: 44.571ms (32768 iters, 1.360µs/iter)
+[BATCH-17] SETUP: 0.907ms (clone 32 snapshots)
+[BATCH-17] EXEC: 85.308ms (65536 iters, 1.302µs/iter)
+[BATCH-18] SETUP: 0.979ms (clone 32 snapshots)
+[BATCH-18] EXEC: 170.408ms (131072 iters, 1.300µs/iter)
+[BATCH-19] SETUP: 1.096ms (clone 32 snapshots)
+[BATCH-19] EXEC: 342.891ms (262144 iters, 1.308µs/iter)
+[BATCH-20] SETUP: 0.892ms (clone 32 snapshots)
+[BATCH-20] EXEC: 676.040ms (524288 iters, 1.289µs/iter)
+[BATCH-21] SETUP: 1.140ms (clone 32 snapshots)
+[BATCH-21] EXEC: 1262.437ms (1048576 iters, 1.204µs/iter)
+[BATCH-22] SETUP: 0.983ms (clone 32 snapshots)
+[BATCH-22] EXEC: 2424.521ms (2097152 iters, 1.156µs/iter)
+Benchmarking game_execution/par_rewind_play_again: Collecting 10 samples in estimated 10.000 s (8.3M iterations)
+[BATCH-23] SETUP: 0.873ms (clone 32 snapshots)
+[BATCH-23] EXEC: 196.388ms (150098 iters, 1.308µs/iter)
+[BATCH-24] SETUP: 0.936ms (clone 32 snapshots)
+[BATCH-24] EXEC: 385.558ms (300196 iters, 1.284µs/iter)
+[BATCH-25] SETUP: 1.064ms (clone 32 snapshots)
+[BATCH-25] EXEC: 574.563ms (450294 iters, 1.276µs/iter)
+[BATCH-26] SETUP: 1.084ms (clone 32 snapshots)
+[BATCH-26] EXEC: 711.785ms (600392 iters, 1.186µs/iter)
+[BATCH-27] SETUP: 0.978ms (clone 32 snapshots)
+[BATCH-27] EXEC: 857.170ms (750490 iters, 1.142µs/iter)
+[BATCH-28] SETUP: 1.203ms (clone 32 snapshots)
+[BATCH-28] EXEC: 1018.990ms (900588 iters, 1.131µs/iter)
+[BATCH-29] SETUP: 0.950ms (clone 32 snapshots)
+[BATCH-29] EXEC: 1209.986ms (1050686 iters, 1.152µs/iter)
+[BATCH-30] SETUP: 0.961ms (clone 32 snapshots)
+[BATCH-30] EXEC: 1386.562ms (1200784 iters, 1.155µs/iter)
+[BATCH-31] SETUP: 0.955ms (clone 32 snapshots)
+[BATCH-31] EXEC: 1531.394ms (1350882 iters, 1.134µs/iter)
+[BATCH-32] SETUP: 0.980ms (clone 32 snapshots)
+[BATCH-32] EXEC: 1685.460ms (1500980 iters, 1.123µs/iter)
+Benchmarking game_execution/par_rewind_play_again: Analyzing
+game_execution/par_rewind_play_again
+                        time:   [1.1331 µs 1.1445 µs 1.1665 µs]
+                        change: [-91.780% -91.489% -91.158%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
