@@ -360,6 +360,56 @@ class ParallelSpeedupAnalyzer:
 
         return results
 
+    def analyze_max_throughput(self, results: List[BenchmarkResult]):
+        """Analyze and print maximum throughput for each allocator"""
+        if not results:
+            print("\nNo results to analyze")
+            return
+
+        print(f"\n{'='*70}")
+        print("MAXIMUM THROUGHPUT ANALYSIS")
+        print(f"{'='*70}\n")
+
+        # Group results by allocator
+        allocator_results = {}
+        for r in results:
+            if r.allocator not in allocator_results:
+                allocator_results[r.allocator] = []
+            allocator_results[r.allocator].append(r)
+
+        # Find max throughput for each allocator
+        max_results = []
+        for allocator in sorted(allocator_results.keys()):
+            alloc_results = allocator_results[allocator]
+            max_result = max(alloc_results, key=lambda r: r.turns_per_sec)
+            max_results.append((allocator, max_result))
+
+        # Print results for each allocator
+        for allocator, max_result in max_results:
+            print(f"Allocator: {allocator}")
+            print(f"  Maximum throughput: {max_result.turns_per_sec:.2f} turns/sec")
+            print(f"  Achieved at: {max_result.num_threads} threads")
+            print(f"  Mean time: {max_result.mean_time_ns/1e6:.4f} ms")
+            print(f"  Std dev: ±{max_result.std_dev_ns/1e6:.4f} ms")
+
+            # Calculate speedup relative to single-threaded
+            single_threaded = [r for r in allocator_results[allocator] if r.num_threads == 1]
+            if single_threaded:
+                speedup = max_result.turns_per_sec / single_threaded[0].turns_per_sec
+                efficiency = (speedup / max_result.num_threads) * 100
+                print(f"  Speedup vs 1 thread: {speedup:.2f}x")
+                print(f"  Parallel efficiency: {efficiency:.1f}%")
+            print()
+
+        # Find overall best allocator
+        best_allocator, best_result = max(max_results, key=lambda x: x[1].turns_per_sec)
+        print(f"{'='*70}")
+        print(f"BEST OVERALL PERFORMANCE")
+        print(f"{'='*70}")
+        print(f"Allocator: {best_allocator}")
+        print(f"Throughput: {best_result.turns_per_sec:.2f} turns/sec at {best_result.num_threads} threads")
+        print(f"{'='*70}\n")
+
     def plot_speedup(self, results: List[BenchmarkResult], output_file: Optional[Path] = None):
         """Generate speedup plot"""
         if not HAS_MATPLOTLIB:
@@ -473,11 +523,15 @@ def main():
 
         if results and not args.dry_run:
             analyzer.save_results(results, args.output_data)
+            # Analyze and print maximum throughput for each allocator
+            analyzer.analyze_max_throughput(results)
 
     # Load results from file if specified
     elif args.input:
         results = analyzer.load_results(args.input)
         print(f"Loaded {len(results)} results from {args.input}")
+        # Analyze loaded results
+        analyzer.analyze_max_throughput(results)
 
     # Generate plot if requested
     if args.plot and results:
