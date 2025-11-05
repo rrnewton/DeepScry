@@ -69,3 +69,7 @@ tempfile = "3.10.1"
 # Disable this feature for maximum performance in benchmarks
 default = ["verbose-logging"]
 verbose-logging = []
+
+# Enable thread-local bump allocator arenas for parallel simulations
+# Provides convenient with_simulation_arena() function
+thread-local-arenas = []

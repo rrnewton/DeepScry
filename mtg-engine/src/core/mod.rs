@@ -1,5 +1,6 @@
 //! Core game types and entities
 
+pub mod allocator;
 pub mod card;
 pub mod costs;
 pub mod effects;
