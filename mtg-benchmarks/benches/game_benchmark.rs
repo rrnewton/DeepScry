@@ -18,6 +18,68 @@
 //!
 //! Run with: `cargo bench --features bench-stats-alloc` for tracking
 //! Run with: `cargo bench --features bench-mimalloc` for performance (default)
+//!
+//! ## Lazy Initialization Pattern
+//!
+//! **IMPORTANT**: All benchmarks MUST use lazy initialization to avoid running setup code
+//! during `cargo bench --list` (which only lists benchmarks without running them).
+//!
+//! ### Problem
+//!
+//! Criterion benchmark functions are executed at registration time to gather metadata,
+//! not just at execution time. If you create expensive state (like game instances) before
+//! calling `bench_function()`, that initialization will run even when listing benchmarks:
+//!
+//! ```rust,ignore
+//! // BAD: This runs during --list!
+//! let game = create_midgame_state(&setup, seed);
+//! group.bench_function("my_benchmark", |b| {
+//!     b.iter(|| { /* use game */ });
+//! });
+//! ```
+//!
+//! ### Solution
+//!
+//! Use `Option<T>` with lazy initialization inside the benchmark closure:
+//!
+//! ```rust,ignore
+//! // GOOD: This only runs during actual benchmarking
+//! let mut game_template: Option<GameState> = None;
+//!
+//! group.bench_function("my_benchmark", |b| {
+//!     b.iter(|| {
+//!         // Initialize on first iteration
+//!         if game_template.is_none() {
+//!             eprintln!("Initializing benchmark state...");
+//!             let game = create_midgame_state(&setup, seed);
+//!             game_template = Some(game);
+//!         }
+//!
+//!         let game = game_template.as_ref().unwrap();
+//!         // Use game...
+//!     });
+//! });
+//! ```
+//!
+//! ### Examples in This File
+//!
+//! - `bench_game_snapshot` (line ~815): Uses `Option<GameState>` for lazy game initialization
+//! - `bench_game_rewind` (line ~890): Uses `Option<GameState>` for lazy game initialization
+//! - `bench_game_rewind_play_again` (line ~1038): Uses `Option<GameState>` for midgame state
+//! - `bench_game_pinned_par_rewind_play_again` (line ~1134): Uses `Option<GameState>` inside `iter_custom`
+//! - `bench_game_par_rewind_play_again` (line ~1290): Uses `Option<GameState>` inside `iter_custom`
+//! - `bench_save_snapshot` (line ~1442): Uses `Option<GameSnapshot>` for snapshot state
+//!
+//! ### Verification
+//!
+//! To verify benchmarks use lazy initialization, run:
+//!
+//! ```bash
+//! cargo bench --bench game_benchmark -- --list
+//! ```
+//!
+//! This should complete instantly without printing initialization messages. If you see
+//! "Initializing..." or game state creation messages, the benchmark needs fixing.
 
 mod allocator;
 mod pinned_thread_pool;
@@ -1131,23 +1193,9 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
 
     let initial_seed = 42u64;
 
-    // Track timing for batch logging
-    let init_start = Instant::now();
-
-    // ONE-TIME SETUP: Create midgame state
-    let (initial_game, actions_count) = create_midgame_state(&setup, initial_seed);
-
-    let init_duration = init_start.elapsed();
-
-    eprintln!(
-        "\nPinned Parallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
-        num_threads
-    );
-    eprintln!("  Full game had {} actions", actions_count);
-    eprintln!("  Starting from midpoint (undo log cleared)");
-    eprintln!("  Replay second half in parallel with pinned threads");
-    eprintln!("  NOTE: Using custom thread pool with precise timing");
-    eprintln!("\n=== BATCH TIMING LOG ===");
+    // Lazy initialization - only create midgame state on first iteration
+    let mut midgame_template: Option<GameState> = None;
+    let mut original_actions_count = 0;
 
     let mut batch_number = 0;
     let total_p1_wins = AtomicUsize::new(0);
@@ -1158,13 +1206,30 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
         b.iter_custom(|iters| {
             batch_number += 1;
 
-            // Log initialization time only for first batch
-            if batch_number == 1 {
+            // Initialize on first iteration
+            if midgame_template.is_none() {
+                let init_start = Instant::now();
+                let (game, actions_count) = create_midgame_state(&setup, initial_seed);
+                let init_duration = init_start.elapsed();
+
+                original_actions_count = actions_count;
+
+                eprintln!(
+                    "\nPinned Parallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
+                    num_threads
+                );
+                eprintln!("  Full game had {} actions", actions_count);
+                eprintln!("  Starting from midpoint (undo log cleared)");
+                eprintln!("  Replay second half in parallel with pinned threads");
+                eprintln!("  NOTE: Using custom thread pool with precise timing");
+                eprintln!("\n=== BATCH TIMING LOG ===");
                 eprintln!(
                     "[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
                     batch_number,
                     init_duration.as_secs_f64() * 1000.0
                 );
+
+                midgame_template = Some(game);
             }
 
             // Atomics for win tracking within this batch
@@ -1179,8 +1244,9 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
             let p2_wins_clone = Arc::clone(&batch_p2_wins);
 
             // Execute parallel batch with pinned threads
+            let initial_game = midgame_template.as_ref().unwrap();
             let (batch_duration, _results) =
-                execute_parallel_batch(num_threads, &initial_game, move |thread_id, thread_game| {
+                execute_parallel_batch(num_threads, initial_game, move |thread_id, thread_game| {
                     for i in 0..games_per_thread {
                         if (thread_id * games_per_thread + i) >= total_iters {
                             break; // Don't overshoot total iters
@@ -1283,23 +1349,9 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     let initial_seed = 42u64;
     let num_threads = num_physical_cores;
 
-    // Track timing for batch logging
-    let init_start = Instant::now();
-
-    // ONE-TIME SETUP: Create midgame state
-    let (initial_game, actions_count) = create_midgame_state(&setup, initial_seed);
-
-    let init_duration = init_start.elapsed();
-
-    eprintln!(
-        "\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
-        num_threads
-    );
-    eprintln!("  Full game had {} actions", actions_count);
-    eprintln!("  Starting from midpoint (undo log cleared)");
-    eprintln!("  Replay second half in parallel with thread-specific RNG seeds");
-    eprintln!("  NOTE: Using iter_custom - clone time NOT included in measurements");
-    eprintln!("\n=== BATCH TIMING LOG ===");
+    // Lazy initialization - only create midgame state on first iteration
+    let mut midgame_template: Option<GameState> = None;
+    let mut original_actions_count = 0;
 
     let mut batch_number = 0;
     let total_p1_wins = AtomicUsize::new(0);
@@ -1310,19 +1362,37 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
         b.iter_custom(|iters| {
             batch_number += 1;
 
-            // Log initialization time only for first batch
-            if batch_number == 1 {
+            // Initialize on first iteration
+            if midgame_template.is_none() {
+                let init_start = Instant::now();
+                let (game, actions_count) = create_midgame_state(&setup, initial_seed);
+                let init_duration = init_start.elapsed();
+
+                original_actions_count = actions_count;
+
+                eprintln!(
+                    "\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
+                    num_threads
+                );
+                eprintln!("  Full game had {} actions", actions_count);
+                eprintln!("  Starting from midpoint (undo log cleared)");
+                eprintln!("  Replay second half in parallel with thread-specific RNG seeds");
+                eprintln!("  NOTE: Using iter_custom - clone time NOT included in measurements");
+                eprintln!("\n=== BATCH TIMING LOG ===");
                 eprintln!(
                     "[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
                     batch_number,
                     init_duration.as_secs_f64() * 1000.0
                 );
+
+                midgame_template = Some(game);
             }
 
             // PER-BATCH SETUP: Track clone time
             let setup_start = Instant::now();
             // PER-BATCH SETUP (outside timing): Clone snapshots for parallel execution
             // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
+            let initial_game = midgame_template.as_ref().unwrap();
             let snapshots: Vec<GameState> = (0..num_threads).map(|_| initial_game.clone()).collect();
 
             let setup_duration = setup_start.elapsed();
@@ -1431,52 +1501,72 @@ fn bench_save_snapshot(c: &mut Criterion) {
 
     let seed = 42u64;
 
-    // Create a representative game state by running a game for a few turns
-    let mut game = {
-        let game_init = GameInitializer::new(&setup.card_db);
-        setup
-            .runtime
-            .block_on(async {
-                game_init
-                    .init_game(
-                        "Player 1".to_string(),
-                        &setup.deck1,
-                        "Player 2".to_string(),
-                        &setup.deck2,
-                        20,
-                    )
-                    .await
-            })
-            .expect("Failed to initialize game")
-    };
-    game.seed_rng(seed);
-
-    let (p1_id, p2_id) = {
-        let mut players_iter = game.players.iter().map(|p| p.id);
-        (
-            players_iter.next().expect("Should have player 1"),
-            players_iter.next().expect("Should have player 2"),
-        )
-    };
-
-    let mut controller1 = RandomController::with_seed(p1_id, 42);
-    let mut controller2 = RandomController::with_seed(p2_id, 42);
-
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    game_loop
-        .run_turns(&mut controller1, &mut controller2, 10)
-        .expect("Game should complete successfully");
-
-    let snapshot = GameSnapshot::new(game.clone(), game.turn.turn_number, vec![]);
-
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let snapshot_path = temp_dir.path().join("benchmark.snapshot");
+    // Lazy initialization - only create game state and snapshot on first iteration
+    let mut snapshot_template: Option<GameSnapshot> = None;
+    let mut temp_dir_holder: Option<tempfile::TempDir> = None;
+    let mut snapshot_path_holder: Option<PathBuf> = None;
 
     group.bench_function("save_to_file", |b| {
         b.iter(|| {
+            // Initialize on first iteration
+            if snapshot_template.is_none() {
+                eprintln!("\nSave Snapshot mode (seed {seed}):");
+                eprintln!("  Creating game state by running 10 turns...");
+
+                // Create a representative game state by running a game for a few turns
+                let mut game = {
+                    let game_init = GameInitializer::new(&setup.card_db);
+                    setup
+                        .runtime
+                        .block_on(async {
+                            game_init
+                                .init_game(
+                                    "Player 1".to_string(),
+                                    &setup.deck1,
+                                    "Player 2".to_string(),
+                                    &setup.deck2,
+                                    20,
+                                )
+                                .await
+                        })
+                        .expect("Failed to initialize game")
+                };
+                game.seed_rng(seed);
+
+                let (p1_id, p2_id) = {
+                    let mut players_iter = game.players.iter().map(|p| p.id);
+                    (
+                        players_iter.next().expect("Should have player 1"),
+                        players_iter.next().expect("Should have player 2"),
+                    )
+                };
+
+                let mut controller1 = RandomController::with_seed(p1_id, 42);
+                let mut controller2 = RandomController::with_seed(p2_id, 42);
+
+                let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+                game_loop
+                    .run_turns(&mut controller1, &mut controller2, 10)
+                    .expect("Game should complete successfully");
+
+                let snapshot = GameSnapshot::new(game.clone(), game.turn.turn_number, vec![]);
+
+                let temp_dir = tempdir().expect("Failed to create temp dir");
+                let snapshot_path = temp_dir.path().join("benchmark.snapshot");
+
+                eprintln!("  Snapshot created at turn {}", game.turn.turn_number);
+
+                snapshot_template = Some(snapshot);
+                snapshot_path_holder = Some(snapshot_path);
+                temp_dir_holder = Some(temp_dir);
+            }
+
+            let snapshot = snapshot_template.as_ref().unwrap();
+            let snapshot_path = snapshot_path_holder.as_ref().unwrap();
+
             snapshot
                 .save_to_file(
-                    black_box(&snapshot_path),
+                    black_box(snapshot_path),
                     mtg_forge_rs::game::snapshot::SnapshotFormat::Json,
                 )
                 .expect("Failed to save snapshot");

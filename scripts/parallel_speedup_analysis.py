@@ -378,12 +378,75 @@ class ParallelSpeedupAnalyzer:
             return float(match.group(1))
         return None
 
-    def run_full_analysis(self, dry_run: bool = False) -> List[BenchmarkResult]:
-        """Run benchmarks for all allocators and thread counts"""
+    def _write_single_result(self, result: BenchmarkResult, output_file: Path):
+        """
+        Append a single result to CSV file incrementally.
+        Creates file with header if it doesn't exist.
+        """
+        file_exists = output_file.exists()
+
+        with open(output_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+
+            # Write header only for new files
+            if not file_exists:
+                writer.writerow([
+                    "timestamp", "git_commit", "allocator", "num_threads",
+                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn",
+                    "mean_time_ci_lower_ns", "mean_time_ci_upper_ns"
+                ])
+
+            # Append the result
+            writer.writerow([
+                result.timestamp, result.git_commit, result.allocator, result.num_threads,
+                result.mean_time_ns, result.std_dev_ns, result.turns_per_sec, result.bytes_per_turn,
+                result.mean_time_ci_lower_ns, result.mean_time_ci_upper_ns
+            ])
+
+    def run_full_analysis(self, dry_run: bool = False, output_file: Optional[Path] = None) -> List[BenchmarkResult]:
+        """
+        Run benchmarks for all allocators and thread counts.
+
+        Results are written incrementally to CSV after each benchmark completes.
+        This ensures partial results are saved even if the process is interrupted.
+        """
         results = []
 
         thread_counts = self._get_thread_counts()
         measurement_time = self._get_measurement_time()
+
+        # Determine output file
+        if output_file is None and not dry_run:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            output_file = self.results_dir / f"parallel_speedup_{date_str}.csv"
+
+        # Check for conflicts with existing data before starting
+        if output_file and output_file.exists() and not dry_run:
+            print(f"\nCSV file exists: {output_file}")
+            print(f"Checking for conflicts...")
+            existing_results = self.load_results(output_file)
+
+            # Build set of configurations we plan to run
+            planned_configs = {(a[0], t) for a in self.allocators for t in thread_counts}
+            existing_configs = {(r.allocator, r.num_threads) for r in existing_results}
+            conflicts = planned_configs & existing_configs
+
+            if conflicts:
+                print(f"\n{'='*70}")
+                print("ERROR: Conflicting configurations detected!")
+                print(f"{'='*70}")
+                print(f"File: {output_file}")
+                print("The following (allocator, threads) combinations would conflict:")
+                for allocator, threads in sorted(conflicts):
+                    print(f"  - {allocator}: {threads} threads")
+                print(f"\nPlease either:")
+                print(f"  1. Remove conflicting rows from {output_file}")
+                print(f"  2. Use a different output file with --output-data")
+                print(f"  3. Delete the existing file to start fresh")
+                print(f"{'='*70}\n")
+                return []
+
+            print(f"✓ No conflicts found, will append results incrementally")
 
         # Determine mode description
         mode_desc = {
@@ -399,6 +462,8 @@ class ParallelSpeedupAnalyzer:
         print(f"Measurement time: {measurement_time}s per benchmark")
         print(f"Allocators: {', '.join(a[0] for a in self.allocators)}")
         print(f"Total runs: {len(self.allocators)} allocators × {len(thread_counts)} thread counts = {len(self.allocators) * len(thread_counts)}")
+        if output_file and not dry_run:
+            print(f"Output file: {output_file} (incremental writes)")
         print(f"{'='*70}\n")
 
         for allocator_name, feature in self.allocators:
@@ -417,6 +482,11 @@ class ParallelSpeedupAnalyzer:
                 if result:
                     results.append(result)
                     print(f"  ✓ {num_threads} threads: {result.mean_time_ns/1e6:.2f}ms")
+
+                    # Write result incrementally (if not dry-run)
+                    if not dry_run and output_file:
+                        self._write_single_result(result, output_file)
+                        print(f"    → Written to {output_file}")
 
         return results
 
@@ -761,10 +831,15 @@ def main():
 
     # Run benchmarks if requested
     if args.run_benchmarks or args.dry_run:
-        results = analyzer.run_full_analysis(dry_run=args.dry_run)
+        # Pass output_file to run_full_analysis for incremental CSV writing
+        results = analyzer.run_full_analysis(dry_run=args.dry_run, output_file=args.output_data)
 
         if results and not args.dry_run:
-            analyzer.save_results(results, args.output_data)
+            # Results were already written incrementally during run_full_analysis
+            # Just print analysis now
+            print(f"\n{'='*70}")
+            print(f"✓ All benchmarks completed and written to CSV")
+            print(f"{'='*70}")
             # Analyze and print maximum throughput for each allocator
             analyzer.analyze_max_throughput(results)
 
