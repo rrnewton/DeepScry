@@ -976,19 +976,15 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 /// Measures forward gameplay after rewind across N worker threads
 ///
 /// This benchmark models future MCTS parallel search by:
-/// 1. Playing a full game N turns (done once in setup)
-/// 2. For each iteration:
-///    - Rewinds to middle of game
-///    - Clones snapshot to N worker threads (one per core)
-///    - Each thread plays iters/N games with thread-specific RNG
-///    - Aggregates metrics from all threads
-/// 3. Measures allocation rate for forward play only (not counting rewind/clone)
+/// 1. ONE-TIME SETUP: Play a full game to build undo log
+/// 2. PER-BATCH SETUP (outside timing): Clone snapshot to N worker threads
+/// 3. TIMED LOOP: Each thread runs forward from mid-game, then rewinds for next iteration
 ///
-/// This exposes allocator contention under parallel load, which will be critical
-/// for future parallel MCTS implementation.
+/// CRITICAL: Uses iter_custom to exclude clone cost from measurements.
+/// Only the actual parallel gameplay is timed, not the snapshot cloning.
 fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     use rayon::prelude::*;
-    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     // Configure rayon to use only physical cores (not hyperthreads)
     let num_physical_cores = num_cpus::get_physical();
@@ -1011,167 +1007,118 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
 
     let initial_seed = 42u64;
-    // Use only physical cores (not hyperthreads) to isolate allocator contention
     let num_threads = num_physical_cores;
 
-    // Accumulator for aggregating metrics
-    let aggregated = Arc::new(Mutex::new(GameMetrics {
-        turns: 0,
-        actions: 0,
-        duration: Duration::ZERO,
-        bytes_allocated: 0,
-        bytes_deallocated: 0,
-    }));
-    let iteration_count = Arc::new(Mutex::new(0usize));
+    // ONE-TIME SETUP: Create and play initial game to build undo log
+    let game_init = GameInitializer::new(&setup.card_db);
+    let mut initial_game = setup
+        .runtime
+        .block_on(async {
+            game_init
+                .init_game(
+                    "Player 1".to_string(),
+                    &setup.deck1,
+                    "Player 2".to_string(),
+                    &setup.deck2,
+                    20,
+                )
+                .await
+        })
+        .expect("Failed to initialize game");
 
-    // Lazy initialization - only create and run initial game on first iteration
-    let mut initial_game: Option<GameState> = None;
-    let mut rewind_target = 0;
+    initial_game.seed_rng(initial_seed);
+
+    // Play the game once to build the undo log
+    {
+        let (p1_id, p2_id) = {
+            let mut players_iter = initial_game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
+
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = RandomController::with_seed(p2_id, 42);
+
+        let mut game_loop = GameLoop::new(&mut initial_game).with_verbosity(VerbosityLevel::Silent);
+        let _ = game_loop
+            .run_game(&mut controller1, &mut controller2)
+            .expect("Initial game should complete");
+    }
+
+    let actions_count = initial_game.undo_log.len();
+    let rewind_target = actions_count / 2; // Rewind to middle of game
+
+    // Rewind to the target position for the benchmark
+    while initial_game.undo_log.len() > rewind_target {
+        initial_game.undo().expect("Undo should succeed");
+    }
+
+    eprintln!("\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):", num_threads);
+    eprintln!("  Game completed with {} actions in undo log", actions_count);
+    eprintln!("  Will start from action {} (middle) for each batch", rewind_target);
+    eprintln!("  Then replay second half in parallel with thread-specific RNG seeds");
+    eprintln!("  NOTE: Using iter_custom - clone time NOT included in measurements");
 
     group.bench_function("par_rewind_play_again", |b| {
-        b.iter(|| {
-            // Initialize on first iteration
-            if initial_game.is_none() {
-                let game_init = GameInitializer::new(&setup.card_db);
-                let mut game = setup
-                    .runtime
-                    .block_on(async {
-                        game_init
-                            .init_game(
-                                "Player 1".to_string(),
-                                &setup.deck1,
-                                "Player 2".to_string(),
-                                &setup.deck2,
-                                20,
-                            )
-                            .await
-                    })
-                    .expect("Failed to initialize game");
-
-                game.seed_rng(initial_seed);
-
-                // Play the game once to build the undo log
-                {
-                    let (p1_id, p2_id) = {
-                        let mut players_iter = game.players.iter().map(|p| p.id);
-                        (
-                            players_iter.next().expect("Should have player 1"),
-                            players_iter.next().expect("Should have player 2"),
-                        )
-                    };
-
-                    let mut controller1 = RandomController::with_seed(p1_id, 42);
-                    let mut controller2 = RandomController::with_seed(p2_id, 42);
-
-                    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-                    let _ = game_loop
-                        .run_game(&mut controller1, &mut controller2)
-                        .expect("Initial game should complete");
-                }
-
-                let actions_count = game.undo_log.len();
-                rewind_target = actions_count / 2; // Rewind to middle of game
-
-                eprintln!("\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):", num_threads);
-                eprintln!("  Game completed with {} actions in undo log", actions_count);
-                eprintln!(
-                    "  Will rewind to action {} (middle) for each iteration...",
-                    rewind_target
-                );
-                eprintln!("  Then replay second half in parallel with thread-specific RNG seeds");
-
-                initial_game = Some(game);
-            }
-
-            let game = initial_game.as_mut().unwrap();
-
-            // Rewind to middle (outside timing - not counting rewind cost)
-            let current_actions = game.undo_log.len();
-            let rewinds_needed = current_actions - rewind_target;
-            for _ in 0..rewinds_needed {
-                game.undo().expect("Undo should succeed");
-            }
-
-            // Get current iteration count for seed generation
-            let iter_count = {
-                let count = iteration_count.lock().unwrap();
-                *count
-            };
-
-            // Clone snapshots for parallel execution (outside timing)
+        b.iter_custom(|iters| {
+            // PER-BATCH SETUP (outside timing): Clone snapshots for parallel execution
             // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
             let snapshots: Vec<GameState> = (0..num_threads)
-                .map(|_| game.clone())
+                .map(|_| initial_game.clone())
                 .collect();
 
-            // Parallel execution across N threads
-            let thread_metrics: Vec<GameMetrics> = snapshots
+            // START TIMING - only measure the actual parallel gameplay
+            let start = Instant::now();
+
+            // Parallel execution of iters across N threads
+            // Each thread does iters/N games
+            snapshots
                 .into_par_iter()
                 .enumerate()
-                .map(|(thread_id, mut thread_game)| {
-                    // Thread-specific seed: mix in iteration count and thread ID
-                    let thread_seed = initial_seed
-                        .wrapping_add((iter_count * num_threads + thread_id) as u64);
+                .for_each(|(thread_id, mut thread_game)| {
+                    let games_per_thread = (iters as usize + num_threads - 1) / num_threads; // Ceiling division
 
-                    // Run forward gameplay using shared helper function
-                    run_forward_gameplay_from_snapshot(&mut thread_game, thread_seed, rewind_target)
-                })
-                .collect();
+                    for i in 0..games_per_thread {
+                        if (thread_id * games_per_thread + i) >= iters as usize {
+                            break; // Don't overshoot total iters
+                        }
 
-            // Aggregate metrics from all threads
-            let total_metrics = thread_metrics.into_iter().fold(
-                GameMetrics {
-                    turns: 0,
-                    actions: 0,
-                    duration: Duration::ZERO,
-                    bytes_allocated: 0,
-                    bytes_deallocated: 0,
-                },
-                |acc, m| acc + m,
-            );
+                        // Thread-specific seed for this iteration
+                        let iter_num = thread_id * games_per_thread + i;
+                        let thread_seed = initial_seed.wrapping_add(iter_num as u64);
 
-            // Update global aggregates
-            {
-                let mut agg = aggregated.lock().unwrap();
-                *agg += total_metrics;
-            }
-            {
-                let mut count = iteration_count.lock().unwrap();
-                *count += num_threads; // Each iteration runs N games
-            }
+                        thread_game.seed_rng(thread_seed);
 
-            // Re-run the game to populate undo log for next iteration
-            // (This happens outside the timing)
-            {
-                let (p1_id, p2_id) = {
-                    let mut players_iter = game.players.iter().map(|p| p.id);
-                    (
-                        players_iter.next().expect("Should have player 1"),
-                        players_iter.next().expect("Should have player 2"),
-                    )
-                };
+                        // Run forward gameplay from the snapshot
+                        let (p1_id, p2_id) = {
+                            let mut players_iter = thread_game.players.iter().map(|p| p.id);
+                            (
+                                players_iter.next().expect("Should have player 1"),
+                                players_iter.next().expect("Should have player 2"),
+                            )
+                        };
 
-                let mut controller1 = RandomController::with_seed(p1_id, 42);
-                let mut controller2 = RandomController::with_seed(p2_id, 42);
+                        let mut controller1 = RandomController::with_seed(p1_id, thread_seed);
+                        let mut controller2 = RandomController::with_seed(p2_id, thread_seed);
 
-                let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
-                let _ = game_loop
-                    .run_game(&mut controller1, &mut controller2)
-                    .expect("Game should complete");
-            }
+                        let mut game_loop = GameLoop::new(&mut thread_game).with_verbosity(VerbosityLevel::Silent);
+                        let _ = game_loop
+                            .run_game(&mut controller1, &mut controller2)
+                            .expect("Game should complete");
+
+                        // Rewind back to the mid-game state for next iteration
+                        while thread_game.undo_log.len() > rewind_target {
+                            thread_game.undo().expect("Undo should succeed");
+                        }
+                    }
+                });
+
+            // STOP TIMING
+            start.elapsed()
         });
     });
-
-    let final_iteration_count = *iteration_count.lock().unwrap();
-    if final_iteration_count > 0 {
-        let final_aggregated = aggregated.lock().unwrap();
-        print_aggregated_metrics(
-            &format!("Parallel Rewind + Play Again ({} threads)", num_threads),
-            initial_seed,
-            &final_aggregated,
-            final_iteration_count,
-        );
-    }
 
     group.finish();
 }
