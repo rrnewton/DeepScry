@@ -10,7 +10,7 @@
 //! - CreatureEvaluator.java (creature scoring)
 
 use crate::core::{Card, CardId, Keyword, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{GameStateView, PlayerController};
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
 /// Combat factors for attack decisions
@@ -2376,14 +2376,14 @@ impl PlayerController for HeuristicController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         if available.is_empty() {
             let player_name = view.player_name();
             view.logger().controller_choice(
                 "HEURISTIC",
                 &format!("{} chose to pass priority (no available actions)", player_name),
             );
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         let choice = self.choose_best_spell(view, available);
@@ -2421,7 +2421,7 @@ impl PlayerController for HeuristicController {
             );
         }
 
-        choice
+        ChoiceResult::Ok(choice)
     }
 
     fn choose_targets(
@@ -2429,9 +2429,9 @@ impl PlayerController for HeuristicController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // TODO: Implement intelligent targeting
@@ -2451,7 +2451,7 @@ impl PlayerController for HeuristicController {
             // Fallback: just pick the first target
             let mut targets = SmallVec::new();
             targets.push(valid_targets[0]);
-            return targets;
+            return ChoiceResult::Ok(targets);
         }
 
         // For our own spells (pumps), target our best creature
@@ -2474,7 +2474,7 @@ impl PlayerController for HeuristicController {
             targets.push(valid_targets[0]);
         }
 
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -2482,7 +2482,7 @@ impl PlayerController for HeuristicController {
         _view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Simple greedy approach for now
         // TODO: Implement intelligent mana tapping order from ComputerUtilMana
         let mut sources = SmallVec::new();
@@ -2492,10 +2492,14 @@ impl PlayerController for HeuristicController {
             sources.push(source_id);
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Port of Java's AiAttackController.declareAttackers()
         // Reference: AiAttackController.java:818
 
@@ -2550,7 +2554,7 @@ impl PlayerController for HeuristicController {
             );
         }
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -2558,7 +2562,7 @@ impl PlayerController for HeuristicController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Use improved blocking with gang block support
         // Reference: AiBlockController.assignBlockersForCombat() lines 1070-1160
         let blocks = self.assign_blocks_with_gang(view, available_blockers, attackers);
@@ -2579,7 +2583,7 @@ impl PlayerController for HeuristicController {
             );
         }
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -2587,10 +2591,10 @@ impl PlayerController for HeuristicController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // For now, just return the blockers in order
         // TODO: Implement intelligent ordering to kill blockers efficiently
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -2598,7 +2602,7 @@ impl PlayerController for HeuristicController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Simple heuristic: Discard lands first, then worst creatures
         let mut hand_cards: Vec<&Card> = hand.iter().filter_map(|&id| view.get_card(id)).collect();
 
@@ -2613,7 +2617,7 @@ impl PlayerController for HeuristicController {
             }
         });
 
-        hand_cards.iter().take(count).map(|c| c.id).collect()
+        ChoiceResult::Ok(hand_cards.iter().take(count).map(|c| c.id).collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

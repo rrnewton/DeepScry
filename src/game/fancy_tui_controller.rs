@@ -4,13 +4,14 @@
 //! with separate panels for battlefield, hand, card details, prompts, and game state.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{GameStateView, PlayerController};
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::Step;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use rand::Rng;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -37,6 +38,18 @@ enum InputAction {
     Pass,
     /// Exit the game (Ctrl-C pressed)
     Exit,
+    /// Undo the most recent action (Z key pressed)
+    Undo,
+    /// Make a random choice (R key pressed)
+    RandomChoice,
+}
+
+/// Result from prompting for a choice
+enum PromptResult {
+    /// User made a normal choice
+    Choice(Option<usize>),
+    /// User requested undo
+    Undo,
 }
 
 /// Tab indices for left panels (Combat|Log only)
@@ -222,6 +235,8 @@ struct FancyTuiState {
     actions_pane_area: Option<Rect>,
     /// Hand pane area (for mouse click detection)
     hand_pane_area: Option<Rect>,
+    /// Rewind message to display after undo operation
+    rewind_message: Option<String>,
 }
 
 impl FancyTuiState {
@@ -240,6 +255,7 @@ impl FancyTuiState {
             choice_context: ChoiceContext::None,
             actions_pane_area: None,
             hand_pane_area: None,
+            rewind_message: None,
         }
     }
 }
@@ -737,10 +753,30 @@ impl FancyTuiController {
         let available_lines = area.height.saturating_sub(2) as usize; // Account for borders
         let start_idx = logs.len().saturating_sub(available_lines);
 
+        // Calculate the width needed for line numbers based on the maximum visible line number
+        // Line numbers go from 1 to logs.len()
+        let max_line_number = logs.len();
+        let line_number_width = if max_line_number > 0 {
+            max_line_number.to_string().len()
+        } else {
+            1
+        };
+
         let items: Vec<ListItem> = logs
             .iter()
             .skip(start_idx)
-            .map(|entry| ListItem::new(entry.message.as_str()))
+            .enumerate()
+            .map(|(idx, entry)| {
+                // Line number is start_idx + idx + 1 (1-based indexing)
+                let line_number = start_idx + idx + 1;
+                // Format line number with grey color
+                let line_num_str = format!("{:>width$} ", line_number, width = line_number_width);
+                let line = Line::from(vec![
+                    Span::styled(line_num_str, Style::default().fg(Color::DarkGray)),
+                    Span::raw(&entry.message),
+                ]);
+                ListItem::new(line)
+            })
             .collect();
 
         let list = List::new(items);
@@ -752,7 +788,7 @@ impl FancyTuiController {
         &self,
         f: &mut Frame,
         area: Rect,
-        _view: &GameStateView,
+        view: &GameStateView,
         current_prompt: Option<&str>,
         choices: &[(String, bool)],
     ) {
@@ -780,15 +816,34 @@ impl FancyTuiController {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
+        // Reserve 1 line at bottom for status bar
+        let status_height = 1;
+        let content_height = inner_area.height.saturating_sub(status_height);
+
+        let content_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y,
+            width: inner_area.width,
+            height: content_height,
+        };
+
+        let status_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y + content_height,
+            width: inner_area.width,
+            height: status_height,
+        };
+
+        // Draw main content (prompt and choices)
         if let Some(prompt) = current_prompt {
             // Show prompt text
             let prompt_text = Text::from(prompt);
             let prompt_height = 3; // Reserve lines for prompt
             let prompt_area = Rect {
-                x: inner_area.x,
-                y: inner_area.y,
-                width: inner_area.width,
-                height: prompt_height.min(inner_area.height),
+                x: content_area.x,
+                y: content_area.y,
+                width: content_area.width,
+                height: prompt_height.min(content_area.height),
             };
             let paragraph = Paragraph::new(prompt_text)
                 .wrap(Wrap { trim: true })
@@ -798,10 +853,10 @@ impl FancyTuiController {
             // Show choices below prompt
             if !choices.is_empty() {
                 let choices_area = Rect {
-                    x: inner_area.x,
-                    y: inner_area.y + prompt_height,
-                    width: inner_area.width,
-                    height: inner_area.height.saturating_sub(prompt_height),
+                    x: content_area.x,
+                    y: content_area.y + prompt_height,
+                    width: content_area.width,
+                    height: content_area.height.saturating_sub(prompt_height),
                 };
 
                 let items: Vec<ListItem> = choices
@@ -825,8 +880,20 @@ impl FancyTuiController {
         } else {
             let text = Text::from("(Waiting for input...)");
             let paragraph = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-            f.render_widget(paragraph, inner_area);
+            f.render_widget(paragraph, content_area);
         }
+
+        // Draw status bar at the bottom
+        let action_count = view.action_count();
+        let choice_count = view.choice_count();
+        let status_text = if let Some(ref msg) = self.state.rewind_message {
+            format!("{} actions, {} choices in game | {}", action_count, choice_count, msg)
+        } else {
+            format!("{} actions, {} choices in game", action_count, choice_count)
+        };
+
+        let status_paragraph = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(status_paragraph, status_area);
     }
 
     /// Draw both battlefields (opponent on top, player on bottom)
@@ -2544,6 +2611,14 @@ impl FancyTuiController {
                                 // No action needed here - the signal handler will suspend the process
                                 return Ok(InputAction::Continue);
                             }
+                            KeyCode::Char('Z') => {
+                                // Shift+Z: Undo the most recent action
+                                return Ok(InputAction::Undo);
+                            }
+                            KeyCode::Char('r') | KeyCode::Char('R') => {
+                                // R: Make a random choice
+                                return Ok(InputAction::RandomChoice);
+                            }
                             KeyCode::Char(c) if c.is_ascii_digit() => {
                                 // Digit selection only works when Actions pane is focused
                                 if self.state.focused_pane == FocusedPane::Actions {
@@ -2572,7 +2647,7 @@ impl FancyTuiController {
         view: &GameStateView,
         prompt: &str,
         choices: &[String],
-    ) -> io::Result<Option<usize>> {
+    ) -> io::Result<PromptResult> {
         self.state.highlighted_choice = 0;
 
         let mut terminal = Self::setup_terminal()?;
@@ -2599,17 +2674,34 @@ impl FancyTuiController {
                 }
                 InputAction::Select(choice) => {
                     Self::restore_terminal(&mut terminal)?;
-                    return Ok(Some(choice));
+                    return Ok(PromptResult::Choice(Some(choice)));
                 }
                 InputAction::Pass => {
                     Self::restore_terminal(&mut terminal)?;
-                    return Ok(None);
+                    return Ok(PromptResult::Choice(None));
                 }
                 InputAction::Exit => {
                     // Ctrl-C pressed - restore terminal and exit gracefully
                     Self::restore_terminal(&mut terminal)?;
                     eprintln!("Exiting game (Ctrl-C pressed)");
                     std::process::exit(0);
+                }
+                InputAction::Undo => {
+                    // Return undo signal to be handled at controller trait method level
+                    Self::restore_terminal(&mut terminal)?;
+                    return Ok(PromptResult::Undo);
+                }
+                InputAction::RandomChoice => {
+                    // R key pressed - make a random choice
+                    let choice = if choices.is_empty() {
+                        None
+                    } else {
+                        let mut rng = rand::thread_rng();
+                        let idx = rng.gen_range(0..choices.len());
+                        Some(idx)
+                    };
+                    Self::restore_terminal(&mut terminal)?;
+                    return Ok(PromptResult::Choice(choice));
                 }
             }
         }
@@ -2625,9 +2717,9 @@ impl PlayerController for FancyTuiController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         if available.is_empty() {
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         // Set choice context and valid choices for highlighting
@@ -2661,40 +2753,56 @@ impl PlayerController for FancyTuiController {
             }))
             .collect();
 
-        let result = match self.prompt_for_choice(view, &prompt, &choices) {
-            Ok(Some(0)) | Ok(None) => None, // Pass
-            Ok(Some(idx)) if idx > 0 && idx <= available.len() => Some(available[idx - 1].clone()),
-            _ => None,
-        };
+        match self.prompt_for_choice(view, &prompt, &choices) {
+            Ok(PromptResult::Undo) => {
+                // Clear choice context
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                ChoiceResult::UndoRequest(usize::MAX)
+            }
+            Ok(PromptResult::Choice(choice_opt)) => {
+                let result = match choice_opt {
+                    Some(0) | None => None, // Pass
+                    Some(idx) if idx > 0 && idx <= available.len() => Some(available[idx - 1].clone()),
+                    _ => None,
+                };
 
-        // Log the choice
-        if let Some(ability) = &result {
-            let choice_description = match ability {
-                SpellAbility::PlayLand { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("play land: {}", name)
+                // Log the choice
+                if let Some(ability) = &result {
+                    let choice_description = match ability {
+                        SpellAbility::PlayLand { card_id } => {
+                            let name = view.card_name(*card_id).unwrap_or_default();
+                            format!("play land: {}", name)
+                        }
+                        SpellAbility::CastSpell { card_id } => {
+                            let name = view.card_name(*card_id).unwrap_or_default();
+                            format!("cast spell: {}", name)
+                        }
+                        SpellAbility::ActivateAbility { card_id, .. } => {
+                            let name = view.card_name(*card_id).unwrap_or_default();
+                            format!("activate: {}", name)
+                        }
+                    };
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose {}", player_name, choice_description));
+                } else {
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                 }
-                SpellAbility::CastSpell { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("cast spell: {}", name)
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("activate: {}", name)
-                }
-            };
-            view.logger()
-                .controller_choice("TUI", &format!("{} chose {}", player_name, choice_description));
-        } else {
-            view.logger()
-                .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
+
+                // Clear choice context after making choice
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+
+                ChoiceResult::Ok(result)
+            }
+            Err(e) => {
+                // Clear choice context on error
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                ChoiceResult::Error(format!("Failed to prompt for choice: {}", e))
+            }
         }
-
-        // Clear choice context after making choice
-        self.state.choice_context = ChoiceContext::None;
-        self.state.valid_choices.clear();
-
-        result
     }
 
     fn choose_targets(
@@ -2702,9 +2810,9 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Set choice context and valid choices for highlighting
@@ -2747,10 +2855,20 @@ impl PlayerController for FancyTuiController {
 
         let mut targets = SmallVec::new();
         match self.prompt_for_choice(view, &prompt, &choices) {
-            Ok(Some(idx)) if idx > 0 && idx <= valid_targets.len() => {
+            Ok(PromptResult::Undo) => {
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                return ChoiceResult::UndoRequest(usize::MAX);
+            }
+            Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_targets.len() => {
                 targets.push(valid_targets[idx - 1]);
             }
-            _ => {}
+            Ok(PromptResult::Choice(_)) => {}
+            Err(e) => {
+                self.state.choice_context = ChoiceContext::None;
+                self.state.valid_choices.clear();
+                return ChoiceResult::Error(format!("Failed to prompt for choice: {}", e));
+            }
         }
 
         // Log the choice
@@ -2769,7 +2887,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -2777,12 +2895,12 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         let mut sources = SmallVec::new();
         let needed = cost.cmc() as usize;
 
         if needed == 0 || available_sources.is_empty() {
-            return sources;
+            return ChoiceResult::Ok(sources);
         }
 
         for i in 0..needed {
@@ -2793,19 +2911,29 @@ impl PlayerController for FancyTuiController {
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(Some(idx)) if idx < available_sources.len() => {
+                Ok(PromptResult::Undo) => {
+                    return ChoiceResult::UndoRequest(usize::MAX);
+                }
+                Ok(PromptResult::Choice(Some(idx))) if idx < available_sources.len() => {
                     sources.push(available_sources[idx]);
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    return ChoiceResult::Error(format!("Failed to prompt for mana source: {}", e));
+                }
             }
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Set choice context and valid choices for highlighting
@@ -2825,14 +2953,24 @@ impl PlayerController for FancyTuiController {
                 .collect();
 
             match self.prompt_for_choice(view, prompt, &choices) {
-                Ok(Some(0)) | Ok(None) => break,
-                Ok(Some(idx)) if idx > 0 && idx <= available_creatures.len() => {
+                Ok(PromptResult::Undo) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::UndoRequest(usize::MAX);
+                }
+                Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => break,
+                Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= available_creatures.len() => {
                     let card_id = available_creatures[idx - 1];
                     if !attackers.contains(&card_id) {
                         attackers.push(card_id);
                     }
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::Error(format!("Failed to prompt for attackers: {}", e));
+                }
             }
         }
 
@@ -2860,7 +2998,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -2868,9 +3006,9 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if attackers.is_empty() || available_blockers.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Set choice context: both blockers and attackers are valid choices
@@ -2907,11 +3045,21 @@ impl PlayerController for FancyTuiController {
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(Some(0)) | Ok(None) => continue,
-                Ok(Some(idx)) if idx > 0 && idx <= attackers.len() => {
+                Ok(PromptResult::Undo) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::UndoRequest(usize::MAX);
+                }
+                Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => continue,
+                Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= attackers.len() => {
                     blocks.push((blocker_id, attackers[idx - 1]));
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    self.state.choice_context = ChoiceContext::None;
+                    self.state.valid_choices.clear();
+                    return ChoiceResult::Error(format!("Failed to prompt for blockers: {}", e));
+                }
             }
         }
 
@@ -2936,7 +3084,7 @@ impl PlayerController for FancyTuiController {
         self.state.choice_context = ChoiceContext::None;
         self.state.valid_choices.clear();
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -2944,10 +3092,10 @@ impl PlayerController for FancyTuiController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // For simplicity, just return blockers in order
         // TODO: implement UI for reordering
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -2955,7 +3103,7 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         let mut discards = SmallVec::new();
 
         for i in 0..count {
@@ -2971,7 +3119,10 @@ impl PlayerController for FancyTuiController {
             }
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(Some(idx)) if idx < hand.len() => {
+                Ok(PromptResult::Undo) => {
+                    return ChoiceResult::UndoRequest(usize::MAX);
+                }
+                Ok(PromptResult::Choice(Some(idx))) if idx < hand.len() => {
                     let card_id = hand
                         .iter()
                         .filter(|&card_id| !discards.contains(card_id))
@@ -2981,11 +3132,14 @@ impl PlayerController for FancyTuiController {
                         discards.push(card_id);
                     }
                 }
-                _ => break,
+                Ok(PromptResult::Choice(_)) => break,
+                Err(e) => {
+                    return ChoiceResult::Error(format!("Failed to prompt for discard: {}", e));
+                }
             }
         }
 
-        discards
+        ChoiceResult::Ok(discards)
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

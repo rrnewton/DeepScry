@@ -5,8 +5,7 @@
 //! to choosing the first option (index 0).
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::GameStateView;
-use crate::game::controller::PlayerController;
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
 /// A controller that follows a fixed script of choices for testing
@@ -76,7 +75,7 @@ impl PlayerController for FixedScriptController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         let choice_index = self.next_choice();
 
         // INVARIANT: Choice indices match menu display
@@ -87,7 +86,7 @@ impl PlayerController for FixedScriptController {
         if choice_index == 0 {
             // Choice 0 is always pass
             view.logger().controller_choice("SCRIPT", "Chose [0] Pass priority");
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         // Convert displayed index to array index (subtract 1)
@@ -103,14 +102,14 @@ impl PlayerController for FixedScriptController {
                     available.len()
                 ),
             );
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         view.logger().controller_choice(
             "SCRIPT",
             &format!("chose [{}] from choices 0-{}", choice_index, available.len()),
         );
-        Some(available[action_index].clone())
+        ChoiceResult::Ok(Some(available[action_index].clone()))
     }
 
     fn choose_targets(
@@ -118,18 +117,18 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "Chose no targets (none available)");
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         if valid_targets.len() == 1 {
             // Only one target available - no choice to make, don't log or consume script
             let mut targets = SmallVec::new();
             targets.push(valid_targets[0]);
-            return targets;
+            return ChoiceResult::Ok(targets);
         }
 
         // Multiple targets - use script
@@ -159,7 +158,7 @@ impl PlayerController for FixedScriptController {
 
         let mut targets = SmallVec::new();
         targets.push(valid_targets[clamped_index]);
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -167,7 +166,7 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Simple greedy approach: take sources in order until we have enough
         // Script controller doesn't use randomness, just takes first N sources
         let mut sources = SmallVec::new();
@@ -188,14 +187,18 @@ impl PlayerController for FixedScriptController {
             sources.push(source_id);
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "Chose no attackers (none available)");
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Use script to decide how many creatures to attack with
@@ -217,7 +220,7 @@ impl PlayerController for FixedScriptController {
             attackers.push(creature_id);
         }
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -225,11 +228,11 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if attackers.is_empty() || available_blockers.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "Chose no blockers (none available or no attackers)");
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Use script to decide how many blockers to use
@@ -251,7 +254,7 @@ impl PlayerController for FixedScriptController {
             blocks.push((blocker_id, attackers[0]));
         }
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -259,7 +262,7 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Just return blockers in the order they were provided
         // Script controller doesn't reorder
         if blockers.len() >= 2 {
@@ -272,7 +275,7 @@ impl PlayerController for FixedScriptController {
             );
         }
 
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -280,7 +283,7 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Discard first N cards from hand
         let num_discarding = count.min(hand.len());
 
@@ -295,7 +298,7 @@ impl PlayerController for FixedScriptController {
             );
         }
 
-        hand.iter().take(num_discarding).copied().collect()
+        ChoiceResult::Ok(hand.iter().take(num_discarding).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {
@@ -367,11 +370,11 @@ mod tests {
         // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
         // First choice: index 1 → abilities[0] (first ability)
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, Some(abilities[0].clone()));
+        assert_eq!(choice1.unwrap(), Some(abilities[0].clone()));
 
         // Second choice: index 2 → abilities[1] (second ability)
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, Some(abilities[1].clone()));
+        assert_eq!(choice2.unwrap(), Some(abilities[1].clone()));
     }
 
     #[test]
@@ -393,11 +396,11 @@ mod tests {
 
         // Index 0 = pass priority
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, None);
+        assert_eq!(choice1.unwrap(), None);
 
         // Out of bounds choice (99) should also pass
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, None);
+        assert_eq!(choice2.unwrap(), None);
     }
 
     #[test]
@@ -412,13 +415,15 @@ mod tests {
 
         // First choice: index 2 (third target)
         let targets1 = controller.choose_targets(&view, spell_id, &valid_targets);
-        assert_eq!(targets1.len(), 1);
-        assert_eq!(targets1[0], valid_targets[2]);
+        let targets1_val = targets1.unwrap();
+        assert_eq!(targets1_val.len(), 1);
+        assert_eq!(targets1_val[0], valid_targets[2]);
 
         // Second choice: index 0 (first target)
         let targets2 = controller.choose_targets(&view, spell_id, &valid_targets);
-        assert_eq!(targets2.len(), 1);
-        assert_eq!(targets2[0], valid_targets[0]);
+        let targets2_val = targets2.unwrap();
+        assert_eq!(targets2_val.len(), 1);
+        assert_eq!(targets2_val[0], valid_targets[0]);
     }
 
     #[test]
@@ -433,13 +438,15 @@ mod tests {
 
         // First choice: 2 attackers
         let attackers1 = controller.choose_attackers(&view, &creatures);
-        assert_eq!(attackers1.len(), 2);
-        assert_eq!(attackers1[0], creatures[0]);
-        assert_eq!(attackers1[1], creatures[1]);
+        let attackers1_val = attackers1.unwrap();
+        assert_eq!(attackers1_val.len(), 2);
+        assert_eq!(attackers1_val[0], creatures[0]);
+        assert_eq!(attackers1_val[1], creatures[1]);
 
         // Second choice: 0 attackers
         let attackers2 = controller.choose_attackers(&view, &creatures);
-        assert_eq!(attackers2.len(), 0);
+        let attackers2_val = attackers2.unwrap();
+        assert_eq!(attackers2_val.len(), 0);
     }
 
     #[test]
@@ -461,14 +468,14 @@ mod tests {
         // INVARIANT: Index 0 = Pass, Index 1+ = actions (shifted by 1)
         // First choice: index 1 → abilities[0] (first ability)
         let choice1 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice1, Some(abilities[0].clone()));
+        assert_eq!(choice1.unwrap(), Some(abilities[0].clone()));
 
         // Script exhausted, should default to index 0 → pass priority
         let choice2 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice2, None);
+        assert_eq!(choice2.unwrap(), None);
 
         // Should keep passing
         let choice3 = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert_eq!(choice3, None);
+        assert_eq!(choice3.unwrap(), None);
     }
 }

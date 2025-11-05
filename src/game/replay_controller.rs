@@ -5,7 +5,7 @@
 //! wrapped controller for subsequent choices.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{GameStateView, PlayerController};
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
 /// A single recorded choice from a controller
@@ -113,7 +113,7 @@ impl PlayerController for ReplayController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         // Try to consume a replay choice first
         if let Some(choice) = self.consume_replay_choice(|c| {
             if let ReplayChoice::SpellAbility(opt) = c {
@@ -122,7 +122,7 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return choice;
+            return ChoiceResult::Ok(choice);
         }
 
         // No replay choice available, delegate to inner controller
@@ -134,7 +134,7 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Try to consume a replay choice first
         if let Some(targets) = self.consume_replay_choice(|c| {
             if let ReplayChoice::Targets(t) = c {
@@ -143,7 +143,7 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return targets;
+            return ChoiceResult::Ok(targets);
         }
 
         // No replay choice available, delegate to inner controller
@@ -155,7 +155,7 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Try to consume a replay choice first
         if let Some(sources) = self.consume_replay_choice(|c| {
             if let ReplayChoice::ManaSources(s) = c {
@@ -164,14 +164,18 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return sources;
+            return ChoiceResult::Ok(sources);
         }
 
         // No replay choice available, delegate to inner controller
         self.inner.choose_mana_sources_to_pay(view, cost, available_sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Try to consume a replay choice first
         if let Some(attackers) = self.consume_replay_choice(|c| {
             if let ReplayChoice::Attackers(a) = c {
@@ -180,7 +184,7 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return attackers;
+            return ChoiceResult::Ok(attackers);
         }
 
         // No replay choice available, delegate to inner controller
@@ -192,7 +196,7 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Try to consume a replay choice first
         if let Some(blockers) = self.consume_replay_choice(|c| {
             if let ReplayChoice::Blockers(b) = c {
@@ -201,7 +205,7 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return blockers;
+            return ChoiceResult::Ok(blockers);
         }
 
         // No replay choice available, delegate to inner controller
@@ -213,7 +217,7 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Try to consume a replay choice first
         if let Some(order) = self.consume_replay_choice(|c| {
             if let ReplayChoice::DamageOrder(o) = c {
@@ -222,7 +226,7 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return order;
+            return ChoiceResult::Ok(order);
         }
 
         // No replay choice available, delegate to inner controller
@@ -234,7 +238,7 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Try to consume a replay choice first
         if let Some(discard) = self.consume_replay_choice(|c| {
             if let ReplayChoice::Discard(d) = c {
@@ -243,7 +247,7 @@ impl PlayerController for ReplayController {
                 None
             }
         }) {
-            return discard;
+            return ChoiceResult::Ok(discard);
         }
 
         // No replay choice available, delegate to inner controller
@@ -300,12 +304,12 @@ mod tests {
         // First call should return the replayed choice
         assert!(replay.has_replay_choice());
         let choice1 = replay.choose_spell_ability_to_play(&view, &[]);
-        assert!(choice1.is_some());
+        assert!(choice1.unwrap().is_some());
 
         // Second call should return the second replayed choice
         assert!(replay.has_replay_choice());
         let choice2 = replay.choose_spell_ability_to_play(&view, &[]);
-        assert!(choice2.is_none()); // Second choice was None (pass priority)
+        assert!(choice2.unwrap().is_none()); // Second choice was None (pass priority)
 
         // After exhausting replay choices, should delegate to inner controller
         assert!(!replay.has_replay_choice());

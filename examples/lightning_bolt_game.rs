@@ -242,7 +242,7 @@ fn main() {
     let total_actions = game.undo_log.len();
     for i in 0..total_actions {
         if let Ok(undone) = game.undo() {
-            if undone {
+            if undone.is_some() {
                 print_game_state(
                     &game,
                     &format!("After undo #{} (actions remaining: {})", i + 1, game.undo_log.len()),

@@ -3,8 +3,7 @@
 //! Reads player choices from stdin and displays game state using GameStateView
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::GameStateView;
-use crate::game::controller::PlayerController;
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::RichInputController;
 use smallvec::SmallVec;
 use std::io::{self, Write};
@@ -371,9 +370,9 @@ impl PlayerController for InteractiveController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         if available.is_empty() {
-            return None;
+            return ChoiceResult::Ok(None);
         }
 
         // Get player name from view
@@ -406,18 +405,29 @@ impl PlayerController for InteractiveController {
                 }
             }
 
-            let choice = self.get_user_choice_with_view(
+            let choice_opt = self.get_user_choice_with_view(
                 &format!("Enter choice (0-{}, or ? for help):", available.len()),
                 available.len() + 1,
                 false,
                 Some(view),
-            )?;
+            );
+
+            let choice = match choice_opt {
+                Some(c) => c,
+                None => {
+                    // User cancelled or input error - pass priority
+                    println!("Passed priority.");
+                    view.logger()
+                        .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
+                    return ChoiceResult::Ok(None);
+                }
+            };
 
             if choice == 0 {
                 println!("Passed priority.");
                 view.logger()
                     .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
-                return None; // Pass
+                return ChoiceResult::Ok(None); // Pass
             }
 
             // Acknowledge the chosen action
@@ -443,7 +453,7 @@ impl PlayerController for InteractiveController {
                 }
             }
 
-            Some(available[choice - 1].clone())
+            ChoiceResult::Ok(Some(available[choice - 1].clone()))
         } else {
             // Non-numeric mode: Index 0 = Pass, 1+ = actions, OR rich text commands
             // Use shared format_choice_menu for consistency
@@ -516,13 +526,13 @@ impl PlayerController for InteractiveController {
                                     .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
                             }
                         }
-                        return Some(ability);
+                        return ChoiceResult::Ok(Some(ability));
                     } else if trimmed == "p" || trimmed == "pass" {
                         // Explicit pass command
                         println!("  {} passed priority.", player_name);
                         view.logger()
                             .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
-                        return None;
+                        return ChoiceResult::Ok(None);
                     } else {
                         // Rich command but no match found
                         eprintln!("No matching action found for '{}'. Try again.", trimmed);
@@ -538,7 +548,7 @@ impl PlayerController for InteractiveController {
                         println!("  {} passed priority.", player_name);
                         view.logger()
                             .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
-                        return None;
+                        return ChoiceResult::Ok(None);
                     }
                     Ok(choice) if choice <= available.len() => {
                         // Index 1 to N maps to available[0] to available[N-1]
@@ -565,7 +575,7 @@ impl PlayerController for InteractiveController {
                                     .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
                             }
                         }
-                        return Some(available[action_index].clone());
+                        return ChoiceResult::Ok(Some(available[action_index].clone()));
                     }
                     _ => {
                         eprintln!(
@@ -583,9 +593,9 @@ impl PlayerController for InteractiveController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         let spell_name = view.card_name(spell).unwrap_or_default();
@@ -643,7 +653,7 @@ impl PlayerController for InteractiveController {
                 .controller_choice("TUI", &format!("chose target {}", target_names.join(", ")));
         }
 
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -651,9 +661,9 @@ impl PlayerController for InteractiveController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_sources.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         println!("\n--- Paying Mana Cost: {} ---", cost);
@@ -664,7 +674,7 @@ impl PlayerController for InteractiveController {
         let needed = cost.cmc() as usize;
 
         if needed == 0 {
-            return sources;
+            return ChoiceResult::Ok(sources);
         }
 
         println!("Select {} sources to tap:", needed);
@@ -683,12 +693,16 @@ impl PlayerController for InteractiveController {
             }
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Note: Attacker selection prompt is now printed by game loop before this method is called
@@ -818,7 +832,7 @@ impl PlayerController for InteractiveController {
             );
         }
 
-        attackers
+        ChoiceResult::Ok(attackers)
     }
 
     fn choose_blockers(
@@ -826,9 +840,9 @@ impl PlayerController for InteractiveController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if attackers.is_empty() || available_blockers.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         // Note: Blocker selection prompt is now printed by game loop before this method is called
@@ -977,7 +991,7 @@ impl PlayerController for InteractiveController {
             );
         }
 
-        blocks
+        ChoiceResult::Ok(blocks)
     }
 
     fn choose_damage_assignment_order(
@@ -985,9 +999,9 @@ impl PlayerController for InteractiveController {
         view: &GameStateView,
         attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if blockers.len() <= 1 {
-            return blockers.iter().copied().collect();
+            return ChoiceResult::Ok(blockers.iter().copied().collect());
         }
 
         println!("\n--- Damage Assignment Order ---");
@@ -1043,7 +1057,7 @@ impl PlayerController for InteractiveController {
 
             let mut input = String::new();
             if io::stdin().read_line(&mut input).is_err() {
-                return blockers.iter().copied().collect();
+                return ChoiceResult::Ok(blockers.iter().copied().collect());
             }
 
             for index_str in input.split_whitespace() {
@@ -1062,7 +1076,7 @@ impl PlayerController for InteractiveController {
             }
         }
 
-        ordered
+        ChoiceResult::Ok(ordered)
     }
 
     fn choose_cards_to_discard(
@@ -1070,7 +1084,7 @@ impl PlayerController for InteractiveController {
         _view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Note: Discard selection prompt is now printed by game loop before this method is called
         let mut discards = SmallVec::new();
 
@@ -1098,7 +1112,7 @@ impl PlayerController for InteractiveController {
             let mut input = String::new();
             if io::stdin().read_line(&mut input).is_err() {
                 // Auto-discard first N cards if input fails
-                return hand.iter().take(count).copied().collect();
+                return ChoiceResult::Ok(hand.iter().take(count).copied().collect());
             }
 
             for index_str in input.split_whitespace() {
@@ -1119,7 +1133,7 @@ impl PlayerController for InteractiveController {
             }
         }
 
-        discards
+        ChoiceResult::Ok(discards)
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

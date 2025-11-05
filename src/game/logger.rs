@@ -97,6 +97,9 @@ pub struct GameLogger {
 
     /// Captured log entries (owned strings)
     log_buffer: RefCell<Vec<LogEntry>>,
+
+    /// Count of controller choices made in the game
+    choice_count: RefCell<usize>,
 }
 
 impl GameLogger {
@@ -112,6 +115,7 @@ impl GameLogger {
             debug_state_hash: false,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         }
     }
 
@@ -127,6 +131,7 @@ impl GameLogger {
             debug_state_hash: false,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         }
     }
 
@@ -243,6 +248,23 @@ impl GameLogger {
     pub fn clear_logs(&mut self) {
         self.log_buffer.borrow_mut().clear();
         self.format_bump.borrow_mut().reset();
+    }
+
+    /// Truncate the log buffer to a specific size
+    ///
+    /// Removes all entries beyond the specified size.
+    /// If size >= current length, does nothing.
+    /// This is used to synchronize log removal with undo operations.
+    pub fn truncate_to(&mut self, size: usize) {
+        let mut buffer = self.log_buffer.borrow_mut();
+        if size < buffer.len() {
+            buffer.truncate(size);
+        }
+    }
+
+    /// Get the current number of log entries
+    pub fn log_count(&self) -> usize {
+        self.log_buffer.borrow().len()
     }
 
     /// Set output format (Text or JSON)
@@ -410,8 +432,12 @@ impl GameLogger {
     /// Controller-specific debug info goes to stderr when debug_state_hash is enabled.
     ///
     /// Uses bump allocator for temporary formatting to avoid intermediate allocations.
+    /// Increments the global choice counter for display in TUI status.
     #[inline]
     pub fn controller_choice(&self, controller_name: &str, message: &str) {
+        // Increment choice counter (always increment, regardless of logging)
+        *self.choice_count.borrow_mut() += 1;
+
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
         let should_log = self.numeric_choices || self.verbosity >= VerbosityLevel::Normal;
@@ -445,6 +471,33 @@ impl GameLogger {
             println!("  {}", formatted);
         }
     }
+
+    /// Get the current count of controller choices made
+    ///
+    /// Returns the total number of times controller_choice() has been called.
+    /// Used by the fancy TUI to display choice count status.
+    pub fn choice_count(&self) -> usize {
+        *self.choice_count.borrow()
+    }
+
+    /// Decrement the choice counter
+    ///
+    /// Used when undoing a choice to keep the counter accurate.
+    /// Does nothing if the counter is already at 0.
+    pub fn decrement_choice_count(&self) {
+        let current = *self.choice_count.borrow();
+        if current > 0 {
+            *self.choice_count.borrow_mut() = current - 1;
+        }
+    }
+
+    /// Set the choice counter to a specific value
+    ///
+    /// Used when restoring to a specific choice point during undo.
+    /// This directly sets the counter instead of incrementing/decrementing.
+    pub fn set_choice_count(&self, count: usize) {
+        *self.choice_count.borrow_mut() = count;
+    }
 }
 
 impl Default for GameLogger {
@@ -475,6 +528,7 @@ impl Clone for GameLogger {
             debug_state_hash: self.debug_state_hash,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         }
     }
 }
@@ -521,6 +575,7 @@ impl<'de> Deserialize<'de> for GameLogger {
             debug_state_hash: false,
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            choice_count: RefCell::new(0),
         })
     }
 }

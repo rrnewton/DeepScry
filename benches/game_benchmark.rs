@@ -826,7 +826,7 @@ fn bench_game_rewind(c: &mut Criterion) {
 
             // Rewind all actions to get back to initial state
             let mut rewind_count = 0;
-            while game.undo().expect("Undo should succeed") {
+            while game.undo().expect("Undo should succeed").is_some() {
                 rewind_count += 1;
             }
 

@@ -251,13 +251,17 @@ impl GameState {
             }
         }
 
-        // Log the action
-        self.undo_log.log(crate::undo::GameAction::MoveCard {
-            card_id,
-            from_zone: from,
-            to_zone: to,
-            owner,
-        });
+        // Log the action with prior log size for undo synchronization
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::MoveCard {
+                card_id,
+                from_zone: from,
+                to_zone: to,
+                owner,
+            },
+            prior_log_size,
+        );
 
         Ok(())
     }
@@ -284,13 +288,17 @@ impl GameState {
             if let Some(card_id) = zones.library.draw_top() {
                 zones.hand.add(card_id);
 
-                // Log the card movement for undo
-                self.undo_log.log(crate::undo::GameAction::MoveCard {
-                    card_id,
-                    from_zone: crate::zones::Zone::Library,
-                    to_zone: crate::zones::Zone::Hand,
-                    owner: player_id,
-                });
+                // Log the card movement for undo with prior log size
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::MoveCard {
+                        card_id,
+                        from_zone: crate::zones::Zone::Library,
+                        to_zone: crate::zones::Zone::Hand,
+                        owner: player_id,
+                    },
+                    prior_log_size,
+                );
 
                 return Ok(Some(card_id));
             }
@@ -352,13 +360,17 @@ impl GameState {
             zones.graveyard.add(spell_id);
         }
 
-        // Log the counter action
-        self.undo_log.log(crate::undo::GameAction::MoveCard {
-            card_id: spell_id,
-            from_zone: crate::zones::Zone::Stack,
-            to_zone: crate::zones::Zone::Graveyard,
-            owner: owner_id,
-        });
+        // Log the counter action with prior log size
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::MoveCard {
+                card_id: spell_id,
+                from_zone: crate::zones::Zone::Stack,
+                to_zone: crate::zones::Zone::Graveyard,
+                owner: owner_id,
+            },
+            prior_log_size,
+        );
 
         Ok(())
     }
@@ -369,11 +381,15 @@ impl GameState {
             if let Ok(card) = self.cards.get_mut(*card_id) {
                 if card.controller == player_id && card.tapped {
                     card.untap();
-                    // Log the untap action
-                    self.undo_log.log(crate::undo::GameAction::TapCard {
-                        card_id: *card_id,
-                        tapped: false,
-                    });
+                    // Log the untap action with prior log size
+                    let prior_log_size = self.logger.log_count();
+                    self.undo_log.log(
+                        crate::undo::GameAction::TapCard {
+                            card_id: *card_id,
+                            tapped: false,
+                        },
+                        prior_log_size,
+                    );
                 }
             }
         }
@@ -385,12 +401,16 @@ impl GameState {
         if let Ok(card) = self.cards.get_mut(card_id) {
             card.add_counter(counter_type, amount);
 
-            // Log the action
-            self.undo_log.log(crate::undo::GameAction::AddCounter {
-                card_id,
-                counter_type,
-                amount,
-            });
+            // Log the action with prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::AddCounter {
+                    card_id,
+                    counter_type,
+                    amount,
+                },
+                prior_log_size,
+            );
 
             Ok(())
         } else {
@@ -408,12 +428,16 @@ impl GameState {
         if let Ok(card) = self.cards.get_mut(card_id) {
             let removed = card.remove_counter(counter_type, amount);
 
-            // Log the action
-            self.undo_log.log(crate::undo::GameAction::RemoveCounter {
-                card_id,
-                counter_type,
-                amount: removed,
-            });
+            // Log the action with prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::RemoveCounter {
+                    card_id,
+                    counter_type,
+                    amount: removed,
+                },
+                prior_log_size,
+            );
 
             Ok(removed)
         } else {
@@ -472,13 +496,17 @@ impl GameState {
 
             self.turn.next_turn(next_player);
 
-            // Log the turn change with RNG state from before the turn change
-            self.undo_log.log(crate::undo::GameAction::ChangeTurn {
-                from_player,
-                to_player: next_player,
-                turn_number: old_turn_number + 1,
-                rng_state,
-            });
+            // Log the turn change with RNG state from before the turn change and prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::ChangeTurn {
+                    from_player,
+                    to_player: next_player,
+                    turn_number: old_turn_number + 1,
+                    rng_state,
+                },
+                prior_log_size,
+            );
 
             // Log turn transfer indicator with life totals
             let new_turn_num = old_turn_number + 1;
@@ -498,8 +526,11 @@ impl GameState {
                 .map(|p| p.life)
                 .unwrap_or(0);
 
+            // Add a newline before the turn separator for visual separation
+            self.logger.normal("");
+
             let turn_msg = format!(
-                ">>> T{} - {} {} ({} {})",
+                "         >>> Turn {} - {} {} ({} {}) <<<<",
                 new_turn_num, active_player_name, active_player_life, other_player_name, other_player_life
             );
             self.logger.normal(&turn_msg);
@@ -509,11 +540,15 @@ impl GameState {
                 player.reset_lands_played();
             }
         } else {
-            // Log the step advance
-            self.undo_log.log(crate::undo::GameAction::AdvanceStep {
-                from_step,
-                to_step: self.turn.current_step,
-            });
+            // Log the step advance with prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::AdvanceStep {
+                    from_step,
+                    to_step: self.turn.current_step,
+                },
+                prior_log_size,
+            );
         }
         Ok(())
     }
@@ -540,12 +575,289 @@ impl GameState {
         self.players.iter().find(|p| !p.has_lost).map(|p| p.id)
     }
 
+    /// Undo back to the previous choice point for a specific player
+    ///
+    /// Keeps undoing actions until a ChoicePoint action for the specified player is found.
+    /// This will undo ALL intervening choices (including other players' choices) until
+    /// reaching the target player's previous choice.
+    ///
+    /// Returns (actions_undone, choice_log_size) where:
+    /// - actions_undone: number of non-ChoicePoint actions undone
+    /// - choice_log_size: the log size to truncate to (from the ChoicePoint)
+    ///
+    /// Returns Ok(None) if no ChoicePoint for the specified player is found.
+    pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
+        // Debug: Log initial state
+        eprintln!(
+            "[UNDO DEBUG] Starting undo_to_previous_choice_point for player {}",
+            requesting_player.as_u32()
+        );
+        eprintln!(
+            "[UNDO DEBUG]   Initial: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+            self.undo_log.len(),
+            self.logger.log_count(),
+            self.logger.choice_count()
+        );
+
+        // IMPORTANT: First check if there's a ChoicePoint for this player in the log
+        // We must do this BEFORE undoing anything, otherwise we corrupt state if none exists
+        let has_choice_point = self.undo_log.actions().iter().any(|action| {
+            matches!(action, crate::undo::GameAction::ChoicePoint { player_id, .. } if *player_id == requesting_player)
+        });
+
+        if !has_choice_point {
+            eprintln!(
+                "[UNDO DEBUG] No ChoicePoint found for player {} in undo log - returning early WITHOUT undoing",
+                requesting_player.as_u32()
+            );
+            return Ok(None);
+        }
+
+        eprintln!(
+            "[UNDO DEBUG] Found at least one ChoicePoint for player {}, proceeding with undo",
+            requesting_player.as_u32()
+        );
+
+        let mut actions_undone = 0;
+        let mut choice_log_size = None;
+
+        // Keep undoing until we hit a ChoicePoint for the requesting player
+        while let Some((action, prior_log_size)) = self.undo_log.pop() {
+            eprintln!(
+                "[UNDO DEBUG]   Popped action (prior_log_size={}): {:?}",
+                prior_log_size, action
+            );
+            match action {
+                crate::undo::GameAction::ChoicePoint {
+                    player_id, choice_id, ..
+                } => {
+                    eprintln!(
+                        "[UNDO DEBUG]     ChoicePoint for player {}, choice_id={}. Current choice count: {}",
+                        player_id.as_u32(),
+                        choice_id,
+                        self.logger.choice_count()
+                    );
+
+                    if player_id == requesting_player {
+                        // Found a choice point for the requesting player! Save the log size and stop
+                        // Set choice_count to reflect choices made BEFORE this point
+                        // (If we're restoring to choice_id=3, then choices 1 and 2 were made, so count=2)
+                        let target_choice_count = choice_id.saturating_sub(1) as usize;
+                        eprintln!(
+                            "[UNDO DEBUG]     *** Found target ChoicePoint! Setting choice_count from {} to {}",
+                            self.logger.choice_count(),
+                            target_choice_count
+                        );
+                        // Directly set the choice count instead of decrementing
+                        self.logger.set_choice_count(target_choice_count);
+                        eprintln!("[UNDO DEBUG]     *** prior_log_size={}", prior_log_size);
+                        choice_log_size = Some(prior_log_size);
+                        break;
+                    }
+                    // Otherwise, this was another player's choice - keep undoing
+                    // Don't decrement here - we'll set the correct count when we find the target
+                    eprintln!("[UNDO DEBUG]     Different player's choice, continuing undo...");
+                }
+                _ => {
+                    // Not a choice point - undo this action
+                    match action {
+                        crate::undo::GameAction::MoveCard {
+                            card_id,
+                            from_zone,
+                            to_zone,
+                            owner,
+                        } => {
+                            // Move card back from to_zone to from_zone
+                            let removed = match to_zone {
+                                Zone::Battlefield => self.battlefield.remove(card_id),
+                                Zone::Stack => self.stack.remove(card_id),
+                                _ => {
+                                    if let Some(zones) = self.get_player_zones_mut(owner) {
+                                        if let Some(zone) = zones.get_zone_mut(to_zone) {
+                                            zone.remove(card_id)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                }
+                            };
+
+                            if removed {
+                                match from_zone {
+                                    Zone::Battlefield => self.battlefield.add(card_id),
+                                    Zone::Stack => self.stack.add(card_id),
+                                    _ => {
+                                        if let Some(zones) = self.get_player_zones_mut(owner) {
+                                            if let Some(zone) = zones.get_zone_mut(from_zone) {
+                                                zone.add(card_id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::TapCard { card_id, tapped } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                if tapped {
+                                    card.untap();
+                                } else {
+                                    card.tap();
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::ModifyLife { player_id, delta } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                if delta > 0 {
+                                    player.lose_life(delta);
+                                } else {
+                                    player.gain_life(-delta);
+                                }
+                                if player.life > 0 {
+                                    player.has_lost = false;
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::AddMana { player_id, mana } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                if player.mana_pool.white >= mana.white {
+                                    player.mana_pool.white -= mana.white;
+                                }
+                                if player.mana_pool.blue >= mana.blue {
+                                    player.mana_pool.blue -= mana.blue;
+                                }
+                                if player.mana_pool.black >= mana.black {
+                                    player.mana_pool.black -= mana.black;
+                                }
+                                if player.mana_pool.red >= mana.red {
+                                    player.mana_pool.red -= mana.red;
+                                }
+                                if player.mana_pool.green >= mana.green {
+                                    player.mana_pool.green -= mana.green;
+                                }
+                                if player.mana_pool.colorless >= mana.colorless {
+                                    player.mana_pool.colorless -= mana.colorless;
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::EmptyManaPool {
+                            player_id,
+                            prev_white,
+                            prev_blue,
+                            prev_black,
+                            prev_red,
+                            prev_green,
+                            prev_colorless,
+                        } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                player.mana_pool.white = prev_white;
+                                player.mana_pool.blue = prev_blue;
+                                player.mana_pool.black = prev_black;
+                                player.mana_pool.red = prev_red;
+                                player.mana_pool.green = prev_green;
+                                player.mana_pool.colorless = prev_colorless;
+                            }
+                        }
+                        crate::undo::GameAction::AddCounter {
+                            card_id,
+                            counter_type,
+                            amount,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.remove_counter(counter_type, amount);
+                            }
+                        }
+                        crate::undo::GameAction::RemoveCounter {
+                            card_id,
+                            counter_type,
+                            amount,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.add_counter(counter_type, amount);
+                            }
+                        }
+                        crate::undo::GameAction::AdvanceStep { from_step, to_step: _ } => {
+                            self.turn.current_step = from_step;
+                        }
+                        crate::undo::GameAction::ChangeTurn {
+                            from_player,
+                            to_player: _,
+                            turn_number,
+                            rng_state,
+                        } => {
+                            self.turn.active_player = from_player;
+                            self.turn.turn_number = turn_number - 1;
+
+                            if let Some(rng_bytes) = rng_state {
+                                if let Ok(rng) = serde_json::from_slice::<ChaCha12Rng>(&rng_bytes) {
+                                    *self.rng.borrow_mut() = rng;
+                                }
+                            }
+                        }
+                        crate::undo::GameAction::PumpCreature {
+                            card_id,
+                            power_delta,
+                            toughness_delta,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.power_bonus -= power_delta;
+                                card.toughness_bonus -= toughness_delta;
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    actions_undone += 1;
+                    // Truncate logger to the prior size
+                    eprintln!(
+                        "[UNDO DEBUG]     Truncating logger from {} to {}",
+                        self.logger.log_count(),
+                        prior_log_size
+                    );
+                    self.logger.truncate_to(prior_log_size);
+                    eprintln!(
+                        "[UNDO DEBUG]     Logger after truncate: log_count={}",
+                        self.logger.log_count()
+                    );
+                }
+            }
+        }
+
+        if let Some(log_size) = choice_log_size {
+            eprintln!(
+                "[UNDO DEBUG] Undo complete: actions_undone={}, choice_log_size={}",
+                actions_undone, log_size
+            );
+            eprintln!(
+                "[UNDO DEBUG]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                self.undo_log.len(),
+                self.logger.log_count(),
+                self.logger.choice_count()
+            );
+            eprintln!("[UNDO DEBUG]   Will truncate logger to {} in caller", log_size);
+            Ok(Some((actions_undone, log_size)))
+        } else {
+            eprintln!(
+                "[UNDO DEBUG] Undo complete: No ChoicePoint found for player {}",
+                requesting_player.as_u32()
+            );
+            eprintln!(
+                "[UNDO DEBUG]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                self.undo_log.len(),
+                self.logger.log_count(),
+                self.logger.choice_count()
+            );
+            Ok(None)
+        }
+    }
+
     /// Undo the most recent action
     ///
     /// Pops the last action from the undo log and reverts it.
-    /// Returns Ok(true) if an action was undone, Ok(false) if log is empty.
-    pub fn undo(&mut self) -> Result<bool> {
-        if let Some(action) = self.undo_log.pop() {
+    /// Returns Ok(Some(prior_log_size)) to truncate logs to, Ok(None) if log is empty.
+    pub fn undo(&mut self) -> Result<Option<usize>> {
+        if let Some((action, prior_log_size)) = self.undo_log.pop() {
             match action {
                 crate::undo::GameAction::MoveCard {
                     card_id,
@@ -734,9 +1046,9 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
             }
-            Ok(true)
+            Ok(Some(prior_log_size))
         } else {
-            Ok(false)
+            Ok(None)
         }
     }
 }

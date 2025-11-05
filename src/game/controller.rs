@@ -467,6 +467,186 @@ impl<'a> GameStateView<'a> {
     pub fn combat(&self) -> &crate::game::CombatState {
         &self.game.combat
     }
+
+    /// Get the number of actions in the undo log
+    ///
+    /// Returns the count of reversible actions that have been performed.
+    /// Used by the fancy TUI to display action count status.
+    pub fn action_count(&self) -> usize {
+        self.game.undo_log.len()
+    }
+
+    /// Get the number of controller choices made
+    ///
+    /// Returns the count of times a controller has made a choice.
+    /// Used by the fancy TUI to display choice count status alongside action count.
+    pub fn choice_count(&self) -> usize {
+        self.game.logger.choice_count()
+    }
+}
+
+/// Result of a controller choice operation
+///
+/// This enum allows controllers to return not just a choice, but also
+/// special requests like undo, exit, or error conditions.
+#[derive(Debug, Clone)]
+pub enum ChoiceResult<T> {
+    /// Normal choice made successfully
+    Ok(T),
+    /// Request to undo N actions
+    UndoRequest(usize),
+    /// Request to cleanly exit the game
+    ExitGame,
+    /// Error in the controller
+    Error(String),
+}
+
+impl<T> ChoiceResult<T> {
+    /// Helper to check if this is an Ok variant
+    pub fn is_ok(&self) -> bool {
+        matches!(self, ChoiceResult::Ok(_))
+    }
+
+    /// Helper to unwrap the Ok value (panics if not Ok)
+    pub fn unwrap(self) -> T {
+        match self {
+            ChoiceResult::Ok(value) => value,
+            _ => panic!("Called unwrap on non-Ok ChoiceResult"),
+        }
+    }
+
+    /// Convert to Result for easier handling
+    pub fn into_result(self) -> Result<T, String> {
+        match self {
+            ChoiceResult::Ok(value) => Ok(value),
+            ChoiceResult::Error(msg) => Err(msg),
+            ChoiceResult::UndoRequest(n) => Err(format!("Undo request for {} actions", n)),
+            ChoiceResult::ExitGame => Err("Exit game requested".to_string()),
+        }
+    }
+}
+
+/// Macro for uniform handling of ChoiceResult at call sites
+///
+/// This macro reduces verbosity when handling ChoiceResult values in the game loop.
+/// It handles all the special cases (UndoRequest, ExitGame, Error) uniformly.
+///
+/// Usage: Must be called within a loop block:
+/// ```
+/// let result = loop {
+///     let choice = controller.choose_something(...);
+///     break handle_choice_result!(choice, game_state, player_id);
+/// };
+/// ```
+///
+/// This macro continues to the immediately enclosing loop on undo requests,
+/// causing the choice to be re-prompted.
+///
+/// Special undo values:
+/// - `usize::MAX`: Undo to previous choice point for the requesting player
+/// - Any other value N: Undo exactly N individual actions
+#[macro_export]
+macro_rules! handle_choice_result {
+    ($result:expr, $game:expr, $player_id:expr) => {
+        match $result {
+            $crate::game::controller::ChoiceResult::Ok(value) => value,
+            $crate::game::controller::ChoiceResult::UndoRequest(n) => {
+                if n == usize::MAX {
+                    // Special case: undo to previous choice point for the requesting player
+                    eprintln!("[UNDO DEBUG MACRO] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                              $game.undo_log.len(), $game.logger.log_count(), $game.logger.choice_count());
+                    if let Ok(Some((_actions_undone, choice_log_size))) =
+                        $game.undo_to_previous_choice_point($player_id)
+                    {
+                        eprintln!("[UNDO DEBUG MACRO] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
+                        $game.logger.truncate_to(choice_log_size);
+                        eprintln!("[UNDO DEBUG MACRO] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
+                        // Note: Undo info should be displayed in status bar only, not logged
+                    }
+                } else {
+                    // Normal case: undo N specific actions
+                    for _ in 0..n {
+                        if let Ok(Some(prior_log_size)) = $game.undo() {
+                            $game.logger.truncate_to(prior_log_size);
+                        } else {
+                            break; // No more actions to undo
+                        }
+                    }
+                }
+                // After undo, continue the loop to re-prompt for choice
+                continue;
+            }
+            $crate::game::controller::ChoiceResult::ExitGame => {
+                return Err($crate::MtgError::InvalidAction(
+                    "Game exit requested by controller".to_string(),
+                ));
+            }
+            $crate::game::controller::ChoiceResult::Error(msg) => {
+                return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
+            }
+        }
+    };
+}
+
+/// Macro for handling ChoiceResult in secondary choice contexts
+///
+/// This variant returns from the enclosing function on undo instead of continuing.
+/// Use this for secondary choices (attackers, blockers, targets, etc.) where
+/// an undo should exit the current step handler and return control to the main
+/// game loop, allowing it to re-evaluate from the rewound game state.
+///
+/// Usage: Use directly in step handler functions:
+/// ```
+/// let view = GameStateView::new(self.game, active_player);
+/// let choice = controller.choose_attackers(&view, &available_creatures);
+/// let attackers = handle_choice_result_break!(choice, self.game, active_player);
+/// ```
+///
+/// On undo, this macro performs the undo and then RETURNS `Ok(None)` from the
+/// enclosing function, exiting the step handler. The game loop will then check
+/// if the step changed and re-execute from the rewound state.
+#[macro_export]
+macro_rules! handle_choice_result_break {
+    ($result:expr, $game:expr, $player_id:expr) => {
+        match $result {
+            $crate::game::controller::ChoiceResult::Ok(value) => value,
+            $crate::game::controller::ChoiceResult::UndoRequest(n) => {
+                if n == usize::MAX {
+                    // Special case: undo to previous choice point for the requesting player
+                    eprintln!("[UNDO DEBUG MACRO BREAK] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                              $game.undo_log.len(), $game.logger.log_count(), $game.logger.choice_count());
+                    if let Ok(Some((_actions_undone, choice_log_size))) =
+                        $game.undo_to_previous_choice_point($player_id)
+                    {
+                        eprintln!("[UNDO DEBUG MACRO BREAK] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
+                        $game.logger.truncate_to(choice_log_size);
+                        eprintln!("[UNDO DEBUG MACRO BREAK] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
+                        // Note: Undo info should be displayed in status bar only, not logged
+                    }
+                } else {
+                    // Normal case: undo N specific actions
+                    for _ in 0..n {
+                        if let Ok(Some(prior_log_size)) = $game.undo() {
+                            $game.logger.truncate_to(prior_log_size);
+                        } else {
+                            break; // No more actions to undo
+                        }
+                    }
+                }
+                // After undo, return from the step handler
+                // The game loop will detect that the step changed and re-execute from the rewound state
+                return Ok(None);
+            }
+            $crate::game::controller::ChoiceResult::ExitGame => {
+                return Err($crate::MtgError::InvalidAction(
+                    "Game exit requested by controller".to_string(),
+                ));
+            }
+            $crate::game::controller::ChoiceResult::Error(msg) => {
+                return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
+            }
+        }
+    };
 }
 
 /// Player controller interface
@@ -496,7 +676,8 @@ pub trait PlayerController {
     /// - Castable spells (if have mana and in appropriate phase)
     /// - Activated abilities (if can activate)
     ///
-    /// Returns the chosen ability, or None to pass priority.
+    /// Returns ChoiceResult with the chosen ability (or None to pass priority),
+    /// or a special request (UndoRequest, ExitGame, Error).
     ///
     /// Controllers that need randomness should maintain their own RNG
     /// (seeded independently from the game engine's RNG).
@@ -509,7 +690,7 @@ pub trait PlayerController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility>;
+    ) -> ChoiceResult<Option<SpellAbility>>;
 
     /// Choose targets for a spell or ability
     ///
@@ -519,6 +700,9 @@ pub trait PlayerController {
     /// For spells with no targets, this may not be called, or valid_targets
     /// will be empty.
     ///
+    /// Returns ChoiceResult with the chosen targets, or a special request
+    /// (UndoRequest, ExitGame, Error).
+    ///
     /// ## Java Forge Equivalent
     /// Matches `PlayerController.chooseTargetsFor(SpellAbility)`
     fn choose_targets(
@@ -526,7 +710,7 @@ pub trait PlayerController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]>;
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>>;
 
     /// Choose which mana sources to tap to pay a cost
     ///
@@ -534,7 +718,8 @@ pub trait PlayerController {
     /// At this point, the spell is already on the stack.
     ///
     /// The controller must choose which permanents to tap for mana to pay
-    /// the given cost. Returns the card IDs to tap in order.
+    /// the given cost. Returns ChoiceResult with the card IDs to tap in order,
+    /// or a special request (UndoRequest, ExitGame, Error).
     ///
     /// ## Java Forge Equivalent
     /// This is part of `PlayerController.payManaCost(...)` which the AI
@@ -544,25 +729,30 @@ pub trait PlayerController {
         view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]>;
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
     /// Choose which creatures to declare as attackers
     ///
     /// Called during the declare attackers step.
-    /// Returns a list of creature card IDs that should attack.
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]>;
+    /// Returns ChoiceResult with a list of creature card IDs that should attack,
+    /// or a special request (UndoRequest, ExitGame, Error).
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
     /// Choose how to block attacking creatures
     ///
     /// Called during the declare blockers step.
-    /// Returns pairs of (blocker, attacker) indicating which creature
-    /// blocks which attacker.
+    /// Returns ChoiceResult with pairs of (blocker, attacker) indicating which creature
+    /// blocks which attacker, or a special request (UndoRequest, ExitGame, Error).
     fn choose_blockers(
         &mut self,
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]>;
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>>;
 
     /// Choose the damage assignment order for blockers
     ///
@@ -570,19 +760,26 @@ pub trait PlayerController {
     /// The attacker's controller chooses the order in which damage will be assigned to blockers.
     /// MTG Rules 509.2: The attacking player announces the damage assignment order.
     ///
-    /// Returns the blockers in the order damage should be assigned. All blockers must be included.
+    /// Returns ChoiceResult with the blockers in the order damage should be assigned.
+    /// All blockers must be included. Can also return special requests (UndoRequest, ExitGame, Error).
     fn choose_damage_assignment_order(
         &mut self,
         view: &GameStateView,
         attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]>;
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>>;
 
     /// Choose cards to discard to maximum hand size
     ///
     /// Called during cleanup step if hand size exceeds maximum.
-    fn choose_cards_to_discard(&mut self, view: &GameStateView, hand: &[CardId], count: usize)
-        -> SmallVec<[CardId; 7]>;
+    /// Returns ChoiceResult with the cards to discard, or a special request
+    /// (UndoRequest, ExitGame, Error).
+    fn choose_cards_to_discard(
+        &mut self,
+        view: &GameStateView,
+        hand: &[CardId],
+        count: usize,
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>>;
 
     /// Notification that priority was passed
     ///

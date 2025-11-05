@@ -15,7 +15,7 @@
 //! Comma-separated clauses: `BlackKnight blocks WhiteKnight, SerraAngel blocks RoyalAssassin`
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{GameStateView, PlayerController};
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
 /// Controller that parses rich text commands
@@ -136,12 +136,12 @@ impl PlayerController for RichInputController {
         &mut self,
         view: &GameStateView,
         available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
+    ) -> ChoiceResult<Option<SpellAbility>> {
         if let Some(command) = self.next_command() {
-            Self::parse_spell_ability_choice(&command, view, available)
+            ChoiceResult::Ok(Self::parse_spell_ability_choice(&command, view, available))
         } else {
             // No more commands - pass priority
-            None
+            ChoiceResult::Ok(None)
         }
     }
 
@@ -150,23 +150,23 @@ impl PlayerController for RichInputController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         if valid_targets.len() == 1 {
             // Only one target - no choice needed
             let mut targets = SmallVec::new();
             targets.push(valid_targets[0]);
-            return targets;
+            return ChoiceResult::Ok(targets);
         }
 
         // For now, just take the first target
         // TODO: Implement rich syntax for target selection
         let mut targets = SmallVec::new();
         targets.push(valid_targets[0]);
-        targets
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -174,7 +174,7 @@ impl PlayerController for RichInputController {
         _view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
-    ) -> SmallVec<[CardId; 8]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Simple greedy approach: take first N sources
         let mut sources = SmallVec::new();
         let needed = cost.cmc() as usize;
@@ -183,12 +183,16 @@ impl PlayerController for RichInputController {
             sources.push(source_id);
         }
 
-        sources
+        ChoiceResult::Ok(sources)
     }
 
-    fn choose_attackers(&mut self, view: &GameStateView, available_creatures: &[CardId]) -> SmallVec<[CardId; 8]> {
+    fn choose_attackers(
+        &mut self,
+        view: &GameStateView,
+        available_creatures: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if available_creatures.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         if let Some(command) = self.next_command() {
@@ -197,7 +201,7 @@ impl PlayerController for RichInputController {
             // Handle numeric choice (legacy format)
             if let Ok(num) = cmd.parse::<usize>() {
                 let num_attackers = num.min(available_creatures.len());
-                return available_creatures.iter().take(num_attackers).copied().collect();
+                return ChoiceResult::Ok(available_creatures.iter().take(num_attackers).copied().collect());
             }
 
             // Parse "attack X" commands
@@ -217,10 +221,10 @@ impl PlayerController for RichInputController {
                 }
             }
 
-            attackers
+            ChoiceResult::Ok(attackers)
         } else {
             // No more commands - don't attack
-            SmallVec::new()
+            ChoiceResult::Ok(SmallVec::new())
         }
     }
 
@@ -229,9 +233,9 @@ impl PlayerController for RichInputController {
         view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
-    ) -> SmallVec<[(CardId, CardId); 8]> {
+    ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if available_blockers.is_empty() || attackers.is_empty() {
-            return SmallVec::new();
+            return ChoiceResult::Ok(SmallVec::new());
         }
 
         if let Some(command) = self.next_command() {
@@ -244,7 +248,7 @@ impl PlayerController for RichInputController {
                 for &blocker_id in available_blockers.iter().take(num_blockers) {
                     blocks.push((blocker_id, attackers[0]));
                 }
-                return blocks;
+                return ChoiceResult::Ok(blocks);
             }
 
             // Parse "X blocks Y" commands
@@ -287,10 +291,10 @@ impl PlayerController for RichInputController {
                 }
             }
 
-            blocks
+            ChoiceResult::Ok(blocks)
         } else {
             // No more commands - don't block
-            SmallVec::new()
+            ChoiceResult::Ok(SmallVec::new())
         }
     }
 
@@ -299,9 +303,9 @@ impl PlayerController for RichInputController {
         _view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
-    ) -> SmallVec<[CardId; 4]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Keep original order (no reordering via rich input yet)
-        blockers.iter().copied().collect()
+        ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
     fn choose_cards_to_discard(
@@ -309,10 +313,10 @@ impl PlayerController for RichInputController {
         _view: &GameStateView,
         hand: &[CardId],
         count: usize,
-    ) -> SmallVec<[CardId; 7]> {
+    ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Simple: discard first N cards
         // TODO: Implement rich syntax for discard selection
-        hand.iter().take(count).copied().collect()
+        ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {
@@ -407,7 +411,7 @@ mod tests {
         }];
 
         let choice = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert!(choice.is_some());
+        assert!(choice.unwrap().is_some());
     }
 
     #[test]
@@ -418,6 +422,6 @@ mod tests {
         let view = GameStateView::new(&game, player_id);
 
         let choice = controller.choose_spell_ability_to_play(&view, &[]);
-        assert!(choice.is_none());
+        assert!(choice.unwrap().is_none());
     }
 }

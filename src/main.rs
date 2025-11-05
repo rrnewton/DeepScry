@@ -944,10 +944,14 @@ async fn run_tui(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
-        ControllerType::Fancy => Box::new(
-            FancyTuiController::new(p2_id, visual_stacks)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
-        ),
+        ControllerType::Fancy => {
+            // Fancy TUI is only available for Player 1
+            if !suppress_output {
+                eprintln!("Warning: Fancy TUI controller is only available for Player 1");
+                eprintln!("  Using regular TUI controller for Player 2 instead");
+            }
+            Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
+        }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
@@ -1635,10 +1639,14 @@ async fn run_resume(
             }
         }
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
-        ControllerType::Fancy => Box::new(
-            FancyTuiController::new(p2_id, visual_stacks)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
-        ),
+        ControllerType::Fancy => {
+            // Fancy TUI is only available for Player 1
+            if !suppress_output {
+                eprintln!("Warning: Fancy TUI controller is only available for Player 1");
+                eprintln!("  Using regular TUI controller for Player 2 instead");
+            }
+            Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
+        }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error

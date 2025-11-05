@@ -704,12 +704,17 @@ impl GameState {
                 // Untap all sources that were successfully tapped so far
                 for &tapped_id in &tapped_sources {
                     if let Ok(card) = self.cards.get_mut(tapped_id) {
+                        // Capture log size before untap
+                        let prior_log_size = self.logger.log_count();
                         card.untap();
                         // Log the untap for undo functionality
-                        self.undo_log.log(crate::undo::GameAction::TapCard {
-                            card_id: tapped_id,
-                            tapped: false,
-                        });
+                        self.undo_log.log(
+                            crate::undo::GameAction::TapCard {
+                                card_id: tapped_id,
+                                tapped: false,
+                            },
+                            prior_log_size,
+                        );
                     }
                 }
 
@@ -736,12 +741,17 @@ impl GameState {
             // Untap all sources that were tapped
             for &source_id in &tapped_sources {
                 if let Ok(card) = self.cards.get_mut(source_id) {
+                    // Capture log size before untap
+                    let prior_log_size = self.logger.log_count();
                     card.untap();
                     // Log the untap for undo functionality
-                    self.undo_log.log(crate::undo::GameAction::TapCard {
-                        card_id: source_id,
-                        tapped: false,
-                    });
+                    self.undo_log.log(
+                        crate::undo::GameAction::TapCard {
+                            card_id: source_id,
+                            tapped: false,
+                        },
+                        prior_log_size,
+                    );
                 }
             }
 
@@ -781,14 +791,20 @@ impl GameState {
                 }
             }
             Effect::GainLife { player, amount } => {
+                // Capture log size before life gain
+                let prior_log_size = self.logger.log_count();
+
                 let p = self.get_player_mut(*player)?;
                 p.gain_life(*amount);
 
                 // Log the life gain
-                self.undo_log.log(crate::undo::GameAction::ModifyLife {
-                    player_id: *player,
-                    delta: *amount,
-                });
+                self.undo_log.log(
+                    crate::undo::GameAction::ModifyLife {
+                        player_id: *player,
+                        delta: *amount,
+                    },
+                    prior_log_size,
+                );
             }
             Effect::DestroyPermanent { target } => {
                 // Skip if target is still placeholder (0) - no valid targets found
@@ -811,24 +827,36 @@ impl GameState {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
+                // Capture log size before tap
+                let prior_log_size = self.logger.log_count();
+
                 let card = self.cards.get_mut(*target)?;
                 card.tap();
 
                 // Log the tap
-                self.undo_log.log(crate::undo::GameAction::TapCard {
-                    card_id: *target,
-                    tapped: true,
-                });
+                self.undo_log.log(
+                    crate::undo::GameAction::TapCard {
+                        card_id: *target,
+                        tapped: true,
+                    },
+                    prior_log_size,
+                );
             }
             Effect::UntapPermanent { target } => {
+                // Capture log size before untap
+                let prior_log_size = self.logger.log_count();
+
                 let card = self.cards.get_mut(*target)?;
                 card.untap();
 
                 // Log the untap
-                self.undo_log.log(crate::undo::GameAction::TapCard {
-                    card_id: *target,
-                    tapped: false,
-                });
+                self.undo_log.log(
+                    crate::undo::GameAction::TapCard {
+                        card_id: *target,
+                        tapped: false,
+                    },
+                    prior_log_size,
+                );
             }
             Effect::PumpCreature {
                 target,
@@ -840,16 +868,22 @@ impl GameState {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
+                // Capture log size before pump
+                let prior_log_size = self.logger.log_count();
+
                 let card = self.cards.get_mut(*target)?;
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
 
                 // Log the pump effect
-                self.undo_log.log(crate::undo::GameAction::PumpCreature {
-                    card_id: *target,
-                    power_delta: *power_bonus,
-                    toughness_delta: *toughness_bonus,
-                });
+                self.undo_log.log(
+                    crate::undo::GameAction::PumpCreature {
+                        card_id: *target,
+                        power_delta: *power_bonus,
+                        toughness_delta: *toughness_bonus,
+                    },
+                    prior_log_size,
+                );
             }
             Effect::Mill { player, count } => {
                 // Mill cards from library to graveyard
@@ -860,6 +894,9 @@ impl GameState {
                 self.counter_spell(*target)?;
             }
             Effect::AddMana { player, mana } => {
+                // Capture log size before mana addition
+                let prior_log_size = self.logger.log_count();
+
                 // Add mana to player's mana pool
                 let p = self.get_player_mut(*player)?;
 
@@ -884,10 +921,13 @@ impl GameState {
                 }
 
                 // Log the mana addition
-                self.undo_log.log(crate::undo::GameAction::AddMana {
-                    player_id: *player,
-                    mana: *mana,
-                });
+                self.undo_log.log(
+                    crate::undo::GameAction::AddMana {
+                        player_id: *player,
+                        mana: *mana,
+                    },
+                    prior_log_size,
+                );
             }
             Effect::PutCounter {
                 target,
@@ -1001,12 +1041,17 @@ impl GameState {
 
                     // If destination is battlefield and enters_tapped is true, tap the card
                     if *destination == Zone::Battlefield && *enters_tapped {
+                        // Capture log size before tap
+                        let prior_log_size = self.logger.log_count();
+
                         let card = self.cards.get_mut(card_id)?;
                         card.tap();
 
                         // Log the tap
-                        self.undo_log
-                            .log(crate::undo::GameAction::TapCard { card_id, tapped: true });
+                        self.undo_log.log(
+                            crate::undo::GameAction::TapCard { card_id, tapped: true },
+                            prior_log_size,
+                        );
                     }
                 }
 
@@ -1167,6 +1212,9 @@ impl GameState {
     pub fn deal_damage(&mut self, target_id: PlayerId, amount: i32) -> Result<()> {
         // Check if target is a player
         if self.players.iter().any(|p| p.id == target_id) {
+            // Capture log size before life change
+            let prior_log_size = self.logger.log_count();
+
             let player = self.get_player_mut(target_id)?;
             player.lose_life(amount);
 
@@ -1175,10 +1223,13 @@ impl GameState {
             let player_name = player.name.clone();
 
             // Log the life change
-            self.undo_log.log(crate::undo::GameAction::ModifyLife {
-                player_id: target_id,
-                delta: -amount,
-            });
+            self.undo_log.log(
+                crate::undo::GameAction::ModifyLife {
+                    player_id: target_id,
+                    delta: -amount,
+                },
+                prior_log_size,
+            );
 
             // Log damage with new life total
             let message = format!("{} takes {} damage (life: {})", player_name, amount, new_life);
@@ -1277,12 +1328,17 @@ impl GameState {
             None
         };
 
+        // Capture log size before tap
+        let prior_log_size = self.logger.log_count();
+
         // Tap the permanent
         card.tap();
 
         // Log the tap
-        self.undo_log
-            .log(crate::undo::GameAction::TapCard { card_id, tapped: true });
+        self.undo_log.log(
+            crate::undo::GameAction::TapCard { card_id, tapped: true },
+            prior_log_size,
+        );
 
         // Handle non-land mana sources with explicit mana abilities
         if let Some(mana_to_add) = explicit_mana {
@@ -1291,6 +1347,9 @@ impl GameState {
             // Extract this BEFORE getting mutable player reference to avoid borrow conflicts
             let card_text = self.cards.get(card_id)?.text.to_lowercase();
             let is_any_color = card_text.contains("any color");
+
+            // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
+            let prior_log_size = self.logger.log_count();
 
             let player = self.get_player_mut(player_id)?;
 
@@ -1341,7 +1400,8 @@ impl GameState {
                         "C"
                     }
                 };
-                self.undo_log.log(crate::undo::GameAction::AddMana { player_id, mana });
+                self.undo_log
+                    .log(crate::undo::GameAction::AddMana { player_id, mana }, prior_log_size);
 
                 // Log visible message
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
@@ -1371,10 +1431,13 @@ impl GameState {
                     player.mana_pool.colorless += mana_to_add.colorless;
                 }
 
-                self.undo_log.log(crate::undo::GameAction::AddMana {
-                    player_id,
-                    mana: mana_to_add,
-                });
+                self.undo_log.log(
+                    crate::undo::GameAction::AddMana {
+                        player_id,
+                        mana: mana_to_add,
+                    },
+                    prior_log_size,
+                );
 
                 // Log visible message
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
@@ -1412,6 +1475,9 @@ impl GameState {
                 card.text.to_lowercase().contains("any color"),
             )
         };
+
+        // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
+        let prior_log_size = self.logger.log_count();
 
         let player = self.get_player_mut(player_id)?;
 
@@ -1494,7 +1560,8 @@ impl GameState {
                     "C"
                 }
             };
-            self.undo_log.log(crate::undo::GameAction::AddMana { player_id, mana });
+            self.undo_log
+                .log(crate::undo::GameAction::AddMana { player_id, mana }, prior_log_size);
 
             // Log visible message for mana tapping
             if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
@@ -1570,12 +1637,17 @@ impl GameState {
         // Tap the creature (unless it has vigilance)
         let has_vigilance = self.cards.get(card_id)?.has_keyword(&Keyword::Vigilance);
         if !has_vigilance {
+            // Capture log size before tap
+            let prior_log_size = self.logger.log_count();
+
             let card = self.cards.get_mut(card_id)?;
             card.tap();
 
             // Log the action
-            self.undo_log
-                .log(crate::undo::GameAction::TapCard { card_id, tapped: true });
+            self.undo_log.log(
+                crate::undo::GameAction::TapCard { card_id, tapped: true },
+                prior_log_size,
+            );
         }
 
         Ok(())
@@ -1687,8 +1759,9 @@ impl GameState {
         // First pass: collect all damage assignment orders for attackers with multiple blockers
         let mut damage_orders: HashMap<CardId, SmallVec<[CardId; 4]>> = HashMap::new();
 
-        // Use iterator to avoid Vec allocation for attackers
-        for attacker_id in self.combat.attackers_iter() {
+        // Collect attackers to avoid borrow conflict with undo in handle_choice_result!
+        let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
+        for attacker_id in attackers {
             if self.combat.is_blocked(attacker_id) {
                 let blockers = self.combat.get_blockers(attacker_id);
 
@@ -1696,12 +1769,41 @@ impl GameState {
                 if blockers.len() > 1 {
                     let attacker = self.cards.get(attacker_id)?;
                     let attacker_owner = attacker.owner;
-                    let view = GameStateView::new(self, attacker_owner);
 
-                    let ordered_blockers = if attacker_owner == attacker_controller.player_id() {
+                    // Ask controller for damage assignment order
+                    let view = GameStateView::new(self, attacker_owner);
+                    let choice = if attacker_owner == attacker_controller.player_id() {
                         attacker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
                     } else {
                         blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
+                    };
+
+                    use crate::game::controller::ChoiceResult;
+                    let ordered_blockers = match choice {
+                        ChoiceResult::Ok(value) => value,
+                        ChoiceResult::UndoRequest(n) => {
+                            // Perform undo and exit early - game loop will re-execute from rewound state
+                            if n == usize::MAX {
+                                if let Ok(Some((_actions_undone, choice_log_size))) =
+                                    self.undo_to_previous_choice_point(attacker_owner)
+                                {
+                                    self.logger.truncate_to(choice_log_size);
+                                }
+                            } else {
+                                for _ in 0..n {
+                                    if let Ok(Some(prior_log_size)) = self.undo() {
+                                        self.logger.truncate_to(prior_log_size);
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+                        ChoiceResult::ExitGame => {
+                            return Err(MtgError::InvalidAction("Game exit requested".to_string()));
+                        }
+                        ChoiceResult::Error(msg) => {
+                            return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
+                        }
                     };
 
                     damage_orders.insert(attacker_id, ordered_blockers);
