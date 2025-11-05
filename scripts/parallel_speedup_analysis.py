@@ -103,7 +103,7 @@ class BenchmarkResult:
 class ParallelSpeedupAnalyzer:
     """Analyze parallel speedup across allocators and thread counts"""
 
-    def __init__(self, workspace_root: Path, quick_mode: bool = False):
+    def __init__(self, workspace_root: Path, quick_mode: bool = False, hyperthreads: bool = False):
         self.workspace_root = workspace_root
         self.results_dir = workspace_root / "experiment_results"
         self.plots_dir = self.results_dir / "plots"
@@ -112,6 +112,7 @@ class ParallelSpeedupAnalyzer:
         # Get number of physical cores
         self.num_physical_cores = self._get_physical_cores()
         self.quick_mode = quick_mode
+        self.hyperthreads = hyperthreads
 
         # Allocator configurations
         self.allocators = [
@@ -147,11 +148,20 @@ class ParallelSpeedupAnalyzer:
                 max(1, 3 * self.num_physical_cores // 4),  # 75%
                 self.num_physical_cores  # 100%
             ]
-            # Remove duplicates and sort
-            return sorted(set(counts))
         else:
             # Full mode: all thread counts from 1 to num_physical_cores
-            return list(range(1, self.num_physical_cores + 1))
+            counts = list(range(1, self.num_physical_cores + 1))
+
+        # Add hyperthreading test points if requested
+        if self.hyperthreads:
+            # Add 1.5x and 2x physical cores
+            counts.extend([
+                int(1.5 * self.num_physical_cores),  # 1.5x
+                2 * self.num_physical_cores  # 2x
+            ])
+
+        # Remove duplicates and sort
+        return sorted(set(counts))
 
     def _get_measurement_time(self) -> int:
         """Get measurement time in seconds for Criterion"""
@@ -532,6 +542,8 @@ def main():
                        help="Show what would be run without actually running benchmarks")
     parser.add_argument("--quick", action="store_true",
                        help="Quick mode: 1s per benchmark, test only 1/25%%/50%%/75%%/100%% thread counts")
+    parser.add_argument("--hyperthreads", action="store_true",
+                       help="Also test at 1.5x and 2x physical cores to observe hyperthreading effects")
     parser.add_argument("--plot", action="store_true",
                        help="Generate speedup plot (requires matplotlib)")
     parser.add_argument("--input", type=Path,
@@ -547,7 +559,7 @@ def main():
     script_dir = Path(__file__).parent
     workspace_root = script_dir.parent
 
-    analyzer = ParallelSpeedupAnalyzer(workspace_root, quick_mode=args.quick)
+    analyzer = ParallelSpeedupAnalyzer(workspace_root, quick_mode=args.quick, hyperthreads=args.hyperthreads)
 
     results = []
 
