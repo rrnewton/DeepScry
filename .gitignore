@@ -62,3 +62,4 @@ benchmark_output.log
 # Agent play session files
 agentplay/*.game/
 full_deck_list.txt
+*.log
