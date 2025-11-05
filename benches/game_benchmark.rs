@@ -1009,6 +1009,9 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     let initial_seed = 42u64;
     let num_threads = num_physical_cores;
 
+    // Track timing for batch logging
+    let init_start = Instant::now();
+
     // ONE-TIME SETUP: Create and play initial game to build undo log
     let game_init = GameInitializer::new(&setup.card_db);
     let mut initial_game = setup
@@ -1055,19 +1058,38 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
         initial_game.undo().expect("Undo should succeed");
     }
 
+    let init_duration = init_start.elapsed();
+
     eprintln!("\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):", num_threads);
     eprintln!("  Game completed with {} actions in undo log", actions_count);
     eprintln!("  Will start from action {} (middle) for each batch", rewind_target);
     eprintln!("  Then replay second half in parallel with thread-specific RNG seeds");
     eprintln!("  NOTE: Using iter_custom - clone time NOT included in measurements");
+    eprintln!("\n=== BATCH TIMING LOG ===");
+
+    let mut batch_number = 0;
 
     group.bench_function("par_rewind_play_again", |b| {
         b.iter_custom(|iters| {
+            batch_number += 1;
+
+            // Log initialization time only for first batch
+            if batch_number == 1 {
+                eprintln!("[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
+                    batch_number, init_duration.as_secs_f64() * 1000.0);
+            }
+
+            // PER-BATCH SETUP: Track clone time
+            let setup_start = Instant::now();
             // PER-BATCH SETUP (outside timing): Clone snapshots for parallel execution
             // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
             let snapshots: Vec<GameState> = (0..num_threads)
                 .map(|_| initial_game.clone())
                 .collect();
+
+            let setup_duration = setup_start.elapsed();
+            eprintln!("[BATCH-{}] SETUP: {:.3}ms (clone {} snapshots)",
+                batch_number, setup_duration.as_secs_f64() * 1000.0, num_threads);
 
             // START TIMING - only measure the actual parallel gameplay
             let start = Instant::now();
@@ -1116,7 +1138,14 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
                 });
 
             // STOP TIMING
-            start.elapsed()
+            let batch_duration = start.elapsed();
+            eprintln!("[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
+                batch_number,
+                batch_duration.as_secs_f64() * 1000.0,
+                iters,
+                (batch_duration.as_secs_f64() * 1_000_000.0) / iters as f64);
+
+            batch_duration
         });
     });
 
