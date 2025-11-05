@@ -360,6 +360,76 @@ where
     Ok(metrics)
 }
 
+/// Create a mid-game state by playing to halfway point
+///
+/// This helper creates a game state at the 50% mark (halfway through a full game).
+/// The undo log is cleared at this point, so we only track actions from 50%-100%.
+///
+/// # Parameters
+/// - `setup`: Benchmark setup with card database and decks
+/// - `seed`: Initial RNG seed for the first half of the game
+///
+/// # Returns
+/// A tuple of (GameState at midpoint, original total actions before clearing undo log)
+fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize) {
+    let game_init = GameInitializer::new(&setup.card_db);
+    let mut game = setup
+        .runtime
+        .block_on(async {
+            game_init
+                .init_game(
+                    "Player 1".to_string(),
+                    &setup.deck1,
+                    "Player 2".to_string(),
+                    &setup.deck2,
+                    20,
+                )
+                .await
+        })
+        .expect("Failed to initialize game");
+
+    game.seed_rng(seed);
+
+    // Play the game once to build the undo log
+    {
+        let (p1_id, p2_id) = {
+            let mut players_iter = game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
+
+        let mut controller1 = RandomController::with_seed(p1_id, seed);
+        let mut controller2 = RandomController::with_seed(p2_id, seed);
+
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        let _ = game_loop
+            .run_game(&mut controller1, &mut controller2)
+            .expect("Initial game should complete");
+    }
+
+    let total_actions = game.undo_log.len();
+    let rewind_target = total_actions / 2; // Rewind to middle of game
+
+    // Rewind to the target position
+    while game.undo_log.len() > rewind_target {
+        game.undo().expect("Undo should succeed");
+    }
+
+    // Clear the undo log at midpoint - we only care about 50%-100% actions
+    game.undo_log.clear();
+
+    (game, total_actions)
+}
+
+/// Game outcome for win rate tracking
+#[derive(Debug, Clone, Copy)]
+enum GameOutcome {
+    Player1Win,
+    Player2Win,
+}
+
 /// Run forward gameplay from mid-game snapshot and collect metrics
 ///
 /// This helper function is used by both sequential and parallel rewind benchmarks.
@@ -368,15 +438,10 @@ where
 /// # Parameters
 /// - `thread_game`: Mutable reference to the game state (at mid-game point)
 /// - `thread_seed`: RNG seed for this playthrough
-/// - `rewind_target`: Number of actions at the rewind point (for calculating actions_played)
 ///
 /// # Returns
-/// GameMetrics for the forward gameplay (excluding rewind cost)
-fn run_forward_gameplay_from_snapshot(
-    thread_game: &mut GameState,
-    thread_seed: u64,
-    rewind_target: usize,
-) -> GameMetrics {
+/// Tuple of (GameMetrics for the forward gameplay, GameOutcome)
+fn run_forward_gameplay_from_snapshot(thread_game: &mut GameState, thread_seed: u64) -> (GameMetrics, GameOutcome) {
     thread_game.seed_rng(thread_seed);
 
     // Now measure forward gameplay for second half
@@ -402,18 +467,24 @@ fn run_forward_gameplay_from_snapshot(
     let duration = start.elapsed();
     let stats = get_stats!(reg);
 
-    // Calculate actions played in second half
-    let total_actions_now = thread_game.undo_log.len();
-    let actions_played = total_actions_now - rewind_target;
+    // Determine winner
+    let outcome = if result.winner == Some(p1_id) {
+        GameOutcome::Player1Win
+    } else {
+        GameOutcome::Player2Win
+    };
 
     // Record metrics for the forward gameplay only
-    GameMetrics {
+    // Note: undo log was cleared at midpoint, so len() gives us actions from 50%-100%
+    let metrics = GameMetrics {
         turns: result.turns_played,
-        actions: actions_played,
+        actions: thread_game.undo_log.len(),
         duration,
         bytes_allocated: stats.bytes_allocated,
         bytes_deallocated: stats.bytes_deallocated,
-    }
+    };
+
+    (metrics, outcome)
 }
 
 /// Helper function to print aggregated metrics
@@ -878,11 +949,11 @@ fn bench_game_rewind(c: &mut Criterion) {
 /// Measures forward gameplay after rewind, exploring different game paths
 ///
 /// This benchmark:
-/// 1. Plays a full game N turns (done once in setup)
+/// 1. Creates midgame state at 50% mark (done once in setup)
 /// 2. For each iteration:
-///    - Rewinds to middle of game
-///    - Replays second half with new random seed (different path)
-/// 3. Measures allocation rate for forward play only (not counting rewind)
+///    - Replays from midpoint with new random seed (different path)
+/// 3. Measures allocation rate for forward play only
+/// 4. Tracks win rates for P1 vs P2
 ///
 /// This is comparable to other benchmarks that measure forward gameplay.
 fn bench_game_rewind_play_again(c: &mut Criterion) {
@@ -910,88 +981,59 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
         bytes_deallocated: 0,
     };
     let mut iteration_count = 0;
+    let mut p1_wins = 0;
+    let mut p2_wins = 0;
 
-    // Lazy initialization - only create and run initial game on first iteration
-    let mut initial_game: Option<GameState> = None;
-    let mut rewind_target = 0;
+    // Lazy initialization - only create midgame state on first iteration
+    let mut midgame_template: Option<GameState> = None;
+    let mut original_total_actions = 0;
 
     group.bench_function("rewind_play_again", |b| {
         b.iter(|| {
             // Initialize on first iteration
-            if initial_game.is_none() {
-                let game_init = GameInitializer::new(&setup.card_db);
-                let mut game = setup
-                    .runtime
-                    .block_on(async {
-                        game_init
-                            .init_game(
-                                "Player 1".to_string(),
-                                &setup.deck1,
-                                "Player 2".to_string(),
-                                &setup.deck2,
-                                20,
-                            )
-                            .await
-                    })
-                    .expect("Failed to initialize game");
-
-                game.seed_rng(initial_seed);
-
-                // Play the game once to build the undo log
-                {
-                    let (p1_id, p2_id) = {
-                        let mut players_iter = game.players.iter().map(|p| p.id);
-                        (
-                            players_iter.next().expect("Should have player 1"),
-                            players_iter.next().expect("Should have player 2"),
-                        )
-                    };
-
-                    let mut controller1 = RandomController::with_seed(p1_id, 42);
-                    let mut controller2 = RandomController::with_seed(p2_id, 42);
-
-                    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-                    let _ = game_loop
-                        .run_game(&mut controller1, &mut controller2)
-                        .expect("Initial game should complete");
-                }
-
-                let actions_count = game.undo_log.len();
-                rewind_target = actions_count / 2; // Rewind to middle of game
+            if midgame_template.is_none() {
+                let (game, total_actions) = create_midgame_state(&setup, initial_seed);
+                original_total_actions = total_actions;
 
                 eprintln!("\nRewind + Play Again mode (seed {initial_seed}):");
-                eprintln!("  Game completed with {} actions in undo log", actions_count);
-                eprintln!(
-                    "  Will rewind to action {} (middle) for each iteration...",
-                    rewind_target
-                );
-                eprintln!("  Then replay second half with different random seed per iteration");
+                eprintln!("  Full game had {} actions", total_actions);
+                eprintln!("  Starting from midpoint (undo log cleared)");
+                eprintln!("  Will replay second half with different random seed per iteration");
 
-                initial_game = Some(game);
+                midgame_template = Some(game);
             }
 
-            let game = initial_game.as_mut().unwrap();
-
-            // Rewind to middle (outside timing - not counting rewind cost)
-            let current_actions = game.undo_log.len();
-            let rewinds_needed = current_actions - rewind_target;
-            for _ in 0..rewinds_needed {
-                game.undo().expect("Undo should succeed");
-            }
+            // Clone the midgame template for this iteration
+            let mut game = midgame_template.as_ref().unwrap().clone();
 
             // Use different seed for each iteration to explore different paths
             let iteration_seed = initial_seed.wrapping_add(iteration_count as u64);
 
             // Run forward gameplay using shared helper function
-            let metrics = run_forward_gameplay_from_snapshot(game, iteration_seed, rewind_target);
+            let (metrics, outcome) = run_forward_gameplay_from_snapshot(&mut game, iteration_seed);
 
             aggregated += metrics;
+            match outcome {
+                GameOutcome::Player1Win => p1_wins += 1,
+                GameOutcome::Player2Win => p2_wins += 1,
+            }
             iteration_count += 1;
         });
     });
 
     if iteration_count > 0 {
         print_aggregated_metrics("Rewind + Play Again", initial_seed, &aggregated, iteration_count);
+        eprintln!("\n=== Win Rate Analysis ===");
+        eprintln!(
+            "  P1 wins: {} ({:.1}%)",
+            p1_wins,
+            100.0 * p1_wins as f64 / iteration_count as f64
+        );
+        eprintln!(
+            "  P2 wins: {} ({:.1}%)",
+            p2_wins,
+            100.0 * p2_wins as f64 / iteration_count as f64
+        );
     }
 
     group.finish();
@@ -1001,14 +1043,16 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 /// Measures forward gameplay after rewind across N worker threads
 ///
 /// This benchmark models future MCTS parallel search by:
-/// 1. ONE-TIME SETUP: Play a full game to build undo log
+/// 1. ONE-TIME SETUP: Create midgame state at 50% mark (undo log cleared)
 /// 2. PER-BATCH SETUP (outside timing): Clone snapshot to N worker threads
-/// 3. TIMED LOOP: Each thread runs forward from mid-game, then rewinds for next iteration
+/// 3. TIMED LOOP: Each thread runs forward from mid-game with unique seeds
+/// 4. Tracks win rates for P1 vs P2 across all parallel games
 ///
 /// CRITICAL: Uses iter_custom to exclude clone cost from measurements.
 /// Only the actual parallel gameplay is timed, not the snapshot cloning.
 fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
 
     // Configure rayon to use only physical cores (not hyperthreads)
@@ -1037,51 +1081,8 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     // Track timing for batch logging
     let init_start = Instant::now();
 
-    // ONE-TIME SETUP: Create and play initial game to build undo log
-    let game_init = GameInitializer::new(&setup.card_db);
-    let mut initial_game = setup
-        .runtime
-        .block_on(async {
-            game_init
-                .init_game(
-                    "Player 1".to_string(),
-                    &setup.deck1,
-                    "Player 2".to_string(),
-                    &setup.deck2,
-                    20,
-                )
-                .await
-        })
-        .expect("Failed to initialize game");
-
-    initial_game.seed_rng(initial_seed);
-
-    // Play the game once to build the undo log
-    {
-        let (p1_id, p2_id) = {
-            let mut players_iter = initial_game.players.iter().map(|p| p.id);
-            (
-                players_iter.next().expect("Should have player 1"),
-                players_iter.next().expect("Should have player 2"),
-            )
-        };
-
-        let mut controller1 = RandomController::with_seed(p1_id, 42);
-        let mut controller2 = RandomController::with_seed(p2_id, 42);
-
-        let mut game_loop = GameLoop::new(&mut initial_game).with_verbosity(VerbosityLevel::Silent);
-        let _ = game_loop
-            .run_game(&mut controller1, &mut controller2)
-            .expect("Initial game should complete");
-    }
-
-    let actions_count = initial_game.undo_log.len();
-    let rewind_target = actions_count / 2; // Rewind to middle of game
-
-    // Rewind to the target position for the benchmark
-    while initial_game.undo_log.len() > rewind_target {
-        initial_game.undo().expect("Undo should succeed");
-    }
+    // ONE-TIME SETUP: Create midgame state
+    let (initial_game, actions_count) = create_midgame_state(&setup, initial_seed);
 
     let init_duration = init_start.elapsed();
 
@@ -1089,13 +1090,16 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
         "\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
         num_threads
     );
-    eprintln!("  Game completed with {} actions in undo log", actions_count);
-    eprintln!("  Will start from action {} (middle) for each batch", rewind_target);
-    eprintln!("  Then replay second half in parallel with thread-specific RNG seeds");
+    eprintln!("  Full game had {} actions", actions_count);
+    eprintln!("  Starting from midpoint (undo log cleared)");
+    eprintln!("  Replay second half in parallel with thread-specific RNG seeds");
     eprintln!("  NOTE: Using iter_custom - clone time NOT included in measurements");
     eprintln!("\n=== BATCH TIMING LOG ===");
 
     let mut batch_number = 0;
+    let total_p1_wins = AtomicUsize::new(0);
+    let total_p2_wins = AtomicUsize::new(0);
+    let total_games = AtomicUsize::new(0);
 
     group.bench_function("par_rewind_play_again", |b| {
         b.iter_custom(|iters| {
@@ -1124,6 +1128,10 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
                 num_threads
             );
 
+            // Atomics for win tracking within this batch
+            let batch_p1_wins = AtomicUsize::new(0);
+            let batch_p2_wins = AtomicUsize::new(0);
+
             // START TIMING - only measure the actual parallel gameplay
             let start = Instant::now();
 
@@ -1144,34 +1152,28 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
                         let iter_num = thread_id * games_per_thread + i;
                         let thread_seed = initial_seed.wrapping_add(iter_num as u64);
 
-                        thread_game.seed_rng(thread_seed);
+                        // Run forward gameplay and track outcome
+                        let (_metrics, outcome) = run_forward_gameplay_from_snapshot(&mut thread_game, thread_seed);
 
-                        // Run forward gameplay from the snapshot
-                        let (p1_id, p2_id) = {
-                            let mut players_iter = thread_game.players.iter().map(|p| p.id);
-                            (
-                                players_iter.next().expect("Should have player 1"),
-                                players_iter.next().expect("Should have player 2"),
-                            )
-                        };
-
-                        let mut controller1 = RandomController::with_seed(p1_id, thread_seed);
-                        let mut controller2 = RandomController::with_seed(p2_id, thread_seed);
-
-                        let mut game_loop = GameLoop::new(&mut thread_game).with_verbosity(VerbosityLevel::Silent);
-                        let _ = game_loop
-                            .run_game(&mut controller1, &mut controller2)
-                            .expect("Game should complete");
-
-                        // Rewind back to the mid-game state for next iteration
-                        while thread_game.undo_log.len() > rewind_target {
-                            thread_game.undo().expect("Undo should succeed");
+                        match outcome {
+                            GameOutcome::Player1Win => {
+                                batch_p1_wins.fetch_add(1, Ordering::Relaxed);
+                            }
+                            GameOutcome::Player2Win => {
+                                batch_p2_wins.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                 });
 
             // STOP TIMING
             let batch_duration = start.elapsed();
+
+            // Update total win counts
+            total_p1_wins.fetch_add(batch_p1_wins.load(Ordering::Relaxed), Ordering::Relaxed);
+            total_p2_wins.fetch_add(batch_p2_wins.load(Ordering::Relaxed), Ordering::Relaxed);
+            total_games.fetch_add(iters as usize, Ordering::Relaxed);
+
             eprintln!(
                 "[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
                 batch_number,
@@ -1183,6 +1185,24 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
             batch_duration
         });
     });
+
+    // Print win rate analysis after all batches
+    let final_games = total_games.load(Ordering::Relaxed);
+    if final_games > 0 {
+        let final_p1_wins = total_p1_wins.load(Ordering::Relaxed);
+        let final_p2_wins = total_p2_wins.load(Ordering::Relaxed);
+        eprintln!("\n=== Win Rate Analysis (across all {} games) ===", final_games);
+        eprintln!(
+            "  P1 wins: {} ({:.1}%)",
+            final_p1_wins,
+            100.0 * final_p1_wins as f64 / final_games as f64
+        );
+        eprintln!(
+            "  P2 wins: {} ({:.1}%)",
+            final_p2_wins,
+            100.0 * final_p2_wins as f64 / final_games as f64
+        );
+    }
 
     group.finish();
 }
