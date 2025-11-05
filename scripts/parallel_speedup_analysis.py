@@ -104,8 +104,8 @@ class ParallelSpeedupAnalyzer:
     """Analyze parallel speedup across allocators and thread counts"""
 
     def __init__(self, workspace_root: Path, threads_spec: str = "all",
-                 allocators_spec: str = "all", hyperthreads: bool = False,
-                 quick_mode: bool = False):
+                 allocators_spec: str = "all", seconds: Optional[int] = None,
+                 hyperthreads: bool = False, quick_mode: bool = False):
         self.workspace_root = workspace_root
         self.results_dir = workspace_root / "experiment_results"
         self.plots_dir = self.results_dir / "plots"
@@ -115,11 +115,19 @@ class ParallelSpeedupAnalyzer:
         self.num_physical_cores = self._get_physical_cores()
         self.hyperthreads = hyperthreads
 
-        # Support legacy quick_mode flag (maps to threads_spec="quartiles")
-        if quick_mode and threads_spec == "all":
-            self.threads_spec = "quartiles"
+        # Support legacy quick_mode flag (sets threads_spec="quartiles" and seconds=1)
+        if quick_mode:
+            if threads_spec == "all":
+                self.threads_spec = "quartiles"
+            else:
+                self.threads_spec = threads_spec
+            if seconds is None:
+                self.seconds = 1
+            else:
+                self.seconds = seconds
         else:
             self.threads_spec = threads_spec
+            self.seconds = seconds
 
         # All available allocators
         self._all_allocators = [
@@ -210,7 +218,9 @@ class ParallelSpeedupAnalyzer:
 
     def _get_measurement_time(self) -> int:
         """Get measurement time in seconds for Criterion"""
-        # Use 1 second if threads_spec is "quartiles" (quick mode)
+        if self.seconds is not None:
+            return self.seconds
+        # Default: 1 second if threads_spec is "quartiles", otherwise 10
         return 1 if self.threads_spec == "quartiles" else 10
 
     def _get_git_info(self) -> Tuple[str, str]:
@@ -629,8 +639,10 @@ def main():
                        help="Thread counts to test: 'all' (1..P), 'quartiles' (1,25%%,50%%,75%%,100%%), or comma-separated list (e.g., '1,2,4,8')")
     parser.add_argument("--allocators", type=str, default="all",
                        help="Allocators to test: 'all' (default), or comma-separated list (e.g., 'system,mimalloc')")
+    parser.add_argument("--seconds", type=int, default=None,
+                       help="Criterion measurement time in seconds per benchmark (default: 1 for quartiles, 10 for others)")
     parser.add_argument("--quick", action="store_true",
-                       help="[DEPRECATED] Use --threads quartiles instead. Quick mode: 1s per benchmark")
+                       help="[DEPRECATED] Use --threads=quartiles --seconds=1 instead. Shortcut for quick mode")
     parser.add_argument("--hyperthreads", action="store_true",
                        help="Also test at 1.5x and 2x physical cores to observe hyperthreading effects")
     parser.add_argument("--plot", action="store_true",
@@ -646,7 +658,7 @@ def main():
 
     # Warn about deprecated --quick flag
     if args.quick:
-        print("Warning: --quick is deprecated. Use --threads quartiles instead.", file=sys.stderr)
+        print("Warning: --quick is deprecated. Use --threads=quartiles --seconds=1 instead.", file=sys.stderr)
 
     # Find workspace root
     script_dir = Path(__file__).parent
@@ -656,6 +668,7 @@ def main():
         workspace_root,
         threads_spec=args.threads,
         allocators_spec=args.allocators,
+        seconds=args.seconds,
         hyperthreads=args.hyperthreads,
         quick_mode=args.quick  # For backward compatibility
     )
