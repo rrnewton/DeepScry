@@ -5,7 +5,6 @@
 
 // Enable unstable allocator_api for per-thread bump allocators
 #![feature(allocator_api)]
-#![feature(slice_ptr_get)]
 
 pub mod core;
 pub mod error;
