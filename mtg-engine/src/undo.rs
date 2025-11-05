@@ -214,7 +214,7 @@ impl GameAction {
                 // Restore RNG state if available (using bincode + SmallVec)
                 if let Some(rng_bytes) = rng_state {
                     // SmallVec derefs to &[u8], which is what bincode::deserialize expects
-                    if let Ok(rng) = bincode::deserialize::<rand_chacha::ChaCha12Rng>(&rng_bytes) {
+                    if let Ok(rng) = bincode::deserialize::<rand_chacha::ChaCha12Rng>(rng_bytes) {
                         *game.rng.borrow_mut() = rng;
                     } else {
                         return Err("Failed to deserialize RNG state".to_string());

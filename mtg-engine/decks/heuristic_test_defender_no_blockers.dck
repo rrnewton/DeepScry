@@ -1,0 +1,6 @@
+[metadata]
+Name=Heuristic Test - Defender (No Creatures)
+Description=Deck with no creatures to test attacking behavior
+
+[Main]
+60 Plains

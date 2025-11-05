@@ -57,9 +57,11 @@ fmt-check:
 	cargo fmt --all -- --check
 
 # Run clippy linter
+# Note: mtg-benchmarks has mutually exclusive features, so we run it separately without --all-features
 clippy:
 	@echo "=== Running clippy ==="
-	cargo clippy --all-targets --all-features -- -D warnings
+	cargo clippy -p mtg-forge-rs --all-targets --all-features -- -D warnings
+	cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
 
 # Detect code duplication
 code-dups:
@@ -118,7 +120,7 @@ validate-impl-sequential:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 .PHONY: validate-parallel-steps validate-impl-sequential validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step
-validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step deck_list plot
+validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step deck_list
 
 validate-fmt-check-step:
 	@$(MAKE) fmt-check

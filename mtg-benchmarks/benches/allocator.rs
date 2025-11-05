@@ -8,6 +8,8 @@
 //! - `bench-stats-alloc`: Use stats_alloc with allocation tracking (default)
 //! - `bench-mimalloc`: Use mimalloc for maximum performance (no tracking)
 //!
+//! These features are mutually exclusive - only one can be enabled at a time.
+//!
 //! ## Usage
 //!
 //! ```rust
@@ -19,6 +21,10 @@
 //!
 //! println!("Allocated: {} bytes", stats.bytes_allocated);
 //! ```
+
+// Compile-time check: ensure features are mutually exclusive
+#[cfg(all(feature = "bench-stats-alloc", feature = "bench-mimalloc"))]
+compile_error!("Features 'bench-stats-alloc' and 'bench-mimalloc' are mutually exclusive. Enable only one.");
 
 // Import allocator types
 #[cfg(feature = "bench-stats-alloc")]
@@ -37,6 +43,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Allocation statistics - works with or without tracking
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(dead_code)] // Some fields used only in specific features
 pub struct AllocStats {
     pub bytes_allocated: usize,
     pub bytes_deallocated: usize,
@@ -60,6 +67,7 @@ impl AllocStats {
     }
 
     /// Calculate net bytes (allocated - deallocated)
+    #[allow(dead_code)]
     pub fn net_bytes(&self) -> i64 {
         self.bytes_allocated as i64 - self.bytes_deallocated as i64
     }
@@ -134,6 +142,7 @@ impl Default for AllocTracker {
 /// });
 /// println!("Allocated {} bytes", stats.bytes_allocated);
 /// ```
+#[allow(dead_code)]
 pub fn track_allocations<F, R>(f: F) -> AllocStats
 where
     F: FnOnce() -> R,
@@ -144,6 +153,7 @@ where
 }
 
 /// Get the name of the current allocator
+#[allow(dead_code)]
 pub fn allocator_name() -> &'static str {
     #[cfg(feature = "bench-stats-alloc")]
     {
@@ -160,12 +170,14 @@ pub fn allocator_name() -> &'static str {
 }
 
 /// Check if allocation tracking is enabled
+#[allow(dead_code)]
 pub const fn has_tracking() -> bool {
     cfg!(feature = "bench-stats-alloc")
 }
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::{allocator_name, has_tracking, track_allocations, AllocStats, AllocTracker};
 
     #[test]
@@ -177,7 +189,8 @@ mod tests {
     #[test]
     fn test_alloc_tracker() {
         let tracker = AllocTracker::new();
-        let _v = vec![1, 2, 3, 4, 5]; // Allocate something
+        #[allow(clippy::useless_vec)]
+        let _v = vec![1, 2, 3, 4, 5]; // Intentionally using vec! to force heap allocation
         let stats = tracker.stats();
 
         // With stats_alloc, should see allocations

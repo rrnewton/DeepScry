@@ -44,7 +44,7 @@ fn run_game_with_seed(deck_path: &str, seed: u64, verbosity: &str) -> String {
 /// Test determinism for all deck files in decks/
 /// Automatically generates a separate test for each .dck file found
 #[dir_test(
-    dir: "$CARGO_MANIFEST_DIR/decks",
+    dir: "$CARGO_MANIFEST_DIR/../decks",
     glob: "**/*.dck",
 )]
 fn test_deck_determinism(fixture: Fixture<&str>) {
@@ -74,21 +74,27 @@ fn test_deck_determinism(fixture: Fixture<&str>) {
 /// Test that different seeds produce consistent but different results
 #[test]
 fn test_different_seeds_consistency() {
-    let deck_path = "decks/simple_bolt.dck";
-    if !PathBuf::from(deck_path).exists() {
+    // Path relative to workspace root
+    let deck_path_rel = concat!(env!("CARGO_MANIFEST_DIR"), "/../decks/simple_bolt.dck");
+    let deck_path_buf = PathBuf::from(deck_path_rel);
+    if !deck_path_buf.exists() {
         return;
     }
+
+    // Canonicalize to absolute path for cargo run
+    let deck_path = deck_path_buf.canonicalize().expect("Failed to canonicalize deck path");
+    let deck_path_str = deck_path.to_str().expect("Invalid UTF-8 in path");
 
     let verbosity = "verbose";
 
     // Verify seed 42 is consistent
-    let seed42_run1 = run_game_with_seed(deck_path, 42, verbosity);
-    let seed42_run2 = run_game_with_seed(deck_path, 42, verbosity);
+    let seed42_run1 = run_game_with_seed(deck_path_str, 42, verbosity);
+    let seed42_run2 = run_game_with_seed(deck_path_str, 42, verbosity);
     assert_eq!(seed42_run1, seed42_run2, "Seed 42 produced inconsistent output");
 
     // Verify seed 100 is consistent
-    let seed100_run1 = run_game_with_seed(deck_path, 100, verbosity);
-    let seed100_run2 = run_game_with_seed(deck_path, 100, verbosity);
+    let seed100_run1 = run_game_with_seed(deck_path_str, 100, verbosity);
+    let seed100_run2 = run_game_with_seed(deck_path_str, 100, verbosity);
     assert_eq!(seed100_run1, seed100_run2, "Seed 100 produced inconsistent output");
 
     // Verify different seeds produce different output

@@ -21,15 +21,15 @@ echo
 echo "Will use: cargo run --bin mtg"
 echo
 
-# Check if test deck exists
-if [[ ! -f "decks/simple_bolt.dck" ]]; then
-    echo -e "${RED}Error: decks/simple_bolt.dck not found${NC}"
+# Check if test deck exists (relative to workspace root from mtg-engine/)
+if [[ ! -f "../decks/simple_bolt.dck" ]]; then
+    echo -e "${RED}Error: ../decks/simple_bolt.dck not found${NC}"
     exit 1
 fi
 
-# Check if cardsfolder exists
-if [[ ! -d "cardsfolder" ]]; then
-    echo -e "${YELLOW}Warning: cardsfolder not found, skipping test${NC}"
+# Check if cardsfolder exists (relative to workspace root from mtg-engine/)
+if [[ ! -d "../cardsfolder" ]]; then
+    echo -e "${YELLOW}Warning: ../cardsfolder not found, skipping test${NC}"
     exit 0
 fi
 
@@ -71,8 +71,8 @@ echo
 # Redirect stderr to capture game output
 # Since we only call mtg once, use cargo run
 if echo -e "$INPUT_SEQUENCE" | timeout 30s cargo run --bin mtg -- tui \
-    decks/simple_bolt.dck \
-    decks/simple_bolt.dck \
+    ../decks/simple_bolt.dck \
+    ../decks/simple_bolt.dck \
     --p1 tui \
     --p2 zero \
     --seed 42 \

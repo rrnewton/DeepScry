@@ -2204,8 +2204,8 @@ mod tests {
     fn load_test_card(game: &mut GameState, card_name: &str, owner_id: PlayerId) -> Result<CardId> {
         let card_id = game.next_entity_id();
 
-        // Load card definition from cardsfolder
-        let cardsfolder = PathBuf::from("./cardsfolder");
+        // Load card definition from cardsfolder (relative to workspace root)
+        let cardsfolder = PathBuf::from("../cardsfolder");
         let db = CardDatabase::new(cardsfolder);
 
         let card_def = tokio::runtime::Runtime::new()
@@ -5587,7 +5587,7 @@ mod tests {
         }
 
         // Load Elvish Visionary from cardsfolder
-        let cardsfolder = PathBuf::from("./cardsfolder");
+        let cardsfolder = PathBuf::from("../cardsfolder");
         let db = CardDatabase::new(cardsfolder);
 
         let card_def = tokio::runtime::Runtime::new()
@@ -5635,7 +5635,7 @@ mod tests {
         let bob_id = players[1];
 
         // Load Lightning Bolt and Counterspell from cardsfolder
-        let cardsfolder = PathBuf::from("./cardsfolder");
+        let cardsfolder = PathBuf::from("../cardsfolder");
         let db = CardDatabase::new(cardsfolder);
 
         let runtime = tokio::runtime::Runtime::new().unwrap();

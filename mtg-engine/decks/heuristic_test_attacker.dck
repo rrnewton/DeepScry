@@ -1,0 +1,7 @@
+[metadata]
+Name=Heuristic Test - Attacker
+Description=Minimal deck for testing Grizzly Bears attacking
+
+[Main]
+40 Forest
+20 Grizzly Bears

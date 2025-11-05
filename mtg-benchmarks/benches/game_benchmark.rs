@@ -1133,7 +1133,7 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(thread_id, mut thread_game)| {
-                    let games_per_thread = (iters as usize + num_threads - 1) / num_threads; // Ceiling division
+                    let games_per_thread = (iters as usize).div_ceil(num_threads);
 
                     for i in 0..games_per_thread {
                         if (thread_id * games_per_thread + i) >= iters as usize {

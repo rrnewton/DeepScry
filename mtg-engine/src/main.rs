@@ -14,6 +14,16 @@ use mtg_forge_rs::{
 };
 use std::path::PathBuf;
 
+/// Find cardsfolder directory, checking current directory first then parent
+fn find_cardsfolder() -> PathBuf {
+    let local = PathBuf::from("cardsfolder");
+    if local.exists() {
+        local
+    } else {
+        PathBuf::from("../cardsfolder")
+    }
+}
+
 /// Controller type for AI agents
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ControllerType {
@@ -636,7 +646,7 @@ async fn run_tui(
     }
 
     // Create async card database
-    let cardsfolder = PathBuf::from("cardsfolder");
+    let cardsfolder = find_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
     // Load snapshot early if resuming, so we can extract both game state and player-specific choices
@@ -1296,7 +1306,7 @@ async fn run_profile(iterations: usize, seed: u64, deck_path: PathBuf) -> Result
     println!("  Deck: {} cards", deck.total_cards());
 
     // Create card database (lazy loading - only loads cards on-demand)
-    let cardsfolder = PathBuf::from("cardsfolder");
+    let cardsfolder = find_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
     // Prefetch deck cards (not all 31k cards, just what we need)
