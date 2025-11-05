@@ -1040,6 +1040,153 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: Parallel rewind + replay with PINNED threads
+/// Measures forward gameplay after rewind across N pinned worker threads
+///
+/// This benchmark models future MCTS parallel search with precise timing:
+/// 1. ONE-TIME SETUP: Create midgame state at 50% mark (undo log cleared)
+/// 2. PER-BATCH SETUP (outside timing): Clone snapshot to N worker threads
+/// 3. TIMED LOOP: Each thread (pinned to physical core) runs forward from mid-game
+/// 4. Last thread to finish records precise timing
+/// 5. Tracks win rates for P1 vs P2 across all parallel games
+///
+/// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
+fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
+    use pinned_thread_pool::execute_parallel_batch;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    // Configure for physical cores only
+    let num_physical_cores = num_cpus::get_physical();
+
+    // Check if test resources exist and load once
+    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping benchmark - failed to load resources: {e}");
+            return;
+        }
+    };
+
+    let mut group = c.benchmark_group("game_execution");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
+
+    let initial_seed = 42u64;
+    let num_threads = num_physical_cores;
+
+    // Track timing for batch logging
+    let init_start = Instant::now();
+
+    // ONE-TIME SETUP: Create midgame state
+    let (initial_game, actions_count) = create_midgame_state(&setup, initial_seed);
+
+    let init_duration = init_start.elapsed();
+
+    eprintln!(
+        "\nPinned Parallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
+        num_threads
+    );
+    eprintln!("  Full game had {} actions", actions_count);
+    eprintln!("  Starting from midpoint (undo log cleared)");
+    eprintln!("  Replay second half in parallel with pinned threads");
+    eprintln!("  NOTE: Using custom thread pool with precise timing");
+    eprintln!("\n=== BATCH TIMING LOG ===");
+
+    let mut batch_number = 0;
+    let total_p1_wins = AtomicUsize::new(0);
+    let total_p2_wins = AtomicUsize::new(0);
+    let total_games = AtomicUsize::new(0);
+
+    group.bench_function("pinned_par_rewind_play_again", |b| {
+        b.iter_custom(|iters| {
+            batch_number += 1;
+
+            // Log initialization time only for first batch
+            if batch_number == 1 {
+                eprintln!(
+                    "[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
+                    batch_number,
+                    init_duration.as_secs_f64() * 1000.0
+                );
+            }
+
+            // Atomics for win tracking within this batch
+            let batch_p1_wins = Arc::new(AtomicUsize::new(0));
+            let batch_p2_wins = Arc::new(AtomicUsize::new(0));
+
+            let games_per_thread = (iters as usize).div_ceil(num_threads);
+            let total_iters = iters as usize;
+
+            // Clone atomics for closure
+            let p1_wins_clone = Arc::clone(&batch_p1_wins);
+            let p2_wins_clone = Arc::clone(&batch_p2_wins);
+
+            // Execute parallel batch with pinned threads
+            let (batch_duration, _results) =
+                execute_parallel_batch(num_threads, &initial_game, move |thread_id, thread_game| {
+                    for i in 0..games_per_thread {
+                        if (thread_id * games_per_thread + i) >= total_iters {
+                            break; // Don't overshoot total iters
+                        }
+
+                        // Thread-specific seed for this iteration
+                        let iter_num = thread_id * games_per_thread + i;
+                        let thread_seed = initial_seed.wrapping_add(iter_num as u64);
+
+                        // Run forward gameplay and track outcome
+                        let (_metrics, outcome) = run_forward_gameplay_from_snapshot(thread_game, thread_seed);
+
+                        match outcome {
+                            GameOutcome::Player1Win => {
+                                p1_wins_clone.fetch_add(1, Ordering::Relaxed);
+                            }
+                            GameOutcome::Player2Win => {
+                                p2_wins_clone.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+
+            // Update total win counts
+            total_p1_wins.fetch_add(batch_p1_wins.load(Ordering::Relaxed), Ordering::Relaxed);
+            total_p2_wins.fetch_add(batch_p2_wins.load(Ordering::Relaxed), Ordering::Relaxed);
+            total_games.fetch_add(iters as usize, Ordering::Relaxed);
+
+            eprintln!(
+                "[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
+                batch_number,
+                batch_duration.as_secs_f64() * 1000.0,
+                iters,
+                (batch_duration.as_secs_f64() * 1_000_000.0) / iters as f64
+            );
+
+            batch_duration
+        });
+    });
+
+    // Print win rate analysis after all batches
+    let final_games = total_games.load(Ordering::Relaxed);
+    if final_games > 0 {
+        let final_p1_wins = total_p1_wins.load(Ordering::Relaxed);
+        let final_p2_wins = total_p2_wins.load(Ordering::Relaxed);
+        eprintln!("\n=== Win Rate Analysis (across all {} games) ===", final_games);
+        eprintln!(
+            "  P1 wins: {} ({:.1}%)",
+            final_p1_wins,
+            100.0 * final_p1_wins as f64 / final_games as f64
+        );
+        eprintln!(
+            "  P2 wins: {} ({:.1}%)",
+            final_p2_wins,
+            100.0 * final_p2_wins as f64 / final_games as f64
+        );
+    }
+
+    group.finish();
+}
+
 /// Benchmark: Parallel rewind + replay with different paths (models MCTS parallel search)
 /// Measures forward gameplay after rewind across N worker threads
 ///
@@ -1465,6 +1612,7 @@ criterion_group!(
     bench_game_rewind,
     bench_game_rewind_play_again,
     bench_game_par_rewind_play_again,
+    bench_game_pinned_par_rewind_play_again,
     bench_save_snapshot,
     bench_game_old_school_mono_black_vs_the_deck,
     bench_game_old_school_white_weenie_mirror,
