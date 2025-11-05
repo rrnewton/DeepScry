@@ -129,7 +129,7 @@ scaling will be effective.
 
 ### Files
 
-- benchmark_mimalloc_final.txt - Full benchmark output
+- experiment_results/benchmark_mimalloc_2025-11-05_#730(fa5004d2).txt - Full benchmark output
 - benches/game_benchmark.rs - Modified with flag-based allocator switching
 - Cargo.toml - Added mimalloc dependency
 
