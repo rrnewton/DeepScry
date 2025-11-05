@@ -377,17 +377,54 @@ class ParallelSpeedupAnalyzer:
                 allocator_results[r.allocator] = []
             allocator_results[r.allocator].append(r)
 
-        # Find max throughput for each allocator
-        max_results = []
+        # Find single-threaded and parallel max for each allocator
+        single_threaded_results = []
+        max_parallel_results = []
+
         for allocator in sorted(allocator_results.keys()):
             alloc_results = allocator_results[allocator]
-            max_result = max(alloc_results, key=lambda r: r.turns_per_sec)
-            max_results.append((allocator, max_result))
 
-        # Print results for each allocator
-        for allocator, max_result in max_results:
-            print(f"Allocator: {allocator}")
-            print(f"  Maximum throughput: {max_result.turns_per_sec:.2f} turns/sec")
+            # Get single-threaded result
+            single_threaded = [r for r in alloc_results if r.num_threads == 1]
+            if single_threaded:
+                single_threaded_results.append((allocator, single_threaded[0]))
+
+            # Get max parallel result
+            max_result = max(alloc_results, key=lambda r: r.turns_per_sec)
+            max_parallel_results.append((allocator, max_result))
+
+        # Find winners
+        best_single_allocator, best_single = max(single_threaded_results, key=lambda x: x[1].turns_per_sec)
+        best_parallel_allocator, best_parallel = max(max_parallel_results, key=lambda x: x[1].turns_per_sec)
+
+        # Print single-threaded comparison
+        print("SINGLE-THREADED PERFORMANCE")
+        print("-" * 70)
+        for allocator, result in single_threaded_results:
+            is_winner = (allocator == best_single_allocator)
+            pct_diff = ((best_single.turns_per_sec - result.turns_per_sec) / best_single.turns_per_sec) * 100
+
+            winner_mark = " 👑 WINNER" if is_winner else f" ({pct_diff:.1f}% slower)"
+            print(f"  {allocator:12} {result.turns_per_sec:15,.2f} turns/sec{winner_mark}")
+        print()
+
+        # Print parallel performance comparison
+        print("PARALLEL PERFORMANCE (Maximum Throughput)")
+        print("-" * 70)
+        for allocator, max_result in max_parallel_results:
+            is_winner = (allocator == best_parallel_allocator)
+            pct_diff = ((best_parallel.turns_per_sec - max_result.turns_per_sec) / best_parallel.turns_per_sec) * 100
+
+            winner_mark = " 👑 WINNER" if is_winner else f" ({pct_diff:.1f}% slower)"
+            print(f"  {allocator:12} {max_result.turns_per_sec:15,.2f} turns/sec at {max_result.num_threads:2} threads{winner_mark}")
+        print()
+
+        # Detailed results for each allocator
+        print("DETAILED RESULTS BY ALLOCATOR")
+        print("-" * 70)
+        for allocator, max_result in max_parallel_results:
+            print(f"\n{allocator}:")
+            print(f"  Maximum throughput: {max_result.turns_per_sec:,.2f} turns/sec")
             print(f"  Achieved at: {max_result.num_threads} threads")
             print(f"  Mean time: {max_result.mean_time_ns/1e6:.4f} ms")
             print(f"  Std dev: ±{max_result.std_dev_ns/1e6:.4f} ms")
@@ -399,15 +436,12 @@ class ParallelSpeedupAnalyzer:
                 efficiency = (speedup / max_result.num_threads) * 100
                 print(f"  Speedup vs 1 thread: {speedup:.2f}x")
                 print(f"  Parallel efficiency: {efficiency:.1f}%")
-            print()
 
-        # Find overall best allocator
-        best_allocator, best_result = max(max_results, key=lambda x: x[1].turns_per_sec)
+        print(f"\n{'='*70}")
+        print(f"SUMMARY")
         print(f"{'='*70}")
-        print(f"BEST OVERALL PERFORMANCE")
-        print(f"{'='*70}")
-        print(f"Allocator: {best_allocator}")
-        print(f"Throughput: {best_result.turns_per_sec:.2f} turns/sec at {best_result.num_threads} threads")
+        print(f"Single-threaded winner: {best_single_allocator} ({best_single.turns_per_sec:,.2f} turns/sec)")
+        print(f"Parallel winner: {best_parallel_allocator} ({best_parallel.turns_per_sec:,.2f} turns/sec at {best_parallel.num_threads} threads)")
         print(f"{'='*70}\n")
 
     def plot_speedup(self, results: List[BenchmarkResult], output_file: Optional[Path] = None):
