@@ -867,6 +867,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtg-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "dhat",
+ "libc",
+ "mimalloc",
+ "mtg-forge-rs",
+ "num_cpus",
+ "rayon",
+ "stats_alloc",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "mtg-forge-rs"
 version = "0.1.0"
 dependencies = [
@@ -874,14 +890,11 @@ dependencies = [
  "bincode",
  "bumpalo",
  "clap",
- "criterion",
  "crossterm",
  "deunicode",
- "dhat",
  "dir-test",
  "jwalk",
  "libc",
- "mimalloc",
  "nom",
  "num_cpus",
  "rand",
@@ -897,7 +910,6 @@ dependencies = [
  "similar-asserts",
  "smallmap",
  "smallvec",
- "stats_alloc",
  "tempfile",
  "thiserror",
  "tokio",

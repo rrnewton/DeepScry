@@ -1,0 +1,46 @@
+[package]
+name = "mtg-benchmarks"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+# Main engine as library dependency
+mtg-forge-rs = { path = "../mtg-engine" }
+
+# Benchmark framework
+criterion = "0.5"
+
+# Allocation tracking and profiling
+stats_alloc = "0.1"
+mimalloc = "0.1"
+dhat = "0.3"
+
+# Required for benchmark code
+tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "macros", "time", "sync"] }
+tempfile = "3.10.1"
+libc = "0.2"
+
+# Parallel execution (used by benchmarks)
+rayon = "1.10"
+num_cpus = "1.16"
+
+# Performance benchmarks
+[[bench]]
+name = "game_benchmark"
+harness = false
+
+[[bench]]
+name = "puzzle_parse_benchmark"
+harness = false
+
+[[bench]]
+name = "dhat_profile"
+harness = false
+
+[features]
+# Benchmark allocator selection (mutually exclusive)
+# Default: bench-mimalloc for maximum performance
+# Use bench-stats-alloc for allocation tracking
+bench-stats-alloc = []
+bench-mimalloc = []
