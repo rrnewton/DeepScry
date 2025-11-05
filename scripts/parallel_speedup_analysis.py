@@ -731,8 +731,9 @@ class ParallelSpeedupAnalyzer:
                     throughput_at_ci_lower = (1e9 / ci_lower_ns) * avg_turns  # Higher time -> lower throughput
 
                     # Error bars: distance from mean to CI bounds
-                    errors_lower.append(r.turns_per_sec - throughput_at_ci_lower)
-                    errors_upper.append(throughput_at_ci_upper - r.turns_per_sec)
+                    # Use abs() to ensure positive values (due to inverse relationship and floating point)
+                    errors_lower.append(abs(r.turns_per_sec - throughput_at_ci_lower))
+                    errors_upper.append(abs(throughput_at_ci_upper - r.turns_per_sec))
                 else:
                     # No CI data available
                     errors_lower.append(0)
