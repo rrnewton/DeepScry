@@ -33,7 +33,7 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 
 ---
 
-## Infrastructure Improvements (2025-11-05_#759)
+## Infrastructure Improvements (2025-11-05_#763)
 
 ✅ **Pinned thread pool infrastructure** (6834503b)
 - Created custom thread pool with core affinity (core_affinity crate)
@@ -48,11 +48,21 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 - Win rate tracking across parallel games
 - Ready for performance comparison vs Rayon
 
-✅ **Parallel speedup analysis script** (6fd56dd1)
-- Framework for running benchmarks with varying thread counts
+✅ **Working directory helper and graceful thread pinning** (aa1d4c0b)
+- Added ensure_correct_working_directory() function to fix Criterion resource loading
+- Graceful degradation when core_affinity returns insufficient cores
+- Fixes benchmarks running in containerized environments
+
+✅ **Thread count parameterization** (f80e759d)
+- Benchmark now reads BENCH_NUM_THREADS environment variable
+- Falls back to num_physical_cores if not set
+- Enables testing parallel speedup across different thread counts
+
+✅ **Parallel speedup analysis script complete** (81e4c0b9)
+- Script ready to run full benchmark sweeps with thread count variation
 - Support for all three allocators (system, mimalloc, jemalloc)
 - CSV output for results + matplotlib plotting
-- Dry-run mode shows: 3 allocators × 32 cores = 96 benchmark runs
+- Dry-run mode verified: 3 allocators × 32 cores = 96 benchmark runs
 
 ✅ **Jemalloc allocator support** (7259bc22)
 - Added tikv-jemallocator as third allocator option
@@ -70,10 +80,11 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 - Added win rate tracking to parallel benchmarks
 - Cleared undo log at midpoint (only track 50%-100% gameplay)
 
-🚧 **Next: Run parallel speedup analysis**
-- Modify benchmark to accept BENCH_NUM_THREADS env var
-- Run analysis script across all allocators and thread counts
-- Generate speedup plots and document findings
+🚧 **Ready to run: Parallel speedup analysis**
+- All infrastructure complete - benchmark accepts BENCH_NUM_THREADS
+- Analysis script tested in dry-run mode
+- Ready to run full benchmark sweep (very long-running)
+- Alternative: Run limited sweep (fewer thread counts) to validate workflow
 - Update mtg-a6ca26 with allocator comparison results
 
 ---
@@ -158,4 +169,4 @@ likely due to improved cache locality and reduced allocator pressure.
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 
 ---
-**Updated 2025-11-05_#759(6fd56dd1)** - Pinned thread pool complete, analysis script ready, next: run speedup analysis
+**Updated 2025-11-05_#763(81e4c0b9)** - Infrastructure complete: thread count parameterization working, analysis script validated in dry-run, ready for benchmark sweep
