@@ -103,7 +103,9 @@ class BenchmarkResult:
 class ParallelSpeedupAnalyzer:
     """Analyze parallel speedup across allocators and thread counts"""
 
-    def __init__(self, workspace_root: Path, quick_mode: bool = False, hyperthreads: bool = False):
+    def __init__(self, workspace_root: Path, threads_spec: str = "all",
+                 allocators_spec: str = "all", hyperthreads: bool = False,
+                 quick_mode: bool = False):
         self.workspace_root = workspace_root
         self.results_dir = workspace_root / "experiment_results"
         self.plots_dir = self.results_dir / "plots"
@@ -111,15 +113,23 @@ class ParallelSpeedupAnalyzer:
 
         # Get number of physical cores
         self.num_physical_cores = self._get_physical_cores()
-        self.quick_mode = quick_mode
         self.hyperthreads = hyperthreads
 
-        # Allocator configurations
-        self.allocators = [
+        # Support legacy quick_mode flag (maps to threads_spec="quartiles")
+        if quick_mode and threads_spec == "all":
+            self.threads_spec = "quartiles"
+        else:
+            self.threads_spec = threads_spec
+
+        # All available allocators
+        self._all_allocators = [
             ("system", None),  # Default allocator
             ("mimalloc", "bench-mimalloc"),
             ("jemalloc", "bench-jemalloc"),
         ]
+
+        # Parse allocators specification
+        self.allocators = self._parse_allocators(allocators_spec)
 
     def _get_physical_cores(self) -> int:
         """Get number of physical CPU cores"""
@@ -137,10 +147,37 @@ class ParallelSpeedupAnalyzer:
             import os
             return (os.cpu_count() or 1) // 2
 
+    def _parse_allocators(self, spec: str) -> List[Tuple[str, Optional[str]]]:
+        """Parse allocators specification into list of (name, feature) tuples"""
+        if spec == "all":
+            return self._all_allocators
+
+        # Parse comma-separated list
+        allocator_names = [name.strip().lower() for name in spec.split(",")]
+        allocators = []
+
+        for name in allocator_names:
+            matching = [a for a in self._all_allocators if a[0] == name]
+            if matching:
+                allocators.append(matching[0])
+            else:
+                print(f"Warning: Unknown allocator '{name}', skipping", file=sys.stderr)
+
+        if not allocators:
+            print(f"Error: No valid allocators specified, using all", file=sys.stderr)
+            return self._all_allocators
+
+        return allocators
+
     def _get_thread_counts(self) -> List[int]:
         """Get list of thread counts to test"""
-        if self.quick_mode:
-            # Quick mode: 1, 25%, 50%, 75%, 100% of available threads
+        spec = self.threads_spec
+
+        if spec == "all":
+            # All thread counts from 1 to num_physical_cores
+            counts = list(range(1, self.num_physical_cores + 1))
+        elif spec == "quartiles":
+            # Quartiles: 1, 25%, 50%, 75%, 100% of available threads
             counts = [
                 1,
                 max(1, self.num_physical_cores // 4),  # 25%
@@ -149,8 +186,16 @@ class ParallelSpeedupAnalyzer:
                 self.num_physical_cores  # 100%
             ]
         else:
-            # Full mode: all thread counts from 1 to num_physical_cores
-            counts = list(range(1, self.num_physical_cores + 1))
+            # Parse comma-separated list of thread counts
+            try:
+                counts = [int(x.strip()) for x in spec.split(",")]
+                # Validate counts
+                if not all(c > 0 for c in counts):
+                    print(f"Error: Thread counts must be positive integers", file=sys.stderr)
+                    counts = [1, self.num_physical_cores]
+            except ValueError:
+                print(f"Error: Invalid thread specification '{spec}', using default", file=sys.stderr)
+                counts = list(range(1, self.num_physical_cores + 1))
 
         # Add hyperthreading test points if requested
         if self.hyperthreads:
@@ -165,7 +210,8 @@ class ParallelSpeedupAnalyzer:
 
     def _get_measurement_time(self) -> int:
         """Get measurement time in seconds for Criterion"""
-        return 1 if self.quick_mode else 10
+        # Use 1 second if threads_spec is "quartiles" (quick mode)
+        return 1 if self.threads_spec == "quartiles" else 10
 
     def _get_git_info(self) -> Tuple[str, str]:
         """Get current git commit hash and depth"""
@@ -291,11 +337,16 @@ class ParallelSpeedupAnalyzer:
         results = []
 
         thread_counts = self._get_thread_counts()
-        mode_str = "Quick Mode" if self.quick_mode else "Full Analysis"
         measurement_time = self._get_measurement_time()
 
+        # Determine mode description
+        mode_desc = {
+            "all": "Full Analysis",
+            "quartiles": "Quick Mode (Quartiles)"
+        }.get(self.threads_spec, f"Custom ({self.threads_spec})")
+
         print(f"\n{'='*70}")
-        print(f"Parallel Speedup Analysis - {mode_str}")
+        print(f"Parallel Speedup Analysis - {mode_desc}")
         print(f"{'='*70}")
         print(f"Physical cores: {self.num_physical_cores}")
         print(f"Thread counts to test: {thread_counts}")
@@ -324,7 +375,7 @@ class ParallelSpeedupAnalyzer:
         return results
 
     def save_results(self, results: List[BenchmarkResult], output_file: Optional[Path] = None):
-        """Save results to CSV file"""
+        """Save results to CSV file, appending if file exists"""
         if not results:
             print("No results to save")
             return
@@ -333,14 +384,46 @@ class ParallelSpeedupAnalyzer:
             date_str = datetime.now().strftime("%Y-%m-%d")
             output_file = self.results_dir / f"parallel_speedup_{date_str}.csv"
 
-        print(f"\nSaving results to {output_file}")
+        # Check if file exists and load existing results
+        existing_results = []
+        file_exists = output_file.exists()
 
-        with open(output_file, 'w', newline='') as f:
+        if file_exists:
+            print(f"\nCSV file exists, checking for conflicts...")
+            existing_results = self.load_results(output_file)
+
+            # Check for conflicts: same (allocator, num_threads) combination
+            existing_keys = {(r.allocator, r.num_threads) for r in existing_results}
+            new_keys = {(r.allocator, r.num_threads) for r in results}
+            conflicts = existing_keys & new_keys
+
+            if conflicts:
+                print(f"\n{'='*70}")
+                print("ERROR: Duplicate benchmark configurations detected!")
+                print(f"{'='*70}")
+                print("The following (allocator, threads) combinations already exist:")
+                for allocator, threads in sorted(conflicts):
+                    print(f"  - {allocator}: {threads} threads")
+                print(f"\nPlease either:")
+                print(f"  1. Remove conflicting rows from {output_file}")
+                print(f"  2. Use a different output file with --output-data")
+                print(f"  3. Delete the existing file to start fresh")
+                print(f"{'='*70}\n")
+                sys.exit(1)
+
+            print(f"✓ No conflicts found, appending {len(results)} new results")
+
+        # Write results (append if exists, otherwise create new)
+        mode = 'a' if file_exists else 'w'
+        with open(output_file, mode, newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "timestamp", "git_commit", "allocator", "num_threads",
-                "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn"
-            ])
+
+            # Write header only for new files
+            if not file_exists:
+                writer.writerow([
+                    "timestamp", "git_commit", "allocator", "num_threads",
+                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn"
+                ])
 
             for r in results:
                 writer.writerow([
@@ -348,7 +431,9 @@ class ParallelSpeedupAnalyzer:
                     r.mean_time_ns, r.std_dev_ns, r.turns_per_sec, r.bytes_per_turn
                 ])
 
-        print(f"✓ Saved {len(results)} results")
+        action = "Appended" if file_exists else "Saved"
+        total_count = len(existing_results) + len(results) if file_exists else len(results)
+        print(f"✓ {action} {len(results)} results (total: {total_count} in file)")
 
     def load_results(self, input_file: Path) -> List[BenchmarkResult]:
         """Load results from CSV file"""
@@ -540,8 +625,12 @@ def main():
                        help="Run benchmarks for all allocators and thread counts")
     parser.add_argument("--dry-run", action="store_true",
                        help="Show what would be run without actually running benchmarks")
+    parser.add_argument("--threads", type=str, default="all",
+                       help="Thread counts to test: 'all' (1..P), 'quartiles' (1,25%%,50%%,75%%,100%%), or comma-separated list (e.g., '1,2,4,8')")
+    parser.add_argument("--allocators", type=str, default="all",
+                       help="Allocators to test: 'all' (default), or comma-separated list (e.g., 'system,mimalloc')")
     parser.add_argument("--quick", action="store_true",
-                       help="Quick mode: 1s per benchmark, test only 1/25%%/50%%/75%%/100%% thread counts")
+                       help="[DEPRECATED] Use --threads quartiles instead. Quick mode: 1s per benchmark")
     parser.add_argument("--hyperthreads", action="store_true",
                        help="Also test at 1.5x and 2x physical cores to observe hyperthreading effects")
     parser.add_argument("--plot", action="store_true",
@@ -555,11 +644,21 @@ def main():
 
     args = parser.parse_args()
 
+    # Warn about deprecated --quick flag
+    if args.quick:
+        print("Warning: --quick is deprecated. Use --threads quartiles instead.", file=sys.stderr)
+
     # Find workspace root
     script_dir = Path(__file__).parent
     workspace_root = script_dir.parent
 
-    analyzer = ParallelSpeedupAnalyzer(workspace_root, quick_mode=args.quick, hyperthreads=args.hyperthreads)
+    analyzer = ParallelSpeedupAnalyzer(
+        workspace_root,
+        threads_spec=args.threads,
+        allocators_spec=args.allocators,
+        hyperthreads=args.hyperthreads,
+        quick_mode=args.quick  # For backward compatibility
+    )
 
     results = []
 
