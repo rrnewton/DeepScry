@@ -399,7 +399,8 @@ class ParallelSpeedupAnalyzer:
         file_exists = output_file.exists()
 
         if file_exists:
-            print(f"\nCSV file exists, checking for conflicts...")
+            print(f"\nCSV file exists: {output_file}")
+            print(f"Checking for conflicts...")
             existing_results = self.load_results(output_file)
 
             # Check for conflicts: same (allocator, num_threads) combination
@@ -411,6 +412,7 @@ class ParallelSpeedupAnalyzer:
                 print(f"\n{'='*70}")
                 print("ERROR: Duplicate benchmark configurations detected!")
                 print(f"{'='*70}")
+                print(f"File: {output_file}")
                 print("The following (allocator, threads) combinations already exist:")
                 for allocator, threads in sorted(conflicts):
                     print(f"  - {allocator}: {threads} threads")
@@ -421,7 +423,7 @@ class ParallelSpeedupAnalyzer:
                 print(f"{'='*70}\n")
                 sys.exit(1)
 
-            print(f"✓ No conflicts found, appending {len(results)} new results")
+            print(f"✓ No conflicts found, appending {len(results)} new results to {output_file}")
 
         # Write results (append if exists, otherwise create new)
         mode = 'a' if file_exists else 'w'
@@ -498,22 +500,28 @@ class ParallelSpeedupAnalyzer:
             max_result = max(alloc_results, key=lambda r: r.turns_per_sec)
             max_parallel_results.append((allocator, max_result))
 
-        # Find winners
-        best_single_allocator, best_single = max(single_threaded_results, key=lambda x: x[1].turns_per_sec)
-        best_parallel_allocator, best_parallel = max(max_parallel_results, key=lambda x: x[1].turns_per_sec)
+        # Print single-threaded comparison (if available)
+        if single_threaded_results:
+            best_single_allocator, best_single = max(single_threaded_results, key=lambda x: x[1].turns_per_sec)
 
-        # Print single-threaded comparison
-        print("SINGLE-THREADED PERFORMANCE")
-        print("-" * 70)
-        for allocator, result in single_threaded_results:
-            is_winner = (allocator == best_single_allocator)
-            pct_diff = ((best_single.turns_per_sec - result.turns_per_sec) / best_single.turns_per_sec) * 100
+            print("SINGLE-THREADED PERFORMANCE")
+            print("-" * 70)
+            for allocator, result in single_threaded_results:
+                is_winner = (allocator == best_single_allocator)
+                pct_diff = ((best_single.turns_per_sec - result.turns_per_sec) / best_single.turns_per_sec) * 100
 
-            winner_mark = " 👑 WINNER" if is_winner else f" ({pct_diff:.1f}% slower)"
-            print(f"  {allocator:12} {result.turns_per_sec:15,.2f} turns/sec{winner_mark}")
-        print()
+                winner_mark = " 👑 WINNER" if is_winner else f" ({pct_diff:.1f}% slower)"
+                print(f"  {allocator:12} {result.turns_per_sec:15,.2f} turns/sec{winner_mark}")
+            print()
+        else:
+            print("SINGLE-THREADED PERFORMANCE")
+            print("-" * 70)
+            print("  No single-threaded (1 thread) results available")
+            print()
 
         # Print parallel performance comparison
+        best_parallel_allocator, best_parallel = max(max_parallel_results, key=lambda x: x[1].turns_per_sec)
+
         print("PARALLEL PERFORMANCE (Maximum Throughput)")
         print("-" * 70)
         for allocator, max_result in max_parallel_results:
@@ -545,7 +553,10 @@ class ParallelSpeedupAnalyzer:
         print(f"\n{'='*70}")
         print(f"SUMMARY")
         print(f"{'='*70}")
-        print(f"Single-threaded winner: {best_single_allocator} ({best_single.turns_per_sec:,.2f} turns/sec)")
+        if single_threaded_results:
+            print(f"Single-threaded winner: {best_single_allocator} ({best_single.turns_per_sec:,.2f} turns/sec)")
+        else:
+            print(f"Single-threaded winner: N/A (no 1-thread results)")
         print(f"Parallel winner: {best_parallel_allocator} ({best_parallel.turns_per_sec:,.2f} turns/sec at {best_parallel.num_threads} threads)")
         print(f"{'='*70}\n")
 
