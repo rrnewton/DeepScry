@@ -42,15 +42,21 @@ where
     R: Send + 'static,
 {
     let core_ids = core_affinity::get_core_ids().expect("Failed to get core IDs");
-    assert!(
-        num_threads <= core_ids.len(),
-        "Requested {} threads but only {} cores available",
-        num_threads,
-        core_ids.len()
-    );
 
-    // Pin main thread to core 0
-    core_affinity::set_for_current(core_ids[0]);
+    // Check if we have enough cores for pinning
+    // If not enough cores available (e.g., in containers), skip pinning but continue with parallel execution
+    let enable_pinning = num_threads <= core_ids.len();
+
+    if !enable_pinning {
+        eprintln!("Warning: Requested {} threads but only {} cores available via core_affinity",
+                  num_threads, core_ids.len());
+        eprintln!("         Skipping thread pinning, but continuing with parallel execution");
+    }
+
+    // Pin main thread to core 0 if pinning is enabled
+    if enable_pinning {
+        core_affinity::set_for_current(core_ids[0]);
+    }
 
     // Shared synchronization primitives
     let ready_flags: Arc<Vec<AtomicBool>> = Arc::new((0..num_threads).map(|_| AtomicBool::new(false)).collect());
@@ -65,7 +71,11 @@ where
     let mut worker_handles = Vec::new();
 
     for thread_id in 1..num_threads {
-        let core_id = core_ids[thread_id];
+        let core_id = if enable_pinning {
+            Some(core_ids[thread_id])
+        } else {
+            None
+        };
         let mut thread_data = template.clone();
         let ready_flags_clone = Arc::clone(&ready_flags);
         let go_flag_clone = Arc::clone(&go_flag);
@@ -74,8 +84,10 @@ where
         let work_fn_clone = Arc::clone(&work_fn);
 
         let handle = thread::spawn(move || {
-            // Pin this worker thread to its assigned core
-            core_affinity::set_for_current(core_id);
+            // Pin this worker thread to its assigned core (if pinning is enabled)
+            if let Some(core) = core_id {
+                core_affinity::set_for_current(core);
+            }
 
             // Signal ready
             ready_flags_clone[thread_id].store(true, Ordering::Release);

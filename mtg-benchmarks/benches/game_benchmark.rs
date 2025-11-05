@@ -55,6 +55,34 @@ macro_rules! get_stats {
 /// Benchmark measurement time in seconds (used by all benchmarks)
 const BENCHMARK_TIME_SECS: u64 = 10;
 
+/// Helper function to ensure we're in the correct working directory
+///
+/// Criterion benchmarks may run from various subdirectories inside target/.
+/// This function navigates up the directory tree until it finds a directory
+/// containing 'decks', which indicates the workspace root.
+fn ensure_correct_working_directory() {
+    use std::env;
+
+    let mut current_dir = env::current_dir().expect("Failed to get current directory");
+
+    // Check if current directory has 'decks' subdirectory
+    if current_dir.join("decks").exists() {
+        return; // Already in correct directory
+    }
+
+    // Search up the directory tree
+    while let Some(parent) = current_dir.parent() {
+        if parent.join("decks").exists() {
+            env::set_current_dir(parent).expect("Failed to change directory");
+            eprintln!("Changed working directory to: {}", parent.display());
+            return;
+        }
+        current_dir = parent.to_path_buf();
+    }
+
+    panic!("Could not find workspace root (directory containing 'decks')");
+}
+
 /// Metrics collected during game execution
 #[derive(Debug, Clone)]
 struct GameMetrics {
@@ -528,6 +556,8 @@ fn print_aggregated_metrics(mode: &str, seed: u64, aggregated: &GameMetrics, ite
 
 /// Benchmark: Fresh mode - allocate new game each iteration
 fn bench_game_fresh(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -589,6 +619,8 @@ fn bench_game_fresh(c: &mut Criterion) {
 /// Benchmark: Fresh mode with in-memory logging at Normal verbosity
 /// Measures allocation overhead of logging infrastructure
 fn bench_game_fresh_with_logging(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -650,6 +682,8 @@ fn bench_game_fresh_with_logging(c: &mut Criterion) {
 /// Benchmark: Fresh mode with stdout logging at Normal verbosity (redirected to /dev/null)
 /// Measures allocation overhead with reusable buffer optimization
 fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -741,6 +775,8 @@ fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
 /// Benchmark: Snapshot mode - save/restore game state each iteration
 /// Uses Clone to create a fresh copy of the initial game state
 fn bench_game_snapshot(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -814,6 +850,8 @@ fn bench_game_snapshot(c: &mut Criterion) {
 /// Benchmark: Rewind mode - use undo log to rewind game
 /// Measures the cost of rewinding using undo() for tree search
 fn bench_game_rewind(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -958,6 +996,8 @@ fn bench_game_rewind(c: &mut Criterion) {
 ///
 /// This is comparable to other benchmarks that measure forward gameplay.
 fn bench_game_rewind_play_again(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -1052,6 +1092,8 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 ///
 /// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
 fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     use pinned_thread_pool::execute_parallel_batch;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1199,6 +1241,8 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
 /// CRITICAL: Uses iter_custom to exclude clone cost from measurements.
 /// Only the actual parallel gameplay is timed, not the snapshot cloning.
 fn bench_game_par_rewind_play_again(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
@@ -1357,6 +1401,8 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
 
 /// Benchmark: Save snapshot to file
 fn bench_save_snapshot(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
         Ok(s) => s,
@@ -1429,6 +1475,8 @@ fn bench_save_snapshot(c: &mut Criterion) {
 
 /// Benchmark: Old School deck matchup - Mono Black vs The Deck
 fn bench_game_old_school_mono_black_vs_the_deck(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     let setup = match BenchmarkSetup::load(
         "decks/old_school/05_mono_black_rogerbrand.dck",
         "decks/old_school/02_thedeck_peterschnidrig.dck",
@@ -1487,6 +1535,8 @@ fn bench_game_old_school_mono_black_vs_the_deck(c: &mut Criterion) {
 
 /// Benchmark: Old School deck matchup - White Weenie mirror
 fn bench_game_old_school_white_weenie_mirror(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     let setup = match BenchmarkSetup::load_same_deck("decks/old_school2/white_weenie_classic.dck") {
         Ok(s) => s,
         Err(e) => {
@@ -1542,6 +1592,8 @@ fn bench_game_old_school_white_weenie_mirror(c: &mut Criterion) {
 
 /// Benchmark: Old School deck matchup - Jeskai Aggro vs Troll Disk
 fn bench_game_old_school_jeskai_vs_troll_disk(c: &mut Criterion) {
+    ensure_correct_working_directory();
+
     let setup = match BenchmarkSetup::load(
         "decks/old_school/06_jeskai_aggro_joseantonioprieto.dck",
         "decks/old_school/06_troll_disk_daniellebrunazzo.dck",
