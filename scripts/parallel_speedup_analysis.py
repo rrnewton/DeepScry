@@ -98,6 +98,9 @@ class BenchmarkResult:
     bytes_per_turn: float
     timestamp: str
     git_commit: str
+    # Confidence interval bounds (95% confidence level from Criterion)
+    mean_time_ci_lower_ns: float = 0.0
+    mean_time_ci_upper_ns: float = 0.0
 
 
 class ParallelSpeedupAnalyzer:
@@ -308,18 +311,32 @@ class ParallelSpeedupAnalyzer:
             with open(estimates_file) as f:
                 estimates = json.load(f)
 
+            # Use Criterion's statistical estimates (mean time per iteration)
             mean_ns = estimates["mean"]["point_estimate"]
             std_dev_ns = estimates["std_dev"]["point_estimate"]
 
-            # Calculate turns/sec
-            # NOTE: This is a placeholder - actual calculation depends on
-            # how many iterations were run and game state
-            # For now, use inverse of mean time as proxy
-            turns_per_sec = 1e9 / mean_ns  # Placeholder
+            # Extract confidence interval bounds for the mean
+            mean_ci_lower_ns = estimates["mean"]["confidence_interval"]["lower_bound"]
+            mean_ci_upper_ns = estimates["mean"]["confidence_interval"]["upper_bound"]
 
-            # Get bytes/turn from allocator stats
-            # This would need to be extracted from benchmark output
-            bytes_per_turn = 0.0  # Placeholder
+            # Calculate games/sec from Criterion's mean estimate
+            # mean_ns is the expected marginal cost per iteration (game)
+            games_per_sec = 1e9 / mean_ns
+
+            # Extract avg turns/game from benchmark stderr (aggregated metrics printed there)
+            avg_turns_per_game = self._extract_turns_per_game(result.stderr)
+
+            if avg_turns_per_game is not None:
+                # Convert games/sec to turns/sec
+                turns_per_sec = games_per_sec * avg_turns_per_game
+            else:
+                # Fallback: assume games/sec if we can't parse turns/game
+                print(f"  Warning: Could not extract turns/game, using games/sec", file=sys.stderr)
+                turns_per_sec = games_per_sec
+
+            # Get bytes/turn from benchmark output
+            # This would need to be extracted from aggregate metrics
+            bytes_per_turn = 0.0  # Placeholder for now
 
             commit, _depth = self._get_git_info()
             timestamp = datetime.now().isoformat()
@@ -333,6 +350,8 @@ class ParallelSpeedupAnalyzer:
                 bytes_per_turn=bytes_per_turn,
                 timestamp=timestamp,
                 git_commit=commit,
+                mean_time_ci_lower_ns=mean_ci_lower_ns,
+                mean_time_ci_upper_ns=mean_ci_upper_ns,
             )
 
         except subprocess.TimeoutExpired:
@@ -341,6 +360,23 @@ class ParallelSpeedupAnalyzer:
         except Exception as e:
             print(f"  ERROR: {e}")
             return None
+
+    def _extract_turns_per_game(self, benchmark_output: str) -> Optional[float]:
+        """
+        Extract avg turns/game from benchmark stderr output.
+
+        Looks for pattern: "Avg turns/game: X.XX"
+        This is printed by print_aggregated_metrics() in the benchmark code.
+        """
+        import re
+
+        # Pattern: "  Avg turns/game: 7.00"
+        pattern = r'Avg turns/game:\s+(\d+\.?\d*)'
+        match = re.search(pattern, benchmark_output)
+
+        if match:
+            return float(match.group(1))
+        return None
 
     def run_full_analysis(self, dry_run: bool = False) -> List[BenchmarkResult]:
         """Run benchmarks for all allocators and thread counts"""
@@ -434,13 +470,15 @@ class ParallelSpeedupAnalyzer:
             if not file_exists:
                 writer.writerow([
                     "timestamp", "git_commit", "allocator", "num_threads",
-                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn"
+                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn",
+                    "mean_time_ci_lower_ns", "mean_time_ci_upper_ns"
                 ])
 
             for r in results:
                 writer.writerow([
                     r.timestamp, r.git_commit, r.allocator, r.num_threads,
-                    r.mean_time_ns, r.std_dev_ns, r.turns_per_sec, r.bytes_per_turn
+                    r.mean_time_ns, r.std_dev_ns, r.turns_per_sec, r.bytes_per_turn,
+                    r.mean_time_ci_lower_ns, r.mean_time_ci_upper_ns
                 ])
 
         action = "Appended" if file_exists else "Saved"
@@ -463,6 +501,9 @@ class ParallelSpeedupAnalyzer:
                     bytes_per_turn=float(row["bytes_per_turn"]),
                     timestamp=row["timestamp"],
                     git_commit=row["git_commit"],
+                    # New fields (default to 0.0 for backward compatibility)
+                    mean_time_ci_lower_ns=float(row.get("mean_time_ci_lower_ns", 0.0)),
+                    mean_time_ci_upper_ns=float(row.get("mean_time_ci_upper_ns", 0.0)),
                 ))
 
         return results
@@ -582,11 +623,11 @@ class ParallelSpeedupAnalyzer:
         for r in results:
             if r.allocator not in allocator_results:
                 allocator_results[r.allocator] = []
-            allocator_results[r.allocator].append((r.num_threads, r.turns_per_sec))
+            allocator_results[r.allocator].append(r)
 
         # Sort by thread count
         for alloc in allocator_results:
-            allocator_results[alloc].sort(key=lambda x: x[0])
+            allocator_results[alloc].sort(key=lambda r: r.num_threads)
 
         # Create plot
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -595,16 +636,48 @@ class ParallelSpeedupAnalyzer:
         colors = {'system': 'blue', 'mimalloc': 'red', 'jemalloc': 'green'}
         markers = {'system': 'o', 'mimalloc': 's', 'jemalloc': '^'}
 
-        for allocator, data in allocator_results.items():
-            threads = [d[0] for d in data]
-            throughput = [d[1] for d in data]
+        for allocator, alloc_results in allocator_results.items():
+            threads = [r.num_threads for r in alloc_results]
+            throughput = [r.turns_per_sec for r in alloc_results]
 
-            ax.plot(threads, throughput,
-                   label=allocator,
-                   color=colors.get(allocator, 'black'),
-                   marker=markers.get(allocator, 'o'),
-                   linewidth=2,
-                   markersize=8)
+            # Calculate error bars from confidence intervals
+            # Convert time CI to throughput CI (note: inverse relationship)
+            # For turns/sec = (1e9 / mean_ns) * avg_turns_per_game
+            # We need to convert the CI bounds on mean_ns to CI bounds on throughput
+            errors_lower = []
+            errors_upper = []
+
+            for r in alloc_results:
+                # CI bounds in time space (nanoseconds)
+                ci_lower_ns = r.mean_time_ci_lower_ns
+                ci_upper_ns = r.mean_time_ci_upper_ns
+
+                if ci_lower_ns > 0 and ci_upper_ns > 0:
+                    # Convert to throughput (note inverse: lower time = higher throughput)
+                    # Approximate: Use same turns/game factor as the mean
+                    avg_turns = r.turns_per_sec / (1e9 / r.mean_time_ns)
+
+                    throughput_at_ci_upper = (1e9 / ci_upper_ns) * avg_turns  # Lower time -> higher throughput
+                    throughput_at_ci_lower = (1e9 / ci_lower_ns) * avg_turns  # Higher time -> lower throughput
+
+                    # Error bars: distance from mean to CI bounds
+                    errors_lower.append(r.turns_per_sec - throughput_at_ci_lower)
+                    errors_upper.append(throughput_at_ci_upper - r.turns_per_sec)
+                else:
+                    # No CI data available
+                    errors_lower.append(0)
+                    errors_upper.append(0)
+
+            # Plot with error bars
+            ax.errorbar(threads, throughput,
+                       yerr=[errors_lower, errors_upper],
+                       label=allocator,
+                       color=colors.get(allocator, 'black'),
+                       marker=markers.get(allocator, 'o'),
+                       linewidth=2,
+                       markersize=8,
+                       capsize=5,
+                       capthick=2)
 
         # Add perfect linear speedup reference
         if results:
