@@ -39,7 +39,7 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --workspace
 
       - name: Run examples
         run: ./scripts/run_examples.sh
@@ -72,4 +72,6 @@ jobs:
           components: clippy
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy -p mtg-forge-rs --all-targets --all-features -- -D warnings
+          cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
