@@ -164,11 +164,11 @@ impl Iterator for MyIterator {
 // - Combat calculation buffers
 ```
 
-### 8. Use `SmallVec` and `SmallMap` for Expected-Small Collections
+### 8. Use `SmallVec` for Expected-Small Collections
 
 **Problem**: Many game entities have 0-2 counters/abilities but we allocate on the heap for any collection.
 
-**Solution**: Use `smallvec::SmallVec` and similar crates to avoid heap allocation for small counts.
+**Solution**: Use `smallvec::SmallVec` to avoid heap allocation for small counts.
 
 ```rust
 use smallvec::SmallVec;
@@ -177,7 +177,15 @@ use smallvec::SmallVec;
 type CounterList = SmallVec<[Counter; 4]>;
 ```
 
-**Already in use**: The project already uses `SmallVec` for counters (see PROJECT_VISION.md).
+**Already in use**: The project uses `SmallVec` extensively (183 occurrences).
+
+**Allocator API note (2025-11-05, mtg-153)**:
+- SmallVec does NOT support Rust's `Allocator` trait
+- Overflow allocations use the global allocator
+- This is acceptable: 70-85% inline hit rate means minimal overflow
+- When overflow occurs, ~9% of total allocations use global allocator
+- Overall allocator coverage: 80-85% (sufficient for 60-70% parallel efficiency)
+- See: `ai_docs/smallvec_strategy_decision.md` for full analysis
 
 ### 9. Prefer Unboxed Enums Over `Vec<Box<dyn Trait>>`
 
