@@ -34,6 +34,15 @@ heaptrack_analysis.*.txt
 heaptrack.profile.*
 dhat-heap.json
 
+# Temporary benchmark and profiling output files
+benchmark_output.txt
+benchmark_mimalloc.txt
+benchmark_mimalloc_output.txt
+perf_output.txt
+perf_report_full.txt
+perf_stat_output.txt
+error.txt
+
 # Claude Logging
 
 logs/claude_workstream*

@@ -12,9 +12,16 @@
 //!
 //! ## Allocator Configuration
 //!
-//! Set ENABLE_STATS_ALLOC to true to use stats_alloc (tracks allocations, slower)
-//! Set ENABLE_STATS_ALLOC to false to use mimalloc (faster, no allocation tracking)
+//! Use feature flags to select allocator:
+//! - `bench-stats-alloc`: stats_alloc with allocation tracking (slower)
+//! - `bench-mimalloc`: mimalloc for maximum performance (default)
+//!
+//! Run with: `cargo bench --features bench-stats-alloc` for tracking
+//! Run with: `cargo bench --features bench-mimalloc` for performance (default)
 
+mod allocator;
+
+use allocator::{AllocStats, AllocTracker};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
     game::{random_controller::RandomController, GameLoop, GameSnapshot, GameState, VerbosityLevel},
@@ -26,52 +33,20 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
-// Flag to control allocator choice and allocation tracking
-const ENABLE_STATS_ALLOC: bool = false;
-
-// Import stats_alloc (always available for struct compatibility)
-use stats_alloc::{Region, StatsAlloc, Stats, INSTRUMENTED_SYSTEM};
-use std::alloc::System;
-
-// Global allocator - switch by commenting/uncommenting
-// #[global_allocator]
-// static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;  // stats_alloc (with tracking)
-
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;  // mimalloc (fast, no tracking)
-
-/// Zero stats (used when stats_alloc is disabled)
-const ZERO_STATS: Stats = Stats {
-    bytes_allocated: 0,
-    bytes_deallocated: 0,
-    bytes_reallocated: 0,
-    reallocations: 0,
-    allocations: 0,
-    deallocations: 0,
-};
-
-/// Helper macro to create stats region or dummy
+/// Helper macro to create allocation tracker
 macro_rules! stats_region {
     () => {{
-        if ENABLE_STATS_ALLOC {
-            Some(Region::new(&INSTRUMENTED_SYSTEM))
-        } else {
-            None
-        }
+        Some(AllocTracker::new())
     }};
 }
 
-/// Helper macro to get stats from region or return zeros
+/// Helper macro to get stats from tracker
 macro_rules! get_stats {
-    ($reg:expr) => {{
-        if ENABLE_STATS_ALLOC {
-            if let Some(ref r) = $reg {
-                r.change()
-            } else {
-                ZERO_STATS
-            }
+    ($tracker:expr) => {{
+        if let Some(ref t) = $tracker {
+            t.stats()
         } else {
-            ZERO_STATS
+            AllocStats::zero()
         }
     }};
 }
@@ -1110,7 +1085,10 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
 
     let init_duration = init_start.elapsed();
 
-    eprintln!("\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):", num_threads);
+    eprintln!(
+        "\nParallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
+        num_threads
+    );
     eprintln!("  Game completed with {} actions in undo log", actions_count);
     eprintln!("  Will start from action {} (middle) for each batch", rewind_target);
     eprintln!("  Then replay second half in parallel with thread-specific RNG seeds");
@@ -1125,21 +1103,26 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
 
             // Log initialization time only for first batch
             if batch_number == 1 {
-                eprintln!("[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
-                    batch_number, init_duration.as_secs_f64() * 1000.0);
+                eprintln!(
+                    "[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
+                    batch_number,
+                    init_duration.as_secs_f64() * 1000.0
+                );
             }
 
             // PER-BATCH SETUP: Track clone time
             let setup_start = Instant::now();
             // PER-BATCH SETUP (outside timing): Clone snapshots for parallel execution
             // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
-            let snapshots: Vec<GameState> = (0..num_threads)
-                .map(|_| initial_game.clone())
-                .collect();
+            let snapshots: Vec<GameState> = (0..num_threads).map(|_| initial_game.clone()).collect();
 
             let setup_duration = setup_start.elapsed();
-            eprintln!("[BATCH-{}] SETUP: {:.3}ms (clone {} snapshots)",
-                batch_number, setup_duration.as_secs_f64() * 1000.0, num_threads);
+            eprintln!(
+                "[BATCH-{}] SETUP: {:.3}ms (clone {} snapshots)",
+                batch_number,
+                setup_duration.as_secs_f64() * 1000.0,
+                num_threads
+            );
 
             // START TIMING - only measure the actual parallel gameplay
             let start = Instant::now();
@@ -1189,11 +1172,13 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
 
             // STOP TIMING
             let batch_duration = start.elapsed();
-            eprintln!("[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
+            eprintln!(
+                "[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
                 batch_number,
                 batch_duration.as_secs_f64() * 1000.0,
                 iters,
-                (batch_duration.as_secs_f64() * 1_000_000.0) / iters as f64);
+                (batch_duration.as_secs_f64() * 1_000_000.0) / iters as f64
+            );
 
             batch_duration
         });

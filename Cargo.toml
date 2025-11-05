@@ -84,5 +84,11 @@ harness = false
 default = ["verbose-logging"]
 verbose-logging = []
 
+# Benchmark allocator selection (mutually exclusive)
+# Default: bench-mimalloc for maximum performance
+# Use bench-stats-alloc for allocation tracking
+bench-stats-alloc = []
+bench-mimalloc = []
+
 [profile.release]
 debug = true
