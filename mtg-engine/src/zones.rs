@@ -2,6 +2,7 @@
 
 use crate::core::{CardId, PlayerId};
 use serde::{Deserialize, Serialize};
+use std::alloc::{Allocator, Global};
 
 /// Different zones where cards can exist
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16,8 +17,8 @@ pub enum Zone {
 }
 
 /// A zone containing cards (ordered for Library/Graveyard, unordered for others)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CardZone {
+#[derive(Debug, Clone)]
+pub struct CardZone<A: Allocator + Clone = Global> {
     /// Zone type
     pub zone_type: Zone,
 
@@ -25,7 +26,94 @@ pub struct CardZone {
     pub owner: PlayerId,
 
     /// Cards in this zone (order matters for Library and Graveyard)
-    pub cards: Vec<CardId>,
+    pub cards: Vec<CardId, A>,
+}
+
+// Manual Serialize implementation - serialize only the data, not the allocator
+impl<A: Allocator + Clone> Serialize for CardZone<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CardZone", 3)?;
+        state.serialize_field("zone_type", &self.zone_type)?;
+        state.serialize_field("owner", &self.owner)?;
+        state.serialize_field("cards", &self.cards.as_slice())?;
+        state.end()
+    }
+}
+
+// Manual Deserialize implementation - reconstruct with Global allocator
+impl<'de> Deserialize<'de> for CardZone {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            ZoneType,
+            Owner,
+            Cards,
+        }
+
+        struct CardZoneVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CardZoneVisitor {
+            type Value = CardZone;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct CardZone")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<CardZone, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut zone_type = None;
+                let mut owner = None;
+                let mut cards = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::ZoneType => {
+                            zone_type = Some(map.next_value()?);
+                        }
+                        Field::Owner => {
+                            owner = Some(map.next_value()?);
+                        }
+                        Field::Cards => {
+                            cards = Some(map.next_value::<Vec<CardId>>()?);
+                        }
+                    }
+                }
+
+                let zone_type = zone_type.ok_or_else(|| serde::de::Error::missing_field("zone_type"))?;
+                let owner = owner.ok_or_else(|| serde::de::Error::missing_field("owner"))?;
+                let cards = cards.ok_or_else(|| serde::de::Error::missing_field("cards"))?;
+
+                Ok(CardZone {
+                    zone_type,
+                    owner,
+                    cards,
+                })
+            }
+        }
+
+        const FIELDS: &[&str] = &["zone_type", "owner", "cards"];
+        deserializer.deserialize_struct("CardZone", FIELDS, CardZoneVisitor)
+    }
+}
+
+impl<A: Allocator + Clone> CardZone<A> {
+    pub fn new_in(zone_type: Zone, owner: PlayerId, alloc: A) -> Self {
+        CardZone {
+            zone_type,
+            owner,
+            cards: Vec::new_in(alloc),
+        }
+    }
 }
 
 impl CardZone {
@@ -36,6 +124,9 @@ impl CardZone {
             cards: Vec::new(),
         }
     }
+}
+
+impl<A: Allocator + Clone> CardZone<A> {
 
     pub fn add(&mut self, card_id: CardId) {
         self.cards.push(card_id);
@@ -94,25 +185,65 @@ impl CardZone {
 }
 
 /// Collection of all zones for a player
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlayerZones {
-    pub library: CardZone,
-    pub hand: CardZone,
-    pub graveyard: CardZone,
-    pub exile: CardZone,
+#[derive(Debug, Clone)]
+pub struct PlayerZones<A: Allocator + Clone = Global> {
+    pub library: CardZone<A>,
+    pub hand: CardZone<A>,
+    pub graveyard: CardZone<A>,
+    pub exile: CardZone<A>,
 }
 
-impl PlayerZones {
-    pub fn new(player_id: PlayerId) -> Self {
+// Manual Serialize implementation
+impl<A: Allocator + Clone> Serialize for PlayerZones<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("PlayerZones", 4)?;
+        state.serialize_field("library", &self.library)?;
+        state.serialize_field("hand", &self.hand)?;
+        state.serialize_field("graveyard", &self.graveyard)?;
+        state.serialize_field("exile", &self.exile)?;
+        state.end()
+    }
+}
+
+// Manual Deserialize implementation
+impl<'de> Deserialize<'de> for PlayerZones {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct PlayerZonesData {
+            library: CardZone,
+            hand: CardZone,
+            graveyard: CardZone,
+            exile: CardZone,
+        }
+
+        let data = PlayerZonesData::deserialize(deserializer)?;
+        Ok(PlayerZones {
+            library: data.library,
+            hand: data.hand,
+            graveyard: data.graveyard,
+            exile: data.exile,
+        })
+    }
+}
+
+impl<A: Allocator + Clone> PlayerZones<A> {
+    pub fn new_in(player_id: PlayerId, alloc: A) -> Self {
         PlayerZones {
-            library: CardZone::new(Zone::Library, player_id),
-            hand: CardZone::new(Zone::Hand, player_id),
-            graveyard: CardZone::new(Zone::Graveyard, player_id),
-            exile: CardZone::new(Zone::Exile, player_id),
+            library: CardZone::new_in(Zone::Library, player_id, alloc.clone()),
+            hand: CardZone::new_in(Zone::Hand, player_id, alloc.clone()),
+            graveyard: CardZone::new_in(Zone::Graveyard, player_id, alloc.clone()),
+            exile: CardZone::new_in(Zone::Exile, player_id, alloc),
         }
     }
 
-    pub fn get_zone(&self, zone: Zone) -> Option<&CardZone> {
+    pub fn get_zone(&self, zone: Zone) -> Option<&CardZone<A>> {
         match zone {
             Zone::Library => Some(&self.library),
             Zone::Hand => Some(&self.hand),
@@ -122,13 +253,24 @@ impl PlayerZones {
         }
     }
 
-    pub fn get_zone_mut(&mut self, zone: Zone) -> Option<&mut CardZone> {
+    pub fn get_zone_mut(&mut self, zone: Zone) -> Option<&mut CardZone<A>> {
         match zone {
             Zone::Library => Some(&mut self.library),
             Zone::Hand => Some(&mut self.hand),
             Zone::Graveyard => Some(&mut self.graveyard),
             Zone::Exile => Some(&mut self.exile),
             _ => None,
+        }
+    }
+}
+
+impl PlayerZones {
+    pub fn new(player_id: PlayerId) -> Self {
+        PlayerZones {
+            library: CardZone::new(Zone::Library, player_id),
+            hand: CardZone::new(Zone::Hand, player_id),
+            graveyard: CardZone::new(Zone::Graveyard, player_id),
+            exile: CardZone::new(Zone::Exile, player_id),
         }
     }
 }
