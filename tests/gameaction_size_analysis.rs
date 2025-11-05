@@ -156,7 +156,10 @@ fn analyze_gameaction_variant_sizes() {
     for (name, size) in &sizes {
         let waste = enum_size - size;
         let waste_pct = (waste as f64 / enum_size as f64) * 100.0;
-        println!("{:<25} {:>10} {:>10} {:>9} ({:.1}%)", name, size, enum_size, waste, waste_pct);
+        println!(
+            "{:<25} {:>10} {:>10} {:>9} ({:.1}%)",
+            name, size, enum_size, waste, waste_pct
+        );
         total_waste_bytes += waste;
     }
 
@@ -181,7 +184,10 @@ fn analyze_gameaction_variant_sizes() {
 
     if imbalance_ratio > 2.0 {
         println!("\n⚠ SIGNIFICANT IMBALANCE DETECTED");
-        println!("  The largest variant ({}) is {:.1}x larger than average", max_variant, imbalance_ratio);
+        println!(
+            "  The largest variant ({}) is {:.1}x larger than average",
+            max_variant, imbalance_ratio
+        );
         println!("  Consider boxing the largest variant to reduce enum size");
         println!("  This would save ~{} bytes per smaller variant", max_size - avg_size);
     } else {

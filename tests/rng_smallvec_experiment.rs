@@ -110,20 +110,36 @@ fn comprehensive_bincode_size_measurement() {
     println!("Overall max size: {} bytes", max_size);
     println!("\nConclusion:");
     if max_size == min_size {
-        println!("  ✓ ChaCha12Rng bincode serialization is FIXED SIZE: {} bytes", max_size);
-        println!("  ✓ Recommended SmallVec inline capacity: {} bytes (next power of 2)",
-                 max_size.next_power_of_two());
+        println!(
+            "  ✓ ChaCha12Rng bincode serialization is FIXED SIZE: {} bytes",
+            max_size
+        );
+        println!(
+            "  ✓ Recommended SmallVec inline capacity: {} bytes (next power of 2)",
+            max_size.next_power_of_two()
+        );
     } else {
-        println!("  ✗ ChaCha12Rng bincode serialization is VARIABLE SIZE: {}-{} bytes", min_size, max_size);
-        println!("  ✓ Recommended SmallVec inline capacity: {} bytes (max + margin)",
-                 (max_size + 8).next_power_of_two());
+        println!(
+            "  ✗ ChaCha12Rng bincode serialization is VARIABLE SIZE: {}-{} bytes",
+            min_size, max_size
+        );
+        println!(
+            "  ✓ Recommended SmallVec inline capacity: {} bytes (max + margin)",
+            (max_size + 8).next_power_of_two()
+        );
     }
 
     // Verify against user expectation
     if max_size > 200 {
-        println!("\n⚠ User expected ~224 bytes, found {} bytes - expectation CONFIRMED", max_size);
+        println!(
+            "\n⚠ User expected ~224 bytes, found {} bytes - expectation CONFIRMED",
+            max_size
+        );
     } else if max_size < 100 {
-        println!("\n⚠ User expected ~224 bytes, but found only {} bytes - DISCREPANCY", max_size);
+        println!(
+            "\n⚠ User expected ~224 bytes, but found only {} bytes - DISCREPANCY",
+            max_size
+        );
         println!("   This suggests ChaCha12Rng structure is smaller than expected.");
     }
 
@@ -151,7 +167,11 @@ fn inspect_chacha_structure_size() {
     println!("Raw bytes (first 64): {:?}", &bytes[..bytes.len().min(64)]);
 
     if bytes.len() != expected {
-        println!("\n⚠ Discrepancy: bincode size ({}) != expected ({})", bytes.len(), expected);
+        println!(
+            "\n⚠ Discrepancy: bincode size ({}) != expected ({})",
+            bytes.len(),
+            expected
+        );
         println!("  This could be due to:");
         println!("  - Additional fields in ChaCha12Rng struct");
         println!("  - bincode serialization overhead");
