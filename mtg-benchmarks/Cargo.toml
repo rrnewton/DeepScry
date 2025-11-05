@@ -26,6 +26,7 @@ libc = "0.2"
 # Parallel execution (used by benchmarks)
 rayon = "1.10"
 num_cpus = "1.16"
+core_affinity = "0.8"
 
 # Performance benchmarks
 [[bench]]

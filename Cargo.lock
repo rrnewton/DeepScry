@@ -335,6 +335,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_affinity"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a034b3a7b624016c6e13f5df875747cc25f884156aad2abd12b6c46797971342"
+dependencies = [
+ "libc",
+ "num_cpus",
+ "winapi",
+]
+
+[[package]]
 name = "criterion"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -870,6 +881,7 @@ dependencies = [
 name = "mtg-benchmarks"
 version = "0.1.0"
 dependencies = [
+ "core_affinity",
  "criterion",
  "dhat",
  "libc",

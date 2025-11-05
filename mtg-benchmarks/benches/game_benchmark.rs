@@ -20,6 +20,7 @@
 //! Run with: `cargo bench --features bench-mimalloc` for performance (default)
 
 mod allocator;
+mod pinned_thread_pool;
 
 use allocator::{AllocStats, AllocTracker};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
