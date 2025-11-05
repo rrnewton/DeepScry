@@ -532,7 +532,7 @@ impl<T> ChoiceResult<T> {
 /// It handles all the special cases (UndoRequest, ExitGame, Error) uniformly.
 ///
 /// Usage: Must be called within a loop block:
-/// ```
+/// ```ignore
 /// let result = loop {
 ///     let choice = controller.choose_something(...);
 ///     break handle_choice_result!(choice, game_state, player_id);
@@ -596,7 +596,7 @@ macro_rules! handle_choice_result {
 /// game loop, allowing it to re-evaluate from the rewound game state.
 ///
 /// Usage: Use directly in step handler functions:
-/// ```
+/// ```ignore
 /// let view = GameStateView::new(self.game, active_player);
 /// let choice = controller.choose_attackers(&view, &available_creatures);
 /// let attackers = handle_choice_result_break!(choice, self.game, active_player);
