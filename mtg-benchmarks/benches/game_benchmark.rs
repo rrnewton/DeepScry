@@ -1099,8 +1099,12 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
     use std::sync::Arc;
     use std::time::Instant;
 
-    // Configure for physical cores only
+    // Configure thread count: Check BENCH_NUM_THREADS env var, otherwise use physical cores
     let num_physical_cores = num_cpus::get_physical();
+    let num_threads = std::env::var("BENCH_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(num_physical_cores);
 
     // Check if test resources exist and load once
     let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
@@ -1116,7 +1120,6 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(BENCHMARK_TIME_SECS));
 
     let initial_seed = 42u64;
-    let num_threads = num_physical_cores;
 
     // Track timing for batch logging
     let init_start = Instant::now();
