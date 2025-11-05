@@ -48,10 +48,18 @@ where
     let enable_pinning = num_threads <= core_ids.len();
 
     if !enable_pinning {
-        eprintln!("Warning: Requested {} threads but only {} cores available via core_affinity",
-                  num_threads, core_ids.len());
+        eprintln!(
+            "Warning: Requested {} threads but only {} cores available via core_affinity",
+            num_threads,
+            core_ids.len()
+        );
         eprintln!("         Skipping thread pinning, but continuing with parallel execution");
     }
+
+    // Save original affinity so we can restore it later
+    // Note: We get the affinity by calling get_core_ids() which returns cores we CAN run on
+    let original_affinity_core_count = core_ids.len();
+    let original_cpu_count = num_cpus::get(); // Save before pinning!
 
     // Pin main thread to core 0 if pinning is enabled
     if enable_pinning {
@@ -154,6 +162,19 @@ where
     let mut results = vec![main_result];
     for handle in worker_handles {
         results.push(handle.join().expect("Worker thread panicked"));
+    }
+
+    // Restore original affinity by unpinning (allowing all cores again)
+    // We do this by attempting to set affinity to all available cores
+    // Unfortunately core_affinity doesn't have an "unpin" API, so we need to reset to all cores
+    if enable_pinning && original_affinity_core_count > 1 {
+        // Use taskset to restore full affinity to all originally available cores
+        // Use the saved original_cpu_count, not num_cpus::get() which will return 1 while pinned
+        let pid = std::process::id();
+        let cpu_range = format!("0-{}", original_cpu_count - 1);
+        let _ = std::process::Command::new("taskset")
+            .args(["-cp", &cpu_range, &pid.to_string()])
+            .output();
     }
 
     (duration, results)
