@@ -95,6 +95,7 @@ class BenchmarkResult:
     mean_time_ns: float
     std_dev_ns: float
     turns_per_sec: float
+    games_per_sec: float  # Separate column to avoid metric confusion
     bytes_per_turn: float
     timestamp: str
     git_commit: str
@@ -326,13 +327,17 @@ class ParallelSpeedupAnalyzer:
             # Extract avg turns/game from benchmark stderr (aggregated metrics printed there)
             avg_turns_per_game = self._extract_turns_per_game(result.stderr)
 
-            if avg_turns_per_game is not None:
-                # Convert games/sec to turns/sec
-                turns_per_sec = games_per_sec * avg_turns_per_game
-            else:
-                # Fallback: assume games/sec if we can't parse turns/game
-                print(f"  Warning: Could not extract turns/game, using games/sec", file=sys.stderr)
-                turns_per_sec = games_per_sec
+            if avg_turns_per_game is None:
+                # FATAL: We must have turns/game to calculate turns/sec
+                print(f"  ERROR: Could not extract 'Avg turns/game' from benchmark output!", file=sys.stderr)
+                print(f"  ERROR: This metric is required to calculate turns_per_sec.", file=sys.stderr)
+                print(f"  ERROR: Benchmark output should contain: 'Avg turns/game: X.XX'", file=sys.stderr)
+                print(f"\n  Benchmark stderr output:", file=sys.stderr)
+                print(result.stderr, file=sys.stderr)
+                return None
+
+            # Convert games/sec to turns/sec
+            turns_per_sec = games_per_sec * avg_turns_per_game
 
             # Get bytes/turn from benchmark output
             # This would need to be extracted from aggregate metrics
@@ -347,6 +352,7 @@ class ParallelSpeedupAnalyzer:
                 mean_time_ns=mean_ns,
                 std_dev_ns=std_dev_ns,
                 turns_per_sec=turns_per_sec,
+                games_per_sec=games_per_sec,
                 bytes_per_turn=bytes_per_turn,
                 timestamp=timestamp,
                 git_commit=commit,
@@ -392,14 +398,14 @@ class ParallelSpeedupAnalyzer:
             if not file_exists:
                 writer.writerow([
                     "timestamp", "git_commit", "allocator", "num_threads",
-                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn",
+                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "games_per_sec", "bytes_per_turn",
                     "mean_time_ci_lower_ns", "mean_time_ci_upper_ns"
                 ])
 
             # Append the result
             writer.writerow([
                 result.timestamp, result.git_commit, result.allocator, result.num_threads,
-                result.mean_time_ns, result.std_dev_ns, result.turns_per_sec, result.bytes_per_turn,
+                result.mean_time_ns, result.std_dev_ns, result.turns_per_sec, result.games_per_sec, result.bytes_per_turn,
                 result.mean_time_ci_lower_ns, result.mean_time_ci_upper_ns
             ])
 
@@ -540,14 +546,14 @@ class ParallelSpeedupAnalyzer:
             if not file_exists:
                 writer.writerow([
                     "timestamp", "git_commit", "allocator", "num_threads",
-                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "bytes_per_turn",
+                    "mean_time_ns", "std_dev_ns", "turns_per_sec", "games_per_sec", "bytes_per_turn",
                     "mean_time_ci_lower_ns", "mean_time_ci_upper_ns"
                 ])
 
             for r in results:
                 writer.writerow([
                     r.timestamp, r.git_commit, r.allocator, r.num_threads,
-                    r.mean_time_ns, r.std_dev_ns, r.turns_per_sec, r.bytes_per_turn,
+                    r.mean_time_ns, r.std_dev_ns, r.turns_per_sec, r.games_per_sec, r.bytes_per_turn,
                     r.mean_time_ci_lower_ns, r.mean_time_ci_upper_ns
                 ])
 
@@ -562,12 +568,22 @@ class ParallelSpeedupAnalyzer:
         with open(input_file, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
+                # games_per_sec is a new field; for backward compat, calculate from turns_per_sec
+                # if it's missing (old CSVs won't have it)
+                games_per_sec_value = row.get("games_per_sec")
+                if games_per_sec_value is None:
+                    # Estimate from mean_time_ns if possible
+                    games_per_sec_value = 1e9 / float(row["mean_time_ns"]) if "mean_time_ns" in row else 0.0
+                else:
+                    games_per_sec_value = float(games_per_sec_value)
+
                 results.append(BenchmarkResult(
                     allocator=row["allocator"],
                     num_threads=int(row["num_threads"]),
                     mean_time_ns=float(row["mean_time_ns"]),
                     std_dev_ns=float(row["std_dev_ns"]),
                     turns_per_sec=float(row["turns_per_sec"]),
+                    games_per_sec=games_per_sec_value,
                     bytes_per_turn=float(row["bytes_per_turn"]),
                     timestamp=row["timestamp"],
                     git_commit=row["git_commit"],

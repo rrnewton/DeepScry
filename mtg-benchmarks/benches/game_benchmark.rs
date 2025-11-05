@@ -545,6 +545,9 @@ enum GameOutcome {
 fn run_forward_gameplay_from_snapshot(thread_game: &mut GameState, thread_seed: u64) -> (GameMetrics, GameOutcome) {
     thread_game.seed_rng(thread_seed);
 
+    // Record starting turn number to calculate delta
+    let start_turn = thread_game.turn.turn_number;
+
     // Now measure forward gameplay for second half
     let reg = stats_region!();
     let start = std::time::Instant::now();
@@ -575,10 +578,15 @@ fn run_forward_gameplay_from_snapshot(thread_game: &mut GameState, thread_seed: 
         GameOutcome::Player2Win
     };
 
+    // Calculate turns played as delta from starting turn number
+    // The game state turn number advances during play, so final - start = turns played
+    let end_turn = thread_game.turn.turn_number;
+    let turns_played = end_turn.saturating_sub(start_turn);
+
     // Record metrics for the forward gameplay only
     // Note: undo log was cleared at midpoint, so len() gives us actions from 50%-100%
     let metrics = GameMetrics {
-        turns: result.turns_played,
+        turns: turns_played,
         actions: thread_game.undo_log.len(),
         duration,
         bytes_allocated: stats.bytes_allocated,
@@ -1202,6 +1210,10 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
     let total_p2_wins = AtomicUsize::new(0);
     let total_games = AtomicUsize::new(0);
 
+    // Atomics for aggregating metrics across all batches
+    let total_turns = AtomicUsize::new(0);
+    let total_actions = AtomicUsize::new(0);
+
     group.bench_function("pinned_par_rewind_play_again", |b| {
         b.iter_custom(|iters| {
             batch_number += 1;
@@ -1232,9 +1244,11 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
                 midgame_template = Some(game);
             }
 
-            // Atomics for win tracking within this batch
+            // Atomics for win tracking and metrics within this batch
             let batch_p1_wins = Arc::new(AtomicUsize::new(0));
             let batch_p2_wins = Arc::new(AtomicUsize::new(0));
+            let batch_turns = Arc::new(AtomicUsize::new(0));
+            let batch_actions = Arc::new(AtomicUsize::new(0));
 
             let games_per_thread = (iters as usize).div_ceil(num_threads);
             let total_iters = iters as usize;
@@ -1242,22 +1256,36 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
             // Clone atomics for closure
             let p1_wins_clone = Arc::clone(&batch_p1_wins);
             let p2_wins_clone = Arc::clone(&batch_p2_wins);
+            let turns_clone = Arc::clone(&batch_turns);
+            let actions_clone = Arc::clone(&batch_actions);
 
             // Execute parallel batch with pinned threads
+            // NOTE: We pass the midgame template by reference and clone it for EACH iteration
+            // to ensure each game starts from the same mid-game state
             let initial_game = midgame_template.as_ref().unwrap();
             let (batch_duration, _results) =
-                execute_parallel_batch(num_threads, initial_game, move |thread_id, thread_game| {
+                execute_parallel_batch(num_threads, initial_game, move |thread_id, _thread_game| {
+                    // Clone the template for this thread (we'll clone again per-game inside the loop)
+                    let template_game = _thread_game.clone();
+
                     for i in 0..games_per_thread {
                         if (thread_id * games_per_thread + i) >= total_iters {
                             break; // Don't overshoot total iters
                         }
 
+                        // Clone the midgame template for THIS iteration
+                        let mut game = template_game.clone();
+
                         // Thread-specific seed for this iteration
                         let iter_num = thread_id * games_per_thread + i;
                         let thread_seed = initial_seed.wrapping_add(iter_num as u64);
 
-                        // Run forward gameplay and track outcome
-                        let (_metrics, outcome) = run_forward_gameplay_from_snapshot(thread_game, thread_seed);
+                        // Run forward gameplay and track outcome + metrics
+                        let (metrics, outcome) = run_forward_gameplay_from_snapshot(&mut game, thread_seed);
+
+                        // Aggregate metrics
+                        turns_clone.fetch_add(metrics.turns as usize, Ordering::Relaxed);
+                        actions_clone.fetch_add(metrics.actions, Ordering::Relaxed);
 
                         match outcome {
                             GameOutcome::Player1Win => {
@@ -1270,10 +1298,12 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
                     }
                 });
 
-            // Update total win counts
+            // Update total win counts and metrics
             total_p1_wins.fetch_add(batch_p1_wins.load(Ordering::Relaxed), Ordering::Relaxed);
             total_p2_wins.fetch_add(batch_p2_wins.load(Ordering::Relaxed), Ordering::Relaxed);
             total_games.fetch_add(iters as usize, Ordering::Relaxed);
+            total_turns.fetch_add(batch_turns.load(Ordering::Relaxed), Ordering::Relaxed);
+            total_actions.fetch_add(batch_actions.load(Ordering::Relaxed), Ordering::Relaxed);
 
             eprintln!(
                 "[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
@@ -1287,9 +1317,18 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
         });
     });
 
-    // Print win rate analysis after all batches
+    // Print aggregated metrics after all batches
     let final_games = total_games.load(Ordering::Relaxed);
     if final_games > 0 {
+        let final_turns = total_turns.load(Ordering::Relaxed);
+        let final_actions = total_actions.load(Ordering::Relaxed);
+
+        eprintln!("\n=== Aggregated Metrics - Pinned Parallel Rewind + Play Again (seed {initial_seed}, {final_games} games) ===");
+        eprintln!("  Total turns: {}", final_turns);
+        eprintln!("  Total actions: {}", final_actions);
+        eprintln!("  Avg turns/game: {:.2}", final_turns as f64 / final_games as f64);
+        eprintln!("  Avg actions/game: {:.2}", final_actions as f64 / final_games as f64);
+
         let final_p1_wins = total_p1_wins.load(Ordering::Relaxed);
         let final_p2_wins = total_p2_wins.load(Ordering::Relaxed);
         eprintln!("\n=== Win Rate Analysis (across all {} games) ===", final_games);
