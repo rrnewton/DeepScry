@@ -93,7 +93,7 @@ use mtg_forge_rs::{
     loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer},
     Result,
 };
-#[path = "rewind_play_again_module.rs"]
+#[path = "lib/rewind_play_again.rs"]
 mod rewind_play_again;
 use rewind_play_again::RewindPlayAgain;
 use std::path::PathBuf;
