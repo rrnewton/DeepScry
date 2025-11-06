@@ -14,6 +14,8 @@ pub mod utils;
 #[allow(unused_imports)]
 pub use benches::{ParPinned, ParRayon, RewindPlayAgain};
 #[allow(unused_imports)]
-pub use types::{BatchBenchmark, GameMetrics, RestartStrategy, RewindPlayAgainConfig};
+pub use types::{BatchBenchmark, GameMetrics, RestartStrategy, RewindPlayAgainConfig, BASELINE_DECK_PATH};
 #[allow(unused_imports)]
-pub use utils::{ensure_correct_working_directory, get_benchmark_measurement_time, BenchmarkSetup, BASELINE_DECK_PATH};
+pub use utils::{
+    ensure_correct_working_directory, get_benchmark_measurement_time, print_aggregated_metrics, BenchmarkSetup,
+};

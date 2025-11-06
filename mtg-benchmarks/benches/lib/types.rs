@@ -1,4 +1,4 @@
-//! Type definitions for benchmark infrastructure
+//! Type definitions for benchmark infrastructure. Constants too.
 //!
 //! This module defines core types and traits used across the benchmark suite,
 //! including metrics tracking, batch execution, and game outcomes.
@@ -6,6 +6,9 @@
 use crate::allocator::AllocStats;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
+
+/// Use this for most benchmarks for a performance baseline.
+pub const BASELINE_DECK_PATH: &str = "decks/old_school/03_robots_jesseisbak.dck";
 
 /// Metrics collected during game execution
 #[derive(Debug, Clone)]
@@ -200,8 +203,8 @@ impl Default for RewindPlayAgainConfig {
     fn default() -> Self {
         RewindPlayAgainConfig {
             rewind_percent: 0.5,
-            deck1_path: "decks/old_school/03_robots_jesseisbak.dck".to_string(),
-            deck2_path: "decks/old_school/03_robots_jesseisbak.dck".to_string(),
+            deck1_path: BASELINE_DECK_PATH.to_string(),
+            deck2_path: BASELINE_DECK_PATH.to_string(),
             rounds_before_restart: None,
             restart_strategy: RestartStrategy::Fresh,
         }
