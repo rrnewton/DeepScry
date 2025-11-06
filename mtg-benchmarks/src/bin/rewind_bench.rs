@@ -7,52 +7,145 @@
 //!
 //! Default batch size: 1000 games
 
-use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
-use mtg_forge_rs::loader::{
-    prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer,
-};
-use std::path::PathBuf;
-use std::time::Instant;
-use tokio::runtime::Runtime;
-
-// Import allocator for stats tracking
+// Import allocator for stats tracking - we define it here, not in allocator module
 use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
-const BASELINE_DECK_PATH: &str = "decks/old_school/03_robots_jesseisbak.dck";
+// Include benchmark allocator types (but not the global allocator)
+mod allocator {
+    pub use stats_alloc::{Region, INSTRUMENTED_SYSTEM};
+    use std::alloc::System;
 
-/// Game outcome for win rate tracking
-#[derive(Debug, Clone, Copy)]
-enum GameOutcome {
-    Player1Win,
-    Player2Win,
+    /// Allocation statistics - works with or without tracking
+    #[derive(Debug, Clone, Copy, Default)]
+    #[allow(dead_code)]
+    pub struct AllocStats {
+        pub bytes_allocated: usize,
+        pub bytes_deallocated: usize,
+        pub bytes_reallocated: usize,
+        pub allocations: usize,
+        pub deallocations: usize,
+        pub reallocations: usize,
+    }
+
+    impl AllocStats {
+        pub const fn zero() -> Self {
+            AllocStats {
+                bytes_allocated: 0,
+                bytes_deallocated: 0,
+                bytes_reallocated: 0,
+                allocations: 0,
+                deallocations: 0,
+                reallocations: 0,
+            }
+        }
+    }
+
+    impl From<stats_alloc::Stats> for AllocStats {
+        fn from(stats: stats_alloc::Stats) -> Self {
+            AllocStats {
+                bytes_allocated: stats.bytes_allocated,
+                bytes_deallocated: stats.bytes_deallocated,
+                bytes_reallocated: stats.bytes_reallocated.max(0) as usize,
+                allocations: stats.allocations,
+                deallocations: stats.deallocations,
+                reallocations: stats.reallocations,
+            }
+        }
+    }
+
+    pub struct AllocTracker {
+        region: Region<'static, System>,
+    }
+
+    impl AllocTracker {
+        pub fn new() -> Self {
+            AllocTracker {
+                region: Region::new(&INSTRUMENTED_SYSTEM),
+            }
+        }
+
+        pub fn stats(&self) -> AllocStats {
+            self.region.change().into()
+        }
+    }
 }
 
-/// Setup data for benchmark
+#[path = "../../benches/pinned_thread_pool.rs"]
+#[allow(dead_code)]
+mod pinned_thread_pool;
+
+// Define dependencies that rewind_play_again needs
+use mtg_forge_rs::game::GameState;
+use mtg_forge_rs::loader::{
+    prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer,
+};
+use std::path::PathBuf;
+use tokio::runtime::Runtime;
+
+const BASELINE_DECK_PATH: &str = "decks/old_school/03_robots_jesseisbak.dck";
+
+/// Setup data needed for benchmarking (loaded once, reused across iterations)
 struct BenchmarkSetup {
     card_db: CardDatabase,
-    deck: DeckList,
+    deck1: DeckList,
+    deck2: DeckList,
     runtime: Runtime,
 }
 
 impl BenchmarkSetup {
-    fn load(deck_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn load_same_deck(deck_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let runtime = Runtime::new()?;
         let cardsfolder = PathBuf::from("cardsfolder");
         let card_db = CardDatabase::new(cardsfolder);
-        let deck = DeckLoader::load_from_file(&PathBuf::from(deck_path))?;
+        let deck1 = DeckLoader::load_from_file(&PathBuf::from(deck_path))?;
+        let deck2 = DeckLoader::load_from_file(&PathBuf::from(deck_path))?;
 
-        runtime.block_on(async { prefetch_deck_cards(&card_db, &deck).await })?;
+        runtime.block_on(async {
+            prefetch_deck_cards(&card_db, &deck1).await?;
+            prefetch_deck_cards(&card_db, &deck2).await
+        })?;
 
-        Ok(BenchmarkSetup { card_db, deck, runtime })
+        Ok(BenchmarkSetup {
+            card_db,
+            deck1,
+            deck2,
+            runtime,
+        })
     }
+}
+
+/// Helper function to ensure we're in the correct working directory
+fn ensure_correct_working_directory() {
+    use std::env;
+
+    let mut current_dir = env::current_dir().expect("Failed to get current directory");
+
+    // Check if current directory has 'decks' subdirectory
+    if current_dir.join("decks").exists() {
+        return; // Already in correct directory
+    }
+
+    // Search up the directory tree
+    while let Some(parent) = current_dir.parent() {
+        if parent.join("decks").exists() {
+            env::set_current_dir(parent).expect("Failed to change directory");
+            eprintln!("Changed working directory to: {}", parent.display());
+            return;
+        }
+        current_dir = parent.to_path_buf();
+    }
+
+    panic!("Could not find workspace root (directory containing 'decks')");
 }
 
 /// Create a mid-game state by playing to halfway point
 fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize) {
+    use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, VerbosityLevel};
+
     let game_init = GameInitializer::new(&setup.card_db);
     let mut game = setup
         .runtime
@@ -60,9 +153,9 @@ fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize)
             game_init
                 .init_game(
                     "Player 1".to_string(),
-                    &setup.deck,
+                    &setup.deck1,
                     "Player 2".to_string(),
-                    &setup.deck,
+                    &setup.deck2,
                     20,
                 )
                 .await
@@ -91,62 +184,24 @@ fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize)
     }
 
     let total_actions = game.undo_log.len();
-    let rewind_target = total_actions / 2;
+    let rewind_target = total_actions / 2; // Rewind to middle of game
 
     // Rewind to the target position
     while game.undo_log.len() > rewind_target {
         game.undo().expect("Undo should succeed");
     }
 
-    // Clear the undo log at midpoint
+    // Clear the undo log at midpoint - we only care about 50%-100% actions
     game.undo_log.clear();
 
     (game, total_actions)
 }
 
-/// Execute a single game from midpoint to end and rewind back
-fn execute_single_game(game: &mut GameState, seed: u64) -> (u32, usize, GameOutcome) {
-    game.seed_rng(seed);
+// Now include the rewind_play_again module which depends on the above
+#[path = "../../benches/lib/rewind_play_again.rs"]
+mod rewind_play_again;
 
-    // Record starting state
-    let start_turn = game.turn.turn_number;
-    let start_undo_size = game.undo_log.len();
-
-    let (p1_id, p2_id) = {
-        let mut players_iter = game.players.iter().map(|p| p.id);
-        (
-            players_iter.next().expect("Should have player 1"),
-            players_iter.next().expect("Should have player 2"),
-        )
-    };
-
-    let mut controller1 = RandomController::with_seed(p1_id, seed);
-    let mut controller2 = RandomController::with_seed(p2_id, seed);
-
-    let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop
-        .run_game(&mut controller1, &mut controller2)
-        .expect("Game should complete");
-
-    // Capture metrics BEFORE rewinding
-    let end_turn = game.turn.turn_number;
-    let turns_played = end_turn.saturating_sub(start_turn);
-    let actions_played = game.undo_log.len() - start_undo_size;
-
-    // Determine winner
-    let outcome = if result.winner == Some(p1_id) {
-        GameOutcome::Player1Win
-    } else {
-        GameOutcome::Player2Win
-    };
-
-    // Rewind back to midpoint
-    while game.undo_log.len() > start_undo_size {
-        game.undo().expect("Undo should succeed");
-    }
-
-    (turns_played, actions_played, outcome)
-}
+use rewind_play_again::RewindPlayAgain;
 
 fn main() {
     // Parse batch size from command line (default 1000)
@@ -157,66 +212,42 @@ fn main() {
 
     println!("=== Rewind + Play Again Benchmark ===");
     println!("Batch size: {} games", batch_size);
-    println!("Deck: {}", BASELINE_DECK_PATH);
     println!();
 
-    // Load resources
-    println!("Loading deck and card database...");
-    let setup = BenchmarkSetup::load(BASELINE_DECK_PATH).expect("Failed to load setup");
-
-    // Create midgame state
-    let seed = 42u64;
-    println!("Creating midgame state (seed {})...", seed);
-    let (midgame_template, original_total_actions) = create_midgame_state(&setup, seed);
-    println!("  Full game had {} actions", original_total_actions);
-    println!("  Starting from midpoint (undo log cleared)");
+    // Create benchmark instance (loads deck and creates midgame state)
+    println!("Initializing benchmark...");
+    let benchmark = RewindPlayAgain::new("SEQUENTIAL");
+    let seed = benchmark.seed();
+    println!("  Seed: {}", seed);
     println!();
 
     // Execute batch
     println!("Executing batch of {} games...", batch_size);
-    let mut game = midgame_template.clone();
-
-    let mut batch_turns = 0u32;
-    let mut batch_actions = 0usize;
-    let mut p1_wins = 0usize;
-    let mut p2_wins = 0usize;
-
     let region = Region::new(GLOBAL);
-    let start = Instant::now();
-
-    for i in 0..batch_size {
-        let game_seed = seed.wrapping_add(i as u64);
-        let (turns_played, actions_played, outcome) = execute_single_game(&mut game, game_seed);
-
-        batch_turns += turns_played;
-        batch_actions += actions_played;
-
-        match outcome {
-            GameOutcome::Player1Win => p1_wins += 1,
-            GameOutcome::Player2Win => p2_wins += 1,
-        }
-    }
-
-    let duration = start.elapsed();
+    let batch_duration = benchmark.execute_batch_sequential(batch_size);
     let stats = region.change();
+
+    // Get aggregated metrics
+    let metrics = benchmark.get_aggregated_metrics();
+    let total_games = benchmark.get_total_games();
 
     // Print results
     println!();
     println!("=== Results ===");
-    println!("Total games: {}", batch_size);
-    println!("Total duration: {:.3}s", duration.as_secs_f64());
+    println!("Total games: {}", total_games);
+    println!("Total duration: {:.3}s", batch_duration.as_secs_f64());
     println!(
         "Avg duration/game: {:.3}ms",
-        duration.as_secs_f64() * 1000.0 / batch_size as f64
+        batch_duration.as_secs_f64() * 1000.0 / total_games as f64
     );
     println!();
 
     println!("=== Game Metrics ===");
-    println!("Total turns: {}", batch_turns);
-    println!("Total actions: {}", batch_actions);
-    println!("Avg turns/game: {:.2}", batch_turns as f64 / batch_size as f64);
-    println!("Avg actions/game: {:.2}", batch_actions as f64 / batch_size as f64);
-    println!("Actions/turn: {:.2}", batch_actions as f64 / batch_turns as f64);
+    println!("Total turns: {}", metrics.turns);
+    println!("Total actions: {}", metrics.actions);
+    println!("Avg turns/game: {:.2}", metrics.turns as f64 / total_games as f64);
+    println!("Avg actions/game: {:.2}", metrics.actions as f64 / total_games as f64);
+    println!("Actions/turn: {:.2}", metrics.actions_per_turn());
     println!();
 
     println!("=== Allocation Metrics ===");
@@ -228,20 +259,11 @@ fn main() {
     );
     println!(
         "Avg bytes/game: {:.2}",
-        stats.bytes_allocated as f64 / batch_size as f64
+        stats.bytes_allocated as f64 / total_games as f64
     );
-    println!("Bytes/turn: {:.2}", stats.bytes_allocated as f64 / batch_turns as f64);
+    println!("Bytes/turn: {:.2}", metrics.bytes_per_turn());
     println!();
 
-    println!("=== Win Rates ===");
-    println!(
-        "P1 wins: {} ({:.1}%)",
-        p1_wins,
-        100.0 * p1_wins as f64 / batch_size as f64
-    );
-    println!(
-        "P2 wins: {} ({:.1}%)",
-        p2_wins,
-        100.0 * p2_wins as f64 / batch_size as f64
-    );
+    // Print win rates
+    benchmark.print_win_rates("SEQUENTIAL");
 }
