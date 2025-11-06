@@ -91,13 +91,13 @@ mod benchlib;
 
 use allocator::{AllocStats, AllocTracker};
 use benchlib::{
-    ensure_correct_working_directory, get_benchmark_measurement_time, BatchBenchmark, BenchmarkSetup,
-    create_midgame_state, GameMetrics, ParRayon, RewindPlayAgain, BASELINE_DECK_PATH,
+    ensure_correct_working_directory, get_benchmark_measurement_time, BatchBenchmark, BenchmarkSetup, GameMetrics,
+    ParRayon, RewindPlayAgain, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
     game::{random_controller::RandomController, GameLoop, GameSnapshot, GameState, VerbosityLevel},
-    loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
+    loader::GameInitializer,
     Result,
 };
 use std::path::PathBuf;

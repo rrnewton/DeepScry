@@ -3,9 +3,9 @@
 //! This module provides the `RewindPlayAgain` benchmark and the `ParRayon` wrapper
 //! for parallelizing batch benchmarks.
 
-use crate::allocator::{AllocStats, AllocTracker};
-use crate::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome};
-use crate::utils::{create_midgame_state, ensure_correct_working_directory, BenchmarkSetup, BASELINE_DECK_PATH};
+use super::super::allocator::{AllocStats, AllocTracker};
+use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome};
+use super::utils::{create_midgame_state, ensure_correct_working_directory, BenchmarkSetup, BASELINE_DECK_PATH};
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -235,7 +235,7 @@ impl RewindPlayAgain {
     /// Duration of the parallel batch execution
     #[allow(dead_code)] // Used by benchmarks, not all binaries
     pub fn execute_batch_pinned_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
-        use crate::pinned_thread_pool::execute_parallel_batch;
+        use super::super::pinned_thread_pool::execute_parallel_batch;
 
         // Clone Arc references for the closure
         let base_seed = self.seed;
