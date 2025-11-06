@@ -4,7 +4,9 @@
 //! working directory management, game state creation, and resource loading.
 
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
-use mtg_forge_rs::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer};
+use mtg_forge_rs::loader::{
+    prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer,
+};
 use mtg_forge_rs::Result;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,9 +17,11 @@ pub const BASELINE_DECK_PATH: &str = "decks/old_school/03_robots_jesseisbak.dck"
 
 /// Benchmark measurement time in seconds (used by all benchmarks)
 /// Can be overridden via BENCH_MEASUREMENT_TIME_SECS environment variable
+#[allow(dead_code)] // Used by some binaries but not all
 const BENCHMARK_TIME_SECS: u64 = 10;
 
 /// Get benchmark measurement time from environment or default
+#[allow(dead_code)] // Used by some binaries but not all
 pub fn get_benchmark_measurement_time() -> Duration {
     let secs = std::env::var("BENCH_MEASUREMENT_TIME_SECS")
         .ok()

@@ -10,6 +10,10 @@ pub mod types;
 pub mod utils;
 
 // Re-export commonly used items for convenience
+// Note: Some re-exports are only used by certain binaries, so we allow unused
+#[allow(unused_imports)]
 pub use benches::{ParRayon, RewindPlayAgain};
-pub use types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome};
-pub use utils::{create_midgame_state, ensure_correct_working_directory, get_benchmark_measurement_time, BenchmarkSetup, BASELINE_DECK_PATH};
+#[allow(unused_imports)]
+pub use types::{BatchBenchmark, GameMetrics};
+#[allow(unused_imports)]
+pub use utils::{ensure_correct_working_directory, get_benchmark_measurement_time, BenchmarkSetup, BASELINE_DECK_PATH};
