@@ -3,6 +3,7 @@ name = "mtg-benchmarks"
 version.workspace = true
 edition.workspace = true
 publish = false
+autobenches = false
 
 [dependencies]
 # Main engine as library dependency
@@ -43,10 +44,11 @@ harness = false
 
 [features]
 # Benchmark allocator selection (mutually exclusive)
-# Default: system allocator (glibc malloc)
-# bench-stats-alloc: System allocator with allocation tracking
+# Default: stats_alloc with allocation tracking enabled
+# bench-stats-alloc: System allocator with allocation tracking (DEFAULT)
 # bench-mimalloc: mimalloc for maximum performance (no tracking)
 # bench-jemalloc: jemalloc with optional stats support
+default = ["bench-stats-alloc"]
 bench-stats-alloc = []
 bench-mimalloc = []
 bench-jemalloc = []
