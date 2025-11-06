@@ -95,7 +95,7 @@ use mtg_forge_rs::{
 };
 #[path = "lib/rewind_play_again.rs"]
 mod rewind_play_again;
-use rewind_play_again::RewindPlayAgain;
+use rewind_play_again::{GameMetrics, RewindPlayAgain};
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -161,91 +161,6 @@ fn ensure_correct_working_directory() {
     }
 
     panic!("Could not find workspace root (directory containing 'decks')");
-}
-
-/// Metrics collected during game execution
-#[derive(Debug, Clone)]
-struct GameMetrics {
-    /// Total turns played
-    turns: u32,
-    /// Total actions (from UndoLog)
-    actions: usize,
-    /// Game duration
-    duration: Duration,
-    /// Bytes allocated during game execution
-    bytes_allocated: usize,
-    /// Bytes deallocated during game execution
-    bytes_deallocated: usize,
-}
-
-impl GameMetrics {
-    /// Calculate actions per second
-    fn actions_per_sec(&self) -> f64 {
-        self.actions as f64 / self.duration.as_secs_f64()
-    }
-
-    /// Calculate turns per second
-    fn turns_per_sec(&self) -> f64 {
-        self.turns as f64 / self.duration.as_secs_f64()
-    }
-
-    /// Calculate average actions per turn
-    fn actions_per_turn(&self) -> f64 {
-        if self.turns == 0 {
-            0.0
-        } else {
-            self.actions as f64 / self.turns as f64
-        }
-    }
-
-    /// Calculate net bytes allocated (allocated - deallocated)
-    fn net_bytes_allocated(&self) -> i64 {
-        self.bytes_allocated as i64 - self.bytes_deallocated as i64
-    }
-
-    /// Calculate bytes allocated per turn
-    fn bytes_per_turn(&self) -> f64 {
-        if self.turns == 0 {
-            0.0
-        } else {
-            self.bytes_allocated as f64 / self.turns as f64
-        }
-    }
-
-    /// Calculate bytes allocated per second
-    fn bytes_per_sec(&self) -> f64 {
-        self.bytes_allocated as f64 / self.duration.as_secs_f64()
-    }
-
-    /// Calculate average games per second (for aggregated metrics)
-    fn avg_games_per_sec(&self, num_games: usize) -> f64 {
-        num_games as f64 / self.duration.as_secs_f64()
-    }
-}
-
-/// Implement addition for GameMetrics to support aggregation
-impl std::ops::Add for GameMetrics {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        GameMetrics {
-            turns: self.turns + other.turns,
-            actions: self.actions + other.actions,
-            duration: self.duration + other.duration,
-            bytes_allocated: self.bytes_allocated + other.bytes_allocated,
-            bytes_deallocated: self.bytes_deallocated + other.bytes_deallocated,
-        }
-    }
-}
-
-impl std::ops::AddAssign for GameMetrics {
-    fn add_assign(&mut self, other: Self) {
-        self.turns += other.turns;
-        self.actions += other.actions;
-        self.duration += other.duration;
-        self.bytes_allocated += other.bytes_allocated;
-        self.bytes_deallocated += other.bytes_deallocated;
-    }
 }
 
 /// Setup data needed for benchmarking (loaded once, reused across iterations)
