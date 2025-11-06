@@ -63,6 +63,7 @@ num_cpus = "1.16"
 dir-test = "0.4"
 similar-asserts = "1.5"
 tempfile = "3.10.1"
+dhat = "0.3"
 
 [features]
 # Enable verbose game event logging (format! allocations)

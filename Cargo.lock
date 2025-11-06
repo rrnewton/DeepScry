@@ -906,6 +906,7 @@ dependencies = [
  "clap",
  "crossterm",
  "deunicode",
+ "dhat",
  "dir-test",
  "jwalk",
  "libc",
