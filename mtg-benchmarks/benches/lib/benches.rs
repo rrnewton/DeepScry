@@ -260,14 +260,17 @@ impl RewindPlayAgain {
     /// Each thread gets its own game state clone and runs a portion of the batch.
     /// Uses custom thread pool with spin barriers for microsecond-accurate timing.
     ///
+    /// This method is used internally by ParPinned wrapper. Use ParPinned for
+    /// parallel execution via the BatchBenchmark trait.
+    ///
     /// # Parameters
     /// - `batch_size`: Total number of games to play across all threads
     /// - `num_threads`: Number of parallel worker threads
     ///
     /// # Returns
     /// Duration of the parallel batch execution
-    #[allow(dead_code)] // Used by benchmarks, not all binaries
-    pub fn execute_batch_pinned_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
+    #[allow(dead_code)] // Used by ParPinned wrapper
+    pub(crate) fn execute_batch_pinned_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
         use super::super::pinned_thread_pool::execute_parallel_batch;
 
         // Clone Arc references for the closure
@@ -474,5 +477,51 @@ impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
 
     fn total_games(&self) -> usize {
         self.inner.total_games()
+    }
+}
+
+/// Parallel wrapper using pinned threads for batch benchmark execution
+///
+/// Wraps RewindPlayAgain and provides parallel execution using pinned threads
+/// with spin barriers for microsecond-accurate timing.
+#[allow(dead_code)] // Infrastructure for future use
+pub struct ParPinned {
+    inner: RewindPlayAgain,
+}
+
+#[allow(dead_code)] // Infrastructure for future use
+impl ParPinned {
+    /// Create a new pinned-parallel wrapper around a RewindPlayAgain benchmark
+    pub fn new(inner: RewindPlayAgain) -> Self {
+        ParPinned { inner }
+    }
+
+    /// Get a reference to the inner benchmark
+    pub fn inner(&self) -> &RewindPlayAgain {
+        &self.inner
+    }
+}
+
+impl BatchBenchmark for ParPinned {
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
+        if num_threads < 1 {
+            return Err(format!("num_threads must be >= 1, got {}", num_threads));
+        }
+
+        // For single-threaded execution, delegate to sequential execution
+        if num_threads == 1 {
+            return Ok(self.inner.execute_batch_sequential(batch_size));
+        }
+
+        // For parallel execution, use the pinned parallel implementation
+        Ok(self.inner.execute_batch_pinned_parallel(batch_size, num_threads))
+    }
+
+    fn get_metrics(&self) -> GameMetrics {
+        self.inner.get_aggregated_metrics()
+    }
+
+    fn total_games(&self) -> usize {
+        self.inner.get_total_games()
     }
 }
