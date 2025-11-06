@@ -181,6 +181,18 @@ pub enum RestartStrategy {
     Fresh,
 }
 
+/// Logging mode for game execution
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // ToMemory and ToStdout will be used for specialized benchmarks
+pub enum LoggingMode {
+    /// No logging output (VerbosityLevel::Silent)
+    Silent,
+    /// Capture logs to memory (VerbosityLevel::Normal with capture enabled)
+    ToMemory,
+    /// Write logs to stdout (VerbosityLevel::Normal without capture)
+    ToStdout,
+}
+
 /// Configuration for RewindPlayAgain benchmark
 #[derive(Debug, Clone)]
 pub struct RewindPlayAgainConfig {
@@ -197,6 +209,8 @@ pub struct RewindPlayAgainConfig {
     pub rounds_before_restart: Option<usize>,
     /// How to reinitialize when restarting (only relevant if rounds_before_restart is Some)
     pub restart_strategy: RestartStrategy,
+    /// Logging mode for game execution
+    pub logging_mode: LoggingMode,
 }
 
 impl Default for RewindPlayAgainConfig {
@@ -207,6 +221,7 @@ impl Default for RewindPlayAgainConfig {
             deck2_path: BASELINE_DECK_PATH.to_string(),
             rounds_before_restart: None,
             restart_strategy: RestartStrategy::Fresh,
+            logging_mode: LoggingMode::Silent,
         }
     }
 }
@@ -237,6 +252,12 @@ impl RewindPlayAgainConfig {
     /// Set the restart strategy
     pub fn restart_strategy(mut self, strategy: RestartStrategy) -> Self {
         self.restart_strategy = strategy;
+        self
+    }
+
+    /// Set the logging mode
+    pub fn logging_mode(mut self, mode: LoggingMode) -> Self {
+        self.logging_mode = mode;
         self
     }
 }

@@ -4,7 +4,7 @@
 //! for parallelizing batch benchmarks.
 
 use super::super::allocator::{AllocStats, AllocTracker};
-use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome, RewindPlayAgainConfig};
+use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome, LoggingMode, RewindPlayAgainConfig};
 use super::utils::{create_game_at_percent, ensure_correct_working_directory, BenchmarkSetup};
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,6 +95,7 @@ impl RewindPlayAgain {
             }
         );
         eprintln!("  Restart strategy: {:?}", config.restart_strategy);
+        eprintln!("  Logging mode: {:?}", config.logging_mode);
 
         let (initial_game_template, midgame_template, original_total_actions) =
             create_game_at_percent(&setup, seed, config.rewind_percent);
@@ -126,6 +127,22 @@ impl RewindPlayAgain {
     /// Get the seed used for this benchmark
     pub fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// Configure game logging based on the config's logging_mode
+    ///
+    /// - Silent: VerbosityLevel::Silent, no capture
+    /// - ToMemory: VerbosityLevel::Normal with capture enabled
+    /// - ToStdout: VerbosityLevel::Normal without capture
+    fn configure_logging(&self, game: &mut GameState) -> VerbosityLevel {
+        match self.config.logging_mode {
+            LoggingMode::Silent => VerbosityLevel::Silent,
+            LoggingMode::ToMemory => {
+                game.logger.enable_capture();
+                VerbosityLevel::Normal
+            }
+            LoggingMode::ToStdout => VerbosityLevel::Normal,
+        }
     }
 
     /// Execute a single game from midpoint to end and rewind back
@@ -160,7 +177,8 @@ impl RewindPlayAgain {
         let mut controller1 = RandomController::with_seed(p1_id, seed);
         let mut controller2 = RandomController::with_seed(p2_id, seed);
 
-        let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
+        let verbosity = self.configure_logging(game);
+        let mut game_loop = GameLoop::new(game).with_verbosity(verbosity);
         let result = game_loop
             .run_game(&mut controller1, &mut controller2)
             .expect("Game should complete");
@@ -273,11 +291,12 @@ impl RewindPlayAgain {
     pub(crate) fn execute_batch_pinned_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
         use super::super::pinned_thread_pool::execute_parallel_batch;
 
-        // Clone Arc references for the closure
+        // Clone Arc references and copy config values for the closure
         let base_seed = self.seed;
         let p1_wins = Arc::clone(&self.p1_wins);
         let p2_wins = Arc::clone(&self.p2_wins);
         let metrics = Arc::clone(&self.metrics);
+        let logging_mode = self.config.logging_mode;
 
         let games_per_thread = batch_size.div_ceil(num_threads);
 
@@ -319,7 +338,17 @@ impl RewindPlayAgain {
                     let mut controller1 = RandomController::with_seed(p1_id, seed);
                     let mut controller2 = RandomController::with_seed(p2_id, seed);
 
-                    let mut game_loop = GameLoop::new(thread_game).with_verbosity(VerbosityLevel::Silent);
+                    // Configure logging based on mode
+                    let verbosity = match logging_mode {
+                        LoggingMode::Silent => VerbosityLevel::Silent,
+                        LoggingMode::ToMemory => {
+                            thread_game.logger.enable_capture();
+                            VerbosityLevel::Normal
+                        }
+                        LoggingMode::ToStdout => VerbosityLevel::Normal,
+                    };
+
+                    let mut game_loop = GameLoop::new(thread_game).with_verbosity(verbosity);
                     let result = game_loop
                         .run_game(&mut controller1, &mut controller2)
                         .expect("Game should complete");
