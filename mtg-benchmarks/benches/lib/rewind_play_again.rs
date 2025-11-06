@@ -26,6 +26,7 @@ pub struct GameMetrics {
     pub bytes_deallocated: usize,
 }
 
+#[allow(dead_code)] // Used by benchmarks, not all binaries
 impl GameMetrics {
     /// Calculate actions per second
     pub fn actions_per_sec(&self) -> f64 {
@@ -96,6 +97,74 @@ impl std::ops::AddAssign for GameMetrics {
     }
 }
 
+/// Atomic version of GameMetrics for thread-safe aggregation
+///
+/// Mirrors GameMetrics but uses atomic types for concurrent updates.
+/// Wrapped in Arc for cheap cloning across threads.
+pub struct AtomicMetrics {
+    /// Total games played
+    pub total_games: AtomicUsize,
+    /// Aggregated turns across all games
+    pub total_turns: AtomicU32,
+    /// Aggregated actions across all games
+    pub total_actions: AtomicUsize,
+    /// Aggregated duration in nanoseconds
+    pub total_duration_nanos: AtomicU64,
+    /// Aggregated bytes allocated
+    pub total_bytes_allocated: AtomicUsize,
+    /// Aggregated bytes deallocated
+    pub total_bytes_deallocated: AtomicUsize,
+}
+
+impl AtomicMetrics {
+    /// Create new AtomicMetrics with all values initialized to zero
+    pub fn new() -> Self {
+        AtomicMetrics {
+            total_games: AtomicUsize::new(0),
+            total_turns: AtomicU32::new(0),
+            total_actions: AtomicUsize::new(0),
+            total_duration_nanos: AtomicU64::new(0),
+            total_bytes_allocated: AtomicUsize::new(0),
+            total_bytes_deallocated: AtomicUsize::new(0),
+        }
+    }
+
+    /// Atomically add metrics from a batch
+    pub fn add_batch(&self, games: usize, turns: u32, actions: usize, duration: Duration, alloc_stats: &AllocStats) {
+        self.total_games.fetch_add(games, Ordering::Relaxed);
+        self.total_turns.fetch_add(turns, Ordering::Relaxed);
+        self.total_actions.fetch_add(actions, Ordering::Relaxed);
+        self.total_duration_nanos
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.total_bytes_allocated
+            .fetch_add(alloc_stats.bytes_allocated, Ordering::Relaxed);
+        self.total_bytes_deallocated
+            .fetch_add(alloc_stats.bytes_deallocated, Ordering::Relaxed);
+    }
+
+    /// Convert to GameMetrics snapshot by loading all atomic values
+    pub fn to_game_metrics(&self) -> GameMetrics {
+        GameMetrics {
+            turns: self.total_turns.load(Ordering::Relaxed),
+            actions: self.total_actions.load(Ordering::Relaxed),
+            duration: Duration::from_nanos(self.total_duration_nanos.load(Ordering::Relaxed)),
+            bytes_allocated: self.total_bytes_allocated.load(Ordering::Relaxed),
+            bytes_deallocated: self.total_bytes_deallocated.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Get total games played
+    pub fn get_total_games(&self) -> usize {
+        self.total_games.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for AtomicMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Helper macro to create allocation tracker
 macro_rules! stats_region {
     () => {{
@@ -125,7 +194,7 @@ pub enum GameOutcome {
 ///
 /// Consolidates shared logic across sequential and parallel variants.
 /// Tracks win rates and provides methods for executing batches of games.
-/// All metrics use Arc-wrapped atomic types for thread-safe parallel execution.
+/// Uses Arc<AtomicMetrics> for thread-safe metric aggregation.
 pub struct RewindPlayAgain {
     /// The mid-game template (at 50% point, undo log cleared)
     midgame_template: GameState,
@@ -135,18 +204,8 @@ pub struct RewindPlayAgain {
     p1_wins: Arc<AtomicUsize>,
     /// Player 2 win count (Arc-wrapped atomic for thread-safe updates)
     p2_wins: Arc<AtomicUsize>,
-    /// Total games played (Arc-wrapped atomic for thread-safe updates)
-    total_games: Arc<AtomicUsize>,
-    /// Aggregated turns across all games (Arc-wrapped atomic for thread-safe updates)
-    total_turns: Arc<AtomicU32>,
-    /// Aggregated actions across all games (Arc-wrapped atomic for thread-safe updates)
-    total_actions: Arc<AtomicUsize>,
-    /// Aggregated duration in nanoseconds (Arc-wrapped atomic for thread-safe updates)
-    total_duration_nanos: Arc<AtomicU64>,
-    /// Aggregated bytes allocated (Arc-wrapped atomic for thread-safe updates)
-    total_bytes_allocated: Arc<AtomicUsize>,
-    /// Aggregated bytes deallocated (Arc-wrapped atomic for thread-safe updates)
-    total_bytes_deallocated: Arc<AtomicUsize>,
+    /// Aggregated game metrics (Arc-wrapped for cheap cloning across threads)
+    metrics: Arc<AtomicMetrics>,
 }
 
 impl RewindPlayAgain {
@@ -183,12 +242,7 @@ impl RewindPlayAgain {
             seed,
             p1_wins: Arc::new(AtomicUsize::new(0)),
             p2_wins: Arc::new(AtomicUsize::new(0)),
-            total_games: Arc::new(AtomicUsize::new(0)),
-            total_turns: Arc::new(AtomicU32::new(0)),
-            total_actions: Arc::new(AtomicUsize::new(0)),
-            total_duration_nanos: Arc::new(AtomicU64::new(0)),
-            total_bytes_allocated: Arc::new(AtomicUsize::new(0)),
-            total_bytes_deallocated: Arc::new(AtomicUsize::new(0)),
+            metrics: Arc::new(AtomicMetrics::new()),
         }
     }
 
@@ -305,15 +359,8 @@ impl RewindPlayAgain {
         let stats = get_stats!(reg);
 
         // Atomically update all aggregated metrics from this batch
-        self.total_games.fetch_add(batch_size, Ordering::Relaxed);
-        self.total_turns.fetch_add(batch_turns, Ordering::Relaxed);
-        self.total_actions.fetch_add(batch_actions, Ordering::Relaxed);
-        self.total_duration_nanos
-            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
-        self.total_bytes_allocated
-            .fetch_add(stats.bytes_allocated, Ordering::Relaxed);
-        self.total_bytes_deallocated
-            .fetch_add(stats.bytes_deallocated, Ordering::Relaxed);
+        self.metrics
+            .add_batch(batch_size, batch_turns, batch_actions, duration, &stats);
 
         duration
     }
@@ -329,19 +376,15 @@ impl RewindPlayAgain {
     ///
     /// # Returns
     /// Duration of the parallel batch execution
+    #[allow(dead_code)] // Used by benchmarks, not all binaries
     pub fn execute_batch_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
         use rayon::prelude::*;
 
-        // Extract values we need before entering parallel context
+        // Clone Arc references for parallel context
         let base_seed = self.seed;
         let p1_wins = &self.p1_wins;
         let p2_wins = &self.p2_wins;
-        let total_games = &self.total_games;
-        let total_turns = &self.total_turns;
-        let total_actions = &self.total_actions;
-        let total_duration_nanos = &self.total_duration_nanos;
-        let total_bytes_allocated = &self.total_bytes_allocated;
-        let total_bytes_deallocated = &self.total_bytes_deallocated;
+        let metrics = &self.metrics;
 
         // Clone game states for each thread OUTSIDE timing
         let snapshots: Vec<GameState> = (0..num_threads).map(|_| self.midgame_template.clone()).collect();
@@ -434,12 +477,7 @@ impl RewindPlayAgain {
 
                 // Atomically aggregate this thread's metrics into shared state
                 let actual_games = games_per_thread.min(batch_size - thread_id * games_per_thread);
-                total_games.fetch_add(actual_games, Ordering::Relaxed);
-                total_turns.fetch_add(batch_turns, Ordering::Relaxed);
-                total_actions.fetch_add(batch_actions, Ordering::Relaxed);
-                total_duration_nanos.fetch_add(batch_duration.as_nanos() as u64, Ordering::Relaxed);
-                total_bytes_allocated.fetch_add(stats.bytes_allocated, Ordering::Relaxed);
-                total_bytes_deallocated.fetch_add(stats.bytes_deallocated, Ordering::Relaxed);
+                metrics.add_batch(actual_games, batch_turns, batch_actions, batch_duration, &stats);
             });
 
         // STOP TIMING
@@ -451,19 +489,12 @@ impl RewindPlayAgain {
     /// Returns a GameMetrics struct with all accumulated metrics.
     /// Reads atomic values with Relaxed ordering.
     pub fn get_aggregated_metrics(&self) -> GameMetrics {
-        GameMetrics {
-            turns: self.total_turns.load(Ordering::Relaxed),
-            actions: self.total_actions.load(Ordering::Relaxed),
-            duration: Duration::from_nanos(self.total_duration_nanos.load(Ordering::Relaxed)),
-            bytes_allocated: self.total_bytes_allocated.load(Ordering::Relaxed),
-            bytes_deallocated: self.total_bytes_deallocated.load(Ordering::Relaxed),
-        }
+        self.metrics.to_game_metrics()
     }
 
     /// Get total number of games played
     pub fn get_total_games(&self) -> usize {
-        use std::sync::atomic::Ordering;
-        self.total_games.load(Ordering::Relaxed)
+        self.metrics.get_total_games()
     }
 
     /// Execute a batch of games in parallel using pinned threads
@@ -477,19 +508,15 @@ impl RewindPlayAgain {
     ///
     /// # Returns
     /// Duration of the parallel batch execution
+    #[allow(dead_code)] // Used by benchmarks, not all binaries
     pub fn execute_batch_pinned_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
         use crate::pinned_thread_pool::execute_parallel_batch;
 
-        // Clone Arc-wrapped atomics so they can be moved into the closure
+        // Clone Arc references for the closure
         let base_seed = self.seed;
         let p1_wins = Arc::clone(&self.p1_wins);
         let p2_wins = Arc::clone(&self.p2_wins);
-        let total_games = Arc::clone(&self.total_games);
-        let total_turns = Arc::clone(&self.total_turns);
-        let total_actions = Arc::clone(&self.total_actions);
-        let total_duration_nanos = Arc::clone(&self.total_duration_nanos);
-        let total_bytes_allocated = Arc::clone(&self.total_bytes_allocated);
-        let total_bytes_deallocated = Arc::clone(&self.total_bytes_deallocated);
+        let metrics = Arc::clone(&self.metrics);
 
         let games_per_thread = batch_size.div_ceil(num_threads);
 
@@ -574,12 +601,7 @@ impl RewindPlayAgain {
 
                 // Atomically aggregate this thread's metrics into shared state
                 let actual_games = games_per_thread.min(batch_size - thread_id * games_per_thread);
-                total_games.fetch_add(actual_games, Ordering::Relaxed);
-                total_turns.fetch_add(batch_turns, Ordering::Relaxed);
-                total_actions.fetch_add(batch_actions, Ordering::Relaxed);
-                total_duration_nanos.fetch_add(batch_duration.as_nanos() as u64, Ordering::Relaxed);
-                total_bytes_allocated.fetch_add(stats.bytes_allocated, Ordering::Relaxed);
-                total_bytes_deallocated.fetch_add(stats.bytes_deallocated, Ordering::Relaxed);
+                metrics.add_batch(actual_games, batch_turns, batch_actions, batch_duration, &stats);
             });
 
         batch_duration
@@ -587,9 +609,7 @@ impl RewindPlayAgain {
 
     /// Print win rate analysis for this benchmark
     pub fn print_win_rates(&self, mode: &str) {
-        use std::sync::atomic::Ordering;
-
-        let total = self.total_games.load(Ordering::Relaxed);
+        let total = self.metrics.get_total_games();
         if total == 0 {
             return;
         }
