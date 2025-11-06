@@ -95,7 +95,7 @@ use mtg_forge_rs::{
 };
 #[path = "lib/rewind_play_again.rs"]
 mod rewind_play_again;
-use rewind_play_again::{GameMetrics, RewindPlayAgain};
+use rewind_play_again::{BatchBenchmark, GameMetrics, ParRayon, RewindPlayAgain};
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -978,7 +978,7 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
 ///    - Times only the actual parallel gameplay
 /// 3. Tracks win rates and allocations across all threads
 fn bench_game_par_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
+    let mut benchmark: Option<ParRayon<RewindPlayAgain>> = None;
     let num_threads = num_cpus::get();
 
     let mut group = c.benchmark_group("game_execution");
@@ -989,25 +989,28 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
         b.iter_custom(|iters| {
             if benchmark.is_none() {
                 let new_benchmark = RewindPlayAgain::new("PARALLEL");
-                benchmark = Some(new_benchmark);
+                let par_bench = ParRayon::new(new_benchmark);
+                benchmark = Some(par_bench);
             }
 
             let bench = benchmark.as_ref().unwrap();
-            bench.execute_batch_parallel(iters as usize, num_threads)
+            bench.execute_batch(iters as usize, num_threads).unwrap()
         });
     });
 
     if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
+        let total_games = bench.total_games();
         if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
+            let aggregated_metrics = bench.get_metrics();
+            // Access the inner RewindPlayAgain for seed and win rates
+            let inner_bench = bench.inner();
             print_aggregated_metrics(
                 "Rewind + Play Again (Parallel)",
-                bench.seed(),
+                inner_bench.seed(),
                 &aggregated_metrics,
                 total_games,
             );
-            bench.print_win_rates("Rewind + Play Again (Parallel)");
+            inner_bench.print_win_rates("Rewind + Play Again (Parallel)");
         }
     }
 

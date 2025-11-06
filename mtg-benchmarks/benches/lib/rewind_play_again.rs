@@ -234,6 +234,13 @@ pub struct RewindPlayAgain {
     metrics: Arc<AtomicMetrics>,
 }
 
+// SAFETY: RewindPlayAgain is Sync because:
+// 1. The midgame_template (GameState) is only ever cloned, never shared across threads
+// 2. All Arc fields (p1_wins, p2_wins, metrics) are already Sync
+// 3. The seed (u64) is Copy and immutable
+// ParRayon only shares &RewindPlayAgain across threads, and each thread clones the game state
+unsafe impl Sync for RewindPlayAgain {}
+
 impl RewindPlayAgain {
     /// Create a new RewindPlayAgain benchmark state
     ///
@@ -389,125 +396,6 @@ impl RewindPlayAgain {
             .add_batch(batch_size, batch_turns, batch_actions, duration, &stats);
 
         duration
-    }
-
-    /// Execute a batch of games in parallel using Rayon
-    ///
-    /// Each thread gets its own game state clone and runs a portion of the batch.
-    /// Each thread tracks allocations locally, then atomically aggregates results.
-    ///
-    /// # Parameters
-    /// - `batch_size`: Total number of games to play across all threads
-    /// - `num_threads`: Number of parallel worker threads
-    ///
-    /// # Returns
-    /// Duration of the parallel batch execution
-    #[allow(dead_code)] // Used by benchmarks, not all binaries
-    pub fn execute_batch_parallel(&self, batch_size: usize, num_threads: usize) -> Duration {
-        use rayon::prelude::*;
-
-        // Clone Arc references for parallel context
-        let base_seed = self.seed;
-        let p1_wins = &self.p1_wins;
-        let p2_wins = &self.p2_wins;
-        let metrics = &self.metrics;
-
-        // Clone game states for each thread OUTSIDE timing
-        let snapshots: Vec<GameState> = (0..num_threads).map(|_| self.midgame_template.clone()).collect();
-
-        // START TIMING - only measure the actual parallel gameplay
-        let start = std::time::Instant::now();
-
-        // Parallel execution across N threads
-        // Each thread does batch_size/N games, reusing its game state with rewind
-        snapshots
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(thread_id, mut thread_game)| {
-                let games_per_thread = batch_size.div_ceil(num_threads);
-
-                // Track metrics for this thread's batch (thread-local)
-                let mut batch_turns = 0u32;
-                let mut batch_actions = 0usize;
-
-                // Track allocations for this thread's batch
-                let reg = stats_region!();
-                let batch_start = std::time::Instant::now();
-
-                for i in 0..games_per_thread {
-                    let game_idx = thread_id * games_per_thread + i;
-                    if game_idx >= batch_size {
-                        break; // Don't overshoot total batch size
-                    }
-
-                    let seed = base_seed.wrapping_add(game_idx as u64);
-
-                    // Execute single game (forward + rewind) - inline the logic here
-                    // to avoid needing &self in the closure
-                    thread_game.seed_rng(seed);
-
-                    let start_turn = thread_game.turn.turn_number;
-                    let start_undo_size = thread_game.undo_log.len();
-
-                    let (p1_id, p2_id) = {
-                        let mut players_iter = thread_game.players.iter().map(|p| p.id);
-                        (
-                            players_iter.next().expect("Should have player 1"),
-                            players_iter.next().expect("Should have player 2"),
-                        )
-                    };
-
-                    let mut controller1 = RandomController::with_seed(p1_id, seed);
-                    let mut controller2 = RandomController::with_seed(p2_id, seed);
-
-                    let mut game_loop = GameLoop::new(&mut thread_game).with_verbosity(VerbosityLevel::Silent);
-                    let result = game_loop
-                        .run_game(&mut controller1, &mut controller2)
-                        .expect("Game should complete");
-
-                    // Capture metrics BEFORE rewinding
-                    let end_turn = thread_game.turn.turn_number;
-                    let turns_played = end_turn.saturating_sub(start_turn);
-                    let actions_played = thread_game.undo_log.len() - start_undo_size;
-
-                    // Determine winner
-                    let outcome = if result.winner == Some(p1_id) {
-                        GameOutcome::Player1Win
-                    } else {
-                        GameOutcome::Player2Win
-                    };
-
-                    // Rewind back to midpoint
-                    while thread_game.undo_log.len() > start_undo_size {
-                        thread_game.undo().expect("Undo should succeed");
-                    }
-
-                    // Aggregate metrics for this thread (thread-local)
-                    batch_turns += turns_played;
-                    batch_actions += actions_played;
-
-                    // Update win counters atomically
-                    match outcome {
-                        GameOutcome::Player1Win => {
-                            p1_wins.fetch_add(1, Ordering::Relaxed);
-                        }
-                        GameOutcome::Player2Win => {
-                            p2_wins.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                }
-
-                // Stop timing and collect allocation stats for this thread
-                let batch_duration = batch_start.elapsed();
-                let stats = get_stats!(reg);
-
-                // Atomically aggregate this thread's metrics into shared state
-                let actual_games = games_per_thread.min(batch_size - thread_id * games_per_thread);
-                metrics.add_batch(actual_games, batch_turns, batch_actions, batch_duration, &stats);
-            });
-
-        // STOP TIMING
-        start.elapsed()
     }
 
     /// Get aggregated metrics collected so far
@@ -689,6 +577,11 @@ impl<T> ParRayon<T> {
     pub fn new(inner: T) -> Self {
         ParRayon { inner }
     }
+
+    /// Get a reference to the inner benchmark
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
 }
 
 impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
@@ -704,8 +597,8 @@ impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
             return self.inner.execute_batch(batch_size, 1);
         }
 
-        // Calculate games per thread
-        let games_per_thread = batch_size.div_ceil(num_threads);
+        // Calculate iterations per thread
+        let iters_per_thread = batch_size.div_ceil(num_threads);
 
         // Start timing
         let start = std::time::Instant::now();
@@ -715,15 +608,15 @@ impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
         (0..num_threads)
             .into_par_iter()
             .try_for_each(|thread_id| -> Result<(), String> {
-                let thread_batch_size = if thread_id == num_threads - 1 {
+                let thread_iters = if thread_id == num_threads - 1 {
                     // Last thread handles any remainder
-                    batch_size - (thread_id * games_per_thread)
+                    batch_size - (thread_id * iters_per_thread)
                 } else {
-                    games_per_thread
+                    iters_per_thread
                 };
 
-                if thread_batch_size > 0 {
-                    self.inner.execute_batch(thread_batch_size, 1)?;
+                if thread_iters > 0 {
+                    self.inner.execute_batch(thread_iters, 1)?;
                 }
                 Ok(())
             })?;
