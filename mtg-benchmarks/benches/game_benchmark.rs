@@ -91,8 +91,8 @@ mod benchlib;
 
 use allocator::{AllocStats, AllocTracker};
 use benchlib::{
-    ensure_correct_working_directory, get_benchmark_measurement_time, BatchBenchmark, BenchmarkSetup, GameMetrics,
-    ParPinned, ParRayon, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
+    ensure_correct_working_directory, get_benchmark_measurement_time, print_aggregated_metrics, BatchBenchmark,
+    BenchmarkSetup, GameMetrics, ParPinned, ParRayon, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
@@ -304,44 +304,6 @@ where
     };
 
     Ok(metrics)
-}
-
-/// Helper function to print aggregated metrics
-///
-/// Note: The "Avg duration/game" shown here is a naive average (total_time / iterations).
-/// For accurate per-iteration timing, refer to Criterion's statistical estimate shown above,
-/// which accounts for outliers, warmup effects, and provides confidence intervals.
-fn print_aggregated_metrics(mode: &str, seed: u64, aggregated: &GameMetrics, iteration_count: usize) {
-    eprintln!("\n=== Aggregated Metrics - {mode} Mode (seed {seed}, {iteration_count} games) ===");
-    eprintln!("  Total turns: {}", aggregated.turns);
-    eprintln!("  Total actions: {}", aggregated.actions);
-    eprintln!("  Total duration: {:?}", aggregated.duration);
-    eprintln!(
-        "  Avg turns/game: {:.2}",
-        aggregated.turns as f64 / iteration_count as f64
-    );
-    eprintln!(
-        "  Avg actions/game: {:.2}",
-        aggregated.actions as f64 / iteration_count as f64
-    );
-    eprintln!(
-        "  Avg duration/game (naive): {:.2?}",
-        aggregated.duration / iteration_count as u32
-    );
-    eprintln!("  Games/sec: {:.2}", aggregated.avg_games_per_sec(iteration_count));
-    eprintln!("  Actions/sec: {:.2}", aggregated.actions_per_sec());
-    eprintln!("  Turns/sec: {:.2}", aggregated.turns_per_sec());
-    eprintln!("  Actions/turn: {:.2}", aggregated.actions_per_turn());
-    eprintln!("  Total bytes allocated: {}", aggregated.bytes_allocated);
-    eprintln!("  Total bytes deallocated: {}", aggregated.bytes_deallocated);
-    eprintln!("  Net bytes: {}", aggregated.net_bytes_allocated());
-    eprintln!(
-        "  Avg bytes/game: {:.2}",
-        aggregated.bytes_allocated as f64 / iteration_count as f64
-    );
-    eprintln!("  Bytes/turn: {:.2}", aggregated.bytes_per_turn());
-    eprintln!("  Bytes/sec: {:.2}", aggregated.bytes_per_sec());
-    eprintln!("\nNote: For authoritative per-iteration timing, see Criterion's estimate above.");
 }
 
 /// Benchmark: Fresh mode - allocate new game each iteration
