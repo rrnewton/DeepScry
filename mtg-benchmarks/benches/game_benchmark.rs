@@ -92,7 +92,7 @@ mod benchlib;
 use allocator::{AllocStats, AllocTracker};
 use benchlib::{
     ensure_correct_working_directory, get_benchmark_measurement_time, BatchBenchmark, BenchmarkSetup, GameMetrics,
-    ParRayon, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
+    ParPinned, ParRayon, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
@@ -896,7 +896,7 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(num_physical_cores);
 
-    let mut benchmark: Option<RewindPlayAgain> = None;
+    let mut benchmark: Option<ParPinned> = None;
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
@@ -907,25 +907,28 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
             if benchmark.is_none() {
                 let config = RewindPlayAgainConfig::default();
                 let new_benchmark = RewindPlayAgain::new(config, "PINNED-PARALLEL");
-                benchmark = Some(new_benchmark);
+                let par_bench = ParPinned::new(new_benchmark);
+                benchmark = Some(par_bench);
             }
 
             let bench = benchmark.as_ref().unwrap();
-            bench.execute_batch_pinned_parallel(iters as usize, num_threads)
+            bench.execute_batch(iters as usize, num_threads).unwrap()
         });
     });
 
     if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
+        let total_games = bench.total_games();
         if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
+            let aggregated_metrics = bench.get_metrics();
+            // Access the inner RewindPlayAgain for seed and win rates
+            let inner_bench = bench.inner();
             print_aggregated_metrics(
                 "Rewind + Play Again (Pinned-Parallel)",
-                bench.seed(),
+                inner_bench.seed(),
                 &aggregated_metrics,
                 total_games,
             );
-            bench.print_win_rates("Rewind + Play Again (Pinned-Parallel)");
+            inner_bench.print_win_rates("Rewind + Play Again (Pinned-Parallel)");
         }
     }
 

@@ -12,7 +12,7 @@ pub mod utils;
 // Re-export commonly used items for convenience
 // Note: Some re-exports are only used by certain binaries, so we allow unused
 #[allow(unused_imports)]
-pub use benches::{ParRayon, RewindPlayAgain};
+pub use benches::{ParPinned, ParRayon, RewindPlayAgain};
 #[allow(unused_imports)]
 pub use types::{BatchBenchmark, GameMetrics, RestartStrategy, RewindPlayAgainConfig};
 #[allow(unused_imports)]
