@@ -8,28 +8,29 @@ use crate::Result;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
+use std::alloc::{Allocator, Global};
 use std::cell::RefCell;
 
 /// Complete game state
 ///
 /// This is the central structure that holds all game information.
 /// It's designed to be efficiently clonable for tree search.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameState {
+#[derive(Debug, Clone)]
+pub struct GameState<A: Allocator + Clone = Global> {
     /// All cards in the game
     pub cards: EntityStore<Card>,
 
     /// All players in the game (Vec for stable ordering, small count)
-    pub players: Vec<Player>,
+    pub players: Vec<Player, A>,
 
     /// Zones for each player
-    pub player_zones: Vec<(PlayerId, PlayerZones)>,
+    pub player_zones: Vec<(PlayerId, PlayerZones<A>), A>,
 
     /// Shared battlefield (all players)
-    pub battlefield: CardZone,
+    pub battlefield: CardZone<A>,
 
     /// The stack (for spells and abilities)
-    pub stack: CardZone,
+    pub stack: CardZone<A>,
 
     /// Turn structure
     pub turn: TurnStructure,
@@ -55,9 +56,9 @@ pub struct GameState {
     pub logger: GameLogger,
 }
 
-impl GameState {
-    /// Create a new game with two players
-    pub fn new_two_player(player1_name: String, player2_name: String, starting_life: i32) -> Self {
+impl<A: Allocator + Clone> GameState<A> {
+    /// Create a new game with two players using a custom allocator
+    pub fn new_two_player_in(player1_name: String, player2_name: String, starting_life: i32, alloc: A) -> Self {
         let mut next_id = 0;
 
         // Create players with unified IDs
@@ -69,9 +70,13 @@ impl GameState {
         let player1 = Player::new(p1_id, player1_name, starting_life);
         let player2 = Player::new(p2_id, player2_name, starting_life);
 
-        let players = vec![player1, player2];
+        let mut players = Vec::new_in(alloc.clone());
+        players.push(player1);
+        players.push(player2);
 
-        let player_zones = vec![(p1_id, PlayerZones::new(p1_id)), (p2_id, PlayerZones::new(p2_id))];
+        let mut player_zones = Vec::new_in(alloc.clone());
+        player_zones.push((p1_id, PlayerZones::new_in(p1_id, alloc.clone())));
+        player_zones.push((p2_id, PlayerZones::new_in(p2_id, alloc.clone())));
 
         // Use a unified PlayerId for shared zones (battlefield, stack)
         // These don't belong to a specific player, but we need an ID for the zone
@@ -82,8 +87,8 @@ impl GameState {
             cards: EntityStore::new(),
             players,
             player_zones,
-            battlefield: CardZone::new(Zone::Battlefield, shared_id),
-            stack: CardZone::new(Zone::Stack, shared_id),
+            battlefield: CardZone::new_in(Zone::Battlefield, shared_id, alloc.clone()),
+            stack: CardZone::new_in(Zone::Stack, shared_id, alloc),
             turn: TurnStructure::new_with_idx(p1_id, 0), // Player 1 starts at index 0
             combat: CombatState::new(),
             rng: RefCell::new(ChaCha12Rng::seed_from_u64(0)), // Default seed, will be reseeded by game initialization
@@ -92,6 +97,16 @@ impl GameState {
             logger: GameLogger::new(),
         }
     }
+}
+
+impl GameState {
+    /// Create a new game with two players (uses Global allocator)
+    pub fn new_two_player(player1_name: String, player2_name: String, starting_life: i32) -> Self {
+        GameState::new_two_player_in(player1_name, player2_name, starting_life, Global)
+    }
+}
+
+impl<A: Allocator + Clone> GameState<A> {
 
     /// Set the RNG seed for deterministic gameplay
     ///
