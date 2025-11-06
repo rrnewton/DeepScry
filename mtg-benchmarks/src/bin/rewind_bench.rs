@@ -82,7 +82,7 @@ mod pinned_thread_pool;
 #[path = "../../benches/lib/mod.rs"]
 mod benchlib;
 
-use benchlib::RewindPlayAgain;
+use benchlib::{RewindPlayAgain, RewindPlayAgainConfig};
 
 fn main() {
     // Parse batch size from command line (default 1000)
@@ -97,7 +97,8 @@ fn main() {
 
     // Create benchmark instance (loads deck and creates midgame state)
     println!("Initializing benchmark...");
-    let benchmark = RewindPlayAgain::new("SEQUENTIAL");
+    let config = RewindPlayAgainConfig::default();
+    let benchmark = RewindPlayAgain::new(config, "SEQUENTIAL");
     let seed = benchmark.seed();
     println!("  Seed: {}", seed);
     println!();

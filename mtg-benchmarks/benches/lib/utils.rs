@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 
 /// Use this for most benchmarks for a performance baseline.
+#[allow(dead_code)] // Used by some binaries but not all
 pub const BASELINE_DECK_PATH: &str = "decks/old_school/03_robots_jesseisbak.dck";
 
 /// Benchmark measurement time in seconds (used by all benchmarks)
@@ -90,9 +91,77 @@ impl BenchmarkSetup {
         })
     }
 
+    #[allow(dead_code)] // Used by some binaries but not all
     pub fn load_same_deck(deck_path: &str) -> Result<Self> {
         Self::load(deck_path, deck_path)
     }
+}
+
+/// Create a game state at a specific point in the game
+///
+/// This helper plays a full game, then rewinds to a specified percentage point.
+/// The undo log is cleared at this point.
+///
+/// # Parameters
+/// - `setup`: Benchmark setup with card database and decks
+/// - `seed`: Initial RNG seed for the game
+/// - `rewind_percent`: Percentage of actions to keep (0.0 = start, 1.0 = end)
+///
+/// # Returns
+/// A tuple of (initial GameState before any play, GameState at rewind point, original total actions)
+pub fn create_game_at_percent(setup: &BenchmarkSetup, seed: u64, rewind_percent: f64) -> (GameState, GameState, usize) {
+    let game_init = GameInitializer::new(&setup.card_db);
+    let mut game = setup
+        .runtime
+        .block_on(async {
+            game_init
+                .init_game(
+                    "Player 1".to_string(),
+                    &setup.deck1,
+                    "Player 2".to_string(),
+                    &setup.deck2,
+                    20,
+                )
+                .await
+        })
+        .expect("Failed to initialize game");
+
+    // Clone the initial state before playing
+    let initial_game = game.clone();
+
+    game.seed_rng(seed);
+
+    // Play the game once to build the undo log
+    {
+        let (p1_id, p2_id) = {
+            let mut players_iter = game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
+
+        let mut controller1 = RandomController::with_seed(p1_id, seed);
+        let mut controller2 = RandomController::with_seed(p2_id, seed);
+
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        let _ = game_loop
+            .run_game(&mut controller1, &mut controller2)
+            .expect("Initial game should complete");
+    }
+
+    let total_actions = game.undo_log.len();
+    let rewind_target = (total_actions as f64 * rewind_percent) as usize;
+
+    // Rewind to the target position
+    while game.undo_log.len() > rewind_target {
+        game.undo().expect("Undo should succeed");
+    }
+
+    // Clear the undo log at rewind point
+    game.undo_log.clear();
+
+    (initial_game, game, total_actions)
 }
 
 /// Create a mid-game state by playing to halfway point
@@ -106,6 +175,7 @@ impl BenchmarkSetup {
 ///
 /// # Returns
 /// A tuple of (GameState at midpoint, original total actions before clearing undo log)
+#[allow(dead_code)] // Kept for backward compatibility, use create_game_at_percent instead
 pub fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize) {
     let game_init = GameInitializer::new(&setup.card_db);
     let mut game = setup

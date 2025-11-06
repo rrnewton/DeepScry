@@ -168,6 +168,76 @@ pub enum GameOutcome {
     Player2Win,
 }
 
+/// Strategy for reinitializing games when restarting from scratch
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Will be used when restart logic is implemented
+pub enum RestartStrategy {
+    /// Clone the initial game state
+    Clone,
+    /// Create a fresh game state from scratch
+    Fresh,
+}
+
+/// Configuration for RewindPlayAgain benchmark
+#[derive(Debug, Clone)]
+pub struct RewindPlayAgainConfig {
+    /// Percentage of game to play before rewinding (0.0 to 1.0, default 0.5)
+    pub rewind_percent: f64,
+    /// Path to player 1's deck
+    pub deck1_path: String,
+    /// Path to player 2's deck
+    pub deck2_path: String,
+    /// Number of rewind+replay rounds before restarting from scratch
+    /// - None = infinite (never restart)
+    /// - Some(0) = play forward only, no rewind
+    /// - Some(n) = rewind n times then restart
+    pub rounds_before_restart: Option<usize>,
+    /// How to reinitialize when restarting (only relevant if rounds_before_restart is Some)
+    pub restart_strategy: RestartStrategy,
+}
+
+impl Default for RewindPlayAgainConfig {
+    fn default() -> Self {
+        RewindPlayAgainConfig {
+            rewind_percent: 0.5,
+            deck1_path: "decks/old_school/03_robots_jesseisbak.dck".to_string(),
+            deck2_path: "decks/old_school/03_robots_jesseisbak.dck".to_string(),
+            rounds_before_restart: None,
+            restart_strategy: RestartStrategy::Fresh,
+        }
+    }
+}
+
+#[allow(dead_code)] // Infrastructure for future config flexibility
+impl RewindPlayAgainConfig {
+    /// Create a new config with the same deck for both players
+    pub fn with_same_deck(deck_path: &str) -> Self {
+        RewindPlayAgainConfig {
+            deck1_path: deck_path.to_string(),
+            deck2_path: deck_path.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the rewind percentage
+    pub fn rewind_percent(mut self, percent: f64) -> Self {
+        self.rewind_percent = percent;
+        self
+    }
+
+    /// Set the number of rounds before restart
+    pub fn rounds_before_restart(mut self, rounds: Option<usize>) -> Self {
+        self.rounds_before_restart = rounds;
+        self
+    }
+
+    /// Set the restart strategy
+    pub fn restart_strategy(mut self, strategy: RestartStrategy) -> Self {
+        self.restart_strategy = strategy;
+        self
+    }
+}
+
 /// Trait for batch benchmark execution
 ///
 /// Provides a unified interface for running batches of game simulations,

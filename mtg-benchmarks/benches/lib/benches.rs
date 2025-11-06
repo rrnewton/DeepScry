@@ -4,8 +4,8 @@
 //! for parallelizing batch benchmarks.
 
 use super::super::allocator::{AllocStats, AllocTracker};
-use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome};
-use super::utils::{create_midgame_state, ensure_correct_working_directory, BenchmarkSetup, BASELINE_DECK_PATH};
+use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome, RewindPlayAgainConfig};
+use super::utils::{create_game_at_percent, ensure_correct_working_directory, BenchmarkSetup};
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -35,7 +35,13 @@ macro_rules! get_stats {
 /// Tracks win rates and provides methods for executing batches of games.
 /// Uses Arc<AtomicMetrics> for thread-safe metric aggregation.
 pub struct RewindPlayAgain {
-    /// The mid-game template (at 50% point, undo log cleared)
+    /// Configuration for this benchmark
+    #[allow(dead_code)] // Will be used for rounds_before_restart logic
+    config: RewindPlayAgainConfig,
+    /// The initial full game state (before any rewind)
+    #[allow(dead_code)] // Will be used for restart logic
+    initial_game_template: GameState,
+    /// The mid-game template (at rewind_percent point, undo log cleared)
     midgame_template: GameState,
     /// RNG seed used for game initialization
     seed: u64,
@@ -45,6 +51,9 @@ pub struct RewindPlayAgain {
     p2_wins: Arc<AtomicUsize>,
     /// Aggregated game metrics (Arc-wrapped for cheap cloning across threads)
     metrics: Arc<AtomicMetrics>,
+    /// Number of rounds completed (for tracking restart logic)
+    #[allow(dead_code)] // Will be used for rounds_before_restart logic
+    rounds_completed: Arc<AtomicUsize>,
 }
 
 // SAFETY: RewindPlayAgain is Sync because:
@@ -57,14 +66,15 @@ unsafe impl Sync for RewindPlayAgain {}
 impl RewindPlayAgain {
     /// Create a new RewindPlayAgain benchmark state
     ///
-    /// This creates a mid-game state by playing to 50% and clearing the undo log.
+    /// This creates game states according to the provided configuration.
     ///
     /// # Parameters
+    /// - `config`: Configuration for the benchmark
     /// - `mode_tag`: Mode description (e.g., "SEQUENTIAL", "PARALLEL")
-    pub fn new(mode_tag: &str) -> Self {
+    pub fn new(config: RewindPlayAgainConfig, mode_tag: &str) -> Self {
         let seed = 43u64;
         ensure_correct_working_directory();
-        let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
+        let setup = match BenchmarkSetup::load(&config.deck1_path, &config.deck2_path) {
             Ok(s) => s,
             Err(e) => {
                 panic!("Benchmark failed to load resources: {e}");
@@ -72,21 +82,44 @@ impl RewindPlayAgain {
         };
 
         eprintln!(
-            "\nRewind + Play Again mode (seed {seed}, {mode_tag}), deck {}:",
-            BASELINE_DECK_PATH
+            "\nRewind + Play Again mode (seed {seed}, {mode_tag}), decks {} vs {}:",
+            config.deck1_path, config.deck2_path
         );
-        let (midgame_template, original_total_actions) = create_midgame_state(&setup, seed);
+        eprintln!("  Rewind percent: {:.1}%", config.rewind_percent * 100.0);
+        eprintln!(
+            "  Rounds before restart: {}",
+            match config.rounds_before_restart {
+                None => "infinite".to_string(),
+                Some(0) => "0 (forward only)".to_string(),
+                Some(n) => n.to_string(),
+            }
+        );
+        eprintln!("  Restart strategy: {:?}", config.restart_strategy);
+
+        let (initial_game_template, midgame_template, original_total_actions) =
+            create_game_at_percent(&setup, seed, config.rewind_percent);
+
         eprintln!("  Full game had {} actions", original_total_actions);
-        eprintln!("  Starting from midpoint (undo log cleared)");
-        eprintln!("  Will execute batches of (play forward + rewind) cycles");
-        eprintln!("  NOTE: Each iteration rewinds, NO cloning!");
+        eprintln!(
+            "  Starting from {:.1}% point (undo log cleared)",
+            config.rewind_percent * 100.0
+        );
+
+        if config.rounds_before_restart == Some(0) {
+            eprintln!("  Will play forward only (no rewind)");
+        } else {
+            eprintln!("  Will execute batches of (play forward + rewind) cycles");
+        }
 
         Self {
+            config,
+            initial_game_template,
             midgame_template,
             seed,
             p1_wins: Arc::new(AtomicUsize::new(0)),
             p2_wins: Arc::new(AtomicUsize::new(0)),
             metrics: Arc::new(AtomicMetrics::new()),
+            rounds_completed: Arc::new(AtomicUsize::new(0)),
         }
     }
 
