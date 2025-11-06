@@ -92,7 +92,7 @@ mod benchlib;
 use allocator::{AllocStats, AllocTracker};
 use benchlib::{
     ensure_correct_working_directory, get_benchmark_measurement_time, BatchBenchmark, BenchmarkSetup, GameMetrics,
-    ParRayon, RewindPlayAgain, BASELINE_DECK_PATH,
+    ParRayon, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
@@ -798,7 +798,8 @@ fn bench_game_rewind_play_again(c: &mut Criterion) {
     group.bench_function("rewind_play_again", |b| {
         b.iter_custom(|iters| {
             if benchmark.is_none() {
-                let new_benchmark = RewindPlayAgain::new("SEQUENTIAL");
+                let config = RewindPlayAgainConfig::default();
+                let new_benchmark = RewindPlayAgain::new(config, "SEQUENTIAL");
                 benchmark = Some(new_benchmark);
             }
 
@@ -845,7 +846,8 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
     group.bench_function("par_rewind_play_again", |b| {
         b.iter_custom(|iters| {
             if benchmark.is_none() {
-                let new_benchmark = RewindPlayAgain::new("PARALLEL");
+                let config = RewindPlayAgainConfig::default();
+                let new_benchmark = RewindPlayAgain::new(config, "PARALLEL");
                 let par_bench = ParRayon::new(new_benchmark);
                 benchmark = Some(par_bench);
             }
@@ -903,7 +905,8 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
     group.bench_function("pinned_par_rewind_play_again", |b| {
         b.iter_custom(|iters| {
             if benchmark.is_none() {
-                let new_benchmark = RewindPlayAgain::new("PINNED-PARALLEL");
+                let config = RewindPlayAgainConfig::default();
+                let new_benchmark = RewindPlayAgain::new(config, "PINNED-PARALLEL");
                 benchmark = Some(new_benchmark);
             }
 
