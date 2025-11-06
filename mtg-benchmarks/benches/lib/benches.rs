@@ -36,7 +36,7 @@ macro_rules! get_stats {
 /// Uses Arc<AtomicMetrics> for thread-safe metric aggregation.
 pub struct RewindPlayAgain {
     /// Configuration for this benchmark
-    #[allow(dead_code)] // Will be used for rounds_before_restart logic
+    #[allow(dead_code)] // Will be used for rewinds_before_restart logic
     config: RewindPlayAgainConfig,
     /// The initial full game state (before any rewind)
     #[allow(dead_code)] // Will be used for restart logic
@@ -51,9 +51,9 @@ pub struct RewindPlayAgain {
     p2_wins: Arc<AtomicUsize>,
     /// Aggregated game metrics (Arc-wrapped for cheap cloning across threads)
     metrics: Arc<AtomicMetrics>,
-    /// Number of rounds completed (for tracking restart logic)
-    #[allow(dead_code)] // Will be used for rounds_before_restart logic
-    rounds_completed: Arc<AtomicUsize>,
+    /// Number of rewinds completed (for tracking restart logic)
+    #[allow(dead_code)] // Will be used for rewinds_before_restart logic
+    rewinds_completed: Arc<AtomicUsize>,
 }
 
 // SAFETY: RewindPlayAgain is Sync because:
@@ -87,8 +87,8 @@ impl RewindPlayAgain {
         );
         eprintln!("  Rewind percent: {:.1}%", config.rewind_percent * 100.0);
         eprintln!(
-            "  Rounds before restart: {}",
-            match config.rounds_before_restart {
+            "  Rewinds before restart: {}",
+            match config.rewinds_before_restart {
                 None => "infinite".to_string(),
                 Some(0) => "0 (forward only)".to_string(),
                 Some(n) => n.to_string(),
@@ -106,7 +106,7 @@ impl RewindPlayAgain {
             config.rewind_percent * 100.0
         );
 
-        if config.rounds_before_restart == Some(0) {
+        if config.rewinds_before_restart == Some(0) {
             eprintln!("  Will play forward only (no rewind)");
         } else {
             eprintln!("  Will execute batches of (play forward + rewind) cycles");
@@ -120,7 +120,7 @@ impl RewindPlayAgain {
             p1_wins: Arc::new(AtomicUsize::new(0)),
             p2_wins: Arc::new(AtomicUsize::new(0)),
             metrics: Arc::new(AtomicMetrics::new()),
-            rounds_completed: Arc::new(AtomicUsize::new(0)),
+            rewinds_completed: Arc::new(AtomicUsize::new(0)),
         }
     }
 
