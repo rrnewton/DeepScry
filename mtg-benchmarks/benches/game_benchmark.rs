@@ -10,21 +10,23 @@
 //! The benchmark is based on RandomController vs RandomController playing
 //! with simple_bolt.dck (Mountains + Lightning Bolts).
 //!
-//! ## Allocator Configuration
+//! ##[path = "rewind_play_again_module.rs"]Allocator Configuration
 //!
-//! Use feature flags to select allocator:
-//! - `bench-stats-alloc`: stats_alloc with allocation tracking (slower)
-//! - `bench-mimalloc`: mimalloc for maximum performance (default)
+//! By default, allocation tracking is ENABLED using stats_alloc.
+//! Use feature flags to select different allocators:
+//! - `bench-stats-alloc`: stats_alloc with allocation tracking (DEFAULT)
+//! - `bench-mimalloc`: mimalloc for maximum performance (no tracking)
+//! - `bench-jemalloc`: jemalloc for performance (no tracking)
 //!
-//! Run with: `cargo bench --features bench-stats-alloc` for tracking
-//! Run with: `cargo bench --features bench-mimalloc` for performance (default)
+//! Run with: `cargo bench` for tracking (default)
+//! Run with: `cargo bench --no-default-features --features bench-mimalloc` for max performance
 //!
-//! ## Lazy Initialization Pattern
+//! ##[path = "rewind_play_again_module.rs"]Lazy Initialization Pattern
 //!
 //! **IMPORTANT**: All benchmarks MUST use lazy initialization to avoid running setup code
 //! during `cargo bench --list` (which only lists benchmarks without running them).
 //!
-//! ### Problem
+//! ###[path = "rewind_play_again_module.rs"]Problem
 //!
 //! Criterion benchmark functions are executed at registration time to gather metadata,
 //! not just at execution time. If you create expensive state (like game instances) before
@@ -38,7 +40,7 @@
 //! });
 //! ```
 //!
-//! ### Solution
+//! ###[path = "rewind_play_again_module.rs"]Solution
 //!
 //! Use `Option<T>` with lazy initialization inside the benchmark closure:
 //!
@@ -61,7 +63,7 @@
 //! });
 //! ```
 //!
-//! ### Examples in This File
+//! ###[path = "rewind_play_again_module.rs"]Examples in This File
 //!
 //! - `bench_game_snapshot` (line ~815): Uses `Option<GameState>` for lazy game initialization
 //! - `bench_game_rewind` (line ~890): Uses `Option<GameState>` for lazy game initialization
@@ -70,7 +72,7 @@
 //! - `bench_game_par_rewind_play_again` (line ~1290): Uses `Option<GameState>` inside `iter_custom`
 //! - `bench_save_snapshot` (line ~1442): Uses `Option<GameSnapshot>` for snapshot state
 //!
-//! ### Verification
+//! ###[path = "rewind_play_again_module.rs"]Verification
 //!
 //! To verify benchmarks use lazy initialization, run:
 //!
@@ -91,10 +93,16 @@ use mtg_forge_rs::{
     loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer},
     Result,
 };
+#[path = "rewind_play_again_module.rs"]
+mod rewind_play_again;
+use rewind_play_again::RewindPlayAgain;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
+
+/// Use this for most benchmarks for a performance baseline.
+const BASELINE_DECK_PATH: &str = "decks/old_school/03_robots_jesseisbak.dck";
 
 /// Helper macro to create allocation tracker
 macro_rules! stats_region {
@@ -466,11 +474,11 @@ where
 /// This helper creates a game state at the 50% mark (halfway through a full game).
 /// The undo log is cleared at this point, so we only track actions from 50%-100%.
 ///
-/// # Parameters
+/// #[path = "rewind_play_again_module.rs"]Parameters
 /// - `setup`: Benchmark setup with card database and decks
 /// - `seed`: Initial RNG seed for the first half of the game
 ///
-/// # Returns
+/// #[path = "rewind_play_again_module.rs"]Returns
 /// A tuple of (GameState at midpoint, original total actions before clearing undo log)
 fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize) {
     let game_init = GameInitializer::new(&setup.card_db);
@@ -524,69 +532,7 @@ fn create_midgame_state(setup: &BenchmarkSetup, seed: u64) -> (GameState, usize)
     (game, total_actions)
 }
 
-/// Game outcome for win rate tracking
-#[derive(Debug, Clone, Copy)]
-enum GameOutcome {
-    Player1Win,
-    Player2Win,
-}
-
-/// Run forward gameplay from mid-game snapshot and collect metrics
-///
-/// This helper function is used by both sequential and parallel rewind benchmarks.
-/// It plays the second half of a game from a mid-game state with a specific RNG seed.
-///
-/// # Parameters
-/// - `thread_game`: Mutable reference to the game state (at mid-game point)
-/// - `thread_seed`: RNG seed for this playthrough
-///
-/// # Returns
-/// Tuple of (GameMetrics for the forward gameplay, GameOutcome)
-fn run_forward_gameplay_from_snapshot(thread_game: &mut GameState, thread_seed: u64) -> (GameMetrics, GameOutcome) {
-    thread_game.seed_rng(thread_seed);
-
-    // Now measure forward gameplay for second half
-    let reg = stats_region!();
-    let start = std::time::Instant::now();
-
-    let (p1_id, p2_id) = {
-        let mut players_iter = thread_game.players.iter().map(|p| p.id);
-        (
-            players_iter.next().expect("Should have player 1"),
-            players_iter.next().expect("Should have player 2"),
-        )
-    };
-
-    let mut controller1 = RandomController::with_seed(p1_id, thread_seed);
-    let mut controller2 = RandomController::with_seed(p2_id, thread_seed);
-
-    let mut game_loop = GameLoop::new(thread_game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop
-        .run_game(&mut controller1, &mut controller2)
-        .expect("Game should complete");
-
-    let duration = start.elapsed();
-    let stats = get_stats!(reg);
-
-    // Determine winner
-    let outcome = if result.winner == Some(p1_id) {
-        GameOutcome::Player1Win
-    } else {
-        GameOutcome::Player2Win
-    };
-
-    // Record metrics for the forward gameplay only
-    // Note: undo log was cleared at midpoint, so len() gives us actions from 50%-100%
-    let metrics = GameMetrics {
-        turns: result.turns_played,
-        actions: thread_game.undo_log.len(),
-        duration,
-        bytes_allocated: stats.bytes_allocated,
-        bytes_deallocated: stats.bytes_deallocated,
-    };
-
-    (metrics, outcome)
-}
+// Use the RewindPlayAgain module (no duplicate code needed here)
 
 /// Helper function to print aggregated metrics
 ///
@@ -631,7 +577,7 @@ fn bench_game_fresh(c: &mut Criterion) {
     ensure_correct_working_directory();
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -694,7 +640,7 @@ fn bench_game_fresh_with_logging(c: &mut Criterion) {
     ensure_correct_working_directory();
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -757,7 +703,7 @@ fn bench_game_fresh_with_stdout_logging(c: &mut Criterion) {
     ensure_correct_working_directory();
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -850,7 +796,7 @@ fn bench_game_snapshot(c: &mut Criterion) {
     ensure_correct_working_directory();
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -925,7 +871,7 @@ fn bench_game_rewind(c: &mut Criterion) {
     ensure_correct_working_directory();
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -1056,121 +1002,116 @@ fn bench_game_rewind(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark: Rewind + replay with different paths
-/// Measures forward gameplay after rewind, exploring different game paths
+/// Benchmark: Rewind + replay with different paths (SEQUENTIAL)
+/// Measures complete forward+rewind cycle exploring different game paths
 ///
-/// This benchmark:
+/// This benchmark correctly measures the full MCTS simulation workload:
 /// 1. Creates midgame state at 50% mark (done once in setup)
-/// 2. For each iteration:
-///    - Replays from midpoint with new random seed (different path)
-/// 3. Measures allocation rate for forward play only
+/// 2. For each batch of iterations:
+///    - Play forward from midpoint to end
+///    - Rewind back to midpoint
+///    - Repeat with different random seed
+/// 3. Times the ENTIRE batch (forward + rewind for all iterations)
 /// 4. Tracks win rates for P1 vs P2
 ///
-/// This is comparable to other benchmarks that measure forward gameplay.
+/// FIXED: Now uses iter_custom to time batches correctly, and reuses a single
+/// game instance (no cloning per iteration, just rewind back to start).
 fn bench_game_rewind_play_again(c: &mut Criterion) {
-    ensure_correct_working_directory();
-
-    // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Skipping benchmark - failed to load resources: {e}");
-            return;
-        }
-    };
+    let mut benchmark: Option<RewindPlayAgain> = None;
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
     group.measurement_time(get_benchmark_measurement_time());
 
-    let initial_seed = 42u64;
-
-    // Accumulator for aggregating metrics
-    let mut aggregated = GameMetrics {
-        turns: 0,
-        actions: 0,
-        duration: Duration::ZERO,
-        bytes_allocated: 0,
-        bytes_deallocated: 0,
-    };
-    let mut iteration_count = 0;
-    let mut p1_wins = 0;
-    let mut p2_wins = 0;
-
-    // Lazy initialization - only create midgame state on first iteration
-    let mut midgame_template: Option<GameState> = None;
-    let mut original_total_actions = 0;
-
     group.bench_function("rewind_play_again", |b| {
-        b.iter(|| {
-            // Initialize on first iteration
-            if midgame_template.is_none() {
-                let (game, total_actions) = create_midgame_state(&setup, initial_seed);
-                original_total_actions = total_actions;
-
-                eprintln!("\nRewind + Play Again mode (seed {initial_seed}):");
-                eprintln!("  Full game had {} actions", total_actions);
-                eprintln!("  Starting from midpoint (undo log cleared)");
-                eprintln!("  Will replay second half with different random seed per iteration");
-
-                midgame_template = Some(game);
+        b.iter_custom(|iters| {
+            if benchmark.is_none() {
+                let new_benchmark = RewindPlayAgain::new("SEQUENTIAL");
+                benchmark = Some(new_benchmark);
             }
 
-            // Clone the midgame template for this iteration
-            let mut game = midgame_template.as_ref().unwrap().clone();
-
-            // Use different seed for each iteration to explore different paths
-            let iteration_seed = initial_seed.wrapping_add(iteration_count as u64);
-
-            // Run forward gameplay using shared helper function
-            let (metrics, outcome) = run_forward_gameplay_from_snapshot(&mut game, iteration_seed);
-
-            aggregated += metrics;
-            match outcome {
-                GameOutcome::Player1Win => p1_wins += 1,
-                GameOutcome::Player2Win => p2_wins += 1,
-            }
-            iteration_count += 1;
+            let bench = benchmark.as_ref().unwrap();
+            bench.execute_batch_sequential(iters as usize)
         });
     });
 
-    if iteration_count > 0 {
-        print_aggregated_metrics("Rewind + Play Again", initial_seed, &aggregated, iteration_count);
-        eprintln!("\n=== Win Rate Analysis ===");
-        eprintln!(
-            "  P1 wins: {} ({:.1}%)",
-            p1_wins,
-            100.0 * p1_wins as f64 / iteration_count as f64
-        );
-        eprintln!(
-            "  P2 wins: {} ({:.1}%)",
-            p2_wins,
-            100.0 * p2_wins as f64 / iteration_count as f64
-        );
+    if let Some(ref bench) = benchmark {
+        let total_games = bench.get_total_games();
+        if total_games > 0 {
+            let aggregated_metrics = bench.get_aggregated_metrics();
+            print_aggregated_metrics(
+                "Rewind + Play Again (Sequential)",
+                bench.seed(),
+                &aggregated_metrics,
+                total_games,
+            );
+            bench.print_win_rates("Rewind + Play Again (Sequential)");
+        }
+    }
+
+    group.finish();
+}
+
+/// Benchmark: Parallel rewind + replay with different paths (PARALLEL with Rayon)
+/// Measures complete forward+rewind cycle with parallel execution using the RewindPlayAgain module
+///
+/// This benchmark measures MCTS-style parallel simulation:
+/// 1. Creates midgame state at 50% mark (done once in setup)
+/// 2. For each batch of iterations:
+///    - Clone game states for N threads (outside timing)
+///    - Each thread plays forward from midpoint and rewinds back
+///    - Times only the actual parallel gameplay
+/// 3. Tracks win rates and allocations across all threads
+fn bench_game_par_rewind_play_again(c: &mut Criterion) {
+    let mut benchmark: Option<RewindPlayAgain> = None;
+    let num_threads = num_cpus::get();
+
+    let mut group = c.benchmark_group("game_execution");
+    group.sample_size(10);
+    group.measurement_time(get_benchmark_measurement_time());
+
+    group.bench_function("par_rewind_play_again", |b| {
+        b.iter_custom(|iters| {
+            if benchmark.is_none() {
+                let new_benchmark = RewindPlayAgain::new("PARALLEL");
+                benchmark = Some(new_benchmark);
+            }
+
+            let bench = benchmark.as_ref().unwrap();
+            bench.execute_batch_parallel(iters as usize, num_threads)
+        });
+    });
+
+    if let Some(ref bench) = benchmark {
+        let total_games = bench.get_total_games();
+        if total_games > 0 {
+            let aggregated_metrics = bench.get_aggregated_metrics();
+            print_aggregated_metrics(
+                "Rewind + Play Again (Parallel)",
+                bench.seed(),
+                &aggregated_metrics,
+                total_games,
+            );
+            bench.print_win_rates("Rewind + Play Again (Parallel)");
+        }
     }
 
     group.finish();
 }
 
 /// Benchmark: Parallel rewind + replay with PINNED threads
-/// Measures forward gameplay after rewind across N pinned worker threads
+/// Measures complete forward+rewind cycle with pinned thread execution using the RewindPlayAgain module
 ///
-/// This benchmark models future MCTS parallel search with precise timing:
-/// 1. ONE-TIME SETUP: Create midgame state at 50% mark (undo log cleared)
-/// 2. PER-BATCH SETUP (outside timing): Clone snapshot to N worker threads
-/// 3. TIMED LOOP: Each thread (pinned to physical core) runs forward from mid-game
-/// 4. Last thread to finish records precise timing
-/// 5. Tracks win rates for P1 vs P2 across all parallel games
+/// This benchmark measures MCTS-style parallel simulation with pinned threads:
+/// 1. Creates midgame state at 50% mark (done once in setup)
+/// 2. For each batch of iterations:
+///    - Clone game states for N threads (outside timing)
+///    - Each thread plays forward from midpoint and rewinds back
+///    - Times only the actual parallel gameplay with microsecond-accurate timing
+/// 3. Tracks win rates and allocations across all threads
 ///
 /// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
 fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
-    ensure_correct_working_directory();
-
-    use pinned_thread_pool::execute_parallel_batch;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use std::time::Instant;
-
     // Configure thread count: Check BENCH_NUM_THREADS env var, otherwise use physical cores
     let num_physical_cores = num_cpus::get_physical();
     let num_threads = std::env::var("BENCH_NUM_THREADS")
@@ -1178,136 +1119,42 @@ fn bench_game_pinned_par_rewind_play_again(c: &mut Criterion) {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(num_physical_cores);
 
-    // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Skipping benchmark - failed to load resources: {e}");
-            return;
-        }
-    };
+    let mut benchmark: Option<RewindPlayAgain> = None;
 
     let mut group = c.benchmark_group("game_execution");
     group.sample_size(10);
     group.measurement_time(get_benchmark_measurement_time());
 
-    let initial_seed = 42u64;
-
-    // Lazy initialization - only create midgame state on first iteration
-    let mut midgame_template: Option<GameState> = None;
-    let mut original_actions_count = 0;
-
-    let mut batch_number = 0;
-    let total_p1_wins = AtomicUsize::new(0);
-    let total_p2_wins = AtomicUsize::new(0);
-    let total_games = AtomicUsize::new(0);
-
     group.bench_function("pinned_par_rewind_play_again", |b| {
         b.iter_custom(|iters| {
-            batch_number += 1;
-
-            // Initialize on first iteration
-            if midgame_template.is_none() {
-                let init_start = Instant::now();
-                let (game, actions_count) = create_midgame_state(&setup, initial_seed);
-                let init_duration = init_start.elapsed();
-
-                original_actions_count = actions_count;
-
-                eprintln!(
-                    "\nPinned Parallel Rewind + Play Again mode (seed {initial_seed}, {} threads):",
-                    num_threads
-                );
-                eprintln!("  Full game had {} actions", actions_count);
-                eprintln!("  Starting from midpoint (undo log cleared)");
-                eprintln!("  Replay second half in parallel with pinned threads");
-                eprintln!("  NOTE: Using custom thread pool with precise timing");
-                eprintln!("\n=== BATCH TIMING LOG ===");
-                eprintln!(
-                    "[BATCH-{}] INIT: {:.3}ms (from benchmark start)",
-                    batch_number,
-                    init_duration.as_secs_f64() * 1000.0
-                );
-
-                midgame_template = Some(game);
+            if benchmark.is_none() {
+                let new_benchmark = RewindPlayAgain::new("PINNED-PARALLEL");
+                benchmark = Some(new_benchmark);
             }
 
-            // Atomics for win tracking within this batch
-            let batch_p1_wins = Arc::new(AtomicUsize::new(0));
-            let batch_p2_wins = Arc::new(AtomicUsize::new(0));
-
-            let games_per_thread = (iters as usize).div_ceil(num_threads);
-            let total_iters = iters as usize;
-
-            // Clone atomics for closure
-            let p1_wins_clone = Arc::clone(&batch_p1_wins);
-            let p2_wins_clone = Arc::clone(&batch_p2_wins);
-
-            // Execute parallel batch with pinned threads
-            let initial_game = midgame_template.as_ref().unwrap();
-            let (batch_duration, _results) =
-                execute_parallel_batch(num_threads, initial_game, move |thread_id, thread_game| {
-                    for i in 0..games_per_thread {
-                        if (thread_id * games_per_thread + i) >= total_iters {
-                            break; // Don't overshoot total iters
-                        }
-
-                        // Thread-specific seed for this iteration
-                        let iter_num = thread_id * games_per_thread + i;
-                        let thread_seed = initial_seed.wrapping_add(iter_num as u64);
-
-                        // Run forward gameplay and track outcome
-                        let (_metrics, outcome) = run_forward_gameplay_from_snapshot(thread_game, thread_seed);
-
-                        match outcome {
-                            GameOutcome::Player1Win => {
-                                p1_wins_clone.fetch_add(1, Ordering::Relaxed);
-                            }
-                            GameOutcome::Player2Win => {
-                                p2_wins_clone.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                });
-
-            // Update total win counts
-            total_p1_wins.fetch_add(batch_p1_wins.load(Ordering::Relaxed), Ordering::Relaxed);
-            total_p2_wins.fetch_add(batch_p2_wins.load(Ordering::Relaxed), Ordering::Relaxed);
-            total_games.fetch_add(iters as usize, Ordering::Relaxed);
-
-            eprintln!(
-                "[BATCH-{}] EXEC: {:.3}ms ({} iters, {:.3}µs/iter)",
-                batch_number,
-                batch_duration.as_secs_f64() * 1000.0,
-                iters,
-                (batch_duration.as_secs_f64() * 1_000_000.0) / iters as f64
-            );
-
-            batch_duration
+            let bench = benchmark.as_ref().unwrap();
+            bench.execute_batch_pinned_parallel(iters as usize, num_threads)
         });
     });
 
-    // Print win rate analysis after all batches
-    let final_games = total_games.load(Ordering::Relaxed);
-    if final_games > 0 {
-        let final_p1_wins = total_p1_wins.load(Ordering::Relaxed);
-        let final_p2_wins = total_p2_wins.load(Ordering::Relaxed);
-        eprintln!("\n=== Win Rate Analysis (across all {} games) ===", final_games);
-        eprintln!(
-            "  P1 wins: {} ({:.1}%)",
-            final_p1_wins,
-            100.0 * final_p1_wins as f64 / final_games as f64
-        );
-        eprintln!(
-            "  P2 wins: {} ({:.1}%)",
-            final_p2_wins,
-            100.0 * final_p2_wins as f64 / final_games as f64
-        );
+    if let Some(ref bench) = benchmark {
+        let total_games = bench.get_total_games();
+        if total_games > 0 {
+            let aggregated_metrics = bench.get_aggregated_metrics();
+            print_aggregated_metrics(
+                "Rewind + Play Again (Pinned-Parallel)",
+                bench.seed(),
+                &aggregated_metrics,
+                total_games,
+            );
+            bench.print_win_rates("Rewind + Play Again (Pinned-Parallel)");
+        }
     }
 
     group.finish();
 }
 
+/*
 /// Benchmark: Parallel rewind + replay with different paths (models MCTS parallel search)
 /// Measures forward gameplay after rewind across N worker threads
 ///
@@ -1334,7 +1181,7 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
         .ok(); // Ignore error if already initialized
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -1481,13 +1328,14 @@ fn bench_game_par_rewind_play_again(c: &mut Criterion) {
 
     group.finish();
 }
+*/
 
 /// Benchmark: Save snapshot to file
 fn bench_save_snapshot(c: &mut Criterion) {
     ensure_correct_working_directory();
 
     // Check if test resources exist and load once
-    let setup = match BenchmarkSetup::load_same_deck("decks/simple_bolt.dck") {
+    let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Skipping benchmark - failed to load resources: {e}");
@@ -1766,8 +1614,8 @@ criterion_group!(
     bench_game_snapshot,
     bench_game_rewind,
     bench_game_rewind_play_again,
-    bench_game_par_rewind_play_again,
-    bench_game_pinned_par_rewind_play_again,
+    bench_game_par_rewind_play_again,        // ENABLED: now uses RewindPlayAgain module
+    bench_game_pinned_par_rewind_play_again, // ENABLED: now uses RewindPlayAgain module
     bench_save_snapshot,
     bench_game_old_school_mono_black_vs_the_deck,
     bench_game_old_school_white_weenie_mirror,
