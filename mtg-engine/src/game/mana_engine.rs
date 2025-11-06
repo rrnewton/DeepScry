@@ -118,6 +118,7 @@ use crate::game::mana_payment::{
     SimpleManaResolver,
 };
 use crate::game::GameState;
+use smallvec::SmallVec;
 
 /// Maximum mana production capacity
 ///
@@ -479,7 +480,8 @@ fn has_mana_ability(card: &crate::core::Card) -> bool {
         return false;
     }
 
-    let text_lower = card.text.to_lowercase();
+    // Use pre-lowercased text to avoid allocation
+    let text_lower = &card.text_lowercase;
     // Check for tap-to-add-mana patterns
     // Examples: "{T}: Add {G}", "Add one mana of any color", "{T}: Add {C}"
     text_lower.contains("{t}: add") || (text_lower.contains("add") && text_lower.contains("mana"))
@@ -490,7 +492,8 @@ fn has_mana_ability(card: &crate::core::Card) -> bool {
 /// Analyzes oracle text to determine what mana a creature can produce.
 /// Examples: Llanowar Elves "{T}: Add {G}", Birds of Paradise "Add one mana of any color"
 fn get_creature_mana_production(card: &crate::core::Card) -> Option<ManaProduction> {
-    let text_lower = card.text.to_lowercase();
+    // Use pre-lowercased text to avoid allocation
+    let text_lower = &card.text_lowercase;
 
     // Check for any-color production (Birds of Paradise pattern)
     if text_lower.contains("any color") {
@@ -534,7 +537,8 @@ fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProductio
     }
 
     // Check for dual lands by looking at basic land subtypes
-    let mut colors = Vec::new();
+    // Use SmallVec to store dual land colors inline (no heap allocation for 2 colors)
+    let mut colors = SmallVec::<[ManaColor; 2]>::new();
 
     // Check subtypes for basic land types
     for subtype in &card.subtypes {
@@ -558,8 +562,8 @@ fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProductio
 
     // Check oracle text for any-color lands (City of Brass pattern)
     // Example: "Add one mana of any color"
-    let text_lower = card.text.to_lowercase();
-    if text_lower.contains("any color") {
+    // Use pre-lowercased text to avoid allocation
+    if card.text_lowercase.contains("any color") {
         return Some(ManaProduction::free(ManaProductionKind::AnyColor));
     }
 
@@ -749,6 +753,7 @@ mod tests {
         let mut llanowar = Card::new(EntityId::new(1), "Llanowar Elves".to_string(), p1_id);
         llanowar.types.push(CardType::Creature);
         llanowar.text = "{T}: Add {G}.".to_string();
+        llanowar.text_lowercase = llanowar.text.to_lowercase();
         assert!(has_mana_ability(&llanowar));
         assert_eq!(
             get_creature_mana_production(&llanowar),
@@ -759,6 +764,7 @@ mod tests {
         let mut birds = Card::new(EntityId::new(2), "Birds of Paradise".to_string(), p1_id);
         birds.types.push(CardType::Creature);
         birds.text = "{T}: Add one mana of any color.".to_string();
+        birds.text_lowercase = birds.text.to_lowercase();
         assert!(has_mana_ability(&birds));
         assert_eq!(
             get_creature_mana_production(&birds),
@@ -769,6 +775,7 @@ mod tests {
         let mut bear = Card::new(EntityId::new(3), "Grizzly Bears".to_string(), p1_id);
         bear.types.push(CardType::Creature);
         bear.text = "".to_string();
+        bear.text_lowercase = bear.text.to_lowercase();
         assert!(!has_mana_ability(&bear));
     }
 
@@ -790,6 +797,7 @@ mod tests {
         elf.types.push(CardType::Creature);
         elf.controller = p1_id;
         elf.text = "{T}: Add {G}.".to_string();
+        elf.text_lowercase = elf.text.to_lowercase();
         elf.turn_entered_battlefield = Some(game.turn.turn_number - 1); // Not summoning sick
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
@@ -829,6 +837,7 @@ mod tests {
         elf.types.push(CardType::Creature);
         elf.controller = p1_id;
         elf.text = "{T}: Add {G}.".to_string();
+        elf.text_lowercase = elf.text.to_lowercase();
         elf.turn_entered_battlefield = Some(game.turn.turn_number); // Summoning sick!
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);

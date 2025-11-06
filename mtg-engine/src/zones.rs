@@ -127,7 +127,6 @@ impl CardZone {
 }
 
 impl<A: Allocator + Clone> CardZone<A> {
-
     pub fn add(&mut self, card_id: CardId) {
         self.cards.push(card_id);
     }

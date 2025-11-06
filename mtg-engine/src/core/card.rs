@@ -58,6 +58,9 @@ pub struct Card {
     /// Oracle text
     pub text: String,
 
+    /// Pre-lowercased oracle text (computed once at load time to avoid repeated allocations)
+    pub text_lowercase: String,
+
     /// Current zone owner (player who owns this card)
     pub owner: PlayerId,
 
@@ -107,6 +110,7 @@ impl Card {
             power_bonus: 0,
             toughness_bonus: 0,
             text: String::new(),
+            text_lowercase: String::new(),
             owner,
             controller: owner,
             tapped: false,

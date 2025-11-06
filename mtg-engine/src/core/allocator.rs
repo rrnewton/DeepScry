@@ -49,27 +49,15 @@
 /// Re-export bumpalo::Bump for convenience
 pub use bumpalo::Bump;
 
-/// Thread-local storage for simulation arenas.
-///
-/// This provides a convenient way to use per-thread bump allocators
-/// without manual lifetime management.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use mtg_forge_rs::core::allocator::with_simulation_arena;
-///
-/// let result = with_simulation_arena(|bump| {
-///     let mut v = Vec::new_in(bump);
-///     v.push(42);
-///     v[0]
-/// });
-/// assert_eq!(result, 42);
-/// ```
 #[cfg(feature = "thread-local-arenas")]
-thread_local! {
-    static SIMULATION_ARENA: std::cell::RefCell<Bump> =
-        std::cell::RefCell::new(Bump::new());
+mod thread_local_arena {
+    use super::*;
+
+    // Thread-local storage for simulation arenas - accessed via with_simulation_arena()
+    thread_local! {
+        pub(super) static SIMULATION_ARENA: std::cell::RefCell<Bump> =
+            std::cell::RefCell::new(Bump::new());
+    }
 }
 
 /// Run a closure with access to a thread-local bump allocator.
@@ -96,7 +84,7 @@ pub fn with_simulation_arena<F, R>(f: F) -> R
 where
     F: FnOnce(&Bump) -> R,
 {
-    SIMULATION_ARENA.with(|arena_cell| {
+    thread_local_arena::SIMULATION_ARENA.with(|arena_cell| {
         let mut arena = arena_cell.borrow_mut();
 
         // Reset arena for clean state
@@ -336,16 +324,15 @@ mod tests {
         }
 
         // Box<dyn Controller> with custom allocator
-        let controller1: Box<dyn Controller, _> =
-            Box::new_in(RandomController { seed: 42 }, &bump);
+        let controller1: Box<dyn Controller, _> = Box::new_in(RandomController { seed: 42 }, &bump);
         assert_eq!(controller1.choose_action(), 2);
 
-        let controller2: Box<dyn Controller, _> =
-            Box::new_in(HeuristicController { depth: 5 }, &bump);
+        let controller2: Box<dyn Controller, _> = Box::new_in(HeuristicController { depth: 5 }, &bump);
         assert_eq!(controller2.choose_action(), 10);
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_box_with_multiple_trait_objects() {
         let bump = Bump::new();
 

@@ -166,6 +166,7 @@ impl CardDefinition {
         card.power = self.power;
         card.toughness = self.toughness;
         card.text = self.oracle.clone();
+        card.text_lowercase = self.oracle.to_lowercase(); // Pre-compute to avoid repeated allocations
 
         // Parse keywords
         card.keywords = self.parse_keywords();

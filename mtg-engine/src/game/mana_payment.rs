@@ -32,6 +32,7 @@
 //! ```
 
 use crate::core::{CardId, ManaCost};
+use smallvec::SmallVec;
 
 /// Result of checking whether a mana cost can be paid
 ///
@@ -120,7 +121,8 @@ pub enum ManaProductionKind {
     Fixed(ManaColor),
 
     /// Can produce one of several colors (e.g., Taiga → {R} or {G})
-    Choice(Vec<ManaColor>),
+    /// Uses SmallVec to store dual lands (2 colors) inline without heap allocation
+    Choice(SmallVec<[ManaColor; 2]>),
 
     /// Can produce any color (e.g., City of Brass)
     AnyColor,
@@ -790,7 +792,10 @@ mod tests {
         let sources = vec![
             ManaSource {
                 card_id: CardId::new(1),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])),
+                production: ManaProduction::free(ManaProductionKind::Choice(SmallVec::from_buf([
+                    ManaColor::Red,
+                    ManaColor::Green,
+                ]))),
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
@@ -867,7 +872,10 @@ mod tests {
             },
             ManaSource {
                 card_id: CardId::new(2),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])), // Taiga
+                production: ManaProduction::free(ManaProductionKind::Choice(SmallVec::from_buf([
+                    ManaColor::Red,
+                    ManaColor::Green,
+                ]))), // Taiga
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
@@ -917,7 +925,10 @@ mod tests {
             },
             ManaSource {
                 card_id: CardId::new(3),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])), // Taiga
+                production: ManaProduction::free(ManaProductionKind::Choice(SmallVec::from_buf([
+                    ManaColor::Red,
+                    ManaColor::Green,
+                ]))), // Taiga
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
@@ -1082,7 +1093,10 @@ mod tests {
             },
             ManaSource {
                 card_id: CardId::new(2),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])),
+                production: ManaProduction::free(ManaProductionKind::Choice(SmallVec::from_buf([
+                    ManaColor::Red,
+                    ManaColor::Green,
+                ]))),
                 is_tapped: false,
                 has_summoning_sickness: false,
             },

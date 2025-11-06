@@ -27,7 +27,11 @@ impl<'a> GameInitializer<'a> {
         player2_deck: &DeckList,
         starting_life: i32,
     ) -> Result<GameState> {
-        let mut game = GameState::new_two_player(player1_name, player2_name, starting_life);
+        // Calculate total cards for pre-sizing EntityStore
+        let total_cards: usize = player1_deck.main_deck.iter().map(|e| e.count as usize).sum::<usize>()
+            + player2_deck.main_deck.iter().map(|e| e.count as usize).sum::<usize>();
+
+        let mut game = GameState::new_two_player_with_capacity(player1_name, player2_name, starting_life, total_cards);
 
         // Get player IDs
         let player1_id = game.players[0].id;
