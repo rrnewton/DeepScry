@@ -206,8 +206,8 @@ pub struct RewindPlayAgainConfig {
     /// - None = infinite (never restart)
     /// - Some(0) = play forward only, no rewind
     /// - Some(n) = rewind n times then restart
-    pub rounds_before_restart: Option<usize>,
-    /// How to reinitialize when restarting (only relevant if rounds_before_restart is Some)
+    pub rewinds_before_restart: Option<usize>,
+    /// How to reinitialize when restarting (only relevant if rewinds_before_restart is Some)
     pub restart_strategy: RestartStrategy,
     /// Logging mode for game execution
     pub logging_mode: LoggingMode,
@@ -219,7 +219,7 @@ impl Default for RewindPlayAgainConfig {
             rewind_percent: 0.5,
             deck1_path: BASELINE_DECK_PATH.to_string(),
             deck2_path: BASELINE_DECK_PATH.to_string(),
-            rounds_before_restart: None,
+            rewinds_before_restart: None,
             restart_strategy: RestartStrategy::Fresh,
             logging_mode: LoggingMode::Silent,
         }
@@ -243,9 +243,9 @@ impl RewindPlayAgainConfig {
         self
     }
 
-    /// Set the number of rounds before restart
-    pub fn rounds_before_restart(mut self, rounds: Option<usize>) -> Self {
-        self.rounds_before_restart = rounds;
+    /// Set the number of rewinds before restart
+    pub fn rewinds_before_restart(mut self, rewinds: Option<usize>) -> Self {
+        self.rewinds_before_restart = rewinds;
         self
     }
 
