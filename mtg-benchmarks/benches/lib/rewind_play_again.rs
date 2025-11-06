@@ -190,6 +190,32 @@ pub enum GameOutcome {
     Player2Win,
 }
 
+/// Trait for batch benchmark execution
+///
+/// Provides a unified interface for running batches of game simulations,
+/// supporting both sequential and parallel execution strategies.
+#[allow(dead_code)] // Infrastructure for future use
+pub trait BatchBenchmark {
+    /// Execute a batch of games
+    ///
+    /// # Parameters
+    /// - `batch_size`: Number of games to execute
+    /// - `num_threads`: Number of threads to use (implementations may restrict this)
+    ///
+    /// # Returns
+    /// Duration of the batch execution
+    ///
+    /// # Errors
+    /// Returns an error if the num_threads parameter is not supported by this implementation
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String>;
+
+    /// Get aggregated metrics collected so far
+    fn get_metrics(&self) -> GameMetrics;
+
+    /// Get total number of games played
+    fn total_games(&self) -> usize;
+}
+
 /// Benchmark state for rewind + play again benchmarks
 ///
 /// Consolidates shared logic across sequential and parallel variants.
@@ -623,5 +649,93 @@ impl RewindPlayAgain {
         );
         eprintln!("  P1 wins: {} ({:.1}%)", p1_wins, 100.0 * p1_wins as f64 / total as f64);
         eprintln!("  P2 wins: {} ({:.1}%)", p2_wins, 100.0 * p2_wins as f64 / total as f64);
+    }
+}
+
+/// Implement BatchBenchmark for RewindPlayAgain (sequential execution only)
+impl BatchBenchmark for RewindPlayAgain {
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
+        if num_threads != 1 {
+            return Err(format!(
+                "RewindPlayAgain only supports sequential execution (num_threads=1), got {}",
+                num_threads
+            ));
+        }
+        Ok(self.execute_batch_sequential(batch_size))
+    }
+
+    fn get_metrics(&self) -> GameMetrics {
+        self.get_aggregated_metrics()
+    }
+
+    fn total_games(&self) -> usize {
+        self.get_total_games()
+    }
+}
+
+/// Parallel wrapper using Rayon for batch benchmark execution
+///
+/// Wraps any BatchBenchmark implementation and provides parallel execution
+/// using Rayon's thread pool. The wrapped benchmark must support sequential
+/// execution (num_threads=1).
+#[allow(dead_code)] // Infrastructure for future use
+pub struct ParRayon<T> {
+    inner: T,
+}
+
+#[allow(dead_code)] // Infrastructure for future use
+impl<T> ParRayon<T> {
+    /// Create a new parallel wrapper around a sequential benchmark
+    pub fn new(inner: T) -> Self {
+        ParRayon { inner }
+    }
+}
+
+impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
+        use rayon::prelude::*;
+
+        if num_threads < 1 {
+            return Err(format!("num_threads must be >= 1, got {}", num_threads));
+        }
+
+        // For single-threaded execution, just delegate to the inner benchmark
+        if num_threads == 1 {
+            return self.inner.execute_batch(batch_size, 1);
+        }
+
+        // Calculate games per thread
+        let games_per_thread = batch_size.div_ceil(num_threads);
+
+        // Start timing
+        let start = std::time::Instant::now();
+
+        // Execute in parallel using Rayon
+        // Each thread calls the inner benchmark's sequential execute_batch
+        (0..num_threads)
+            .into_par_iter()
+            .try_for_each(|thread_id| -> Result<(), String> {
+                let thread_batch_size = if thread_id == num_threads - 1 {
+                    // Last thread handles any remainder
+                    batch_size - (thread_id * games_per_thread)
+                } else {
+                    games_per_thread
+                };
+
+                if thread_batch_size > 0 {
+                    self.inner.execute_batch(thread_batch_size, 1)?;
+                }
+                Ok(())
+            })?;
+
+        Ok(start.elapsed())
+    }
+
+    fn get_metrics(&self) -> GameMetrics {
+        self.inner.get_metrics()
+    }
+
+    fn total_games(&self) -> usize {
+        self.inner.total_games()
     }
 }
