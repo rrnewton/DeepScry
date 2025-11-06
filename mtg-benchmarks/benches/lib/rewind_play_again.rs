@@ -5,11 +5,96 @@
 //! back to explore different paths.
 
 use crate::allocator::{AllocStats, AllocTracker};
-use crate::{create_midgame_state, BenchmarkSetup, GameMetrics, BASELINE_DECK_PATH};
+use crate::{create_midgame_state, BenchmarkSetup, BASELINE_DECK_PATH};
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Metrics collected during game execution
+#[derive(Debug, Clone)]
+pub struct GameMetrics {
+    /// Total turns played
+    pub turns: u32,
+    /// Total actions (from UndoLog)
+    pub actions: usize,
+    /// Game duration
+    pub duration: Duration,
+    /// Bytes allocated during game execution
+    pub bytes_allocated: usize,
+    /// Bytes deallocated during game execution
+    pub bytes_deallocated: usize,
+}
+
+impl GameMetrics {
+    /// Calculate actions per second
+    pub fn actions_per_sec(&self) -> f64 {
+        self.actions as f64 / self.duration.as_secs_f64()
+    }
+
+    /// Calculate turns per second
+    pub fn turns_per_sec(&self) -> f64 {
+        self.turns as f64 / self.duration.as_secs_f64()
+    }
+
+    /// Calculate average actions per turn
+    pub fn actions_per_turn(&self) -> f64 {
+        if self.turns == 0 {
+            0.0
+        } else {
+            self.actions as f64 / self.turns as f64
+        }
+    }
+
+    /// Calculate net bytes allocated (allocated - deallocated)
+    pub fn net_bytes_allocated(&self) -> i64 {
+        self.bytes_allocated as i64 - self.bytes_deallocated as i64
+    }
+
+    /// Calculate bytes allocated per turn
+    pub fn bytes_per_turn(&self) -> f64 {
+        if self.turns == 0 {
+            0.0
+        } else {
+            self.bytes_allocated as f64 / self.turns as f64
+        }
+    }
+
+    /// Calculate bytes allocated per second
+    pub fn bytes_per_sec(&self) -> f64 {
+        self.bytes_allocated as f64 / self.duration.as_secs_f64()
+    }
+
+    /// Calculate average games per second (for aggregated metrics)
+    pub fn avg_games_per_sec(&self, num_games: usize) -> f64 {
+        num_games as f64 / self.duration.as_secs_f64()
+    }
+}
+
+/// Implement addition for GameMetrics to support aggregation
+impl std::ops::Add for GameMetrics {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        GameMetrics {
+            turns: self.turns + other.turns,
+            actions: self.actions + other.actions,
+            duration: self.duration + other.duration,
+            bytes_allocated: self.bytes_allocated + other.bytes_allocated,
+            bytes_deallocated: self.bytes_deallocated + other.bytes_deallocated,
+        }
+    }
+}
+
+impl std::ops::AddAssign for GameMetrics {
+    fn add_assign(&mut self, other: Self) {
+        self.turns += other.turns;
+        self.actions += other.actions;
+        self.duration += other.duration;
+        self.bytes_allocated += other.bytes_allocated;
+        self.bytes_deallocated += other.bytes_deallocated;
+    }
+}
 
 /// Helper macro to create allocation tracker
 macro_rules! stats_region {
@@ -74,7 +159,7 @@ impl RewindPlayAgain {
     pub fn new(mode_tag: &str) -> Self {
         use crate::ensure_correct_working_directory;
 
-        let seed = 42u64;
+        let seed = 43u64;
         ensure_correct_working_directory();
         let setup = match BenchmarkSetup::load_same_deck(BASELINE_DECK_PATH) {
             Ok(s) => s,
