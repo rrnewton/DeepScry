@@ -119,11 +119,6 @@ impl RewindPlayAgain {
         }
     }
 
-    /// Get the seed used for this benchmark
-    pub fn seed(&self) -> u64 {
-        self.seed
-    }
-
     /// Configure game logging based on the config's logging_mode
     ///
     /// - Silent: VerbosityLevel::Silent, no capture
