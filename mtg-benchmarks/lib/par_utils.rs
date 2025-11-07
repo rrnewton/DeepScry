@@ -10,8 +10,8 @@
 //! evenly with quotient/remainder, and aggregate results.
 
 use super::types::{BatchBenchmark, GameMetrics};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -102,7 +102,9 @@ where
     let ready_flags: Arc<Vec<AtomicBool>> = Arc::new((0..num_threads).map(|_| AtomicBool::new(false)).collect());
     let go_flag = Arc::new(AtomicBool::new(false));
     let finish_counter = Arc::new(AtomicUsize::new(0));
-    let finish_time_nanos = Arc::new(AtomicU64::new(0));
+    // Store finish instant - the last thread to finish records its Instant
+    // Main thread will calculate duration from its start time
+    let finish_instant: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
 
     // Shared work function
     let work_fn = Arc::new(work_fn);
@@ -120,7 +122,7 @@ where
         let ready_flags_clone = Arc::clone(&ready_flags);
         let go_flag_clone = Arc::clone(&go_flag);
         let finish_counter_clone = Arc::clone(&finish_counter);
-        let finish_time_clone = Arc::clone(&finish_time_nanos);
+        let finish_instant_clone = Arc::clone(&finish_instant);
         let work_fn_clone = Arc::clone(&work_fn);
 
         let handle = thread::spawn(move || {
@@ -137,19 +139,19 @@ where
                 std::hint::spin_loop();
             }
 
-            // Record local start time (for duration calculation if this thread finishes last)
-            let local_start = Instant::now();
-
             // Execute work
             let result = work_fn_clone(thread_id, &mut thread_data);
+
+            // Record finish instant
+            let now = Instant::now();
 
             // Increment finish counter
             let count = finish_counter_clone.fetch_add(1, Ordering::AcqRel) + 1;
 
-            // If this thread is the last to finish, record the time
+            // If this thread is the last to finish, record the finish instant
+            // Main thread will calculate the duration from its start time
             if count == num_threads {
-                let duration = local_start.elapsed();
-                finish_time_clone.store(duration.as_nanos() as u64, Ordering::Release);
+                *finish_instant_clone.lock().unwrap() = Some(now);
             }
 
             result
@@ -173,22 +175,27 @@ where
     let mut main_data = template.clone();
     let main_result = work_fn(0, &mut main_data);
 
+    // Record main thread's finish instant
+    let main_finish = Instant::now();
+
     // Increment finish counter for main thread
     let count = finish_counter.fetch_add(1, Ordering::AcqRel) + 1;
 
-    // If main thread is last to finish, record time
+    // If main thread is last to finish, record its finish instant
     if count == num_threads {
-        let duration = start.elapsed();
-        finish_time_nanos.store(duration.as_nanos() as u64, Ordering::Release);
+        *finish_instant.lock().unwrap() = Some(main_finish);
     }
 
-    // Spin waiting for finish time to be written
-    while finish_time_nanos.load(Ordering::Acquire) == 0 {
+    // Wait for the last thread to record its finish instant
+    let final_instant = loop {
+        if let Some(instant) = *finish_instant.lock().unwrap() {
+            break instant;
+        }
         std::hint::spin_loop();
-    }
+    };
 
-    let duration_nanos = finish_time_nanos.load(Ordering::Acquire);
-    let duration = Duration::from_nanos(duration_nanos);
+    // Calculate duration from the main thread's start time to the last thread's finish time
+    let duration = final_instant.duration_since(start);
 
     // Wait for all worker threads to exit and collect results
     let mut results = vec![main_result];
