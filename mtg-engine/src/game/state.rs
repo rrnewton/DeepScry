@@ -58,6 +58,20 @@ pub struct GameState {
 impl GameState {
     /// Create a new game with two players
     pub fn new_two_player(player1_name: String, player2_name: String, starting_life: i32) -> Self {
+        Self::new_two_player_with_capacity(player1_name, player2_name, starting_life, 0)
+    }
+
+    /// Create a new game with two players and pre-allocated card storage
+    ///
+    /// The `deck_capacity` parameter specifies the expected total number of cards
+    /// (typically 60 cards per deck × 2 players = 120 cards for standard constructed).
+    /// Pre-sizing avoids HashMap resizes during deck loading.
+    pub fn new_two_player_with_capacity(
+        player1_name: String,
+        player2_name: String,
+        starting_life: i32,
+        deck_capacity: usize,
+    ) -> Self {
         let mut next_id = 0;
 
         // Create players with unified IDs
@@ -78,8 +92,15 @@ impl GameState {
         let shared_id = PlayerId::new(next_id);
         next_id += 1;
 
+        // Pre-size EntityStore if capacity is specified
+        let cards = if deck_capacity > 0 {
+            EntityStore::with_capacity(deck_capacity)
+        } else {
+            EntityStore::new()
+        };
+
         GameState {
-            cards: EntityStore::new(),
+            cards,
             players,
             player_zones,
             battlefield: CardZone::new(Zone::Battlefield, shared_id),

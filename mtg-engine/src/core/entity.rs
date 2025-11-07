@@ -212,6 +212,17 @@ where
         }
     }
 
+    /// Create a new EntityStore with pre-allocated capacity
+    ///
+    /// This avoids HashMap resizes during initial entity loading.
+    /// Use this when you know the approximate number of entities upfront.
+    pub fn with_capacity(capacity: usize) -> Self {
+        EntityStore {
+            entities: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            next_id: 0,
+        }
+    }
+
     /// Generate a new unique EntityId
     pub fn next_id(&mut self) -> EntityId<T> {
         let id = EntityId::new(self.next_id);
