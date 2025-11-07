@@ -66,9 +66,9 @@ mod benchlib;
 
 use allocator::{AllocStats, AllocTracker};
 use benchlib::{
-    ensure_correct_working_directory, get_benchmark_num_threads, get_benchmark_measurement_time, print_aggregated_metrics, BatchBenchmark,
-    BenchmarkSetup, GameMetrics, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
-    RewindPlayAgainConfig, BASELINE_DECK_PATH,
+    ensure_correct_working_directory, get_benchmark_measurement_time, get_benchmark_num_threads,
+    print_aggregated_metrics, BatchBenchmark, BenchmarkSetup, GameMetrics, LoggingMode, ParPinned, ParRayon,
+    RestartStrategy, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
@@ -517,7 +517,7 @@ fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
 fn bench_robots_mirror_pinned_par_rewind_play_again(c: &mut Criterion) {
     let num_threads = get_benchmark_num_threads();
 
-    let mut benchmark: Option<ParPinned> = None;
+    let mut benchmark: Option<ParPinned<RewindPlayAgain>> = None;
 
     let mut group = c.benchmark_group("robots_mirror");
     group.sample_size(10);
