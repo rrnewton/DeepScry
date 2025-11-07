@@ -479,7 +479,8 @@ fn has_mana_ability(card: &crate::core::Card) -> bool {
         return false;
     }
 
-    let text_lower = card.text.to_lowercase();
+    // Use cached lowercase text instead of allocating
+    let text_lower = &card.cache.text_lowercase;
     // Check for tap-to-add-mana patterns
     // Examples: "{T}: Add {G}", "Add one mana of any color", "{T}: Add {C}"
     text_lower.contains("{t}: add") || (text_lower.contains("add") && text_lower.contains("mana"))
@@ -490,31 +491,30 @@ fn has_mana_ability(card: &crate::core::Card) -> bool {
 /// Analyzes oracle text to determine what mana a creature can produce.
 /// Examples: Llanowar Elves "{T}: Add {G}", Birds of Paradise "Add one mana of any color"
 fn get_creature_mana_production(card: &crate::core::Card) -> Option<ManaProduction> {
-    let text_lower = card.text.to_lowercase();
-
+    // Use cached values from CardCache to avoid allocation
     // Check for any-color production (Birds of Paradise pattern)
-    if text_lower.contains("any color") {
+    if card.cache.text_contains_any_color {
         return Some(ManaProduction::free(ManaProductionKind::AnyColor));
     }
 
-    // Check for specific color production patterns
+    // Check for specific color production patterns using cached flags
     // Pattern: "{T}: Add {G}" or similar
-    if text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}") {
+    if card.cache.text_produces_white {
         return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White)));
     }
-    if text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}") {
+    if card.cache.text_produces_blue {
         return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)));
     }
-    if text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}") {
+    if card.cache.text_produces_black {
         return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black)));
     }
-    if text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}") {
+    if card.cache.text_produces_red {
         return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red)));
     }
-    if text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}") {
+    if card.cache.text_produces_green {
         return Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)));
     }
-    if text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}") {
+    if card.cache.text_produces_colorless {
         return Some(ManaProduction::free(ManaProductionKind::Colorless));
     }
 
@@ -558,8 +558,8 @@ fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProductio
 
     // Check oracle text for any-color lands (City of Brass pattern)
     // Example: "Add one mana of any color"
-    let text_lower = card.text.to_lowercase();
-    if text_lower.contains("any color") {
+    // Use cached flag to avoid allocation
+    if card.cache.text_contains_any_color {
         return Some(ManaProduction::free(ManaProductionKind::AnyColor));
     }
 
@@ -748,7 +748,7 @@ mod tests {
         // Test Llanowar Elves pattern: "{T}: Add {G}"
         let mut llanowar = Card::new(EntityId::new(1), "Llanowar Elves".to_string(), p1_id);
         llanowar.types.push(CardType::Creature);
-        llanowar.text = "{T}: Add {G}.".to_string();
+        llanowar.set_text("{T}: Add {G}.".to_string());
         assert!(has_mana_ability(&llanowar));
         assert_eq!(
             get_creature_mana_production(&llanowar),
@@ -758,7 +758,7 @@ mod tests {
         // Test Birds of Paradise pattern: "Add one mana of any color"
         let mut birds = Card::new(EntityId::new(2), "Birds of Paradise".to_string(), p1_id);
         birds.types.push(CardType::Creature);
-        birds.text = "{T}: Add one mana of any color.".to_string();
+        birds.set_text("{T}: Add one mana of any color.".to_string());
         assert!(has_mana_ability(&birds));
         assert_eq!(
             get_creature_mana_production(&birds),
@@ -768,7 +768,7 @@ mod tests {
         // Test non-mana creature
         let mut bear = Card::new(EntityId::new(3), "Grizzly Bears".to_string(), p1_id);
         bear.types.push(CardType::Creature);
-        bear.text = "".to_string();
+        bear.set_text("".to_string());
         assert!(!has_mana_ability(&bear));
     }
 
@@ -789,7 +789,7 @@ mod tests {
         let mut elf = Card::new(elf_id, "Llanowar Elves".to_string(), p1_id);
         elf.types.push(CardType::Creature);
         elf.controller = p1_id;
-        elf.text = "{T}: Add {G}.".to_string();
+        elf.set_text("{T}: Add {G}.".to_string());
         elf.turn_entered_battlefield = Some(game.turn.turn_number - 1); // Not summoning sick
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
@@ -828,7 +828,7 @@ mod tests {
         let mut elf = Card::new(elf_id, "Llanowar Elves".to_string(), p1_id);
         elf.types.push(CardType::Creature);
         elf.controller = p1_id;
-        elf.text = "{T}: Add {G}.".to_string();
+        elf.set_text("{T}: Add {G}.".to_string());
         elf.turn_entered_battlefield = Some(game.turn.turn_number); // Summoning sick!
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);

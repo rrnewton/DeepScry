@@ -3056,7 +3056,8 @@ impl<'a> GameLoop<'a> {
                         //
                         // We need to distinguish between these cases.
                         // For now, check if the ability description contains "target"
-                        let requires_targets = ability.description.to_lowercase().contains("target");
+                        // Use cached value to avoid allocation
+                        let requires_targets = ability.cache.requires_target;
 
                         if requires_targets && valid_targets.is_empty() {
                             // Ability requires targets but none are available

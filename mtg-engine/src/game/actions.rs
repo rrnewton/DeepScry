@@ -491,10 +491,11 @@ impl GameState {
         // Check for targeting restrictions in the ability description
         // For Royal Assassin: "Destroy target tapped creature"
         // For Strip Mine: "Destroy target land"
-        let requires_tapped = ability.description.to_lowercase().contains("tapped");
-        let requires_untapped = ability.description.to_lowercase().contains("untapped");
-        let targets_creature = ability.description.to_lowercase().contains("creature");
-        let targets_land = ability.description.to_lowercase().contains("land");
+        // Use cached values to avoid allocation
+        let requires_tapped = ability.cache.targets_tapped;
+        let requires_untapped = ability.cache.targets_untapped;
+        let targets_creature = ability.cache.targets_creature;
+        let targets_land = ability.cache.targets_land;
 
         // Check each effect to determine valid targets
         for effect in &ability.effects {

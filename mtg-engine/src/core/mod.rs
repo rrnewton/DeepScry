@@ -9,9 +9,9 @@ pub mod player;
 pub mod spell_ability;
 pub mod types;
 
-pub use card::{Card, CardType};
+pub use card::{Card, CardCache, CardType};
 pub use costs::Cost;
-pub use effects::{ActivatedAbility, Effect, Keyword, TargetRef, Trigger, TriggerEvent};
+pub use effects::{AbilityCache, ActivatedAbility, Effect, Keyword, TargetRef, Trigger, TriggerEvent};
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use mana::{Color, ManaCost, ManaPool};
 pub use player::Player;

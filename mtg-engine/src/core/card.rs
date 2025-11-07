@@ -19,6 +19,100 @@ pub enum CardType {
     Planeswalker,
 }
 
+/// Cache for expensive string operations on Card
+/// Pre-computed at card load time to avoid repeated allocations during gameplay
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardCache {
+    /// Lowercase version of card.text (computed once)
+    pub text_lowercase: String,
+
+    /// Lowercase version of card.name (computed once)
+    pub name_lowercase: String,
+
+    // Pre-computed contains() checks for mana abilities
+    /// Contains "add" in text (generic mana ability marker)
+    pub text_contains_add: bool,
+
+    /// Contains "{t}:" in text (tap symbol)
+    pub text_contains_tap_colon: bool,
+
+    /// Contains "mana" in text
+    pub text_contains_mana: bool,
+
+    /// Contains "any color" in text (produces mana of any color)
+    pub text_contains_any_color: bool,
+
+    // Specific mana colors
+    /// Contains "{t}: add {w}" or "add {w}" (white mana)
+    pub text_produces_white: bool,
+
+    /// Contains "{t}: add {u}" or "add {u}" (blue mana)
+    pub text_produces_blue: bool,
+
+    /// Contains "{t}: add {b}" or "add {b}" (black mana)
+    pub text_produces_black: bool,
+
+    /// Contains "{t}: add {r}" or "add {r}" (red mana)
+    pub text_produces_red: bool,
+
+    /// Contains "{t}: add {g}" or "add {g}" (green mana)
+    pub text_produces_green: bool,
+
+    /// Contains "{t}: add {c}" or "add {c}" (colorless mana)
+    pub text_produces_colorless: bool,
+
+    // Basic land type detection in name
+    /// Name contains "plains"
+    pub name_is_plains: bool,
+
+    /// Name contains "island"
+    pub name_is_island: bool,
+
+    /// Name contains "swamp"
+    pub name_is_swamp: bool,
+
+    /// Name contains "mountain"
+    pub name_is_mountain: bool,
+
+    /// Name contains "forest"
+    pub name_is_forest: bool,
+}
+
+impl CardCache {
+    /// Create a new cache from card text and name
+    pub fn new(text: &str, name: &str) -> Self {
+        let text_lower = text.to_lowercase();
+        let name_lower = name.to_lowercase();
+
+        CardCache {
+            // Store lowercase versions
+            text_lowercase: text_lower.clone(),
+            name_lowercase: name_lower.clone(),
+
+            // Mana ability markers
+            text_contains_add: text_lower.contains("add"),
+            text_contains_tap_colon: text_lower.contains("{t}:"),
+            text_contains_mana: text_lower.contains("mana"),
+            text_contains_any_color: text_lower.contains("any color"),
+
+            // Specific mana production
+            text_produces_white: text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}"),
+            text_produces_blue: text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}"),
+            text_produces_black: text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}"),
+            text_produces_red: text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}"),
+            text_produces_green: text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}"),
+            text_produces_colorless: text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}"),
+
+            // Basic land names
+            name_is_plains: name_lower.contains("plains"),
+            name_is_island: name_lower.contains("island"),
+            name_is_swamp: name_lower.contains("swamp"),
+            name_is_mountain: name_lower.contains("mountain"),
+            name_is_forest: name_lower.contains("forest"),
+        }
+    }
+}
+
 /// Represents a card in the game
 ///
 /// Cards have a unique CardId but many cards can share the same card definition.
@@ -91,13 +185,21 @@ pub struct Card {
     /// Activated abilities (costs and effects)
     /// These can be activated by paying their cost
     pub activated_abilities: Vec<crate::core::ActivatedAbility>,
+
+    /// Cache for expensive string operations (computed at load time)
+    /// Avoids repeated to_lowercase() and contains() allocations during gameplay
+    pub cache: CardCache,
 }
 
 impl Card {
     pub fn new(id: CardId, name: impl Into<CardName>, owner: PlayerId) -> Self {
+        let name: CardName = name.into();
+        let text = String::new();
+
         Card {
             id,
-            name: name.into(),
+            cache: CardCache::new(&text, name.as_str()),
+            name,
             mana_cost: ManaCost::new(),
             types: SmallVec::new(),
             subtypes: SmallVec::new(),
@@ -106,7 +208,7 @@ impl Card {
             toughness: None,
             power_bonus: 0,
             toughness_bonus: 0,
-            text: String::new(),
+            text,
             owner,
             controller: owner,
             tapped: false,
@@ -273,6 +375,13 @@ impl Card {
             .find(|(t, _)| t == &counter_type)
             .map(|(_, count)| *count)
             .unwrap_or(0)
+    }
+
+    /// Set the card text and regenerate the cache
+    /// Use this in tests or when modifying card text after creation
+    pub fn set_text(&mut self, text: String) {
+        self.cache = CardCache::new(&text, self.name.as_str());
+        self.text = text;
     }
 
     /// Get current power (including counters and temporary bonuses)
