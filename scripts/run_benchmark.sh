@@ -13,7 +13,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RESULTS_DIR="$REPO_ROOT/experiment_results"
+
+# Get CPU name and normalize it for use in directory paths
+# Extracts from /proc/cpuinfo, replaces spaces with underscores, strips non-alphanumeric except _ and -
+get_cpu_name() {
+    local cpu_name=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | sed 's/^[ \t]*//')
+    # Replace spaces with underscores and remove any characters that aren't alphanumeric, underscore, or dash
+    echo "$cpu_name" | sed 's/ /_/g' | sed 's/[^a-zA-Z0-9_-]//g'
+}
+
+CPU_NAME=$(get_cpu_name)
+RESULTS_DIR="$REPO_ROOT/experiment_results/$CPU_NAME"
 HISTORY_FILE="$RESULTS_DIR/perf_history.csv"
 
 # Ensure results directory exists
@@ -34,6 +44,7 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 TIMESTAMP_READABLE=$(date +"%Y-%m-%d %H:%M:%S %Z")
 
 echo "=== Running Benchmarks ==="
+echo "CPU: $CPU_NAME"
 echo "Timestamp: $TIMESTAMP_READABLE"
 echo "Git commit: $GIT_COMMIT_SHORT (depth: $GIT_DEPTH, branch: $GIT_BRANCH)${GIT_DIRTY}"
 echo "Results will be appended to: $HISTORY_FILE"
