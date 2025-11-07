@@ -228,6 +228,9 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
         let iters_per_thread = batch_size / num_threads;
         let remainder = batch_size % num_threads;
 
+        // Get original seed for deriving per-thread seeds
+        let orig_seed = self.inner.orig_seed();
+
         // Start timing
         let start = std::time::Instant::now();
 
@@ -235,7 +238,15 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
         // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
 
         // Box up the clones to allow trait objects and avoid Sized issues
-        let replicas: Vec<Box<T>> = (0..num_threads).map(|_| Box::new(self.inner.clone())).collect();
+        // Each thread gets a clone reseeded with orig_seed + thread_id
+        let replicas: Vec<Box<T>> = (0..num_threads)
+            .map(|thread_id| {
+                let mut clone = self.inner.clone();
+                // Reseed with orig_seed + thread_id to ensure different game paths per thread
+                clone.reseed(orig_seed.wrapping_add(thread_id as u64));
+                Box::new(clone)
+            })
+            .collect();
 
         // Execute in parallel using Rayon
         // Each thread calls the inner benchmark's sequential execute_batch
@@ -264,6 +275,14 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
 
     fn total_games(&self) -> usize {
         self.inner.total_games()
+    }
+
+    fn orig_seed(&self) -> u64 {
+        self.inner.orig_seed()
+    }
+
+    fn reseed(&mut self, seed: u64) {
+        self.inner.reseed(seed);
     }
 }
 
@@ -317,10 +336,16 @@ impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T>
         let iters_per_thread = batch_size / num_threads;
         let remainder = batch_size % num_threads;
 
+        // Get original seed for deriving per-thread seeds
+        let orig_seed = self.inner.orig_seed();
+
         // Execute parallel batch with pinned threads
         // Each thread gets a clone of the inner benchmark and executes a portion
         let (batch_duration, results) =
             execute_parallel_batch(num_threads, &self.inner, move |thread_id, local_self| {
+                // Reseed with orig_seed + thread_id to ensure different game paths per thread
+                local_self.reseed(orig_seed.wrapping_add(thread_id as u64));
+
                 // Thread 0 gets the quotient plus the remainder
                 let thread_iters = if thread_id == 0 {
                     iters_per_thread + remainder
@@ -349,6 +374,14 @@ impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T>
 
     fn total_games(&self) -> usize {
         self.inner.total_games()
+    }
+
+    fn orig_seed(&self) -> u64 {
+        self.inner.orig_seed()
+    }
+
+    fn reseed(&mut self, seed: u64) {
+        self.inner.reseed(seed);
     }
 }
 
