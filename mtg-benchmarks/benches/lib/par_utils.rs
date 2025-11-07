@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 /// Tuple of (Duration, Vec<R>) where Duration is precise batch time and Vec contains
 /// results from each thread
 #[allow(dead_code)] // Used by benchmarks but not by all binaries
-pub fn execute_parallel_batch<T, F, R>(num_threads: usize, template: &T, work_fn: F) -> (Duration, Vec<R>)
+fn execute_parallel_batch<T, F, R>(num_threads: usize, template: &T, work_fn: F) -> (Duration, Vec<R>)
 where
     T: Clone + Send + 'static,
     F: Fn(usize, &mut T) -> R + Send + Sync + 'static,
