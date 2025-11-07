@@ -20,7 +20,7 @@ pub mod utils;
 #[allow(unused_imports)]
 pub use core_benches::RewindPlayAgain;
 #[allow(unused_imports)]
-pub use par_utils::{ParPinned, ParRayon};
+pub use par_utils::{FakePar, ParPinned, ParRayon};
 #[allow(unused_imports)]
 pub use types::{BatchBenchmark, GameMetrics, LoggingMode, RestartStrategy, RewindPlayAgainConfig, BASELINE_DECK_PATH};
 #[allow(unused_imports)]

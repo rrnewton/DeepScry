@@ -332,6 +332,10 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
         self.inner.reseed(seed);
     }
 
+    fn reseed_rng(&self, seed: u64) {
+        self.inner.reseed_rng(seed);
+    }
+
     fn reset_metrics(&self) {
         self.inner.reset_metrics();
     }
@@ -443,6 +447,130 @@ impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T>
 
     fn reseed(&mut self, seed: u64) {
         self.inner.reseed(seed);
+    }
+
+    fn reseed_rng(&self, seed: u64) {
+        self.inner.reseed_rng(seed);
+    }
+
+    fn reset_metrics(&self) {
+        self.inner.reset_metrics();
+    }
+
+    fn set_wall_time(&self, duration: Duration) {
+        self.inner.set_wall_time(duration);
+    }
+}
+
+/// Fake parallel wrapper that emulates parallel RNG seeding while running sequentially
+///
+/// Wraps any BatchBenchmark implementation and provides sequential execution that
+/// mimics the RNG seeding behavior of parallel execution. This is useful for
+/// verifying that parallel and sequential versions produce identical results.
+///
+/// FakePar divides work the same way as ParRayon:
+/// - Calculates iterations per thread (quotient + remainder for thread 0)
+/// - Seeds each "thread" with spaced seeds using derive_thread_seed()
+/// - Executes chunks sequentially, reseeding before each chunk
+///
+/// # Example
+/// ```ignore
+/// let sequential_bench = RewindPlayAgain::new(config, "SEQUENTIAL");
+/// let fake_par = FakePar::new(sequential_bench);
+/// fake_par.execute_batch(1000, 8)?; // Run 1000 games as if on 8 threads, but sequentially
+/// ```
+#[allow(dead_code)] // Infrastructure for future use
+pub struct FakePar<T> {
+    inner: T,
+}
+
+#[allow(dead_code)] // Infrastructure for future use
+impl<T> FakePar<T> {
+    /// Create a new fake-parallel wrapper around a sequential benchmark
+    pub fn new(inner: T) -> Self {
+        FakePar { inner }
+    }
+
+    /// Get a reference to the inner benchmark
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner benchmark
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
+
+impl<T: BatchBenchmark> BatchBenchmark for FakePar<T> {
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
+        if num_threads < 1 {
+            return Err(format!("num_threads must be >= 1, got {}", num_threads));
+        }
+
+        // For single-threaded execution, just delegate to the inner benchmark
+        if num_threads == 1 {
+            return self.inner.execute_batch(batch_size, 1);
+        }
+
+        // Calculate iterations per thread: quotient for all, remainder goes to thread 0
+        let iters_per_thread = batch_size / num_threads;
+        let remainder = batch_size % num_threads;
+
+        // Get original seed for deriving per-thread seeds
+        let orig_seed = self.inner.orig_seed();
+
+        // Start timing
+        let start = std::time::Instant::now();
+
+        // Execute chunks sequentially, emulating parallel RNG seeding
+        for thread_id in 0..num_threads {
+            // Reseed with spaced seeds to ensure different game paths per "thread"
+            // This matches what ParRayon and ParPinned do
+            let thread_seed = derive_thread_seed(orig_seed, thread_id);
+
+            // Reseed using interior mutability (Cell) - safe with &self
+            self.inner.reseed_rng(thread_seed);
+
+            // Thread 0 gets the quotient plus the remainder
+            let thread_iters = if thread_id == 0 {
+                iters_per_thread + remainder
+            } else {
+                iters_per_thread
+            };
+
+            if thread_iters > 0 {
+                self.inner.execute_batch(thread_iters, 1)?;
+            }
+        }
+
+        // Get wall-clock duration
+        let wall_time = start.elapsed();
+
+        // Set the wall time (inner uses interior mutability)
+        self.inner.set_wall_time(wall_time);
+
+        Ok(wall_time)
+    }
+
+    fn get_metrics(&self) -> GameMetrics {
+        self.inner.get_metrics()
+    }
+
+    fn total_games(&self) -> usize {
+        self.inner.total_games()
+    }
+
+    fn orig_seed(&self) -> u64 {
+        self.inner.orig_seed()
+    }
+
+    fn reseed(&mut self, seed: u64) {
+        self.inner.reseed(seed);
+    }
+
+    fn reseed_rng(&self, seed: u64) {
+        self.inner.reseed_rng(seed);
     }
 
     fn reset_metrics(&self) {

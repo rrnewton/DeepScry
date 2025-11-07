@@ -349,6 +349,19 @@ pub trait BatchBenchmark {
     /// - `seed`: New seed value to use
     fn reseed(&mut self, seed: u64);
 
+    /// Reseed the RNG for the next batch without cloning
+    ///
+    /// This is a lighter-weight version of reseed() that only updates the RNG seed
+    /// without cloning the entire benchmark state. Used by FakePar to emulate
+    /// parallel RNG seeding while running sequentially.
+    ///
+    /// Takes `&self` instead of `&mut self` because implementations use interior
+    /// mutability (Cell/RefCell) for the seed field.
+    ///
+    /// # Parameters
+    /// - `seed`: New seed value to use for the next batch
+    fn reseed_rng(&self, seed: u64);
+
     /// Reset all accumulated metrics to zero
     ///
     /// Clears all metrics state, ensuring that subsequent calls to `get_metrics()`

@@ -23,20 +23,29 @@
 //!   # Pinned thread execution for microsecond-accurate timing
 //!   cargo run --release --bin rewind_bench -- --mode pinned --threads 16
 //!
-//!   # DHAT heap profiling (1000 games, robots mirror)
-//!   cargo run --release --bin rewind_bench -- --dhat
+//!   # DHAT heap profiling (1000 games, robots mirror, sequential mode)
+//!   # Note: Must disable default features to avoid allocator conflict
+//!   cargo run --release --no-default-features --features dhat-heap --bin rewind_bench -- --dhat
 //!   # View results with: dhat/dh_view.html (opens dhat-heap.json)
 
-// Include the benchmark library FIRST so we don't conflict with its allocator
+// DHAT global allocator must be set BEFORE any other code
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
+// Include the benchmark library (it will detect dhat and skip setting its own allocator)
 #[path = "../lib/mod.rs"]
 mod benchlib;
 
 use benchlib::{
-    allocator::{allocator_name, GLOBAL},
-    BatchBenchmark, FakePar, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
-    RewindPlayAgainConfig, BASELINE_DECK_PATH,
+    allocator::allocator_name, BatchBenchmark, FakePar, LoggingMode, ParPinned, ParRayon, RestartStrategy,
+    RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use clap::Parser;
+
+#[cfg(not(feature = "dhat-heap"))]
+use benchlib::allocator::GLOBAL;
+#[cfg(not(feature = "dhat-heap"))]
 use stats_alloc::Region;
 
 #[cfg(feature = "dhat-heap")]
@@ -64,7 +73,10 @@ impl std::str::FromStr for ExecutionMode {
             "fakepar" | "fake-par" | "fake" => Ok(ExecutionMode::FakePar),
             "par" | "parallel" | "rayon" => Ok(ExecutionMode::Par),
             "pinned" | "pinned-par" => Ok(ExecutionMode::Pinned),
-            _ => Err(format!("Invalid mode '{}'. Valid options: sequential, fakepar, par, pinned", s)),
+            _ => Err(format!(
+                "Invalid mode '{}'. Valid options: sequential, fakepar, par, pinned",
+                s
+            )),
         }
     }
 }
@@ -183,16 +195,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize DHAT if requested
     #[cfg(feature = "dhat-heap")]
-    let _profiler = if args.dhat {
-        Some(Profiler::new_heap())
-    } else {
-        None
-    };
+    let _profiler = if args.dhat { Some(Profiler::new_heap()) } else { None };
 
     #[cfg(not(feature = "dhat-heap"))]
     if args.dhat {
         eprintln!("ERROR: --dhat flag requires rebuilding with --features dhat-heap");
-        eprintln!("Run: cargo run --release --features dhat-heap --bin rewind_bench -- --dhat");
+        eprintln!("Run: cargo run --release --no-default-features --features dhat-heap --bin rewind_bench -- --dhat");
         std::process::exit(1);
     }
 
@@ -248,8 +256,13 @@ fn run_sequential(config: RewindPlayAgainConfig, batch_size: usize) -> Result<()
 
     // Execute batch with allocation tracking
     println!("Executing batch of {} games...", batch_size);
+
+    #[cfg(not(feature = "dhat-heap"))]
     let region = Region::new(GLOBAL);
+
     let batch_duration = benchmark.execute_batch_sequential(batch_size);
+
+    #[cfg(not(feature = "dhat-heap"))]
     let stats = region.change();
 
     // Get aggregated metrics
@@ -257,7 +270,12 @@ fn run_sequential(config: RewindPlayAgainConfig, batch_size: usize) -> Result<()
     let total_games = benchmark.get_total_games();
 
     // Print results
+    #[cfg(not(feature = "dhat-heap"))]
     print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
+
+    #[cfg(feature = "dhat-heap")]
+    print_results_dhat(&metrics, total_games, batch_duration.as_secs_f64());
+
     benchmark.print_win_rates("SEQUENTIAL");
 
     Ok(())
@@ -281,8 +299,13 @@ fn run_fakepar(
         "Executing batch of {} games (sequential with {} logical threads)...",
         batch_size, num_threads
     );
+
+    #[cfg(not(feature = "dhat-heap"))]
     let region = Region::new(GLOBAL);
+
     let batch_duration = benchmark.execute_batch(batch_size, num_threads)?;
+
+    #[cfg(not(feature = "dhat-heap"))]
     let stats = region.change();
 
     // Get aggregated metrics
@@ -290,7 +313,12 @@ fn run_fakepar(
     let total_games = benchmark.total_games();
 
     // Print results
+    #[cfg(not(feature = "dhat-heap"))]
     print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
+
+    #[cfg(feature = "dhat-heap")]
+    print_results_dhat(&metrics, total_games, batch_duration.as_secs_f64());
+
     benchmark.inner().print_win_rates("FAKE-PARALLEL");
 
     Ok(())
@@ -314,8 +342,13 @@ fn run_parallel_rayon(
         "Executing batch of {} games across {} threads...",
         batch_size, num_threads
     );
+
+    #[cfg(not(feature = "dhat-heap"))]
     let region = Region::new(GLOBAL);
+
     let batch_duration = benchmark.execute_batch(batch_size, num_threads)?;
+
+    #[cfg(not(feature = "dhat-heap"))]
     let stats = region.change();
 
     // Get aggregated metrics
@@ -323,7 +356,12 @@ fn run_parallel_rayon(
     let total_games = benchmark.total_games();
 
     // Print results
+    #[cfg(not(feature = "dhat-heap"))]
     print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
+
+    #[cfg(feature = "dhat-heap")]
+    print_results_dhat(&metrics, total_games, batch_duration.as_secs_f64());
+
     benchmark.inner().print_win_rates("PARALLEL (Rayon)");
 
     Ok(())
@@ -347,8 +385,13 @@ fn run_parallel_pinned(
         "Executing batch of {} games across {} pinned threads...",
         batch_size, num_threads
     );
+
+    #[cfg(not(feature = "dhat-heap"))]
     let region = Region::new(GLOBAL);
+
     let batch_duration = benchmark.execute_batch(batch_size, num_threads)?;
+
+    #[cfg(not(feature = "dhat-heap"))]
     let stats = region.change();
 
     // Get aggregated metrics
@@ -356,13 +399,19 @@ fn run_parallel_pinned(
     let total_games = benchmark.total_games();
 
     // Print results
+    #[cfg(not(feature = "dhat-heap"))]
     print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
+
+    #[cfg(feature = "dhat-heap")]
+    print_results_dhat(&metrics, total_games, batch_duration.as_secs_f64());
+
     benchmark.inner().print_win_rates("PARALLEL (Pinned Threads)");
 
     Ok(())
 }
 
-/// Print benchmark results
+/// Print benchmark results (with stats_alloc)
+#[cfg(not(feature = "dhat-heap"))]
 fn print_results(metrics: &benchlib::GameMetrics, total_games: usize, duration_secs: f64, stats: &stats_alloc::Stats) {
     println!();
     println!("=== Results ===");
@@ -405,5 +454,35 @@ fn print_results(metrics: &benchlib::GameMetrics, total_games: usize, duration_s
             0.0
         }
     );
+    println!();
+}
+
+/// Print benchmark results (DHAT mode - no allocation stats available during run)
+#[cfg(feature = "dhat-heap")]
+fn print_results_dhat(metrics: &benchlib::GameMetrics, total_games: usize, duration_secs: f64) {
+    println!();
+    println!("=== Results ===");
+    println!("Total games: {}", total_games);
+    println!("Total duration: {:.3}s", duration_secs);
+    println!(
+        "Avg duration/game: {:.3}ms",
+        duration_secs * 1000.0 / total_games as f64
+    );
+    println!();
+
+    println!("=== Game Metrics ===");
+    println!("Total turns: {}", metrics.turns);
+    println!("Total actions: {}", metrics.actions);
+    println!("Avg turns/game: {:.2}", metrics.turns as f64 / total_games as f64);
+    println!("Avg actions/game: {:.2}", metrics.actions as f64 / total_games as f64);
+    println!("Actions/turn: {:.2}", metrics.actions_per_turn());
+    println!("Games/sec: {:.2}", total_games as f64 / duration_secs);
+    println!("Actions/sec: {:.2}", metrics.actions as f64 / duration_secs);
+    println!("Turns/sec: {:.2}", metrics.turns as f64 / duration_secs);
+    println!();
+
+    println!("=== DHAT Heap Profiling ===");
+    println!("DHAT profiling enabled - allocation data written to dhat-heap.json");
+    println!("View results: Open dhat/dh_view.html in browser and load dhat-heap.json");
     println!();
 }
