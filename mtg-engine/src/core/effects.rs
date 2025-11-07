@@ -205,6 +205,40 @@ impl Trigger {
     }
 }
 
+/// Cache for expensive string operations on ActivatedAbility
+/// Pre-computed at ability creation time to avoid repeated allocations during gameplay
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbilityCache {
+    /// Lowercase version of description (computed once)
+    pub description_lowercase: String,
+
+    /// Pre-computed contains() checks for targeting restrictions
+    pub targets_tapped: bool,
+    pub targets_untapped: bool,
+    pub targets_creature: bool,
+    pub targets_land: bool,
+    pub requires_target: bool,
+}
+
+impl AbilityCache {
+    /// Create a new cache from ability description
+    pub fn new(description: &str) -> Self {
+        let desc_lower = description.to_lowercase();
+
+        AbilityCache {
+            // Store lowercase version
+            description_lowercase: desc_lower.clone(),
+
+            // Targeting restriction flags
+            targets_tapped: desc_lower.contains("tapped"),
+            targets_untapped: desc_lower.contains("untapped"),
+            targets_creature: desc_lower.contains("creature"),
+            targets_land: desc_lower.contains("land"),
+            requires_target: desc_lower.contains("target"),
+        }
+    }
+}
+
 /// An activated ability that can be activated by paying a cost
 /// Example: "{T}: Deal 1 damage to any target" (Prodigal Sorcerer)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,16 +254,22 @@ pub struct ActivatedAbility {
 
     /// Whether this is a mana ability (doesn't use the stack)
     pub is_mana_ability: bool,
+
+    /// Cache for expensive string operations (computed at creation time)
+    pub cache: AbilityCache,
 }
 
 impl ActivatedAbility {
     /// Create a new activated ability
     pub fn new(cost: crate::core::Cost, effects: Vec<Effect>, description: String, is_mana_ability: bool) -> Self {
+        let cache = AbilityCache::new(&description);
+
         ActivatedAbility {
             cost,
             effects,
             description,
             is_mana_ability,
+            cache,
         }
     }
 }

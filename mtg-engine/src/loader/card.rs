@@ -167,6 +167,9 @@ impl CardDefinition {
         card.toughness = self.toughness;
         card.text = self.oracle.clone();
 
+        // Populate cache after text is set (avoids allocation in gameplay)
+        card.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
+
         // Parse keywords
         card.keywords = self.parse_keywords();
 
