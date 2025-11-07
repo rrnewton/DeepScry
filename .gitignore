@@ -16,8 +16,10 @@
 # Benchmarking and Profiling:
 
 # All profiling output goes to experiment_results/<CPU_NAME>/
-# We track the directory structure but not the plots subdirectory
+# We track the directory structure and CSV/log files, but not the plots subdirectory
 experiment_results/*/plots
+# Exception: Track benchmark log files in experiment_results
+!experiment_results/*/benchmark_log_*.log
 
 # Validation logs
 validate_logs/

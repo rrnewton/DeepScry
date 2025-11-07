@@ -42,12 +42,17 @@ fi
 # Get timestamp
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 TIMESTAMP_READABLE=$(date +"%Y-%m-%d %H:%M:%S %Z")
+TIMESTAMP_FILE=$(date +"%Y%m%d")
+
+# Create log file path with date and git depth
+LOG_FILE="$RESULTS_DIR/benchmark_log_${TIMESTAMP_FILE}_#${GIT_DEPTH}.log"
 
 echo "=== Running Benchmarks ==="
 echo "CPU: $CPU_NAME"
 echo "Timestamp: $TIMESTAMP_READABLE"
 echo "Git commit: $GIT_COMMIT_SHORT (depth: $GIT_DEPTH, branch: $GIT_BRANCH)${GIT_DIRTY}"
 echo "Results will be appended to: $HISTORY_FILE"
+echo "Full benchmark output will be saved to: $LOG_FILE"
 echo ""
 
 # Create CSV header if file doesn't exist
@@ -72,13 +77,29 @@ echo ""
 echo "Running cargo bench..."
 echo ""
 
+# Write header to log file with metadata
+cat > "$LOG_FILE" << EOF
+================================================================================
+MTG Forge-rs Benchmark Results
+================================================================================
+CPU: $CPU_NAME
+Timestamp: $TIMESTAMP_READABLE ($TIMESTAMP)
+Git Commit: $GIT_COMMIT
+Git Commit (short): $GIT_COMMIT_SHORT
+Git Depth: $GIT_DEPTH
+Git Branch: $GIT_BRANCH
+Git Dirty: ${GIT_DIRTY:-clean}
+================================================================================
+
+EOF
+
 BENCH_OUTPUT=$(mktemp)
 trap "rm -f $BENCH_OUTPUT" EXIT
 
 if [ -n "$BENCH_FILTER" ]; then
-    cargo bench --bench game_benchmark "$BENCH_FILTER" 2>&1 | tee "$BENCH_OUTPUT"
+    cargo bench --bench game_benchmark "$BENCH_FILTER" 2>&1 | tee -a "$LOG_FILE" | tee "$BENCH_OUTPUT"
 else
-    cargo bench --bench game_benchmark 2>&1 | tee "$BENCH_OUTPUT"
+    cargo bench --bench game_benchmark 2>&1 | tee -a "$LOG_FILE" | tee "$BENCH_OUTPUT"
 fi
 
 echo ""
@@ -240,6 +261,7 @@ parse_metrics "$BENCH_OUTPUT" "$HISTORY_FILE"
 echo ""
 echo "=== Results Saved ==="
 echo "Performance history updated: $HISTORY_FILE"
+echo "Full benchmark log saved to: $LOG_FILE"
 echo ""
-echo "Recent entries:"
+echo "Recent CSV entries:"
 tail -n 5 "$HISTORY_FILE"
