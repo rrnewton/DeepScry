@@ -74,10 +74,6 @@ mod allocator {
     }
 }
 
-#[path = "../../benches/pinned_thread_pool.rs"]
-#[allow(dead_code)]
-mod pinned_thread_pool;
-
 // Include the benchmark library
 #[path = "../../benches/lib/mod.rs"]
 mod benchlib;

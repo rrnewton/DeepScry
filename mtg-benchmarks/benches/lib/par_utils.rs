@@ -1,14 +1,15 @@
-//! Pinned thread pool for precise parallel benchmark timing
+//! Parallel execution utilities for batch benchmarks
 //!
-//! This module implements a custom thread pool with:
-//! - Thread pinning to physical CPU cores
-//! - Spin barriers for precise synchronization (ready/go)
-//! - Shared atomic counter for precise finish time tracking
-//! - Main thread participates as worker 0
+//! This module provides:
+//! - `execute_parallel_batch`: Low-level pinned thread pool with spin barriers
+//! - `ParRayon<T>`: High-level wrapper using Rayon's thread pool
+//! - `ParPinned<T>`: High-level wrapper using pinned threads for microsecond-accurate timing
 //!
-//! This design provides more accurate timing than Rayon for parallel benchmarks
-//! by eliminating thread scheduling variability and providing precise start/stop timing.
+//! Both wrappers are generic over any `BatchBenchmark` implementation and follow
+//! the same pattern: clone the inner benchmark for each thread, distribute work
+//! evenly with quotient/remainder, and aggregate results.
 
+use super::types::{BatchBenchmark, GameMetrics};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -34,7 +35,7 @@ use std::time::{Duration, Instant};
 /// # Returns
 /// Tuple of (Duration, Vec<R>) where Duration is precise batch time and Vec contains
 /// results from each thread
-#[allow(dead_code)] // Will be used in future benchmarks
+#[allow(dead_code)] // Used by benchmarks but not by all binaries
 pub fn execute_parallel_batch<T, F, R>(num_threads: usize, template: &T, work_fn: F) -> (Duration, Vec<R>)
 where
     T: Clone + Send + 'static,
@@ -180,6 +181,177 @@ where
     (duration, results)
 }
 
+/// Parallel wrapper using Rayon for batch benchmark execution
+///
+/// Wraps any BatchBenchmark implementation and provides parallel execution
+/// using Rayon's thread pool. The wrapped benchmark must support sequential
+/// execution (num_threads=1).
+///
+/// # Example
+/// ```ignore
+/// let sequential_bench = RewindPlayAgain::new(config, "SEQUENTIAL");
+/// let parallel_bench = ParRayon::new(sequential_bench);
+/// parallel_bench.execute_batch(1000, 8)?; // Run 1000 games on 8 threads
+/// ```
+#[allow(dead_code)] // Infrastructure for future use
+pub struct ParRayon<T> {
+    inner: T,
+}
+
+#[allow(dead_code)] // Infrastructure for future use
+impl<T> ParRayon<T> {
+    /// Create a new parallel wrapper around a sequential benchmark
+    pub fn new(inner: T) -> Self {
+        ParRayon { inner }
+    }
+
+    /// Get a reference to the inner benchmark
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
+        use rayon::prelude::*;
+
+        if num_threads < 1 {
+            return Err(format!("num_threads must be >= 1, got {}", num_threads));
+        }
+
+        // For single-threaded execution, just delegate to the inner benchmark
+        if num_threads == 1 {
+            return self.inner.execute_batch(batch_size, 1);
+        }
+
+        // Calculate iterations per thread: quotient for all, remainder goes to thread 0
+        let iters_per_thread = batch_size / num_threads;
+        let remainder = batch_size % num_threads;
+
+        // Start timing
+        let start = std::time::Instant::now();
+
+        // PER-BATCH SETUP (outside timing): Clone snapshots for parallel execution
+        // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
+
+        // Box up the clones to allow trait objects and avoid Sized issues
+        let replicas: Vec<Box<T>> = (0..num_threads).map(|_| Box::new(self.inner.clone())).collect();
+
+        // Execute in parallel using Rayon
+        // Each thread calls the inner benchmark's sequential execute_batch
+        replicas.into_par_iter().enumerate().try_for_each(
+            |(thread_id, local_self): (usize, Box<T>)| -> Result<(), String> {
+                // Thread 0 gets the quotient plus the remainder
+                let thread_iters = if thread_id == 0 {
+                    iters_per_thread + remainder
+                } else {
+                    iters_per_thread
+                };
+
+                if thread_iters > 0 {
+                    local_self.execute_batch(thread_iters, 1)?;
+                }
+                Ok(())
+            },
+        )?;
+
+        Ok(start.elapsed())
+    }
+
+    fn get_metrics(&self) -> GameMetrics {
+        self.inner.get_metrics()
+    }
+
+    fn total_games(&self) -> usize {
+        self.inner.total_games()
+    }
+}
+
+/// Parallel wrapper using pinned threads for batch benchmark execution
+///
+/// Wraps any BatchBenchmark implementation and provides parallel execution
+/// using pinned threads with spin barriers for microsecond-accurate timing.
+/// The wrapped benchmark must support sequential execution (num_threads=1).
+///
+/// This provides more accurate timing than ParRayon by:
+/// - Pinning threads to physical CPU cores
+/// - Using spin barriers for synchronization (no OS scheduler involvement)
+/// - Recording precise start/finish times with atomic counters
+///
+/// # Example
+/// ```ignore
+/// let sequential_bench = RewindPlayAgain::new(config, "SEQUENTIAL");
+/// let parallel_bench = ParPinned::new(sequential_bench);
+/// parallel_bench.execute_batch(1000, 8)?; // Run 1000 games on 8 pinned threads
+/// ```
+#[allow(dead_code)] // Infrastructure for future use
+pub struct ParPinned<T> {
+    inner: T,
+}
+
+#[allow(dead_code)] // Infrastructure for future use
+impl<T> ParPinned<T> {
+    /// Create a new pinned-parallel wrapper around a sequential benchmark
+    pub fn new(inner: T) -> Self {
+        ParPinned { inner }
+    }
+
+    /// Get a reference to the inner benchmark
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T> {
+    fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
+        if num_threads < 1 {
+            return Err(format!("num_threads must be >= 1, got {}", num_threads));
+        }
+
+        // For single-threaded execution, just delegate to the inner benchmark
+        if num_threads == 1 {
+            return self.inner.execute_batch(batch_size, 1);
+        }
+
+        // Calculate iterations per thread: quotient for all, remainder goes to thread 0
+        let iters_per_thread = batch_size / num_threads;
+        let remainder = batch_size % num_threads;
+
+        // Execute parallel batch with pinned threads
+        // Each thread gets a clone of the inner benchmark and executes a portion
+        let (batch_duration, results) =
+            execute_parallel_batch(num_threads, &self.inner, move |thread_id, local_self| {
+                // Thread 0 gets the quotient plus the remainder
+                let thread_iters = if thread_id == 0 {
+                    iters_per_thread + remainder
+                } else {
+                    iters_per_thread
+                };
+
+                if thread_iters > 0 {
+                    local_self.execute_batch(thread_iters, 1)
+                } else {
+                    Ok(Duration::ZERO)
+                }
+            });
+
+        // All threads should succeed or we propagate the error
+        for result in results {
+            result?;
+        }
+
+        Ok(batch_duration)
+    }
+
+    fn get_metrics(&self) -> GameMetrics {
+        self.inner.get_metrics()
+    }
+
+    fn total_games(&self) -> usize {
+        self.inner.total_games()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
@@ -190,7 +362,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn test_parallel_batch() {
+    fn test_execute_parallel_batch() {
         let num_threads = num_cpus::get_physical().min(4);
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);

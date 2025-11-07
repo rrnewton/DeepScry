@@ -59,7 +59,6 @@
 //! - `snapshot_serialization`: Snapshot save/load benchmarks
 
 mod allocator;
-mod pinned_thread_pool;
 
 #[path = "lib/mod.rs"]
 mod benchlib;
