@@ -3,7 +3,7 @@
 //! This module defines core types and traits used across the benchmark suite,
 //! including metrics tracking, batch execution, and game outcomes.
 
-use crate::allocator::AllocStats;
+use super::allocator::AllocStats;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 

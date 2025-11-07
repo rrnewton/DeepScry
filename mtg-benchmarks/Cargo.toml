@@ -29,6 +29,11 @@ rayon = "1.10"
 num_cpus = "1.16"
 core_affinity = "0.8"
 
+# Binary targets
+[[bin]]
+name = "rewind_bench"
+path = "bin/rewind_bench.rs"
+
 # Performance benchmarks
 [[bench]]
 name = "game_benchmark"

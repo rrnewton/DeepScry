@@ -43,15 +43,15 @@ use std::alloc::System;
 // Global allocator selection via feature flags
 #[cfg(feature = "bench-stats-alloc")]
 #[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+pub static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[cfg(feature = "bench-mimalloc")]
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+pub static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(feature = "bench-jemalloc")]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+pub static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// Allocation statistics - works with or without tracking
 #[derive(Debug, Clone, Copy, Default)]
