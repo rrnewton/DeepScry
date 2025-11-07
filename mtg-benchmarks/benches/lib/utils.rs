@@ -27,6 +27,17 @@ pub fn get_benchmark_measurement_time() -> Duration {
     Duration::from_secs(secs)
 }
 
+/// Get number of threads to use for parallel benchmarks
+pub fn get_benchmark_num_threads() -> usize {
+    // Configure thread count: Check BENCH_NUM_THREADS env var, otherwise use physical cores
+    let num_physical_cores = num_cpus::get_physical();
+    std::env::var("BENCH_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(num_physical_cores)
+}
+
+
 /// Helper function to ensure we're in the correct working directory
 ///
 /// Criterion benchmarks may run from various subdirectories inside target/.
