@@ -298,7 +298,15 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
             },
         )?;
 
-        Ok(start.elapsed())
+        // Get wall-clock duration
+        let wall_time = start.elapsed();
+
+        // Overwrite accumulated CPU time with actual wall time
+        // (Each thread added its duration to total_duration_nanos, giving CPU time;
+        //  we now overwrite with wall time while preserving CPU time in total_core_nanos)
+        self.inner.set_wall_time(wall_time);
+
+        Ok(wall_time)
     }
 
     fn get_metrics(&self) -> GameMetrics {
@@ -315,6 +323,14 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
 
     fn reseed(&mut self, seed: u64) {
         self.inner.reseed(seed);
+    }
+
+    fn reset_metrics(&self) {
+        self.inner.reset_metrics();
+    }
+
+    fn set_wall_time(&self, duration: Duration) {
+        self.inner.set_wall_time(duration);
     }
 }
 
@@ -398,6 +414,11 @@ impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T>
             result?;
         }
 
+        // Overwrite accumulated CPU time with actual wall time
+        // (Each thread added its duration to total_duration_nanos, giving CPU time;
+        //  we now overwrite with wall time while preserving CPU time in total_core_nanos)
+        self.inner.set_wall_time(batch_duration);
+
         Ok(batch_duration)
     }
 
@@ -415,6 +436,14 @@ impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T>
 
     fn reseed(&mut self, seed: u64) {
         self.inner.reseed(seed);
+    }
+
+    fn reset_metrics(&self) {
+        self.inner.reset_metrics();
+    }
+
+    fn set_wall_time(&self, duration: Duration) {
+        self.inner.set_wall_time(duration);
     }
 }
 

@@ -23,6 +23,10 @@ You should mainly use the second, condensed summary for understanding the basic 
 Coding conventions
 ========================================
 
+You HATE duplicated code. You follow DRY religiously and seek clean abstractions where functions are short, and complexity is factored into helpers, traits, and centralized infrastructure that is shared as much as possible. You hate duplication so much that you would rather centralize repetitive code EVEN if it means the interface to the shared functionality becomes fairly complex (e.g. the shared logic uses callbacks with complex types for the pieces that vary between use cases).
+
+You also dislike long files. Whenever a file grows longer than 1000 lines you propose ideas for 
+
 PREFER STRONG TYPES. Do not use "u32" or "String" where you can have a more specific type or at least a type alias. "String" makes it very unclear which values are legal. We want explicit Enums to lock down the possibilities for our state, and we want separate types for numerical IDs and distinct, non-overlapping uses of basic integers.
 
 Delete trailing spaces. Don't leave empty lines that consist only of whitespace. (Double newline is fine.)
