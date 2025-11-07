@@ -29,6 +29,7 @@ macro_rules! get_stats {
     }};
 }
 
+#[derive(Debug, Clone)]
 /// Benchmark state for rewind + play again benchmarks
 ///
 /// Consolidates shared logic across sequential and parallel variants.
@@ -55,13 +56,6 @@ pub struct RewindPlayAgain {
     #[allow(dead_code)] // Will be used for rewinds_before_restart logic
     rewinds_completed: Arc<AtomicUsize>,
 }
-
-// SAFETY: RewindPlayAgain is Sync because:
-// 1. The midgame_template (GameState) is only ever cloned, never shared across threads
-// 2. All Arc fields (p1_wins, p2_wins, metrics) are already Sync
-// 3. The seed (u64) is Copy and immutable
-// ParRayon only shares &RewindPlayAgain across threads, and each thread clones the game state
-unsafe impl Sync for RewindPlayAgain {}
 
 impl RewindPlayAgain {
     /// Create a new RewindPlayAgain benchmark state
@@ -512,7 +506,7 @@ impl<T> ParRayon<T> {
     }
 }
 
-impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
+impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
     fn execute_batch(&self, batch_size: usize, num_threads: usize) -> Result<Duration, String> {
         use rayon::prelude::*;
 
@@ -525,29 +519,46 @@ impl<T: BatchBenchmark + Sync> BatchBenchmark for ParRayon<T> {
             return self.inner.execute_batch(batch_size, 1);
         }
 
-        // Calculate iterations per thread
-        let iters_per_thread = batch_size.div_ceil(num_threads);
+        // Calculate iterations per thread: quotient for all, remainder goes to thread 0
+        let iters_per_thread = batch_size / num_threads;
+        let remainder = batch_size % num_threads;
 
         // Start timing
         let start = std::time::Instant::now();
 
+        // PER-BATCH SETUP (outside timing): Clone snapshots for parallel execution
+        // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
+
+        // Box up the clones to allow trait objects and avoid Sized issues
+        let replicas: Vec<Box<T>> = (0..num_threads).map(|_| Box::new(self.inner.clone())).collect();
+
+        eprintln!(
+            "Executing batch of {} games in parallel with {} threads ({} games/thread base, {} remainder)",
+            batch_size, num_threads, iters_per_thread, remainder
+        );
+
         // Execute in parallel using Rayon
         // Each thread calls the inner benchmark's sequential execute_batch
-        (0..num_threads)
-            .into_par_iter()
-            .try_for_each(|thread_id| -> Result<(), String> {
-                let thread_iters = if thread_id == num_threads - 1 {
-                    // Last thread handles any remainder
-                    batch_size - (thread_id * iters_per_thread)
+        replicas.into_par_iter().enumerate().try_for_each(
+            |(thread_id, local_self): (usize, Box<T>)| -> Result<(), String> {
+                eprintln!("Thread {} starting...", thread_id);
+
+                // Thread 0 gets the quotient plus the remainder
+                let thread_iters = if thread_id == 0 {
+                    iters_per_thread + remainder
                 } else {
                     iters_per_thread
                 };
 
                 if thread_iters > 0 {
-                    self.inner.execute_batch(thread_iters, 1)?;
+                    eprintln!("Thread {} executing {} iterations...", thread_id, thread_iters);
+                    local_self.execute_batch(thread_iters, 1)?;
+                    eprintln!("Thread {} completed.", thread_id);
                 }
                 Ok(())
-            })?;
+            },
+        )?;
+        eprintln!("All threads completed.");
 
         Ok(start.elapsed())
     }

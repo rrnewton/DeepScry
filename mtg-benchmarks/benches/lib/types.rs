@@ -96,6 +96,7 @@ impl std::ops::AddAssign for GameMetrics {
     }
 }
 
+#[derive(Debug)]
 /// Atomic version of GameMetrics for thread-safe aggregation
 ///
 /// Mirrors GameMetrics but uses atomic types for concurrent updates.

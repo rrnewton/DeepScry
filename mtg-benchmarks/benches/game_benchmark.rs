@@ -66,8 +66,8 @@ mod benchlib;
 
 use allocator::{AllocStats, AllocTracker};
 use benchlib::{
-    ensure_correct_working_directory, get_benchmark_measurement_time, print_aggregated_metrics, BatchBenchmark,
-    BenchmarkSetup, GameMetrics, LoggingMode, ParPinned, RestartStrategy, RewindPlayAgain,
+    ensure_correct_working_directory, get_benchmark_num_threads, get_benchmark_measurement_time, print_aggregated_metrics, BatchBenchmark,
+    BenchmarkSetup, GameMetrics, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
     RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -451,10 +451,56 @@ fn bench_robots_mirror_rewind_play_again(c: &mut Criterion) {
     group.finish();
 }
 
-// NOTE: Parallel Rayon benchmark removed due to thread-safety issues
-// ParRayon::execute_batch shares &RewindPlayAgain across threads, but GameState::clone()
-// is not thread-safe for concurrent access. Use pinned_par_rewind_play_again instead,
-// which properly handles parallel execution with thread-local game state clones.
+/// Benchmark: Parallel rewind + replay with different paths (PARALLEL with Rayon)
+/// Measures complete forward+rewind cycle with parallel execution using the RewindPlayAgain module
+///
+/// This benchmark measures MCTS-style parallel simulation:
+/// 1. Creates midgame state at 50% mark (done once in setup)
+/// 2. For each batch of iterations:
+///    - Clone game states for N threads (outside timing)
+///    - Each thread plays forward from midpoint and rewinds back
+///    - Times only the actual parallel gameplay
+/// 3. Tracks win rates and allocations across all threads
+fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
+    let mut benchmark: Option<ParRayon<RewindPlayAgain>> = None;
+    let num_threads = get_benchmark_num_threads();
+
+    let mut group = c.benchmark_group("robots_mirror");
+    group.sample_size(10);
+    group.measurement_time(get_benchmark_measurement_time());
+
+    group.bench_function("par_rewind_play_again", |b| {
+        b.iter_custom(|iters| {
+            if benchmark.is_none() {
+                let config = RewindPlayAgainConfig::default();
+                let new_benchmark = RewindPlayAgain::new(config, "PARALLEL");
+                let par_bench = ParRayon::new(new_benchmark);
+                benchmark = Some(par_bench);
+            }
+
+            let bench = benchmark.as_ref().unwrap();
+            bench.execute_batch(iters as usize, num_threads).unwrap()
+        });
+    });
+
+    if let Some(ref bench) = benchmark {
+        let total_games = bench.total_games();
+        if total_games > 0 {
+            let aggregated_metrics = bench.get_metrics();
+            // Access the inner RewindPlayAgain for seed and win rates
+            let inner_bench = bench.inner();
+            print_aggregated_metrics(
+                "Rewind + Play Again (Parallel)",
+                inner_bench.seed(),
+                &aggregated_metrics,
+                total_games,
+            );
+            inner_bench.print_win_rates("Rewind + Play Again (Parallel)");
+        }
+    }
+
+    group.finish();
+}
 
 /// Benchmark: Parallel rewind + replay with PINNED threads
 /// Measures complete forward+rewind cycle with pinned thread execution using the RewindPlayAgain module
@@ -469,12 +515,7 @@ fn bench_robots_mirror_rewind_play_again(c: &mut Criterion) {
 ///
 /// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
 fn bench_robots_mirror_pinned_par_rewind_play_again(c: &mut Criterion) {
-    // Configure thread count: Check BENCH_NUM_THREADS env var, otherwise use physical cores
-    let num_physical_cores = num_cpus::get_physical();
-    let num_threads = std::env::var("BENCH_NUM_THREADS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(num_physical_cores);
+    let num_threads = get_benchmark_num_threads();
 
     let mut benchmark: Option<ParPinned> = None;
 
@@ -735,6 +776,7 @@ criterion_group!(
     bench_robots_mirror_snapshot_games,
     bench_robots_mirror_rewind_only,
     bench_robots_mirror_rewind_play_again,
+    bench_robots_mirror_par_rewind_play_again,
     bench_robots_mirror_pinned_par_rewind_play_again,
     bench_save_snapshot,
     bench_monoblack_thedeck_rewind_play_again,
