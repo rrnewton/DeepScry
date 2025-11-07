@@ -94,20 +94,144 @@ macro_rules! get_stats {
     }};
 }
 
-/// Helper function for sequential RewindPlayAgain benchmarks
+/// Trait for benchmark construction and result extraction
 ///
-/// Handles the common pattern: lazy init, reset metrics, execute batch, print results.
-/// Reduces boilerplate by centralizing the iter_custom logic.
-fn bench_sequential_rewind_play_again<F>(
+/// Abstracts over different benchmark types (sequential, ParRayon, ParPinned)
+/// to enable a single generic benchmark helper function.
+trait BenchmarkAdapter: Sized {
+    /// Construct the benchmark from config and label
+    fn from_config(config: RewindPlayAgainConfig, label: &str) -> Self;
+
+    /// Execute a batch with the given parameters
+    fn execute_batch(&self, iters: usize, num_threads: usize) -> Result<Duration, String>;
+
+    /// Get total games played (via BatchBenchmark trait)
+    fn total_games(&self) -> usize;
+
+    /// Get aggregated metrics (via BatchBenchmark trait)
+    fn metrics(&self) -> GameMetrics;
+
+    /// Get the seed used for this benchmark
+    fn seed(&self) -> u64;
+
+    /// Print win rates with the given label
+    fn print_win_rates(&self, label: &str);
+
+    /// Reset metrics before each batch
+    fn reset_metrics(&self);
+}
+
+/// Adapter for sequential RewindPlayAgain benchmarks
+impl BenchmarkAdapter for RewindPlayAgain {
+    fn from_config(config: RewindPlayAgainConfig, label: &str) -> Self {
+        RewindPlayAgain::new(config, label)
+    }
+
+    fn execute_batch(&self, iters: usize, _num_threads: usize) -> Result<Duration, String> {
+        Ok(self.execute_batch_sequential(iters))
+    }
+
+    fn total_games(&self) -> usize {
+        self.get_total_games()
+    }
+
+    fn metrics(&self) -> GameMetrics {
+        self.get_aggregated_metrics()
+    }
+
+    fn seed(&self) -> u64 {
+        self.seed()
+    }
+
+    fn print_win_rates(&self, label: &str) {
+        self.print_win_rates(label)
+    }
+
+    fn reset_metrics(&self) {
+        BatchBenchmark::reset_metrics(self)
+    }
+}
+
+/// Adapter for parallel ParRayon benchmarks
+impl BenchmarkAdapter for ParRayon<RewindPlayAgain> {
+    fn from_config(config: RewindPlayAgainConfig, label: &str) -> Self {
+        let inner = RewindPlayAgain::new(config, label);
+        ParRayon::new(inner)
+    }
+
+    fn execute_batch(&self, iters: usize, num_threads: usize) -> Result<Duration, String> {
+        BatchBenchmark::execute_batch(self, iters, num_threads)
+    }
+
+    fn total_games(&self) -> usize {
+        BatchBenchmark::total_games(self)
+    }
+
+    fn metrics(&self) -> GameMetrics {
+        BatchBenchmark::get_metrics(self)
+    }
+
+    fn seed(&self) -> u64 {
+        self.inner().seed()
+    }
+
+    fn print_win_rates(&self, label: &str) {
+        self.inner().print_win_rates(label)
+    }
+
+    fn reset_metrics(&self) {
+        BatchBenchmark::reset_metrics(self)
+    }
+}
+
+/// Adapter for parallel ParPinned benchmarks
+impl BenchmarkAdapter for ParPinned<RewindPlayAgain> {
+    fn from_config(config: RewindPlayAgainConfig, label: &str) -> Self {
+        let inner = RewindPlayAgain::new(config, label);
+        ParPinned::new(inner)
+    }
+
+    fn execute_batch(&self, iters: usize, num_threads: usize) -> Result<Duration, String> {
+        BatchBenchmark::execute_batch(self, iters, num_threads)
+    }
+
+    fn total_games(&self) -> usize {
+        BatchBenchmark::total_games(self)
+    }
+
+    fn metrics(&self) -> GameMetrics {
+        BatchBenchmark::get_metrics(self)
+    }
+
+    fn seed(&self) -> u64 {
+        self.inner().seed()
+    }
+
+    fn print_win_rates(&self, label: &str) {
+        self.inner().print_win_rates(label)
+    }
+
+    fn reset_metrics(&self) {
+        BatchBenchmark::reset_metrics(self)
+    }
+}
+
+/// Generic benchmark helper function for all execution modes
+///
+/// This is the ur-helper that works for sequential, ParRayon, and ParPinned benchmarks.
+/// The BenchmarkAdapter trait abstracts over the differences between these types.
+fn bench_rewind_play_again<B, F>(
     c: &mut Criterion,
     group_name: &str,
     bench_name: &str,
     label: &str,
+    num_threads: usize,
     config_fn: F,
 ) where
+    B: BenchmarkAdapter,
     F: Fn() -> RewindPlayAgainConfig + 'static,
 {
-    let mut benchmark: Option<RewindPlayAgain> = None;
+    let mut benchmark: Option<B> = None;
 
     let mut group = c.benchmark_group(group_name);
     group.sample_size(10);
@@ -117,19 +241,19 @@ fn bench_sequential_rewind_play_again<F>(
         b.iter_custom(|iters| {
             if benchmark.is_none() {
                 let config = config_fn();
-                benchmark = Some(RewindPlayAgain::new(config, label));
+                benchmark = Some(B::from_config(config, label));
             }
 
             let bench = benchmark.as_ref().unwrap();
             bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
+            bench.execute_batch(iters as usize, num_threads).unwrap()
         });
     });
 
     if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
+        let total_games = bench.total_games();
         if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
+            let aggregated_metrics = bench.metrics();
             print_aggregated_metrics(label, bench.seed(), &aggregated_metrics, total_games);
             bench.print_win_rates(label);
         }
@@ -138,7 +262,20 @@ fn bench_sequential_rewind_play_again<F>(
     group.finish();
 }
 
-/// Helper function for parallel RewindPlayAgain benchmarks using ParRayon
+/// Convenience wrapper for sequential benchmarks
+fn bench_sequential_rewind_play_again<F>(
+    c: &mut Criterion,
+    group_name: &str,
+    bench_name: &str,
+    label: &str,
+    config_fn: F,
+) where
+    F: Fn() -> RewindPlayAgainConfig + 'static,
+{
+    bench_rewind_play_again::<RewindPlayAgain, _>(c, group_name, bench_name, label, 1, config_fn)
+}
+
+/// Convenience wrapper for parallel Rayon benchmarks
 fn bench_parallel_rayon_rewind_play_again<F>(
     c: &mut Criterion,
     group_name: &str,
@@ -149,40 +286,10 @@ fn bench_parallel_rayon_rewind_play_again<F>(
 ) where
     F: Fn() -> RewindPlayAgainConfig + 'static,
 {
-    let mut benchmark: Option<ParRayon<RewindPlayAgain>> = None;
-
-    let mut group = c.benchmark_group(group_name);
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function(bench_name, |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = config_fn();
-                let inner = RewindPlayAgain::new(config, label);
-                benchmark = Some(ParRayon::new(inner));
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch(iters as usize, num_threads).unwrap()
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_metrics();
-            let inner_bench = bench.inner();
-            print_aggregated_metrics(label, inner_bench.seed(), &aggregated_metrics, total_games);
-            inner_bench.print_win_rates(label);
-        }
-    }
-
-    group.finish();
+    bench_rewind_play_again::<ParRayon<RewindPlayAgain>, _>(c, group_name, bench_name, label, num_threads, config_fn)
 }
 
-/// Helper function for parallel RewindPlayAgain benchmarks using ParPinned
+/// Convenience wrapper for parallel pinned benchmarks
 fn bench_parallel_pinned_rewind_play_again<F>(
     c: &mut Criterion,
     group_name: &str,
@@ -193,37 +300,7 @@ fn bench_parallel_pinned_rewind_play_again<F>(
 ) where
     F: Fn() -> RewindPlayAgainConfig + 'static,
 {
-    let mut benchmark: Option<ParPinned<RewindPlayAgain>> = None;
-
-    let mut group = c.benchmark_group(group_name);
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function(bench_name, |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = config_fn();
-                let inner = RewindPlayAgain::new(config, label);
-                benchmark = Some(ParPinned::new(inner));
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch(iters as usize, num_threads).unwrap()
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_metrics();
-            let inner_bench = bench.inner();
-            print_aggregated_metrics(label, inner_bench.seed(), &aggregated_metrics, total_games);
-            inner_bench.print_win_rates(label);
-        }
-    }
-
-    group.finish();
+    bench_rewind_play_again::<ParPinned<RewindPlayAgain>, _>(c, group_name, bench_name, label, num_threads, config_fn)
 }
 
 /// Benchmark: Fresh mode - allocate new game each iteration
@@ -401,6 +478,14 @@ fn bench_jeskai_trolldisk_rewind_play_again(c: &mut Criterion) {
             logging_mode: LoggingMode::Silent,
         },
     );
+}
+
+/// Benchmark: Simple bolt deck - minimal complexity for max actions/sec
+/// Uses the simplest possible deck to measure peak engine throughput
+fn bench_simple_bolt_rewind_play_again(c: &mut Criterion) {
+    bench_sequential_rewind_play_again(c, "simple_bolt", "rewind_play_again", "Simple Bolt Mirror", || {
+        RewindPlayAgainConfig::with_same_deck("decks/simple_bolt.dck")
+    });
 }
 
 /// Benchmark: Rewind mode - use undo log to rewind game
@@ -647,6 +732,7 @@ criterion_group!(
     bench_save_snapshot,
     bench_monoblack_thedeck_rewind_play_again,
     bench_whiteweenie_mirror_rewind_play_again,
-    bench_jeskai_trolldisk_rewind_play_again
+    bench_jeskai_trolldisk_rewind_play_again,
+    bench_simple_bolt_rewind_play_again
 );
 criterion_main!(benches);
