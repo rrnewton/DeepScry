@@ -37,7 +37,6 @@ pub fn get_benchmark_num_threads() -> usize {
         .unwrap_or(num_physical_cores)
 }
 
-
 /// Helper function to ensure we're in the correct working directory
 ///
 /// Criterion benchmarks may run from various subdirectories inside target/.
