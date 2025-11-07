@@ -89,20 +89,39 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 
 ---
 
-**Current performance as of 2025-11-04_#713(1961e96):**
+**Current performance as of 2025-11-07_#822(855b05d5) - MAJOR IMPROVEMENT:**
+
+*Old School deck (03_robots_jesseisbak.dck mirror, 1000 games):*
+- **Rewind + Play Again**: **109.29 games/sec** (+250% vs baseline 31.20 games/sec!)
+- **Duration**: 9.150s (was 32.052s, -71.4% time)
+- **Actions throughput**: 63,943 actions/sec (was 18,260, +250%)
+- **Total turns**: 22,153 turns, 585,063 actions
+
+**Latest DHAT heap profiling (2025-11-07_#822, 1000 games rewind+replay):**
+
+Total allocations: **86.4 MB in 5.6M blocks** (was 1.48 GB in 20.4M blocks)
+- **94.2% allocation reduction!**
+- **72.4% fewer allocation blocks!**
+
+Top remaining hotspots (post-string-cache):
+1. mana_engine.rs:550 - Vec growth in dual land parsing: ~27 MB (31%)
+2. random_controller.rs:103 - Random choice generation: 4.68 MB (5.4%)
+3. mana_payment.rs:580 - Mana source selection: 2.57 MB (3.0%)
+4. game_loop.rs:1413 - Game state updates: 2.20 MB (2.5%)
+
+**Previous performance as of 2025-11-04_#713(1961e96):**
 
 *Simple deck (simple_bolt.dck):*
 - **Fresh Mode**: 5,520 games/sec, avg 7 turns/game, 232KB/game, 33.1KB/turn
 - **Snapshot Mode**: 19,676 games/sec (3.6x faster via clone)
 - **Rewind Mode**: 298,854 games/sec (54.1x faster via undo, +52% vs previous!)
-- **Rewind + Play Again** (isolates forward gameplay): Details pending
 
 *Old School decks (realistic 32-41 turn games):*
 - **Mono Black vs The Deck**: 1,479 games/sec, 32 turns/game, 822KB/game, 25.7KB/turn
 - **White Weenie Mirror**: 1,068 games/sec, 41 turns/game, 1.22MB/game, 29.7KB/turn
 - **Jeskai Aggro vs Troll Disk**: 1,128 games/sec, 39 turns/game, 1.22MB/game, 31.3KB/turn
 
-**Latest DHAT heap profiling (2025-11-04_#713, 100 iterations rewind+replay):**
+**Previous DHAT profiling (2025-11-04_#713, 100 iterations rewind+replay):**
 
 Total allocations: 1.10 MB in 27,968 blocks (-2.6% bytes from previous, +6.2% blocks)
 Top hotspots:
@@ -110,13 +129,17 @@ Top hotspots:
 2. Allocator overhead entries (~7-8% each, expected)
 
 **Major wins achieved:**
+- ✅ **String allocation cache (CardCache + AbilityCache)**: 1.48 GB → 86.4 MB (-94.2%!)
+  - Eliminated repeated to_lowercase() calls (900 MB saved)
+  - Pre-computed boolean flags for mana abilities and targeting
+  - 3.5x speedup in game throughput (31.20 → 109.29 games/sec)
 - ✅ ManaEngine dynamic allocation: 600KB → 0KB (eliminated from top 20!)
 - ✅ ManaEngine::update reserve: 70KB → 0KB (eliminated from top 20!)
 - ✅ GameLoop abilities buffer: 89KB → 51KB (-43% reduction)
 - ✅ RNG serialization: JSON→bincode, 152→56 bytes per turn (63% reduction, 96 bytes/turn saved)
 - ✅ RNG SmallVec: Eliminated heap allocation per turn (~40 allocations saved per game)
 - ✅ RNG advance_step hotspot: 150KB → eliminated from top hotspots!
-- **Total reduction: From 1.86 MB baseline to 1.10 MB (-41% total)**
+- **Total reduction: From 1.48 GB baseline to 86.4 MB (-94.2% total)**
 
 **Completed optimizations:**
 - ✅ mtg-6: Logging allocations (conditional compilation added)
@@ -134,6 +157,7 @@ Top hotspots:
 - ✅ mtg-437f88: RNG bincode serialization (96 bytes/turn saved, ~8% of advance_step allocations)
 - ✅ mtg-02f1df: RNG SmallVec inline storage (heap allocation eliminated, +52% Rewind mode performance!)
 - ✅ mtg-a60157: Parallel benchmark implementation (exposed allocator contention bottleneck)
+- ✅ mtg-c66412: String allocation cache (CardCache + AbilityCache) - **94.2% allocation reduction (1.48 GB → 86.4 MB), 3.5x speedup (31.20 → 109.29 games/sec)**
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -159,14 +183,18 @@ Top hotspots:
 - mtg-14: Object pools for reusable objects
 - mtg-15: Compile-time feature flags for profiling modes
 
-**Optimization status: Excellent!**
-We've achieved a 41% reduction in total allocations (1.86MB → 1.10MB).
-Remaining hotspots are all below 5% and require extensive API refactoring for diminishing returns.
+**Optimization status: Outstanding!**
+We've achieved a **94.2% reduction in total allocations** (1.48 GB → 86.4 MB) and **3.5x speedup** (31.20 → 109.29 games/sec).
 
-The RNG SmallVec optimization had an unexpected but massive impact on Rewind mode performance (+52%),
-likely due to improved cache locality and reduced allocator pressure.
+The string allocation cache (CardCache + AbilityCache) had a massive impact by eliminating repeated to_lowercase() calls that were causing 900 MB of allocations. This optimization exceeded predictions (50-60%) by achieving 94.2% reduction.
+
+**Next high-priority optimizations:**
+1. Pre-size Vec at mana_engine.rs:550 (15-20 MB savings, 5 min fix)
+2. Pre-size other hot Vecs in game_loop.rs (5-10 MB savings, 15 min fix)
+3. Convert dual land colors to SmallVec (8-12 MB savings, 30 min fix)
 
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
+See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
 
 ---
-**Updated 2025-11-05_#763(81e4c0b9)** - Infrastructure complete: thread count parameterization working, analysis script validated in dry-run, ready for benchmark sweep
+**Updated 2025-11-07_#822(855b05d5)** - String allocation cache complete: 94.2% allocation reduction, 3.5x speedup, remaining optimizations identified
