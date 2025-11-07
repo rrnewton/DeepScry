@@ -15,6 +15,37 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Seed spacing between threads to prevent overlap
+///
+/// Each thread's seed is derived as: `orig_seed + (thread_id * THREAD_SEED_SPACING)`
+/// This ensures that when the inner sequential loop increments the seed for each game,
+/// the seeds from different threads don't overlap.
+///
+/// With 1,000,000 spacing, each thread can execute up to 1 million games before
+/// potentially overlapping with the next thread's seed space.
+const THREAD_SEED_SPACING: u64 = 1_000_000;
+
+/// Derive a per-thread seed from the original seed and thread ID
+///
+/// # Parameters
+/// - `orig_seed`: The base seed used for the benchmark
+/// - `thread_id`: The thread's index (0, 1, 2, ...)
+///
+/// # Returns
+/// A seed value that is spaced far enough from other threads to prevent overlap
+/// when the sequential loop increments seeds for individual games.
+///
+/// # Example
+/// ```ignore
+/// let thread_0_seed = derive_thread_seed(43, 0); // 43 + 0*1000000 = 43
+/// let thread_1_seed = derive_thread_seed(43, 1); // 43 + 1*1000000 = 1000043
+/// let thread_2_seed = derive_thread_seed(43, 2); // 43 + 2*1000000 = 2000043
+/// ```
+#[inline]
+fn derive_thread_seed(orig_seed: u64, thread_id: usize) -> u64 {
+    orig_seed.wrapping_add((thread_id as u64).wrapping_mul(THREAD_SEED_SPACING))
+}
+
 /// Helper function to run parallel batch with pinned threads and precise timing
 ///
 /// This is a simplified interface that:
@@ -238,12 +269,13 @@ impl<T: BatchBenchmark + Clone + Send> BatchBenchmark for ParRayon<T> {
         // We need to clone before the parallel loop because GameState contains RefCell (not Sync)
 
         // Box up the clones to allow trait objects and avoid Sized issues
-        // Each thread gets a clone reseeded with orig_seed + thread_id
+        // Each thread gets a clone reseeded with proper spacing to prevent overlap
         let replicas: Vec<Box<T>> = (0..num_threads)
             .map(|thread_id| {
                 let mut clone = self.inner.clone();
-                // Reseed with orig_seed + thread_id to ensure different game paths per thread
-                clone.reseed(orig_seed.wrapping_add(thread_id as u64));
+                // Reseed with spaced seeds to ensure different game paths per thread
+                // Spacing prevents overlap when sequential loop increments seed per game
+                clone.reseed(derive_thread_seed(orig_seed, thread_id));
                 Box::new(clone)
             })
             .collect();
@@ -343,8 +375,9 @@ impl<T: BatchBenchmark + Clone + Send + 'static> BatchBenchmark for ParPinned<T>
         // Each thread gets a clone of the inner benchmark and executes a portion
         let (batch_duration, results) =
             execute_parallel_batch(num_threads, &self.inner, move |thread_id, local_self| {
-                // Reseed with orig_seed + thread_id to ensure different game paths per thread
-                local_self.reseed(orig_seed.wrapping_add(thread_id as u64));
+                // Reseed with spaced seeds to ensure different game paths per thread
+                // Spacing prevents overlap when sequential loop increments seed per game
+                local_self.reseed(derive_thread_seed(orig_seed, thread_id));
 
                 // Thread 0 gets the quotient plus the remainder
                 let thread_iters = if thread_id == 0 {
