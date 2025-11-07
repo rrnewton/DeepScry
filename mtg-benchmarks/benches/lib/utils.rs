@@ -28,6 +28,7 @@ pub fn get_benchmark_measurement_time() -> Duration {
 }
 
 /// Get number of threads to use for parallel benchmarks
+#[allow(dead_code)] // Used by benchmarks but not by all binaries
 pub fn get_benchmark_num_threads() -> usize {
     // Configure thread count: Check BENCH_NUM_THREADS env var, otherwise use physical cores
     let num_physical_cores = num_cpus::get_physical();
