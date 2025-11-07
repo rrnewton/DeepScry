@@ -270,6 +270,14 @@ pub fn print_aggregated_metrics(mode: &str, seed: u64, aggregated: &super::types
         aggregated.bytes_allocated as f64 / iteration_count as f64
     );
     eprintln!("  Bytes/turn: {:.2}", aggregated.bytes_per_turn());
+    eprintln!(
+        "  Bytes/action: {:.2}",
+        if aggregated.actions > 0 {
+            aggregated.bytes_allocated as f64 / aggregated.actions as f64
+        } else {
+            0.0
+        }
+    );
     eprintln!("  Bytes/sec: {:.2}", aggregated.bytes_per_sec());
     eprintln!("\nNote: For authoritative per-iteration timing, see Criterion's estimate above.");
 }
