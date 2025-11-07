@@ -129,13 +129,22 @@ fn bench_rewind_play_again<B, C, F, P>(
             if benchmark.is_none() {
                 let config = config_fn();
                 benchmark = Some(constructor(config, bench_name));
+                eprint!("  Criterion batch sizes: ");
             }
+
+            // Print batch size for visibility
+            eprint!("{}, ", iters);
 
             let bench = benchmark.as_ref().unwrap();
             bench.reset_metrics();
             bench.execute_batch(iters as usize, num_threads).unwrap()
         });
     });
+
+    // Print newline after batch sizes
+    if benchmark.is_some() {
+        eprintln!();
+    }
 
     if let Some(ref bench) = benchmark {
         let total_games = bench.total_games();
