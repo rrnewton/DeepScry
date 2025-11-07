@@ -332,4 +332,12 @@ impl BatchBenchmark for RewindPlayAgain {
     fn total_games(&self) -> usize {
         self.get_total_games()
     }
+
+    fn orig_seed(&self) -> u64 {
+        self.seed
+    }
+
+    fn reseed(&mut self, seed: u64) {
+        self.seed = seed;
+    }
 }

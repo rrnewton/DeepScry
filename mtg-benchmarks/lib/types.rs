@@ -287,4 +287,20 @@ pub trait BatchBenchmark {
 
     /// Get total number of games played
     fn total_games(&self) -> usize;
+
+    /// Get the original seed used for this benchmark
+    ///
+    /// Returns the base RNG seed that was used when creating the benchmark instance.
+    /// This can be used to derive per-thread seeds for parallel execution.
+    fn orig_seed(&self) -> u64;
+
+    /// Reseed the benchmark's RNG
+    ///
+    /// Updates the seed used for subsequent game executions. This is primarily
+    /// used in parallel execution to ensure different threads explore different
+    /// game paths rather than repeating the same games.
+    ///
+    /// # Parameters
+    /// - `seed`: New seed value to use
+    fn reseed(&mut self, seed: u64);
 }
