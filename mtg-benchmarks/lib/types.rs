@@ -101,6 +101,10 @@ impl std::ops::AddAssign for GameMetrics {
 ///
 /// Mirrors GameMetrics but uses atomic types for concurrent updates.
 /// Wrapped in Arc for cheap cloning across threads.
+///
+/// # Duration Tracking
+/// - `total_duration_nanos`: Wall-clock time (set by parallel executor, not additive)
+/// - `total_core_nanos`: CPU time (sum of thread durations, additive across threads)
 pub struct AtomicMetrics {
     /// Total games played
     pub total_games: AtomicUsize,
@@ -108,8 +112,10 @@ pub struct AtomicMetrics {
     pub total_turns: AtomicU32,
     /// Aggregated actions across all games
     pub total_actions: AtomicUsize,
-    /// Aggregated duration in nanoseconds
+    /// Wall-clock duration in nanoseconds (overwritten by parallel executor)
     pub total_duration_nanos: AtomicU64,
+    /// CPU time in nanoseconds (sum of thread durations, for parallel efficiency tracking)
+    pub total_core_nanos: AtomicU64,
     /// Aggregated bytes allocated
     pub total_bytes_allocated: AtomicUsize,
     /// Aggregated bytes deallocated
@@ -124,22 +130,55 @@ impl AtomicMetrics {
             total_turns: AtomicU32::new(0),
             total_actions: AtomicUsize::new(0),
             total_duration_nanos: AtomicU64::new(0),
+            total_core_nanos: AtomicU64::new(0),
             total_bytes_allocated: AtomicUsize::new(0),
             total_bytes_deallocated: AtomicUsize::new(0),
         }
     }
 
+    /// Reset all metrics to zero
+    ///
+    /// This is used to clear metrics before running a batch, ensuring that
+    /// only the most recent batch's measurements are captured.
+    #[allow(dead_code)] // Used by criterion benchmarks
+    pub fn reset(&self) {
+        self.total_games.store(0, Ordering::Relaxed);
+        self.total_turns.store(0, Ordering::Relaxed);
+        self.total_actions.store(0, Ordering::Relaxed);
+        self.total_duration_nanos.store(0, Ordering::Relaxed);
+        self.total_core_nanos.store(0, Ordering::Relaxed);
+        self.total_bytes_allocated.store(0, Ordering::Relaxed);
+        self.total_bytes_deallocated.store(0, Ordering::Relaxed);
+    }
+
     /// Atomically add metrics from a batch
+    ///
+    /// For sequential execution, duration represents both wall time and CPU time.
+    /// For parallel execution, this adds CPU time; wall time must be set separately.
     pub fn add_batch(&self, games: usize, turns: u32, actions: usize, duration: Duration, alloc_stats: &AllocStats) {
         self.total_games.fetch_add(games, Ordering::Relaxed);
         self.total_turns.fetch_add(turns, Ordering::Relaxed);
         self.total_actions.fetch_add(actions, Ordering::Relaxed);
-        self.total_duration_nanos
-            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+
+        // Add to both duration and core time for sequential execution
+        // Parallel executor will overwrite duration with wall time
+        let nanos = duration.as_nanos() as u64;
+        self.total_duration_nanos.fetch_add(nanos, Ordering::Relaxed);
+        self.total_core_nanos.fetch_add(nanos, Ordering::Relaxed);
+
         self.total_bytes_allocated
             .fetch_add(alloc_stats.bytes_allocated, Ordering::Relaxed);
         self.total_bytes_deallocated
             .fetch_add(alloc_stats.bytes_deallocated, Ordering::Relaxed);
+    }
+
+    /// Set the wall-clock duration (used by parallel executors)
+    ///
+    /// This overwrites the total_duration_nanos with the actual wall-clock time,
+    /// while total_core_nanos retains the sum of thread durations (CPU time).
+    pub fn set_wall_time(&self, duration: Duration) {
+        self.total_duration_nanos
+            .store(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     /// Convert to GameMetrics snapshot by loading all atomic values
@@ -156,6 +195,12 @@ impl AtomicMetrics {
     /// Get total games played
     pub fn get_total_games(&self) -> usize {
         self.total_games.load(Ordering::Relaxed)
+    }
+
+    /// Get CPU time (core-seconds) for parallel efficiency calculation
+    #[allow(dead_code)] // Used by criterion benchmarks for parallel efficiency analysis
+    pub fn get_core_seconds(&self) -> f64 {
+        self.total_core_nanos.load(Ordering::Relaxed) as f64 / 1_000_000_000.0
     }
 }
 
@@ -303,4 +348,22 @@ pub trait BatchBenchmark {
     /// # Parameters
     /// - `seed`: New seed value to use
     fn reseed(&mut self, seed: u64);
+
+    /// Reset all accumulated metrics to zero
+    ///
+    /// Clears all metrics state, ensuring that subsequent calls to `get_metrics()`
+    /// and `total_games()` only reflect measurements taken after the reset.
+    /// This is used to ensure benchmarks only measure the last/biggest batch.
+    fn reset_metrics(&self);
+
+    /// Set the wall-clock duration (used by parallel executors)
+    ///
+    /// Overwrites the accumulated duration with the actual wall-clock time.
+    /// In parallel execution, threads accumulate their individual durations (CPU time)
+    /// into total_duration_nanos. This method overwrites that with the actual wall time
+    /// while preserving CPU time in total_core_nanos.
+    ///
+    /// # Parameters
+    /// - `duration`: The wall-clock duration to set
+    fn set_wall_time(&self, duration: Duration);
 }

@@ -340,4 +340,15 @@ impl BatchBenchmark for RewindPlayAgain {
     fn reseed(&mut self, seed: u64) {
         self.seed = seed;
     }
+
+    fn reset_metrics(&self) {
+        self.metrics.reset();
+        self.p1_wins.store(0, Ordering::Relaxed);
+        self.p2_wins.store(0, Ordering::Relaxed);
+        self.rewinds_completed.store(0, Ordering::Relaxed);
+    }
+
+    fn set_wall_time(&self, duration: Duration) {
+        self.metrics.set_wall_time(duration);
+    }
 }

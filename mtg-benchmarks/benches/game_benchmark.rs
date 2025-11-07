@@ -114,6 +114,7 @@ fn bench_robots_mirror_fresh_games(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -156,6 +157,7 @@ fn bench_robots_mirror_mem_logging_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -198,6 +200,7 @@ fn bench_robots_mirror_stdout_logging_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -239,6 +242,7 @@ fn bench_robots_mirror_snapshot_games(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -427,6 +431,7 @@ fn bench_robots_mirror_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -476,6 +481,7 @@ fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch(iters as usize, num_threads).unwrap()
         });
     });
@@ -530,6 +536,7 @@ fn bench_robots_mirror_pinned_par_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch(iters as usize, num_threads).unwrap()
         });
     });
@@ -671,6 +678,7 @@ fn bench_monoblack_thedeck_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -704,6 +712,7 @@ fn bench_whiteweenie_mirror_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
@@ -744,6 +753,7 @@ fn bench_jeskai_trolldisk_rewind_play_again(c: &mut Criterion) {
             }
 
             let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
             bench.execute_batch_sequential(iters as usize)
         });
     });
