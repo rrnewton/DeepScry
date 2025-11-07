@@ -2,6 +2,44 @@
 
 Utility scripts for the MTG Forge Rust project.
 
+## run_benchmark.sh
+
+Runs benchmarks and records results to both CSV and full log files.
+
+### Usage
+
+```bash
+./scripts/run_benchmark.sh [benchmark_name]
+```
+
+### Output Files
+
+The script creates two output files in `experiment_results/<CPU_NAME>/`:
+
+1. **CSV File**: `perf_history.csv`
+   - Append-only history of extracted metrics
+   - One row per benchmark configuration
+   - Machine-readable for analysis and plotting
+
+2. **Log File**: `benchmark_log_YYYYMMDD_#depth.log`
+   - Complete benchmark stdout including:
+     - Full aggregated metrics (turns, actions, duration, allocations)
+     - Win rate analysis (P1 vs P2 percentages)
+     - Criterion timing estimates and confidence intervals
+     - All benchmark output and warnings
+   - Human-readable detailed results
+   - Includes metadata header with CPU, timestamp, git commit
+
+### Example
+
+```bash
+./scripts/run_benchmark.sh rewind_play_again
+```
+
+Creates:
+- `experiment_results/AMD_Ryzen_Threadripper_PRO_7975WX_32-Cores/perf_history.csv` (appended)
+- `experiment_results/AMD_Ryzen_Threadripper_PRO_7975WX_32-Cores/benchmark_log_20251107_#165.log` (new)
+
 ## periodically_run_benchmarks.sh
 
 Automatically runs benchmarks when the git depth has advanced by 5 or more commits.
