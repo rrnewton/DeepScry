@@ -206,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_sequential(config: RewindPlayAgainConfig, batch_size: usize) -> Result<(), Box<dyn std::error::Error>> {
     println!("Initializing sequential benchmark...");
     let benchmark = RewindPlayAgain::new(config, "SEQUENTIAL");
-    let seed = benchmark.seed();
+    let seed = benchmark.orig_seed();
     println!("  Seed: {}", seed);
     println!();
 
@@ -236,7 +236,7 @@ fn run_parallel_rayon(
     println!("Initializing parallel benchmark (Rayon)...");
     let base_benchmark = RewindPlayAgain::new(config, "PARALLEL");
     let benchmark = ParRayon::new(base_benchmark);
-    let seed = benchmark.inner().seed();
+    let seed = benchmark.inner().orig_seed();
     println!("  Seed: {}", seed);
     println!();
 
@@ -269,7 +269,7 @@ fn run_parallel_pinned(
     println!("Initializing parallel benchmark (Pinned Threads)...");
     let base_benchmark = RewindPlayAgain::new(config, "PINNED-PARALLEL");
     let benchmark = ParPinned::new(base_benchmark);
-    let seed = benchmark.inner().seed();
+    let seed = benchmark.inner().orig_seed();
     println!("  Seed: {}", seed);
     println!();
 
