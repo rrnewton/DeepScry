@@ -14,8 +14,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Get CPU name and normalize it for use in directory paths
+# Extracts from /proc/cpuinfo, replaces spaces with underscores, strips non-alphanumeric except _ and -
+get_cpu_name() {
+    local cpu_name=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | sed 's/^[ \t]*//')
+    # Replace spaces with underscores and remove any characters that aren't alphanumeric, underscore, or dash
+    echo "$cpu_name" | sed 's/ /_/g' | sed 's/[^a-zA-Z0-9_-]//g'
+}
+
 # Configuration
-CSV_FILE="experiment_results/perf_history.csv"
+CPU_NAME=$(get_cpu_name)
+CSV_FILE="experiment_results/$CPU_NAME/perf_history.csv"
 MIN_DEPTH_DELTA=5
 
 # Helper functions
@@ -61,6 +70,7 @@ get_last_recorded_depth() {
 # Main script
 main() {
     log_info "Checking if benchmarks should run..."
+    log_info "CPU: $CPU_NAME"
 
     # Ensure we're in a git repository
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -87,8 +97,8 @@ main() {
     log_success "Depth delta ($depth_delta) >= minimum ($MIN_DEPTH_DELTA)"
     log_info "Running benchmarks..."
 
-    # Ensure experiment_results directory exists
-    mkdir -p experiment_results
+    # Ensure experiment_results directory exists (CPU-specific)
+    mkdir -p "experiment_results/$CPU_NAME"
 
     # Initialize CSV file with header if it doesn't exist
     if [ ! -f "$CSV_FILE" ]; then
