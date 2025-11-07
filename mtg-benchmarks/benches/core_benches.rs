@@ -4,7 +4,7 @@
 //! For parallel execution, see the `par_utils` module which provides `ParRayon` and
 //! `ParPinned` wrappers.
 
-use super::super::allocator::{AllocStats, AllocTracker};
+use super::allocator::{AllocStats, AllocTracker};
 use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome, LoggingMode, RewindPlayAgainConfig};
 use super::utils::{create_game_at_percent, ensure_correct_working_directory, BenchmarkSetup};
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};

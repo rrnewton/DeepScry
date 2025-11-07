@@ -58,13 +58,11 @@
 //! - `jeskai_trolldisk`: Old School Jeskai vs Troll Disk
 //! - `snapshot_serialization`: Snapshot save/load benchmarks
 
-mod allocator;
-
-#[path = "lib/mod.rs"]
+#[path = "../lib/mod.rs"]
 mod benchlib;
 
-use allocator::{AllocStats, AllocTracker};
 use benchlib::{
+    allocator::{AllocStats, AllocTracker},
     ensure_correct_working_directory, get_benchmark_measurement_time, get_benchmark_num_threads,
     print_aggregated_metrics, BatchBenchmark, BenchmarkSetup, GameMetrics, LoggingMode, ParPinned, ParRayon,
     RestartStrategy, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
