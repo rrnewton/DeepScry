@@ -89,25 +89,32 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 
 ---
 
-**Current performance as of 2025-11-07_#822(855b05d5) - MAJOR IMPROVEMENT:**
+**Current performance as of 2025-11-07_#823(b33ddea0) - Vec<ManaColor> ELIMINATED:**
 
-*Old School deck (03_robots_jesseisbak.dck mirror, 1000 games):*
+*Old School deck (03_robots_jesseisbak.dck mirror, 10 games, stats_alloc):*
+- **Rewind + Play Again**: **2,120.62 games/sec** (baseline: 2,104.01 games/sec)
+- **Performance gain**: +0.79% throughput improvement
+- **Total allocations**: 665,437 bytes (was 963,317, **-30.9% allocation reduction**)
+- **Avg bytes/game**: 66,543.70 (was 96,331.70, -29,788 bytes/game)
+- **Bytes/action**: 121.99 (was 176.59, -54.60 bytes/action)
+
+*Old School deck (03_robots_jesseisbak.dck mirror, 1000 games - previous):*
 - **Rewind + Play Again**: **109.29 games/sec** (+250% vs baseline 31.20 games/sec!)
 - **Duration**: 9.150s (was 32.052s, -71.4% time)
 - **Actions throughput**: 63,943 actions/sec (was 18,260, +250%)
 - **Total turns**: 22,153 turns, 585,063 actions
 
-**Latest DHAT heap profiling (2025-11-07_#822, 1000 games rewind+replay):**
+**Latest allocation profiling (2025-11-07_#823, 10 games rewind+replay, stats_alloc):**
 
-Total allocations: **86.4 MB in 5.6M blocks** (was 1.48 GB in 20.4M blocks)
-- **94.2% allocation reduction!**
-- **72.4% fewer allocation blocks!**
+Total allocations: **665 KB** (was 963 KB before ManaColors, was 86.4 MB with DHAT profiling)
+- **30.9% allocation reduction from Vec<ManaColor> elimination!**
+- Expected similar improvement at scale (1000 games)
 
-Top remaining hotspots (post-string-cache):
-1. mana_engine.rs:550 - Vec growth in dual land parsing: ~27 MB (31%)
-2. random_controller.rs:103 - Random choice generation: 4.68 MB (5.4%)
-3. mana_payment.rs:580 - Mana source selection: 2.57 MB (3.0%)
-4. game_loop.rs:1413 - Game state updates: 2.20 MB (2.5%)
+Top remaining hotspots (post-Vec<ManaColor> elimination):
+1. ~~mana_engine.rs:550 - Vec growth in dual land parsing~~ **✅ ELIMINATED (ManaColors bitfield)**
+2. random_controller.rs:103 - Random choice generation: ~5% of remaining
+3. mana_payment.rs:580 - Mana source selection: ~3% of remaining
+4. game_loop.rs:1413 - Game state updates: ~2.5% of remaining
 
 **Previous performance as of 2025-11-04_#713(1961e96):**
 
@@ -158,6 +165,7 @@ Top hotspots:
 - ✅ mtg-02f1df: RNG SmallVec inline storage (heap allocation eliminated, +52% Rewind mode performance!)
 - ✅ mtg-a60157: Parallel benchmark implementation (exposed allocator contention bottleneck)
 - ✅ mtg-c66412: String allocation cache (CardCache + AbilityCache) - **94.2% allocation reduction (1.48 GB → 86.4 MB), 3.5x speedup (31.20 → 109.29 games/sec)**
+- ✅ **Vec<ManaColor> bitfield optimization (b33ddea0)** - **30.9% allocation reduction (963 KB → 665 KB per 10 games), ManaProductionKind now Copy**
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -189,12 +197,13 @@ We've achieved a **94.2% reduction in total allocations** (1.48 GB → 86.4 MB) 
 The string allocation cache (CardCache + AbilityCache) had a massive impact by eliminating repeated to_lowercase() calls that were causing 900 MB of allocations. This optimization exceeded predictions (50-60%) by achieving 94.2% reduction.
 
 **Next high-priority optimizations:**
-1. Pre-size Vec at mana_engine.rs:550 (15-20 MB savings, 5 min fix)
-2. Pre-size other hot Vecs in game_loop.rs (5-10 MB savings, 15 min fix)
-3. Convert dual land colors to SmallVec (8-12 MB savings, 30 min fix)
+1. ~~Pre-size Vec at mana_engine.rs:550~~ **✅ DONE (b33ddea0)** - Replaced Vec with ManaColors bitfield: 30.9% allocation reduction
+2. Investigate random_controller.rs:103 - Random choice generation (~5% of remaining allocations)
+3. Investigate mana_payment.rs:580 - Mana source selection (~3% of remaining)
+4. Investigate game_loop.rs:1413 - Game state updates (~2.5% of remaining)
 
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
 
 ---
-**Updated 2025-11-07_#822(855b05d5)** - String allocation cache complete: 94.2% allocation reduction, 3.5x speedup, remaining optimizations identified
+**Updated 2025-11-07_#823(b33ddea0)** - Vec<ManaColor> eliminated with ManaColors bitfield: 30.9% allocation reduction, ManaProductionKind now Copy
