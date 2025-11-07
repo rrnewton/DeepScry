@@ -160,6 +160,9 @@ impl RewindPlayAgain {
     /// # Returns
     /// Tuple of (turns played, actions performed, GameOutcome)
     pub fn execute_single_game(&self, game: &mut GameState, seed: u64) -> (u32, usize, GameOutcome) {
+        use std::fs::OpenOptions;
+        use std::os::fd::AsRawFd;
+
         game.seed_rng(seed);
 
         // Record starting state
@@ -177,11 +180,34 @@ impl RewindPlayAgain {
         let mut controller1 = RandomController::with_seed(p1_id, seed);
         let mut controller2 = RandomController::with_seed(p2_id, seed);
 
+        // For ToStdout mode, redirect stdout to /dev/null to avoid benchmark noise
+        let (orig_stdout, _devnull) = if self.config.logging_mode == LoggingMode::ToStdout {
+            let devnull = OpenOptions::new()
+                .write(true)
+                .open("/dev/null")
+                .expect("Failed to open /dev/null");
+            let orig = unsafe { libc::dup(libc::STDOUT_FILENO) };
+            unsafe {
+                libc::dup2(devnull.as_raw_fd(), libc::STDOUT_FILENO);
+            }
+            (Some(orig), Some(devnull))
+        } else {
+            (None, None)
+        };
+
         let verbosity = self.configure_logging(game);
         let mut game_loop = GameLoop::new(game).with_verbosity(verbosity);
         let result = game_loop
             .run_game(&mut controller1, &mut controller2)
             .expect("Game should complete");
+
+        // Restore stdout if we redirected it
+        if let Some(orig) = orig_stdout {
+            unsafe {
+                libc::dup2(orig, libc::STDOUT_FILENO);
+                libc::close(orig);
+            }
+        }
 
         // Capture metrics BEFORE rewinding
         let end_turn = game.turn.turn_number;
@@ -338,6 +364,24 @@ impl RewindPlayAgain {
                     let mut controller1 = RandomController::with_seed(p1_id, seed);
                     let mut controller2 = RandomController::with_seed(p2_id, seed);
 
+                    // For ToStdout mode, redirect stdout to /dev/null to avoid benchmark noise
+                    let (orig_stdout, _devnull) = if logging_mode == LoggingMode::ToStdout {
+                        use std::fs::OpenOptions;
+                        use std::os::fd::AsRawFd;
+
+                        let devnull = OpenOptions::new()
+                            .write(true)
+                            .open("/dev/null")
+                            .expect("Failed to open /dev/null");
+                        let orig = unsafe { libc::dup(libc::STDOUT_FILENO) };
+                        unsafe {
+                            libc::dup2(devnull.as_raw_fd(), libc::STDOUT_FILENO);
+                        }
+                        (Some(orig), Some(devnull))
+                    } else {
+                        (None, None)
+                    };
+
                     // Configure logging based on mode
                     let verbosity = match logging_mode {
                         LoggingMode::Silent => VerbosityLevel::Silent,
@@ -352,6 +396,14 @@ impl RewindPlayAgain {
                     let result = game_loop
                         .run_game(&mut controller1, &mut controller2)
                         .expect("Game should complete");
+
+                    // Restore stdout if we redirected it
+                    if let Some(orig) = orig_stdout {
+                        unsafe {
+                            libc::dup2(orig, libc::STDOUT_FILENO);
+                            libc::close(orig);
+                        }
+                    }
 
                     // Capture metrics BEFORE rewinding
                     let end_turn = thread_game.turn.turn_number;
