@@ -22,6 +22,10 @@
 //!
 //!   # Pinned thread execution for microsecond-accurate timing
 //!   cargo run --release --bin rewind_bench -- --mode pinned --threads 16
+//!
+//!   # DHAT heap profiling (1000 games, robots mirror)
+//!   cargo run --release --bin rewind_bench -- --dhat
+//!   # View results with: dhat/dh_view.html (opens dhat-heap.json)
 
 // Include the benchmark library FIRST so we don't conflict with its allocator
 #[path = "../lib/mod.rs"]
@@ -29,17 +33,22 @@ mod benchlib;
 
 use benchlib::{
     allocator::{allocator_name, GLOBAL},
-    BatchBenchmark, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
+    BatchBenchmark, FakePar, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
     RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use clap::Parser;
 use stats_alloc::Region;
+
+#[cfg(feature = "dhat-heap")]
+use dhat::Profiler;
 
 /// Execution mode for the benchmark
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExecutionMode {
     /// Sequential execution (single thread)
     Sequential,
+    /// Fake parallel execution (sequential with parallel RNG seeding)
+    FakePar,
     /// Parallel execution using Rayon thread pool
     Par,
     /// Parallel execution using pinned threads with core affinity
@@ -52,9 +61,10 @@ impl std::str::FromStr for ExecutionMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "sequential" | "seq" => Ok(ExecutionMode::Sequential),
+            "fakepar" | "fake-par" | "fake" => Ok(ExecutionMode::FakePar),
             "par" | "parallel" | "rayon" => Ok(ExecutionMode::Par),
             "pinned" | "pinned-par" => Ok(ExecutionMode::Pinned),
-            _ => Err(format!("Invalid mode '{}'. Valid options: sequential, par, pinned", s)),
+            _ => Err(format!("Invalid mode '{}'. Valid options: sequential, fakepar, par, pinned", s)),
         }
     }
 }
@@ -68,11 +78,11 @@ struct Args {
     #[arg(short = 'n', long, default_value = "1000")]
     batch_size: usize,
 
-    /// Execution mode: sequential, par, or pinned
+    /// Execution mode: sequential, fakepar, par, or pinned
     #[arg(short = 'm', long, default_value = "sequential")]
     mode: ExecutionMode,
 
-    /// Number of threads to use (only for par/pinned modes)
+    /// Number of threads to use (only for fakepar/par/pinned modes)
     #[arg(short = 't', long)]
     threads: Option<usize>,
 
@@ -100,6 +110,11 @@ struct Args {
     /// Logging mode: silent, memory, or stdout
     #[arg(short = 'l', long, default_value = "silent")]
     logging: String,
+
+    /// Enable DHAT heap profiling (outputs dhat-heap.json)
+    /// Standard workload: 1000 games, robots mirror, sequential mode
+    #[arg(long)]
+    dhat: bool,
 }
 
 impl Args {
@@ -156,7 +171,7 @@ impl Args {
                 // Default thread count based on mode
                 match self.mode {
                     ExecutionMode::Sequential => 1,
-                    ExecutionMode::Par | ExecutionMode::Pinned => num_cpus::get(),
+                    ExecutionMode::FakePar | ExecutionMode::Par | ExecutionMode::Pinned => num_cpus::get(),
                 }
             }
         }
@@ -165,6 +180,21 @@ impl Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
+    // Initialize DHAT if requested
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = if args.dhat {
+        Some(Profiler::new_heap())
+    } else {
+        None
+    };
+
+    #[cfg(not(feature = "dhat-heap"))]
+    if args.dhat {
+        eprintln!("ERROR: --dhat flag requires rebuilding with --features dhat-heap");
+        eprintln!("Run: cargo run --release --features dhat-heap --bin rewind_bench -- --dhat");
+        std::process::exit(1);
+    }
 
     // Validate and convert to config
     let config = args.to_config()?;
@@ -176,6 +206,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Batch size: {} games", args.batch_size);
     if args.mode != ExecutionMode::Sequential {
         println!("Threads: {}", num_threads);
+    }
+    if args.dhat {
+        println!("DHAT Profiling: ENABLED (dhat-heap.json will be created)");
     }
     println!();
 
@@ -199,6 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Execute benchmark based on mode
     match args.mode {
         ExecutionMode::Sequential => run_sequential(config, args.batch_size),
+        ExecutionMode::FakePar => run_fakepar(config, args.batch_size, num_threads),
         ExecutionMode::Par => run_parallel_rayon(config, args.batch_size, num_threads),
         ExecutionMode::Pinned => run_parallel_pinned(config, args.batch_size, num_threads),
     }
@@ -225,6 +259,39 @@ fn run_sequential(config: RewindPlayAgainConfig, batch_size: usize) -> Result<()
     // Print results
     print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
     benchmark.print_win_rates("SEQUENTIAL");
+
+    Ok(())
+}
+
+/// Run benchmark in fake-parallel mode (sequential with parallel RNG seeding)
+fn run_fakepar(
+    config: RewindPlayAgainConfig,
+    batch_size: usize,
+    num_threads: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Initializing fake-parallel benchmark...");
+    let base_benchmark = RewindPlayAgain::new(config, "FAKE-PARALLEL");
+    let benchmark = FakePar::new(base_benchmark);
+    let seed = benchmark.inner().orig_seed();
+    println!("  Seed: {}", seed);
+    println!();
+
+    // Execute batch with allocation tracking
+    println!(
+        "Executing batch of {} games (sequential with {} logical threads)...",
+        batch_size, num_threads
+    );
+    let region = Region::new(GLOBAL);
+    let batch_duration = benchmark.execute_batch(batch_size, num_threads)?;
+    let stats = region.change();
+
+    // Get aggregated metrics
+    let metrics = benchmark.get_metrics();
+    let total_games = benchmark.total_games();
+
+    // Print results
+    print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
+    benchmark.inner().print_win_rates("FAKE-PARALLEL");
 
     Ok(())
 }
