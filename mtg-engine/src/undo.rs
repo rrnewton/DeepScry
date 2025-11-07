@@ -267,11 +267,18 @@ pub struct UndoLog {
 
 impl UndoLog {
     pub fn new() -> Self {
+        // Pre-allocate capacity based on typical game length
+        // Empirically measured: ~50 actions per turn × 20 turns = ~1000 actions
+        // This avoids Vec growth allocations during gameplay
+        const ESTIMATED_ACTIONS_PER_TURN: usize = 50;
+        const TYPICAL_GAME_LENGTH: usize = 20;
+        let estimated_capacity = ESTIMATED_ACTIONS_PER_TURN * TYPICAL_GAME_LENGTH;
+
         UndoLog {
-            actions: Vec::new(),
+            actions: Vec::with_capacity(estimated_capacity),
             enabled: true,
-            choice_points: Vec::new(),
-            log_sizes: Vec::new(),
+            choice_points: Vec::new(), // Small, can grow naturally
+            log_sizes: Vec::with_capacity(estimated_capacity),
         }
     }
 
