@@ -8,6 +8,7 @@ use super::allocator::{allocator_name, AllocStats, AllocTracker};
 use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome, LoggingMode, RewindPlayAgainConfig};
 use super::utils::{create_game_at_percent, ensure_correct_working_directory, BenchmarkSetup};
 use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,8 +46,8 @@ pub struct RewindPlayAgain {
     initial_game_template: GameState,
     /// The mid-game template (at rewind_percent point, undo log cleared)
     midgame_template: GameState,
-    /// RNG seed used for game initialization
-    seed: u64,
+    /// RNG seed used for game initialization (Cell for interior mutability)
+    seed: Cell<u64>,
     /// Player 1 win count (Arc-wrapped atomic for thread-safe updates)
     p1_wins: Arc<AtomicUsize>,
     /// Player 2 win count (Arc-wrapped atomic for thread-safe updates)
@@ -112,7 +113,7 @@ impl RewindPlayAgain {
             config,
             initial_game_template,
             midgame_template,
-            seed,
+            seed: Cell::new(seed),
             p1_wins: Arc::new(AtomicUsize::new(0)),
             p2_wins: Arc::new(AtomicUsize::new(0)),
             metrics: Arc::new(AtomicMetrics::new()),
@@ -246,7 +247,7 @@ impl RewindPlayAgain {
         let start = std::time::Instant::now();
 
         for i in 0..batch_size {
-            let seed = self.seed.wrapping_add(i as u64);
+            let seed = self.seed.get().wrapping_add(i as u64);
 
             // Execute game (forward + rewind) and collect metrics
             let (turns_played, actions_played, outcome) = self.execute_single_game(&mut game, seed);
@@ -302,7 +303,7 @@ impl RewindPlayAgain {
 
         eprintln!(
             "\n=== Win Rate Analysis - {mode} (seed {}, {total} games) ===",
-            self.seed
+            self.seed.get()
         );
         eprintln!("  P1 wins: {} ({:.1}%)", p1_wins, 100.0 * p1_wins as f64 / total as f64);
         eprintln!("  P2 wins: {} ({:.1}%)", p2_wins, 100.0 * p2_wins as f64 / total as f64);
@@ -330,11 +331,15 @@ impl BatchBenchmark for RewindPlayAgain {
     }
 
     fn orig_seed(&self) -> u64 {
-        self.seed
+        self.seed.get()
     }
 
     fn reseed(&mut self, seed: u64) {
-        self.seed = seed;
+        self.seed.set(seed);
+    }
+
+    fn reseed_rng(&self, seed: u64) {
+        self.seed.set(seed);
     }
 
     fn reset_metrics(&self) {

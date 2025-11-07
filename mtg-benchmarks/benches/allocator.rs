@@ -34,6 +34,15 @@ compile_error!("Features 'bench-stats-alloc' and 'bench-jemalloc' are mutually e
 #[cfg(all(feature = "bench-mimalloc", feature = "bench-jemalloc"))]
 compile_error!("Features 'bench-mimalloc' and 'bench-jemalloc' are mutually exclusive. Enable only one.");
 
+#[cfg(all(feature = "bench-stats-alloc", feature = "dhat-heap"))]
+compile_error!("Features 'bench-stats-alloc' and 'dhat-heap' are mutually exclusive. Enable only one.");
+
+#[cfg(all(feature = "bench-mimalloc", feature = "dhat-heap"))]
+compile_error!("Features 'bench-mimalloc' and 'dhat-heap' are mutually exclusive. Enable only one.");
+
+#[cfg(all(feature = "bench-jemalloc", feature = "dhat-heap"))]
+compile_error!("Features 'bench-jemalloc' and 'dhat-heap' are mutually exclusive. Enable only one.");
+
 // Import allocator types
 #[cfg(feature = "bench-stats-alloc")]
 use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
@@ -41,15 +50,17 @@ use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
 
 // Global allocator selection via feature flags
-#[cfg(feature = "bench-stats-alloc")]
+// Note: When dhat-heap is enabled, binaries set their own allocator
+// so we skip setting it here to avoid conflicts
+#[cfg(all(feature = "bench-stats-alloc", not(feature = "dhat-heap")))]
 #[global_allocator]
 pub static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
-#[cfg(feature = "bench-mimalloc")]
+#[cfg(all(feature = "bench-mimalloc", not(feature = "dhat-heap")))]
 #[global_allocator]
 pub static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[cfg(feature = "bench-jemalloc")]
+#[cfg(all(feature = "bench-jemalloc", not(feature = "dhat-heap")))]
 #[global_allocator]
 pub static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -167,22 +178,27 @@ where
 /// Get the name of the current allocator
 #[allow(dead_code)]
 pub fn allocator_name() -> &'static str {
-    #[cfg(feature = "bench-stats-alloc")]
+    #[cfg(feature = "dhat-heap")]
+    {
+        "dhat (heap profiling allocator)"
+    }
+    #[cfg(all(feature = "bench-stats-alloc", not(feature = "dhat-heap")))]
     {
         "stats_alloc (glibc malloc with tracking)"
     }
-    #[cfg(feature = "bench-mimalloc")]
+    #[cfg(all(feature = "bench-mimalloc", not(feature = "dhat-heap")))]
     {
         "mimalloc (high performance, no tracking)"
     }
-    #[cfg(feature = "bench-jemalloc")]
+    #[cfg(all(feature = "bench-jemalloc", not(feature = "dhat-heap")))]
     {
         "jemalloc (high performance, optional stats)"
     }
     #[cfg(not(any(
         feature = "bench-stats-alloc",
         feature = "bench-mimalloc",
-        feature = "bench-jemalloc"
+        feature = "bench-jemalloc",
+        feature = "dhat-heap"
     )))]
     {
         "system default (glibc malloc)"
