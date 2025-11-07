@@ -328,5 +328,13 @@ fn print_results(metrics: &benchlib::GameMetrics, total_games: usize, duration_s
         stats.bytes_allocated as f64 / total_games as f64
     );
     println!("Bytes/turn: {:.2}", metrics.bytes_per_turn());
+    println!(
+        "Bytes/action: {:.2}",
+        if metrics.actions > 0 {
+            stats.bytes_allocated as f64 / metrics.actions as f64
+        } else {
+            0.0
+        }
+    );
     println!();
 }
