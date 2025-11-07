@@ -1,16 +1,12 @@
 //! Performance benchmarks for MTG Forge game engine
 //!
-//! This benchmark measures game execution performance using Criterion.rs.
-//! It supports three different iteration modes:
+//! # Benchmark Infrastructure
 //!
-//! 1. **Fresh** - Allocate a new game for each iteration
-//! 2. **Rewind** - Use undo log to rewind game to start (NOT YET IMPLEMENTED)
-//! 3. **Snapshot** - Save/restore game state each iteration (NOT YET IMPLEMENTED)
+//! All benchmarks use the `RewindPlayAgain` infrastructure with configuration-driven
+//! behavior via `RewindPlayAgainConfig`. This provides consistent timing and metrics
+//! collection across different benchmark scenarios.
 //!
-//! The benchmark is based on RandomController vs RandomController playing
-//! with simple_bolt.dck (Mountains + Lightning Bolts).
-//!
-//! ##[path = "rewind_play_again_module.rs"]Allocator Configuration
+//! ## Allocator Configuration
 //!
 //! By default, allocation tracking is ENABLED using stats_alloc.
 //! Use feature flags to select different allocators:
@@ -21,67 +17,46 @@
 //! Run with: `cargo bench` for tracking (default)
 //! Run with: `cargo bench --no-default-features --features bench-mimalloc` for max performance
 //!
-//! ##[path = "rewind_play_again_module.rs"]Lazy Initialization Pattern
+//! ## Batch Timing with iter_custom
 //!
-//! **IMPORTANT**: All benchmarks MUST use lazy initialization to avoid running setup code
-//! during `cargo bench --list` (which only lists benchmarks without running them).
+//! **IMPORTANT**: Most benchmarks use `iter_custom` to time entire batches of operations,
+//! not individual iterations. This provides accurate timing for workloads that amortize
+//! setup costs across multiple operations (like MCTS simulations).
 //!
-//! ###[path = "rewind_play_again_module.rs"]Problem
-//!
-//! Criterion benchmark functions are executed at registration time to gather metadata,
-//! not just at execution time. If you create expensive state (like game instances) before
-//! calling `bench_function()`, that initialization will run even when listing benchmarks:
+//! ### Pattern
 //!
 //! ```rust,ignore
-//! // BAD: This runs during --list!
-//! let game = create_midgame_state(&setup, seed);
-//! group.bench_function("my_benchmark", |b| {
-//!     b.iter(|| { /* use game */ });
-//! });
-//! ```
-//!
-//! ###[path = "rewind_play_again_module.rs"]Solution
-//!
-//! Use `Option<T>` with lazy initialization inside the benchmark closure:
-//!
-//! ```rust,ignore
-//! // GOOD: This only runs during actual benchmarking
-//! let mut game_template: Option<GameState> = None;
+//! let mut benchmark: Option<RewindPlayAgain> = None;
 //!
 //! group.bench_function("my_benchmark", |b| {
-//!     b.iter(|| {
-//!         // Initialize on first iteration
-//!         if game_template.is_none() {
-//!             eprintln!("Initializing benchmark state...");
-//!             let game = create_midgame_state(&setup, seed);
-//!             game_template = Some(game);
+//!     b.iter_custom(|iters| {
+//!         // Lazy initialization - only runs once, outside timing
+//!         if benchmark.is_none() {
+//!             let config = RewindPlayAgainConfig::default();
+//!             benchmark = Some(RewindPlayAgain::new(config, "MODE"));
 //!         }
 //!
-//!         let game = game_template.as_ref().unwrap();
-//!         // Use game...
+//!         // Execute batch and return Duration
+//!         let bench = benchmark.as_ref().unwrap();
+//!         bench.execute_batch_sequential(iters as usize)
 //!     });
 //! });
 //! ```
 //!
-//! ###[path = "rewind_play_again_module.rs"]Examples in This File
+//! ### Key Points
 //!
-//! - `bench_game_snapshot` (line ~815): Uses `Option<GameState>` for lazy game initialization
-//! - `bench_game_rewind` (line ~890): Uses `Option<GameState>` for lazy game initialization
-//! - `bench_game_rewind_play_again` (line ~1038): Uses `Option<GameState>` for midgame state
-//! - `bench_game_pinned_par_rewind_play_again` (line ~1134): Uses `Option<GameState>` inside `iter_custom`
-//! - `bench_game_par_rewind_play_again` (line ~1290): Uses `Option<GameState>` inside `iter_custom`
-//! - `bench_save_snapshot` (line ~1442): Uses `Option<GameSnapshot>` for snapshot state
+//! - `iter_custom` expects a closure that returns `Duration`
+//! - Initialization happens outside the timing (first call to `iter_custom`)
+//! - The batch execution itself is timed by the infrastructure
+//! - Criterion calls the closure multiple times with different `iters` values
 //!
-//! ###[path = "rewind_play_again_module.rs"]Verification
+//! ## Benchmark Groups
 //!
-//! To verify benchmarks use lazy initialization, run:
-//!
-//! ```bash
-//! cargo bench --bench game_benchmark -- --list
-//! ```
-//!
-//! This should complete instantly without printing initialization messages. If you see
-//! "Initializing..." or game state creation messages, the benchmark needs fixing.
+//! - `robots_mirror`: Same deck matchups with various configurations
+//! - `monoblack_thedeck`: Old School Mono Black vs The Deck
+//! - `whiteweenie_mirror`: Old School White Weenie mirror
+//! - `jeskai_trolldisk`: Old School Jeskai vs Troll Disk
+//! - `snapshot_serialization`: Snapshot save/load benchmarks
 
 mod allocator;
 mod pinned_thread_pool;
