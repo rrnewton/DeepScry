@@ -28,7 +28,8 @@
 mod benchlib;
 
 use benchlib::{
-    allocator::GLOBAL, BatchBenchmark, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
+    allocator::{allocator_name, GLOBAL},
+    BatchBenchmark, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
     RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use clap::Parser;
@@ -192,6 +193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("  Restart strategy: {:?}", config.restart_strategy);
     println!("  Logging mode: {:?}", config.logging_mode);
+    println!("  Allocator: {}", allocator_name());
     println!();
 
     // Execute benchmark based on mode
