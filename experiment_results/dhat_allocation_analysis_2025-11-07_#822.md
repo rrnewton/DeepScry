@@ -99,24 +99,71 @@ The baseline DHAT profile showed:
 
 The optimized profile shows:
 - **Total**: 86.4 MB allocations across 5.6M blocks
-- **String allocations**: Nearly eliminated
+- **String allocations**: Nearly eliminated (from 900 MB to negligible)
 - **Remaining allocations**: Primarily from legitimate dynamic structures
-  - Game state management
-  - Undo/snapshot system
-  - Logger buffers
-  - Collection growth (Vec, HashMap)
+
+**Allocation breakdown by category**:
+- Vec growth (amortized): 53.89 MB (65.4%)
+- Vec with_capacity: 26.18 MB (31.8%)
+- Other allocations: 2.32 MB (2.8%)
+
+**Top 10 allocation sites** (current):
+
+| Rank | Bytes | Blocks | Avg Size | Primary Location | Context |
+|------|-------|--------|----------|------------------|---------|
+| 1-2 | 9.75 MB × 2 | 1.3M × 2 | 8.0 | `mana_engine.rs:550` | Vec growth in mana source collection |
+| 3 | 4.68 MB | 163K | 30.0 | `random_controller.rs:103` | Random choice generation |
+| 4 | 2.57 MB | 35K | 76.7 | `mana_payment.rs:580` | Mana source selection |
+| 5 | 2.20 MB | 25K | 92.5 | `game_loop.rs:1413` | Game state updates |
+| 6 | 2.10 MB | 30K | 73.9 | `game_loop.rs:3111` | Ability activation |
+| 7 | 1.88 MB | 76K | 26.1 | `game_loop.rs:13` | Turn structure init |
+| 8 | 1.71 MB | 54K | 33.3 | `actions.rs:1476` | Combat resolution |
+| 9-10 | 1.63 MB × 2 | 213K × 2 | 8.0 | `mana_engine.rs:550` | Vec growth (duplicate paths) |
+
+Total from top 10: ~38 MB (44% of total allocations)
 
 ### Allocation Breakdown by Category
 
-Based on the dramatic reduction, the ~900 MB of string allocations have been replaced with:
-- **One-time cache allocation**: ~200 bytes per card × ~30 cards = ~6 KB per game (negligible)
-- **Cache benefit**: Eliminates hundreds of thousands of runtime allocations
+Based on DHAT profiling of the current (optimized) version:
 
-The remaining 86.4 MB allocations are likely from:
-- **Vec growth**: Collection resizing during gameplay (~40-50 MB estimated)
-- **Undo/snapshot**: Game state snapshots for rewind functionality (~20-30 MB estimated)
-- **Logging**: Action log buffers in silent mode (~10-15 MB estimated)
-- **Miscellaneous**: HashMap growth, temporary structures (~5-10 MB estimated)
+**1. Vec Growth (Amortized): 53.89 MB (65.4%)**
+
+This is the dominant allocation pattern - Vecs starting small and growing incrementally:
+
+- **`mana_engine.rs:550`**: ~27 MB total (multiple paths)
+  - Vec growth in `colors.push(c)` during dual land parsing
+  - Called during `ManaEngine::update()` for every mana source
+  - **Opportunity**: Pre-size with `Vec::with_capacity(5)` for typical dual lands
+
+- **`game_loop.rs`**: ~8-10 MB
+  - Various Vec growth in ability lists, action queues
+  - **Opportunity**: Pre-size based on game phase (main phase vs combat)
+
+- **`random_controller.rs:103`**: 4.68 MB
+  - Random choice selection building temporary Vecs
+  - **Opportunity**: Reuse allocated Vec across choices
+
+**2. Vec with_capacity: 26.18 MB (31.8%)**
+
+Vecs allocated with capacity (better, but still room for optimization):
+
+- **`mana_payment.rs:580`**: 2.57 MB
+  - Mana source selection algorithms
+  - Already using `with_capacity` but possibly oversized
+
+- **`game_loop.rs:1413,3111`**: ~4.3 MB
+  - Ability activation and validation
+  - **Opportunity**: Pool and reuse Vecs
+
+- **`state.rs:503,553`**: ~2.5 MB
+  - Game state snapshots for undo
+  - **Opportunity**: Use copy-on-write or buffer pooling
+
+**3. Other Allocations: 2.32 MB (2.8%)**
+
+Miscellaneous allocations (HashMap, String, etc.):
+- Logger buffers, temporary structures
+- Low priority for optimization
 
 ## Performance Impact Analysis
 
@@ -182,51 +229,99 @@ dhat: At t-end:  1,064 bytes in 2 blocks
 
 ## Next Optimization Opportunities
 
-With string allocations eliminated, the next highest-impact optimizations are likely:
+With string allocations eliminated, remaining optimizations target the 86.4 MB from Vec operations:
 
-### 1. Vector Pre-Sizing (Estimated 20-30 MB savings)
+### 1. Vector Pre-Sizing (Estimated 20-30 MB savings - HIGH PRIORITY)
 
-Current: Many Vecs start at capacity 0 and grow incrementally
+**Target: `mana_engine.rs:550` (~27 MB, 31% of total)**
+
+Current code (line 537-550 in `get_complex_mana_production`):
 ```rust
-let mut results = Vec::new();  // Allocates: 0, 4, 8, 16, 32...
-results.push(item);
+let mut colors = Vec::new();  // Starts at capacity 0, grows to 2
+
+for subtype in &card.subtypes {
+    let color = match subtype.as_str() {
+        "Plains" => Some(ManaColor::White),
+        // ...
+    };
+    if let Some(c) = color {
+        colors.push(c);  // Triggers reallocation
+    }
+}
 ```
 
-Optimized: Pre-size based on typical counts
+Optimized:
 ```rust
-let mut results = Vec::with_capacity(10);  // Allocates once
-results.push(item);
+let mut colors = Vec::with_capacity(5);  // Dual lands have 2, but allow for future expansion
 ```
 
-**Targets**:
-- Mana production results: capacity 5-10
-- Action lists: capacity based on phase
-- Target lists: capacity 5-20
+**Expected savings**: 15-20 MB (this is the #1 allocation site)
 
-### 2. SmallVec for Small Collections (Estimated 10-20 MB savings)
+**Other pre-sizing targets**:
+- `game_loop.rs:1413`: Action queue (capacity 20-30)
+- `game_loop.rs:3111`: Ability list (capacity 5-10)
+- `random_controller.rs:103`: Choice list (capacity based on context)
 
-Replace `Vec<T>` with `SmallVec<[T; N]>` for collections that are usually small:
-- Mana production: `SmallVec<[Mana; 4]>` (most cards produce 1-3 mana)
-- Blocker lists: `SmallVec<[CardId; 2]>` (most attackers have 0-2 blockers)
-- Target lists: `SmallVec<[CardId; 3]>` (most spells target 1 permanent)
+### 2. Vec Pooling/Reuse (Estimated 15-20 MB savings)
 
-### 3. Undo/Snapshot Optimization (Estimated 15-25 MB savings)
+**Target: `random_controller.rs:103` (4.68 MB)**
 
-The rewind functionality may be allocating heavily for snapshots:
-- Use copy-on-write for unchanged state
-- Pool/reuse snapshot buffers
-- Compress historical states
-
-### 4. String Interning for Card Names (Estimated 5-10 MB savings)
-
-Card names are duplicated across many instances. Use `Arc<str>` or string interning:
+Instead of allocating fresh Vecs for each choice:
 ```rust
-// Before: Each card has its own String
-pub struct Card { name: String, ... }
-
-// After: Cards share immutable strings
-pub struct Card { name: Arc<str>, ... }
+// Current: Allocates new Vec each time
+fn choose_from<T>(&self, options: Vec<T>) -> usize {
+    let mut filtered = Vec::new();  // NEW ALLOCATION
+    // ...
+}
 ```
+
+Optimized:
+```rust
+// Reuse a thread-local or controller-owned Vec
+fn choose_from<T>(&mut self, options: Vec<T>) -> usize {
+    self.temp_vec.clear();  // Reuse existing allocation
+    // ...
+}
+```
+
+### 3. SmallVec for Small Collections (Estimated 10-15 MB savings)
+
+**Target: `mana_engine.rs:550` and similar small collections**
+
+Replace `Vec<ManaColor>` with `SmallVec<[ManaColor; 5]>`:
+```rust
+// Before
+let mut colors = Vec::new();  // Heap allocation
+
+// After
+let mut colors = SmallVec::<[ManaColor; 5]>::new();  // Stack allocation for ≤5 items
+```
+
+Most dual lands have exactly 2 colors, so this avoids heap allocation entirely.
+
+**Other SmallVec candidates**:
+- Blocker lists: `SmallVec<[CardId; 3]>` (most have 0-2 blockers)
+- Target lists: `SmallVec<[CardId; 2]>` (most spells have 0-1 targets)
+- Mana production: `SmallVec<[Mana; 4]>` (most produce 1-3 mana)
+
+### 4. Snapshot/Undo Buffer Pooling (Estimated 5-10 MB savings)
+
+**Target: `state.rs:503,553` (~2.5 MB)**
+
+The undo system allocates for game state snapshots:
+- Pool snapshot buffers instead of allocating fresh
+- Use copy-on-write for unchanged portions of state
+- Consider delta encoding for incremental changes
+
+### Priority Ranking
+
+Based on impact vs complexity:
+
+1. **Critical**: Pre-size Vec at `mana_engine.rs:550` (15-20 MB, 5 min fix)
+2. **High**: Pre-size other hot Vecs in `game_loop.rs` (5-10 MB, 15 min fix)
+3. **Medium**: Convert dual land colors to SmallVec (8-12 MB, 30 min fix)
+4. **Medium**: Vec pooling in random controller (4-5 MB, 1 hour)
+5. **Low**: Snapshot buffer pooling (2-5 MB, 2+ hours)
 
 ## Validation & Testing
 
