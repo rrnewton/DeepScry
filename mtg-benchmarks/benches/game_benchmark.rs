@@ -94,23 +94,30 @@ macro_rules! get_stats {
     }};
 }
 
-/// Benchmark: Fresh mode - allocate new game each iteration
-/// Tests the cost of fresh gamestate allocation by playing forward only (no rewind)
-fn bench_robots_mirror_fresh_games(c: &mut Criterion) {
+/// Helper function for sequential RewindPlayAgain benchmarks
+///
+/// Handles the common pattern: lazy init, reset metrics, execute batch, print results.
+/// Reduces boilerplate by centralizing the iter_custom logic.
+fn bench_sequential_rewind_play_again<F>(
+    c: &mut Criterion,
+    group_name: &str,
+    bench_name: &str,
+    label: &str,
+    config_fn: F,
+) where
+    F: Fn() -> RewindPlayAgainConfig + 'static,
+{
     let mut benchmark: Option<RewindPlayAgain> = None;
 
-    let mut group = c.benchmark_group("robots_mirror");
+    let mut group = c.benchmark_group(group_name);
     group.sample_size(10);
     group.measurement_time(get_benchmark_measurement_time());
 
-    group.bench_function("fresh_games", |b| {
+    group.bench_function(bench_name, |b| {
         b.iter_custom(|iters| {
             if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default()
-                    .rewinds_before_restart(Some(0)) // Play forward only, no rewind
-                    .restart_strategy(RestartStrategy::Fresh);
-                let new_benchmark = RewindPlayAgain::new(config, "FRESH");
-                benchmark = Some(new_benchmark);
+                let config = config_fn();
+                benchmark = Some(RewindPlayAgain::new(config, label));
             }
 
             let bench = benchmark.as_ref().unwrap();
@@ -123,145 +130,277 @@ fn bench_robots_mirror_fresh_games(c: &mut Criterion) {
         let total_games = bench.get_total_games();
         if total_games > 0 {
             let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics(
-                "Robots Mirror: Fresh Games",
-                bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            bench.print_win_rates("Robots Mirror: Fresh Games");
+            print_aggregated_metrics(label, bench.seed(), &aggregated_metrics, total_games);
+            bench.print_win_rates(label);
         }
     }
 
     group.finish();
+}
+
+/// Helper function for parallel RewindPlayAgain benchmarks using ParRayon
+fn bench_parallel_rayon_rewind_play_again<F>(
+    c: &mut Criterion,
+    group_name: &str,
+    bench_name: &str,
+    label: &str,
+    num_threads: usize,
+    config_fn: F,
+) where
+    F: Fn() -> RewindPlayAgainConfig + 'static,
+{
+    let mut benchmark: Option<ParRayon<RewindPlayAgain>> = None;
+
+    let mut group = c.benchmark_group(group_name);
+    group.sample_size(10);
+    group.measurement_time(get_benchmark_measurement_time());
+
+    group.bench_function(bench_name, |b| {
+        b.iter_custom(|iters| {
+            if benchmark.is_none() {
+                let config = config_fn();
+                let inner = RewindPlayAgain::new(config, label);
+                benchmark = Some(ParRayon::new(inner));
+            }
+
+            let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
+            bench.execute_batch(iters as usize, num_threads).unwrap()
+        });
+    });
+
+    if let Some(ref bench) = benchmark {
+        let total_games = bench.total_games();
+        if total_games > 0 {
+            let aggregated_metrics = bench.get_metrics();
+            let inner_bench = bench.inner();
+            print_aggregated_metrics(label, inner_bench.seed(), &aggregated_metrics, total_games);
+            inner_bench.print_win_rates(label);
+        }
+    }
+
+    group.finish();
+}
+
+/// Helper function for parallel RewindPlayAgain benchmarks using ParPinned
+fn bench_parallel_pinned_rewind_play_again<F>(
+    c: &mut Criterion,
+    group_name: &str,
+    bench_name: &str,
+    label: &str,
+    num_threads: usize,
+    config_fn: F,
+) where
+    F: Fn() -> RewindPlayAgainConfig + 'static,
+{
+    let mut benchmark: Option<ParPinned<RewindPlayAgain>> = None;
+
+    let mut group = c.benchmark_group(group_name);
+    group.sample_size(10);
+    group.measurement_time(get_benchmark_measurement_time());
+
+    group.bench_function(bench_name, |b| {
+        b.iter_custom(|iters| {
+            if benchmark.is_none() {
+                let config = config_fn();
+                let inner = RewindPlayAgain::new(config, label);
+                benchmark = Some(ParPinned::new(inner));
+            }
+
+            let bench = benchmark.as_ref().unwrap();
+            bench.reset_metrics();
+            bench.execute_batch(iters as usize, num_threads).unwrap()
+        });
+    });
+
+    if let Some(ref bench) = benchmark {
+        let total_games = bench.total_games();
+        if total_games > 0 {
+            let aggregated_metrics = bench.get_metrics();
+            let inner_bench = bench.inner();
+            print_aggregated_metrics(label, inner_bench.seed(), &aggregated_metrics, total_games);
+            inner_bench.print_win_rates(label);
+        }
+    }
+
+    group.finish();
+}
+
+/// Benchmark: Fresh mode - allocate new game each iteration
+/// Tests the cost of fresh gamestate allocation by playing forward only (no rewind)
+fn bench_robots_mirror_fresh_games(c: &mut Criterion) {
+    bench_sequential_rewind_play_again(c, "robots_mirror", "fresh_games", "Robots Mirror: Fresh Games", || {
+        RewindPlayAgainConfig::default()
+            .rewinds_before_restart(Some(0)) // Play forward only, no rewind
+            .restart_strategy(RestartStrategy::Fresh)
+    });
 }
 
 /// Benchmark: Memory logging mode with rewind+play cycles
 /// Measures allocation overhead of logging infrastructure with memory capture
 fn bench_robots_mirror_mem_logging_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
-
-    let mut group = c.benchmark_group("robots_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("mem_logging_rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default()
-                    .rewinds_before_restart(None) // Unlimited rewind+replay cycles
-                    .restart_strategy(RestartStrategy::Fresh)
-                    .logging_mode(LoggingMode::ToMemory);
-                let new_benchmark = RewindPlayAgain::new(config, "MEM-LOGGING");
-                benchmark = Some(new_benchmark);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics(
-                "Robots Mirror: Memory Logging",
-                bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            bench.print_win_rates("Robots Mirror: Memory Logging");
-        }
-    }
-
-    group.finish();
+    bench_sequential_rewind_play_again(
+        c,
+        "robots_mirror",
+        "mem_logging_rewind_play_again",
+        "Robots Mirror: Memory Logging",
+        || {
+            RewindPlayAgainConfig::default()
+                .rewinds_before_restart(None) // Unlimited rewind+replay cycles
+                .restart_strategy(RestartStrategy::Fresh)
+                .logging_mode(LoggingMode::ToMemory)
+        },
+    );
 }
 
 /// Benchmark: Stdout logging mode with rewind+play cycles
 /// Measures allocation overhead with reusable buffer optimization
 fn bench_robots_mirror_stdout_logging_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
-
-    let mut group = c.benchmark_group("robots_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("stdout_logging_rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default()
-                    .rewinds_before_restart(None) // Unlimited rewind+replay cycles
-                    .restart_strategy(RestartStrategy::Fresh)
-                    .logging_mode(LoggingMode::ToStdout);
-                let new_benchmark = RewindPlayAgain::new(config, "STDOUT-LOGGING");
-                benchmark = Some(new_benchmark);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics(
-                "Robots Mirror: Stdout Logging",
-                bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            bench.print_win_rates("Robots Mirror: Stdout Logging");
-        }
-    }
-
-    group.finish();
+    bench_sequential_rewind_play_again(
+        c,
+        "robots_mirror",
+        "stdout_logging_rewind_play_again",
+        "Robots Mirror: Stdout Logging",
+        || {
+            RewindPlayAgainConfig::default()
+                .rewinds_before_restart(None) // Unlimited rewind+replay cycles
+                .restart_strategy(RestartStrategy::Fresh)
+                .logging_mode(LoggingMode::ToStdout)
+        },
+    );
 }
 
 /// Benchmark: Snapshot mode - allocate new game by cloning
 /// Tests the cost of cloning gamestate by playing forward only (no rewind)
 fn bench_robots_mirror_snapshot_games(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
+    bench_sequential_rewind_play_again(
+        c,
+        "robots_mirror",
+        "snapshot_games",
+        "Robots Mirror: Snapshot Games",
+        || {
+            RewindPlayAgainConfig::default()
+                .rewinds_before_restart(Some(0)) // Play forward only, no rewind
+                .restart_strategy(RestartStrategy::Clone)
+        },
+    );
+}
 
-    let mut group = c.benchmark_group("robots_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
+/// Benchmark: Rewind + replay with different paths (SEQUENTIAL)
+/// Measures complete forward+rewind cycle exploring different game paths
+///
+/// This benchmark correctly measures the full MCTS simulation workload:
+/// 1. Creates midgame state at 50% mark (done once in setup)
+/// 2. For each batch of iterations:
+///    - Play forward from midpoint to end
+///    - Rewind back to midpoint
+///    - Repeat with different random seed
+/// 3. Times the ENTIRE batch (forward + rewind for all iterations)
+/// 4. Tracks win rates for P1 vs P2
+///
+/// FIXED: Now uses iter_custom to time batches correctly, and reuses a single
+/// game instance (no cloning per iteration, just rewind back to start).
+fn bench_robots_mirror_rewind_play_again(c: &mut Criterion) {
+    bench_sequential_rewind_play_again(
+        c,
+        "robots_mirror",
+        "rewind_play_again",
+        "Rewind + Play Again (Sequential)",
+        RewindPlayAgainConfig::default,
+    );
+}
 
-    group.bench_function("snapshot_games", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default()
-                    .rewinds_before_restart(Some(0)) // Play forward only, no rewind
-                    .restart_strategy(RestartStrategy::Clone);
-                let new_benchmark = RewindPlayAgain::new(config, "SNAPSHOT");
-                benchmark = Some(new_benchmark);
-            }
+/// Benchmark: Parallel rewind + replay with different paths (PARALLEL with Rayon)
+/// Measures complete forward+rewind cycle with parallel execution using the RewindPlayAgain module
+///
+/// This benchmark measures MCTS-style parallel simulation:
+/// 1. Creates midgame state at 50% mark (done once in setup)
+/// 2. For each batch of iterations:
+///    - Clone game states for N threads (outside timing)
+///    - Each thread plays forward from midpoint and rewinds back
+///    - Times only the actual parallel gameplay
+/// 3. Tracks win rates and allocations across all threads
+fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
+    let num_threads = get_benchmark_num_threads();
+    bench_parallel_rayon_rewind_play_again(
+        c,
+        "robots_mirror",
+        "par_rewind_play_again",
+        "Rewind + Play Again (Parallel)",
+        num_threads,
+        RewindPlayAgainConfig::default,
+    );
+}
 
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
+/// Benchmark: Parallel rewind + replay with PINNED threads
+/// Measures complete forward+rewind cycle with pinned thread execution using the RewindPlayAgain module
+///
+/// This benchmark measures MCTS-style parallel simulation with pinned threads:
+/// 1. Creates midgame state at 50% mark (done once in setup)
+/// 2. For each batch of iterations:
+///    - Clone game states for N threads (outside timing)
+///    - Each thread plays forward from midpoint and rewinds back
+///    - Times only the actual parallel gameplay with microsecond-accurate timing
+/// 3. Tracks win rates and allocations across all threads
+///
+/// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
+fn bench_robots_mirror_pinned_par_rewind_play_again(c: &mut Criterion) {
+    let num_threads = get_benchmark_num_threads();
+    bench_parallel_pinned_rewind_play_again(
+        c,
+        "robots_mirror",
+        "pinned_par_rewind_play_again",
+        "Rewind + Play Again (Pinned-Parallel)",
+        num_threads,
+        RewindPlayAgainConfig::default,
+    );
+}
 
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics(
-                "Robots Mirror: Snapshot Games",
-                bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            bench.print_win_rates("Robots Mirror: Snapshot Games");
-        }
-    }
+/// Benchmark: Old School deck matchup - Mono Black vs The Deck
+fn bench_monoblack_thedeck_rewind_play_again(c: &mut Criterion) {
+    bench_sequential_rewind_play_again(
+        c,
+        "monoblack_thedeck",
+        "rewind_play_again",
+        "Mono Black vs The Deck",
+        || RewindPlayAgainConfig {
+            rewind_percent: 0.5,
+            deck1_path: "decks/old_school/05_mono_black_rogerbrand.dck".to_string(),
+            deck2_path: "decks/old_school/02_thedeck_peterschnidrig.dck".to_string(),
+            rewinds_before_restart: None,
+            restart_strategy: RestartStrategy::Fresh,
+            logging_mode: LoggingMode::Silent,
+        },
+    );
+}
 
-    group.finish();
+/// Benchmark: Old School deck matchup - White Weenie mirror
+fn bench_whiteweenie_mirror_rewind_play_again(c: &mut Criterion) {
+    bench_sequential_rewind_play_again(
+        c,
+        "whiteweenie_mirror",
+        "rewind_play_again",
+        "White Weenie Mirror",
+        || RewindPlayAgainConfig::with_same_deck("decks/old_school2/white_weenie_classic.dck"),
+    );
+}
+
+/// Benchmark: Old School deck matchup - Jeskai Aggro vs Troll Disk
+fn bench_jeskai_trolldisk_rewind_play_again(c: &mut Criterion) {
+    bench_sequential_rewind_play_again(
+        c,
+        "jeskai_trolldisk",
+        "rewind_play_again",
+        "Jeskai Aggro vs Troll Disk",
+        || RewindPlayAgainConfig {
+            rewind_percent: 0.5,
+            deck1_path: "decks/old_school/06_jeskai_aggro_joseantonioprieto.dck".to_string(),
+            deck2_path: "decks/old_school/06_troll_disk_daniellebrunazzo.dck".to_string(),
+            rewinds_before_restart: None,
+            restart_strategy: RestartStrategy::Fresh,
+            logging_mode: LoggingMode::Silent,
+        },
+    );
 }
 
 /// Benchmark: Rewind mode - use undo log to rewind game
@@ -401,165 +540,6 @@ fn bench_robots_mirror_rewind_only(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark: Rewind + replay with different paths (SEQUENTIAL)
-/// Measures complete forward+rewind cycle exploring different game paths
-///
-/// This benchmark correctly measures the full MCTS simulation workload:
-/// 1. Creates midgame state at 50% mark (done once in setup)
-/// 2. For each batch of iterations:
-///    - Play forward from midpoint to end
-///    - Rewind back to midpoint
-///    - Repeat with different random seed
-/// 3. Times the ENTIRE batch (forward + rewind for all iterations)
-/// 4. Tracks win rates for P1 vs P2
-///
-/// FIXED: Now uses iter_custom to time batches correctly, and reuses a single
-/// game instance (no cloning per iteration, just rewind back to start).
-fn bench_robots_mirror_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
-
-    let mut group = c.benchmark_group("robots_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default();
-                let new_benchmark = RewindPlayAgain::new(config, "SEQUENTIAL");
-                benchmark = Some(new_benchmark);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics(
-                "Rewind + Play Again (Sequential)",
-                bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            bench.print_win_rates("Rewind + Play Again (Sequential)");
-        }
-    }
-
-    group.finish();
-}
-
-/// Benchmark: Parallel rewind + replay with different paths (PARALLEL with Rayon)
-/// Measures complete forward+rewind cycle with parallel execution using the RewindPlayAgain module
-///
-/// This benchmark measures MCTS-style parallel simulation:
-/// 1. Creates midgame state at 50% mark (done once in setup)
-/// 2. For each batch of iterations:
-///    - Clone game states for N threads (outside timing)
-///    - Each thread plays forward from midpoint and rewinds back
-///    - Times only the actual parallel gameplay
-/// 3. Tracks win rates and allocations across all threads
-fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<ParRayon<RewindPlayAgain>> = None;
-    let num_threads = get_benchmark_num_threads();
-
-    let mut group = c.benchmark_group("robots_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("par_rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default();
-                let new_benchmark = RewindPlayAgain::new(config, "PARALLEL");
-                let par_bench = ParRayon::new(new_benchmark);
-                benchmark = Some(par_bench);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch(iters as usize, num_threads).unwrap()
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_metrics();
-            // Access the inner RewindPlayAgain for seed and win rates
-            let inner_bench = bench.inner();
-            print_aggregated_metrics(
-                "Rewind + Play Again (Parallel)",
-                inner_bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            inner_bench.print_win_rates("Rewind + Play Again (Parallel)");
-        }
-    }
-
-    group.finish();
-}
-
-/// Benchmark: Parallel rewind + replay with PINNED threads
-/// Measures complete forward+rewind cycle with pinned thread execution using the RewindPlayAgain module
-///
-/// This benchmark measures MCTS-style parallel simulation with pinned threads:
-/// 1. Creates midgame state at 50% mark (done once in setup)
-/// 2. For each batch of iterations:
-///    - Clone game states for N threads (outside timing)
-///    - Each thread plays forward from midpoint and rewinds back
-///    - Times only the actual parallel gameplay with microsecond-accurate timing
-/// 3. Tracks win rates and allocations across all threads
-///
-/// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
-fn bench_robots_mirror_pinned_par_rewind_play_again(c: &mut Criterion) {
-    let num_threads = get_benchmark_num_threads();
-
-    let mut benchmark: Option<ParPinned<RewindPlayAgain>> = None;
-
-    let mut group = c.benchmark_group("robots_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("pinned_par_rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::default();
-                let new_benchmark = RewindPlayAgain::new(config, "PINNED-PARALLEL");
-                let par_bench = ParPinned::new(new_benchmark);
-                benchmark = Some(par_bench);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch(iters as usize, num_threads).unwrap()
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_metrics();
-            // Access the inner RewindPlayAgain for seed and win rates
-            let inner_bench = bench.inner();
-            print_aggregated_metrics(
-                "Rewind + Play Again (Pinned-Parallel)",
-                inner_bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            inner_bench.print_win_rates("Rewind + Play Again (Pinned-Parallel)");
-        }
-    }
-
-    group.finish();
-}
-
 /// Benchmark: Save snapshot to file
 fn bench_save_snapshot(c: &mut Criterion) {
     ensure_correct_working_directory();
@@ -650,127 +630,6 @@ fn bench_save_snapshot(c: &mut Criterion) {
                 .expect("Failed to save snapshot");
         });
     });
-
-    group.finish();
-}
-
-/// Benchmark: Old School deck matchup - Mono Black vs The Deck
-fn bench_monoblack_thedeck_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
-
-    let mut group = c.benchmark_group("monoblack_thedeck");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig {
-                    rewind_percent: 0.5,
-                    deck1_path: "decks/old_school/05_mono_black_rogerbrand.dck".to_string(),
-                    deck2_path: "decks/old_school/02_thedeck_peterschnidrig.dck".to_string(),
-                    rewinds_before_restart: None,
-                    restart_strategy: RestartStrategy::Fresh,
-                    logging_mode: LoggingMode::Silent,
-                };
-                let new_benchmark = RewindPlayAgain::new(config, "MONOBLACK-VS-THEDECK");
-                benchmark = Some(new_benchmark);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics("Mono Black vs The Deck", bench.seed(), &aggregated_metrics, total_games);
-            bench.print_win_rates("Mono Black vs The Deck");
-        }
-    }
-
-    group.finish();
-}
-
-/// Benchmark: Old School deck matchup - White Weenie mirror
-fn bench_whiteweenie_mirror_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
-
-    let mut group = c.benchmark_group("whiteweenie_mirror");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig::with_same_deck("decks/old_school2/white_weenie_classic.dck");
-                let new_benchmark = RewindPlayAgain::new(config, "WHITEWEENIE-MIRROR");
-                benchmark = Some(new_benchmark);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics("White Weenie Mirror", bench.seed(), &aggregated_metrics, total_games);
-            bench.print_win_rates("White Weenie Mirror");
-        }
-    }
-
-    group.finish();
-}
-
-/// Benchmark: Old School deck matchup - Jeskai Aggro vs Troll Disk
-fn bench_jeskai_trolldisk_rewind_play_again(c: &mut Criterion) {
-    let mut benchmark: Option<RewindPlayAgain> = None;
-
-    let mut group = c.benchmark_group("jeskai_trolldisk");
-    group.sample_size(10);
-    group.measurement_time(get_benchmark_measurement_time());
-
-    group.bench_function("rewind_play_again", |b| {
-        b.iter_custom(|iters| {
-            if benchmark.is_none() {
-                let config = RewindPlayAgainConfig {
-                    rewind_percent: 0.5,
-                    deck1_path: "decks/old_school/06_jeskai_aggro_joseantonioprieto.dck".to_string(),
-                    deck2_path: "decks/old_school/06_troll_disk_daniellebrunazzo.dck".to_string(),
-                    rewinds_before_restart: None,
-                    restart_strategy: RestartStrategy::Fresh,
-                    logging_mode: LoggingMode::Silent,
-                };
-                let new_benchmark = RewindPlayAgain::new(config, "JESKAI-VS-TROLLDISK");
-                benchmark = Some(new_benchmark);
-            }
-
-            let bench = benchmark.as_ref().unwrap();
-            bench.reset_metrics();
-            bench.execute_batch_sequential(iters as usize)
-        });
-    });
-
-    if let Some(ref bench) = benchmark {
-        let total_games = bench.get_total_games();
-        if total_games > 0 {
-            let aggregated_metrics = bench.get_aggregated_metrics();
-            print_aggregated_metrics(
-                "Jeskai Aggro vs Troll Disk",
-                bench.seed(),
-                &aggregated_metrics,
-                total_games,
-            );
-            bench.print_win_rates("Jeskai Aggro vs Troll Disk");
-        }
-    }
 
     group.finish();
 }
