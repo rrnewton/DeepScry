@@ -54,7 +54,9 @@ harness = false
 # bench-stats-alloc: System allocator with allocation tracking (DEFAULT)
 # bench-mimalloc: mimalloc for maximum performance (no tracking)
 # bench-jemalloc: jemalloc with optional stats support
+# dhat-heap: Enable DHAT heap profiling
 default = ["bench-stats-alloc"]
 bench-stats-alloc = []
 bench-mimalloc = []
 bench-jemalloc = []
+dhat-heap = []
