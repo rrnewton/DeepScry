@@ -113,6 +113,7 @@
 //! - **Cost reduction**: Handle effects like Goblin Electromancer that reduce spell costs
 
 use crate::core::{CardId, ManaCost, PlayerId};
+use crate::game::mana_colors::ManaColors;
 use crate::game::mana_payment::{
     GreedyManaResolver, ManaColor, ManaPaymentResolver, ManaProduction, ManaProductionKind, ManaSource,
     SimpleManaResolver,
@@ -402,7 +403,7 @@ impl ManaEngine {
                 },
                 ManaProductionKind::Choice(colors) => {
                     // Dual lands: add 1 to each color in the choice
-                    for color in colors {
+                    for color in colors.iter() {
                         match color {
                             ManaColor::White => capacity.white += 1,
                             ManaColor::Blue => capacity.blue += 1,
@@ -534,7 +535,7 @@ fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProductio
     }
 
     // Check for dual lands by looking at basic land subtypes
-    let mut colors = Vec::new();
+    let mut colors = ManaColors::new();
 
     // Check subtypes for basic land types
     for subtype in &card.subtypes {
@@ -547,7 +548,7 @@ fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProductio
             _ => None,
         };
         if let Some(c) = color {
-            colors.push(c);
+            colors.insert(c);
         }
     }
 

@@ -11,6 +11,7 @@ pub mod hand_setup;
 pub mod heuristic_controller;
 pub mod interactive_controller;
 pub mod logger;
+pub mod mana_colors;
 pub mod mana_engine;
 pub mod mana_payment;
 pub mod phase;
@@ -39,6 +40,7 @@ pub use hand_setup::{setup_opening_hands, HandSetup};
 pub use heuristic_controller::HeuristicController;
 pub use interactive_controller::InteractiveController;
 pub use logger::{GameLogger, LogEntry, OutputFormat, OutputMode};
+pub use mana_colors::ManaColors;
 pub use mana_engine::{ManaCapacity, ManaEngine};
 pub use mana_payment::{
     GreedyManaResolver, ManaColor, ManaPaymentResolver, ManaProduction, ManaSource, PaymentResult, SimpleManaResolver,

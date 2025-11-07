@@ -32,6 +32,7 @@
 //! ```
 
 use crate::core::{CardId, ManaCost};
+use crate::game::mana_colors::ManaColors;
 
 /// Result of checking whether a mana cost can be paid
 ///
@@ -114,13 +115,14 @@ impl ManaProduction {
 }
 
 /// The kind of mana a source can produce
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManaProductionKind {
     /// Produces exactly one specific color (e.g., Mountain → {R})
     Fixed(ManaColor),
 
     /// Can produce one of several colors (e.g., Taiga → {R} or {G})
-    Choice(Vec<ManaColor>),
+    /// Uses a bitfield for efficient storage (1 byte vs 24+ bytes for Vec)
+    Choice(ManaColors),
 
     /// Can produce any color (e.g., City of Brass)
     AnyColor,
@@ -221,7 +223,7 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
             ManaProductionKind::Colorless => max_colorless += 1,
             ManaProductionKind::Choice(colors) => {
                 // Choice lands count toward each color they can produce
-                for color in colors {
+                for color in colors.iter() {
                     match color {
                         ManaColor::White => max_white += 1,
                         ManaColor::Blue => max_blue += 1,
@@ -490,7 +492,7 @@ impl GreedyManaResolver {
     fn can_produce_color(production: &ManaProduction, color: ManaColor) -> bool {
         match &production.kind {
             ManaProductionKind::Fixed(c) => *c == color,
-            ManaProductionKind::Choice(colors) => colors.contains(&color),
+            ManaProductionKind::Choice(colors) => colors.contains(color),
             ManaProductionKind::AnyColor => true,
             ManaProductionKind::Colorless => false,
         }
@@ -501,7 +503,7 @@ impl GreedyManaResolver {
     fn score_for_color(production: &ManaProduction, color: ManaColor) -> u8 {
         match &production.kind {
             ManaProductionKind::Fixed(c) if *c == color => 0, // Best: exact match
-            ManaProductionKind::Choice(colors) if colors.contains(&color) => {
+            ManaProductionKind::Choice(colors) if colors.contains(color) => {
                 colors.len() as u8 // Better: dual land (prefer fewer options)
             }
             ManaProductionKind::AnyColor => 100, // Worst: save for last resort
@@ -790,7 +792,9 @@ mod tests {
         let sources = vec![
             ManaSource {
                 card_id: CardId::new(1),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])),
+                production: ManaProduction::free(ManaProductionKind::Choice(
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                )),
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
@@ -867,7 +871,9 @@ mod tests {
             },
             ManaSource {
                 card_id: CardId::new(2),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])), // Taiga
+                production: ManaProduction::free(ManaProductionKind::Choice(
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                )), // Taiga
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
@@ -917,7 +923,9 @@ mod tests {
             },
             ManaSource {
                 card_id: CardId::new(3),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])), // Taiga
+                production: ManaProduction::free(ManaProductionKind::Choice(
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                )), // Taiga
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
@@ -1082,7 +1090,9 @@ mod tests {
             },
             ManaSource {
                 card_id: CardId::new(2),
-                production: ManaProduction::free(ManaProductionKind::Choice(vec![ManaColor::Red, ManaColor::Green])),
+                production: ManaProduction::free(ManaProductionKind::Choice(
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                )),
                 is_tapped: false,
                 has_summoning_sickness: false,
             },
