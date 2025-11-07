@@ -28,9 +28,8 @@
 mod benchlib;
 
 use benchlib::{
-    allocator::GLOBAL,
-    BatchBenchmark, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain, RewindPlayAgainConfig,
-    BASELINE_DECK_PATH,
+    allocator::GLOBAL, BatchBenchmark, LoggingMode, ParPinned, ParRayon, RestartStrategy, RewindPlayAgain,
+    RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use clap::Parser;
 use stats_alloc::Region;
@@ -54,10 +53,7 @@ impl std::str::FromStr for ExecutionMode {
             "sequential" | "seq" => Ok(ExecutionMode::Sequential),
             "par" | "parallel" | "rayon" => Ok(ExecutionMode::Par),
             "pinned" | "pinned-par" => Ok(ExecutionMode::Pinned),
-            _ => Err(format!(
-                "Invalid mode '{}'. Valid options: sequential, par, pinned",
-                s
-            )),
+            _ => Err(format!("Invalid mode '{}'. Valid options: sequential, par, pinned", s)),
         }
     }
 }
@@ -292,20 +288,13 @@ fn run_parallel_pinned(
 
     // Print results
     print_results(&metrics, total_games, batch_duration.as_secs_f64(), &stats);
-    benchmark
-        .inner()
-        .print_win_rates("PARALLEL (Pinned Threads)");
+    benchmark.inner().print_win_rates("PARALLEL (Pinned Threads)");
 
     Ok(())
 }
 
 /// Print benchmark results
-fn print_results(
-    metrics: &benchlib::GameMetrics,
-    total_games: usize,
-    duration_secs: f64,
-    stats: &stats_alloc::Stats,
-) {
+fn print_results(metrics: &benchlib::GameMetrics, total_games: usize, duration_secs: f64, stats: &stats_alloc::Stats) {
     println!();
     println!("=== Results ===");
     println!("Total games: {}", total_games);
@@ -320,10 +309,7 @@ fn print_results(
     println!("Total turns: {}", metrics.turns);
     println!("Total actions: {}", metrics.actions);
     println!("Avg turns/game: {:.2}", metrics.turns as f64 / total_games as f64);
-    println!(
-        "Avg actions/game: {:.2}",
-        metrics.actions as f64 / total_games as f64
-    );
+    println!("Avg actions/game: {:.2}", metrics.actions as f64 / total_games as f64);
     println!("Actions/turn: {:.2}", metrics.actions_per_turn());
     println!("Games/sec: {:.2}", total_games as f64 / duration_secs);
     println!("Actions/sec: {:.2}", metrics.actions as f64 / duration_secs);
