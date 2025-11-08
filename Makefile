@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups
 
 # Default target - show available commands
 help:
@@ -15,8 +15,9 @@ help:
 	@echo "  make bench-snapshot - Run snapshot benchmark only"
 	@echo "  make bench-logging  - Run stdout logging benchmark only"
 	@echo "  make profile        - Profile game execution with flamegraph (CPU time)"
+	@echo "  make perfprofile    - Profile with perf (CPU + cache analysis)"
 	@echo "  make heapprofile    - Profile allocations with heaptrack"
-	@echo "  make dhatprofile    - Profile allocations with dhat-rs (Rust-native, full symbols)"
+	@echo "  make dhatprofile    - Profile allocations with dhat-rs (recommended)"
 	@echo "  make clean          - Clean build artifacts (cargo clean)"
 	@echo "  make run            - Run the main binary (cargo run)"
 	@echo "  make check          - Fast compilation check (cargo check)"
@@ -218,10 +219,66 @@ profile:
 	@echo "Flamegraph saved to: experiment_results/flamegraph.svg"
 	@echo "Open with: firefox experiment_results/flamegraph.svg (or your browser of choice)"
 
-profile2: build-release
+# Profile with Linux perf (CPU + cache performance)
+# Requires perf: apt-get install linux-tools-common linux-tools-generic (or equivalent)
+# May require elevated permissions. Run with sudo or adjust /proc/sys/kernel/perf_event_paranoid
+perfprofile: build-release
+	@echo "=== Linux perf CPU + Cache Profiling ==="
+	@echo ""
+	@echo "This profiles CPU hotspots and cache behavior using Linux perf."
+	@echo "The rewind_bench binary runs 5000 games to get statistically significant samples."
+	@echo ""
+	@if ! command -v perf >/dev/null 2>&1; then \
+		echo "Error: perf not found"; \
+		echo "Install with:"; \
+		echo "  Ubuntu/Debian: sudo apt-get install linux-tools-common linux-tools-generic"; \
+		echo "  Fedora: sudo dnf install perf"; \
+		exit 1; \
+	fi
 	@mkdir -p experiment_results
-	cd experiment_results && perf record -g --call-graph dwarf -- ../target/release/mtg profile --games 5000 --seed 42
-	cd experiment_results && perf report
+	@echo "Attempting to run perf record..."
+	@echo ""
+	@# Run with call-graph recording
+	@(cd experiment_results && sudo perf record -F 997 -g --call-graph dwarf \
+		-- ../target/release/rewind_bench -n 5000 --sequential 2>&1 | tee perf_record.log) || \
+	(echo ""; \
+	 echo "=== perf profiling failed (likely permission/container issue) ==="; \
+	 echo ""; \
+	 echo "This is expected in containerized environments."; \
+	 echo ""; \
+	 echo "Workarounds:"; \
+	 echo "  1. Run on host system (not in container)"; \
+	 echo "  2. Use 'make profile' for flamegraph profiling instead"; \
+	 echo "  3. Use 'make dhatprofile' for allocation profiling"; \
+	 echo "  4. Run manually with perf stat (no recording):"; \
+	 echo "     perf stat -d target/release/rewind_bench -n 1000 --sequential"; \
+	 echo ""; \
+	 echo "For reference, here's what a successful perf profile shows:"; \
+	 echo "  - Top CPU hotspots by function name"; \
+	 echo "  - Call graph showing which functions call expensive operations"; \
+	 echo "  - Cache miss rates (L1/L2/L3)"; \
+	 echo "  - Instructions per cycle (IPC)"; \
+	 echo ""; \
+	 exit 1)
+	@echo ""
+	@echo "=== Profiling complete! Generating reports... ==="
+	@echo ""
+	@echo "=== Top 20 CPU Hotspots ==="
+	@echo ""
+	@(cd experiment_results && sudo perf report --stdio --no-children -n --sort symbol --percent-limit 0.5 | head -50)
+	@echo ""
+	@echo "=== Next Steps ==="
+	@echo ""
+	@echo "For interactive analysis:"
+	@echo "  cd experiment_results && sudo perf report"
+	@echo ""
+	@echo "For detailed call graph:"
+	@echo "  cd experiment_results && sudo perf report --stdio -g --no-children"
+	@echo ""
+	@echo "For cache miss details:"
+	@echo "  cd experiment_results && sudo perf annotate --stdio"
+	@echo ""
+	@echo "Data saved to: experiment_results/perf.data"
 
 # Profile allocations with heaptrack
 # Requires cargo-heaptrack: cargo install cargo-heaptrack
@@ -256,27 +313,33 @@ heapprofile:
 
 # Profile allocations with dhat-rs (Rust-native profiler with full symbol information)
 # Generates dhat-heap.json which can be viewed with dh_view.html
+# Automatically runs analysis and produces human-readable summary
 dhatprofile:
-	@echo "=== Profiling allocations with dhat-rs ==="
-	@echo "This will run 100 iterations of rewind+replay pattern"
-	@echo "Output: dhat-heap.json (forward gameplay allocations only)"
+	@echo "=== DHAT Allocation Profiling ==="
+	@echo ""
+	@echo "This profiles allocation hotspots in the game engine using dhat-rs."
+	@echo "The rewind_bench binary runs 100 iterations of rewind+replay to isolate"
+	@echo "forward gameplay allocations (excluding initialization overhead)."
 	@echo ""
 	@mkdir -p experiment_results
-	cargo bench --bench dhat_profile --no-default-features
+	@echo "Running profiler..."
+	@cargo bench --bench dhat_profile --no-default-features
 	@# Move dhat output to experiment_results
 	@if [ -f dhat-heap.json ]; then \
 		mv dhat-heap.json experiment_results/dhat-heap.json; \
 		echo ""; \
-		echo "=== DHAT profiling complete! ==="; \
+		echo "=== Profiling complete! Analyzing results... ==="; \
 		echo ""; \
-		echo "Output saved to: experiment_results/dhat-heap.json"; \
+		python3 scripts/analyze_dhat.py; \
 		echo ""; \
-		echo "View results:"; \
+		echo "=== Next Steps ==="; \
+		echo ""; \
+		echo "For interactive analysis:"; \
 		echo "  1. Open https://nnethercote.github.io/dh_view/dh_view.html"; \
 		echo "  2. Load experiment_results/dhat-heap.json"; \
 		echo ""; \
-		echo "Or analyze with Python:"; \
-		echo "  python3 scripts/analyze_dhat.py"; \
+		echo "To create a detailed analysis document:"; \
+		echo "  python3 scripts/analyze_dhat.py > experiment_results/dhat_analysis_$$(date +%Y-%m-%d)_#$$(git rev-list --count HEAD).md"; \
 	else \
 		echo "Error: dhat-heap.json not found"; \
 		exit 1; \

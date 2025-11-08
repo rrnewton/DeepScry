@@ -36,10 +36,10 @@ fn main() {
     let runtime = Runtime::new().expect("Failed to create tokio runtime");
 
     // Load deck and card database
-    let cardsfolder = PathBuf::from("cardsfolder");
+    let cardsfolder = PathBuf::from("../cardsfolder");
     let card_db = CardDatabase::new(cardsfolder);
 
-    let deck_path = "decks/simple_bolt.dck";
+    let deck_path = "../decks/simple_bolt.dck";
     let deck = DeckLoader::load_from_file(&PathBuf::from(deck_path)).expect("Failed to load deck");
 
     // Prefetch cards
