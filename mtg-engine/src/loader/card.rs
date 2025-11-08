@@ -83,8 +83,8 @@ impl CardLoader {
                     "K" => {
                         raw_keywords.push(value.to_string());
                     }
-                    // Ability lines (A:, S:, T:, etc.)
-                    "A" | "S" | "T" => {
+                    // Ability lines (A:, S:, T:, SVar:, etc.)
+                    "A" | "S" | "T" | "SVar" => {
                         raw_abilities.push(format!("{key}:{value}"));
                     }
                     _ => {} // Ignore other fields for now
@@ -497,9 +497,10 @@ impl CardDefinition {
     }
 
     /// Parse triggered abilities (T: lines)
-    /// This is a simplified parser for common ETB triggers
+    ///
+    /// Uses tokenized parameter extraction for safety. Replaces unsafe substring matching.
     fn parse_triggers(&self) -> Vec<Trigger> {
-        use crate::core::{Effect, PlayerId};
+        use std::collections::HashMap;
 
         let mut triggers = Vec::new();
 
@@ -509,143 +510,134 @@ impl CardDefinition {
                 continue;
             }
 
-            // Parse ETB triggers
-            // Format: "T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ When..."
-            if ability.contains("Mode$ ChangesZone")
-                && ability.contains("Destination$ Battlefield")
-                && ability.contains("ValidCard$ Card.Self")
+            // Parse parameters by splitting on | (simpler than AbilityParams since triggers don't have record types)
+            let mut params = HashMap::new();
+            if let Some((_prefix, body)) = ability.split_once(':') {
+                for param in body.split('|') {
+                    let param = param.trim();
+                    if param.is_empty() {
+                        continue;
+                    }
+                    if let Some((key, value)) = param.split_once('$') {
+                        params.insert(key.trim().to_string(), value.trim().to_string());
+                    }
+                }
+            }
+
+            // Determine trigger type from Mode$ parameter
+            let mode = params.get("Mode").map(|s| s.as_str());
+
+            // Parse ETB triggers (Mode$ ChangesZone)
+            if mode == Some("ChangesZone")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Battlefield")
+                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self")
             {
-                // Extract the Execute$ parameter to determine what effects to apply
+                use crate::core::{CardId, Effect, PlayerId, TargetRef};
+
+                // Parse effects - check for parameters in this trigger AND in other raw_abilities
+                // (for SVar resolution compatibility)
                 let mut effects = Vec::new();
 
-                // Check if this is a draw trigger
-                if ability.contains("Execute$ TrigDraw") || ability.contains("Draw") {
-                    // Look for NumCards in the ability string
-                    // For now, default to drawing 1 card if we can't find the number
-                    let count = if let Some(cards_str) = ability.split("NumCards$").nth(1) {
-                        cards_str
-                            .trim()
-                            .split(['|', ' ', '\n'])
-                            .next()
-                            .and_then(|s| s.trim().parse::<u8>().ok())
-                            .unwrap_or(1)
-                    } else {
-                        1
-                    };
+                // Helper: search for a parameter across all raw_abilities (for SVar lookups)
+                let find_param = |key: &str| -> Option<String> {
+                    for ab in &self.raw_abilities {
+                        if let Some((_pre, body)) = ab.split_once(':') {
+                            for param in body.split('|') {
+                                if let Some((k, v)) = param.split_once('$') {
+                                    if k.trim() == key {
+                                        return Some(v.trim().to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None
+                };
 
-                    effects.push(Effect::DrawCards {
-                        player: PlayerId::new(0), // Placeholder - will be filled when triggered
-                        count,
-                    });
-                }
-
-                // Check if this is a damage trigger
-                if ability.contains("Execute$ TrigDealDamage") || ability.contains("DealDamage") {
-                    // Look for NumDmg in the ability string
-                    let amount = if let Some(dmg_str) = ability.split("NumDmg$").nth(1) {
-                        dmg_str
-                            .trim()
-                            .split(['|', ' ', '\n'])
-                            .next()
-                            .and_then(|s| s.trim().parse::<i32>().ok())
-                            .unwrap_or(1)
-                    } else {
-                        1
-                    };
-
-                    effects.push(Effect::DealDamage {
-                        target: crate::core::TargetRef::None, // Will be filled when triggered
-                        amount,
-                    });
-                }
-
-                // Check if this is a gain life trigger
-                if ability.contains("Execute$ TrigGainLife")
-                    || (ability.contains("GainLife") && !ability.contains("DealDamage"))
+                // Check if we have NumCards$ parameter (draw effect)
+                if let Some(num_cards_str) = params
+                    .get("NumCards")
+                    .map(|s| s.to_string())
+                    .or_else(|| find_param("NumCards"))
                 {
-                    // Look for LifeAmount in the ability string
-                    let amount = if let Some(life_str) = ability.split("LifeAmount$").nth(1) {
-                        life_str
-                            .trim()
-                            .split(['|', ' ', '\n'])
-                            .next()
-                            .and_then(|s| s.trim().parse::<i32>().ok())
-                            .unwrap_or(1)
-                    } else {
-                        1
-                    };
-
-                    effects.push(Effect::GainLife {
-                        player: PlayerId::new(0), // Placeholder - will be filled when triggered
-                        amount,
-                    });
-                }
-
-                // Check if this is a destroy trigger
-                if ability.contains("Execute$ TrigDestroy") || ability.contains("Destroy") {
-                    use crate::core::CardId;
-                    effects.push(Effect::DestroyPermanent {
-                        target: CardId::new(0), // Placeholder - will be filled when triggered
-                    });
-                }
-
-                // Check if this is a pump trigger
-                if ability.contains("Execute$ TrigPump") || ability.contains("Pump") {
-                    // Look for NumAtt and NumDef in the ability string
-                    let power_bonus = if let Some(att_str) = ability.split("NumAtt$").nth(1) {
-                        att_str
-                            .trim()
-                            .split(['|', ' ', '\n'])
-                            .next()
-                            .and_then(|s| s.trim().strip_prefix('+').unwrap_or(s.trim()).parse::<i32>().ok())
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    let toughness_bonus = if let Some(def_str) = ability.split("NumDef$").nth(1) {
-                        def_str
-                            .trim()
-                            .split(['|', ' ', '\n'])
-                            .next()
-                            .and_then(|s| s.trim().strip_prefix('+').unwrap_or(s.trim()).parse::<i32>().ok())
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    if power_bonus != 0 || toughness_bonus != 0 {
-                        use crate::core::CardId;
-                        effects.push(Effect::PumpCreature {
-                            target: CardId::new(0), // Placeholder - will be filled when triggered
-                            power_bonus,
-                            toughness_bonus,
+                    if let Ok(count) = num_cards_str.parse::<u8>() {
+                        effects.push(Effect::DrawCards {
+                            player: PlayerId::new(0),
+                            count,
                         });
                     }
                 }
 
-                if !effects.is_empty() {
-                    // Extract description from TriggerDescription$ if available
-                    let description = if let Some(desc_str) = ability.split("TriggerDescription$").nth(1) {
-                        desc_str.trim().to_string()
-                    } else {
-                        "When this enters the battlefield".to_string()
-                    };
-
-                    triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
+                // Check if we have NumDmg$ parameter (damage effect)
+                if let Some(num_dmg_str) = params
+                    .get("NumDmg")
+                    .map(|s| s.to_string())
+                    .or_else(|| find_param("NumDmg"))
+                {
+                    if let Ok(amount) = num_dmg_str.parse::<i32>() {
+                        effects.push(Effect::DealDamage {
+                            target: TargetRef::None,
+                            amount,
+                        });
+                    }
                 }
+
+                // Check if we have LifeAmount$ parameter (gain life effect)
+                if let Some(life_amt_str) = params
+                    .get("LifeAmount")
+                    .map(|s| s.to_string())
+                    .or_else(|| find_param("LifeAmount"))
+                {
+                    if let Ok(amount) = life_amt_str.parse::<i32>() {
+                        effects.push(Effect::GainLife {
+                            player: PlayerId::new(0),
+                            amount,
+                        });
+                    }
+                }
+
+                // Check if we have NumAtt$/NumDef$ parameters (pump effect)
+                let power_bonus = params
+                    .get("NumAtt")
+                    .map(|s| s.to_string())
+                    .or_else(|| find_param("NumAtt"))
+                    .and_then(|s| s.trim_start_matches('+').parse::<i32>().ok())
+                    .unwrap_or(0);
+                let toughness_bonus = params
+                    .get("NumDef")
+                    .map(|s| s.to_string())
+                    .or_else(|| find_param("NumDef"))
+                    .and_then(|s| s.trim_start_matches('+').parse::<i32>().ok())
+                    .unwrap_or(0);
+
+                if power_bonus != 0 || toughness_bonus != 0 {
+                    effects.push(Effect::PumpCreature {
+                        target: CardId::new(0),
+                        power_bonus,
+                        toughness_bonus,
+                    });
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "When this enters the battlefield".to_string());
+
+                // Note: This implements basic SVar resolution by searching across all raw_abilities
+                // for effect parameters. Proper SVar resolution would parse SVar: lines separately.
+                // TODO: Implement proper SVar parsing and Execute$ sub-ability resolution
+
+                triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
             }
 
-            // Parse phase triggers
-            // Format: "T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | ..."
-            if ability.contains("Mode$ Phase") {
-                // Determine which phase/step this triggers on
-                let trigger_event = if ability.contains("Phase$ Upkeep") {
-                    Some(TriggerEvent::BeginningOfUpkeep)
-                } else if ability.contains("Phase$ EndOfTurn") || ability.contains("Phase$ End") {
-                    Some(TriggerEvent::BeginningOfEndStep)
-                } else {
-                    None // Other phases not supported yet
+            // Parse phase triggers (Mode$ Phase)
+            if mode == Some("Phase") {
+                // Determine which phase/step this triggers on using tokenized params
+                let trigger_event = match params.get("Phase").map(|s| s.as_str()) {
+                    Some("Upkeep") => Some(TriggerEvent::BeginningOfUpkeep),
+                    Some("EndOfTurn") | Some("End") => Some(TriggerEvent::BeginningOfEndStep),
+                    _ => None, // Other phases not supported yet
                 };
 
                 if let Some(event) = trigger_event {
@@ -654,11 +646,10 @@ impl CardDefinition {
                     // TODO(mtg-111): Support ValidPlayer$ filtering (You vs Opponent vs Each)
                     // TODO(mtg-111): Support OptionalDecider$ for optional triggers
 
-                    let description = if let Some(desc_str) = ability.split("TriggerDescription$").nth(1) {
-                        desc_str.trim().to_string()
-                    } else {
-                        "At the beginning of upkeep".to_string()
-                    };
+                    let description = params
+                        .get("TriggerDescription")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "At the beginning of upkeep".to_string());
 
                     // For now, don't add effects - phase triggers usually need complex parsing
                     // This creates a placeholder trigger that can be detected in the game loop
