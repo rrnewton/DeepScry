@@ -4,7 +4,7 @@
 //! All other tests should load only the specific cards they need.
 
 use mtg_forge_rs::{
-    loader::{AsyncCardDatabase as CardDatabase, DeckLoader},
+    loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader},
     Result,
 };
 use std::path::{Path, PathBuf};
@@ -21,10 +21,13 @@ async fn test_deck_directory(
 ) -> Result<()> {
     println!("\n=== Testing Deck Loading: {} ===", directory_name);
 
-    if !directory.exists() {
-        println!("Skipping {} deck loading test - directory not present", directory_name);
-        return Ok(());
-    }
+    assert!(
+        directory.exists(),
+        "Deck directory {} not found! This test requires the directory to exist. \
+         For forge-java: ensure the submodule is initialized (git submodule update --init). \
+         For decks: ensure the test decks directory exists in the repository.",
+        directory.display()
+    );
 
     println!("Discovering .dck files in {}...", directory.display());
 
@@ -48,10 +51,12 @@ async fn test_deck_directory(
     let deck_count = deck_paths.len();
     println!("Found {} .dck files", deck_count);
 
-    if deck_count == 0 {
-        println!("No decks found in {}, skipping", directory_name);
-        return Ok(());
-    }
+    assert!(
+        deck_count > 0,
+        "No .dck files found in {}! The directory exists but contains no deck files. \
+         This test expects deck files to be present.",
+        directory_name
+    );
 
     // Load all decks in parallel with concurrency limit
     println!("Loading all decks and verifying card resolution...");
@@ -190,12 +195,8 @@ async fn test_deck_directory(
 /// Also serves as a regression test to ensure deck loading doesn't get worse
 #[tokio::test]
 async fn test_load_cards_and_decks() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        // Skip test if cardsfolder doesn't exist
-        println!("Skipping full database load test - cardsfolder not present");
-        return Ok(());
-    }
+    // Use centralized cardsfolder resolution - will panic with helpful message if not found
+    let cardsfolder = require_cardsfolder();
 
     println!("Loading full card database from cardsfolder...");
     let card_db = CardDatabase::new(cardsfolder);
@@ -223,20 +224,22 @@ async fn test_load_cards_and_decks() -> Result<()> {
     assert!(grizzly_bears.is_some(), "Grizzly Bears should be in database");
     assert_eq!(grizzly_bears.unwrap().name.as_str(), "Grizzly Bears");
 
-    // Test loading decks from forge-java
+     // Test loading decks from forge-java
     // Known limitation: Double-faced cards (DFCs) and modal double-faced cards (MDFCs)
     // are stored in files with both face names combined, but decks reference only one face.
     // Example: 'Ludevic, Necrogenius' is in 'ludevic_necrogenius_olag_ludevics_hubris.txt'
     // This requires building a card name index during database load.
     // Current baseline: 1730 failures out of 6000+ decks (~71% success rate)
-    let forge_java = PathBuf::from("forge-java");
+    // Note: Integration tests run from mtg-engine/ directory, so use ../forge-java
+    let forge_java = PathBuf::from("../forge-java");
     test_deck_directory(&card_db, &forge_java, 1730, "forge-java").await?;
 
     // Test loading decks from ./decks directory
     // These are our test decks - mostly should load successfully
     // Known failure: monored.dck contains "Ojer Axonil, Deepest Might" (double-faced card)
     // Current baseline: 1 failure (out of 29 decks, ~96.6% success rate)
-    let local_decks = PathBuf::from("decks");
+    // Note: Integration tests run from mtg-engine/ directory, so use ../decks
+    let local_decks = PathBuf::from("../decks");
     test_deck_directory(&card_db, &local_decks, 1, "decks").await?;
 
     Ok(())
