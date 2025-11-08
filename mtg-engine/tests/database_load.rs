@@ -190,11 +190,10 @@ async fn test_deck_directory(
     Ok(())
 }
 
-/// Test that the full card database and all forge-java decks can be loaded
+/// Test that the full card database can be loaded
 /// This is the ONLY test in the entire test suite that should call eager_load()
-/// Also serves as a regression test to ensure deck loading doesn't get worse
 #[tokio::test]
-async fn test_load_cards_and_decks() -> Result<()> {
+async fn test_load_all_cards() -> Result<()> {
     // Use centralized cardsfolder resolution - will panic with helpful message if not found
     let cardsfolder = require_cardsfolder();
 
@@ -223,6 +222,19 @@ async fn test_load_cards_and_decks() -> Result<()> {
     let grizzly_bears = card_db.get_card("Grizzly Bears").await?;
     assert!(grizzly_bears.is_some(), "Grizzly Bears should be in database");
     assert_eq!(grizzly_bears.unwrap().name.as_str(), "Grizzly Bears");
+
+    Ok(())
+}
+
+/// Test that all forge-java decks and local test decks can be loaded
+/// This serves as a regression test to ensure deck loading doesn't get worse
+#[tokio::test]
+async fn test_load_all_decks() -> Result<()> {
+    // Use centralized cardsfolder resolution - will panic with helpful message if not found
+    let cardsfolder = require_cardsfolder();
+
+    println!("Loading card database (lazy) for deck loading tests...");
+    let card_db = CardDatabase::new(cardsfolder);
 
     // Test loading decks from forge-java
     // Known limitation: Double-faced cards (DFCs) and modal double-faced cards (MDFCs)
