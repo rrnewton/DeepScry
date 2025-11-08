@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups
 
 # Default target - show available commands
 help:
@@ -12,13 +12,14 @@ help:
 	@echo "  make validate       - Full pre-commit validation (tests + examples + lint)"
 	@echo "  make examples       - Run all examples"
 	@echo "  make full-benchmark - Run all performance benchmarks (slow)"
-	@echo "  make bench-snapshot - Run snapshot benchmark only"
-	@echo "  make bench-logging  - Run stdout logging benchmark only"
-	@echo "  make profile        - Profile game execution with flamegraph (CPU time)"
-	@echo "  make perfprofile    - Profile with perf (CPU + cache analysis)"
-	@echo "  make heapprofile    - Profile allocations with heaptrack"
-	@echo "  make dhatprofile    - Profile allocations with dhat-rs (recommended)"
-	@echo "  make clean          - Clean build artifacts (cargo clean)"
+	@echo "  make bench-snapshot    - Run snapshot benchmark only"
+	@echo "  make bench-logging     - Run stdout logging benchmark only"
+	@echo "  make profile           - Profile game execution with flamegraph (CPU time)"
+	@echo "  make callgrindprofile  - Profile with Valgrind Callgrind (works in containers)"
+	@echo "  make perfprofile       - Profile with perf (requires host/privileges)"
+	@echo "  make heapprofile       - Profile allocations with heaptrack"
+	@echo "  make dhatprofile       - Profile allocations with dhat-rs (recommended)"
+	@echo "  make clean             - Clean build artifacts (cargo clean)"
 	@echo "  make run            - Run the main binary (cargo run)"
 	@echo "  make check          - Fast compilation check (cargo check)"
 	@echo "  make fmt            - Format code (cargo fmt)"
@@ -219,9 +220,60 @@ profile:
 	@echo "Flamegraph saved to: experiment_results/flamegraph.svg"
 	@echo "Open with: firefox experiment_results/flamegraph.svg (or your browser of choice)"
 
+# Profile with Valgrind Callgrind (CPU profiling that works in containers)
+# Requires valgrind: apt-get install valgrind (or equivalent)
+# This is the recommended CPU profiler for containerized environments
+callgrindprofile: build-release
+	@echo "=== Valgrind Callgrind CPU Profiling ==="
+	@echo ""
+	@echo "This profiles CPU instruction counts and call graphs using Callgrind."
+	@echo "Callgrind works in containers without special permissions."
+	@echo "The rewind_bench binary runs 500 games (smaller than perf due to ~50x slowdown)."
+	@echo ""
+	@if ! command -v valgrind >/dev/null 2>&1; then \
+		echo "Error: valgrind not found"; \
+		echo "Install with:"; \
+		echo "  Ubuntu/Debian: sudo apt-get install valgrind"; \
+		echo "  Fedora: sudo dnf install valgrind"; \
+		exit 1; \
+	fi
+	@mkdir -p experiment_results
+	@echo "Running callgrind (this will take 3-5 minutes due to instrumentation overhead)..."
+	@echo ""
+	@# Run with callgrind, collecting instruction counts and call graphs
+	valgrind --tool=callgrind \
+		--callgrind-out-file=experiment_results/callgrind.out \
+		--dump-instr=yes \
+		--collect-jumps=yes \
+		--cache-sim=yes \
+		target/release/rewind_bench -n 500 -m sequential
+	@echo ""
+	@echo "=== Profiling complete! Analyzing results... ==="
+	@echo ""
+	@echo "=== Top 30 CPU Hotspots (by instruction count) ==="
+	@echo ""
+	@callgrind_annotate --auto=yes --inclusive=yes experiment_results/callgrind.out 2>&1 | head -100
+	@echo ""
+	@echo "=== Next Steps ==="
+	@echo ""
+	@echo "For function-level analysis:"
+	@echo "  callgrind_annotate --auto=yes experiment_results/callgrind.out | less"
+	@echo ""
+	@echo "For source-level annotation of a specific file:"
+	@echo "  callgrind_annotate --auto=yes experiment_results/callgrind.out mtg-engine/src/game/mana_engine.rs"
+	@echo ""
+	@echo "For interactive visualization (requires KCachegrind on host):"
+	@echo "  kcachegrind experiment_results/callgrind.out"
+	@echo ""
+	@echo "For call graph analysis:"
+	@echo "  callgrind_annotate --tree=both experiment_results/callgrind.out | less"
+	@echo ""
+	@echo "Data saved to: experiment_results/callgrind.out"
+
 # Profile with Linux perf (CPU + cache performance)
 # Requires perf: apt-get install linux-tools-common linux-tools-generic (or equivalent)
 # May require elevated permissions. Run with sudo or adjust /proc/sys/kernel/perf_event_paranoid
+# NOTE: Use 'make callgrindprofile' for containerized environments (no special permissions needed)
 perfprofile: build-release
 	@echo "=== Linux perf CPU + Cache Profiling ==="
 	@echo ""
