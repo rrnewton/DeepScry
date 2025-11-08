@@ -50,7 +50,7 @@ make callgrindprofile
 
 **What it does:**
 - Profiles CPU instruction counts and call graphs using Valgrind
-- Runs 500 games (takes 3-5 minutes due to ~50x slowdown)
+- Runs 250 games (takes 1-2 minutes due to ~50x slowdown)
 - Works perfectly in containers without special permissions
 - Collects instruction counts, cache statistics, and call graphs
 - Outputs `experiment_results/callgrind.out`
@@ -295,7 +295,7 @@ Expected: Allocation count reduced by ~50-70%
 
 2. **Use representative workloads**
    - Our benchmarks use `rewind_bench` with robots mirror match
-   - 500-5000 games depending on profiler overhead
+   - 250-5000 games depending on profiler overhead
    - Consistent seed (43) for reproducibility
 
 3. **Profile one thing at a time**

@@ -228,7 +228,7 @@ callgrindprofile: build-release
 	@echo ""
 	@echo "This profiles CPU instruction counts and call graphs using Callgrind."
 	@echo "Callgrind works in containers without special permissions."
-	@echo "The rewind_bench binary runs 500 games (smaller than perf due to ~50x slowdown)."
+	@echo "The rewind_bench binary runs 250 games (reduced due to ~50x slowdown)."
 	@echo ""
 	@if ! command -v valgrind >/dev/null 2>&1; then \
 		echo "Error: valgrind not found"; \
@@ -238,7 +238,7 @@ callgrindprofile: build-release
 		exit 1; \
 	fi
 	@mkdir -p experiment_results
-	@echo "Running callgrind (this will take 3-5 minutes due to instrumentation overhead)..."
+	@echo "Running callgrind (this will take 1-2 minutes due to instrumentation overhead)..."
 	@echo ""
 	@# Run with callgrind, collecting instruction counts and call graphs
 	valgrind --tool=callgrind \
@@ -246,7 +246,7 @@ callgrindprofile: build-release
 		--dump-instr=yes \
 		--collect-jumps=yes \
 		--cache-sim=yes \
-		target/release/rewind_bench -n 500 -m sequential
+		target/release/rewind_bench -n 250 -m sequential
 	@echo ""
 	@echo "=== Profiling complete! Analyzing results... ==="
 	@echo ""
