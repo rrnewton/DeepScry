@@ -20,6 +20,9 @@
 
 set -e  # Exit on error
 
+# Change to repository root (script is in mtg-engine/tests/, need to go up 2 levels)
+cd "$(dirname "$0")/../.."
+
 # Parse command line arguments
 FORCE_SEQUENTIAL=false
 KEEP_ARTIFACTS=false
@@ -64,10 +67,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check for cardsfolder
+# Check for cardsfolder (now running from repository root)
 if [ ! -d "cardsfolder" ]; then
-    echo "Warning: cardsfolder not found, skipping stress tests"
-    exit 0
+    echo "Error: cardsfolder not found"
+    echo "Please ensure cardsfolder symlink exists at repository root"
+    exit 1
 fi
 
 # Default decks to test if none specified

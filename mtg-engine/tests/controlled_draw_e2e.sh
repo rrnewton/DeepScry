@@ -19,14 +19,15 @@ NC='\033[0m' # No Color
 echo "=== Controlled Draw (--p1-draw / --p2-draw) E2E Test ==="
 echo
 
-# Check if cardsfolder exists
-if [[ ! -d "cardsfolder" ]]; then
-    echo -e "${YELLOW}Warning: cardsfolder not found, skipping test${NC}"
-    exit 0
+# Check if cardsfolder exists (tests run from mtg-engine/)
+if [[ ! -d "../cardsfolder" ]]; then
+    echo -e "${RED}Error: ../cardsfolder not found${NC}"
+    echo "Please ensure cardsfolder symlink exists at repository root"
+    exit 1
 fi
 
-# Check if test deck exists
-DECK="decks/simple_bolt.dck"
+# Check if test deck exists (tests run from mtg-engine/)
+DECK="../decks/simple_bolt.dck"
 if [[ ! -f "$DECK" ]]; then
     echo -e "${RED}Error: $DECK not found${NC}"
     exit 1
