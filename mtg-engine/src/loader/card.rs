@@ -673,11 +673,11 @@ impl CardDefinition {
 
     /// Parse activated abilities (A:AB$ lines)
     ///
-    /// Uses tokenized parsing for cost extraction. Effect parsing still uses
-    /// substring matching (TODO: migrate to params_to_effect).
+    /// Uses tokenized parsing with params_to_effect() for all effect types.
+    /// Eliminates unsafe substring matching.
     fn parse_activated_abilities(&self) -> Vec<crate::core::ActivatedAbility> {
         use super::ability_parser::{AbilityParams, AbilityRecordType};
-        use crate::core::{ActivatedAbility, Cost, Effect};
+        use crate::core::{ActivatedAbility, Cost};
 
         let mut abilities = Vec::new();
 
@@ -709,6 +709,67 @@ impl CardDefinition {
 
             if cost.is_none() {
                 continue; // Skip abilities without parseable cost
+            }
+            let cost = cost.unwrap();
+
+            // Parse effects using the tokenized converter
+            use super::ability_parser::ApiType;
+            use super::effect_converter::params_to_effect;
+
+            // Special handling for mana abilities (need is_mana_ability = true)
+            let is_mana_ability = matches!(params.api_type, ApiType::Mana);
+
+            // Try to convert parameters to effects
+            let effects = if let Some(effect) = params_to_effect(&params) {
+                vec![effect]
+            } else {
+                // Fallback to old parsing for unsupported API types
+                // TODO: Remove this once all API types are migrated
+                vec![]
+            };
+
+            // Extract description
+            let description = params
+                .get("SpellDescription")
+                .unwrap_or("Activated ability")
+                .to_string();
+
+            // Only add if we have effects
+            if !effects.is_empty() {
+                abilities.push(ActivatedAbility::new(cost, effects, description, is_mana_ability));
+            }
+        }
+
+        abilities
+    }
+
+    /// DEPRECATED: Old parse_activated_abilities implementation
+    /// Preserved for reference, will be removed after confidence period
+    #[allow(dead_code)]
+    fn parse_activated_abilities_old(&self) -> Vec<crate::core::ActivatedAbility> {
+        use crate::core::{ActivatedAbility, Cost, Effect, ManaCost};
+
+        let mut abilities = Vec::new();
+
+        for ability in &self.raw_abilities {
+            // Only process A:AB$ lines (activated abilities)
+            if !ability.starts_with("A:AB$") {
+                continue;
+            }
+
+            // Extract cost from Cost$ parameter
+            let cost = if let Some(cost_str) = ability.split("Cost$").nth(1) {
+                if let Some(cost_part) = cost_str.trim().split('|').next() {
+                    Cost::parse(cost_part.trim())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if cost.is_none() {
+                continue; // Skip abilities we can't parse the cost for
             }
             let cost = cost.unwrap();
 

@@ -147,6 +147,43 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        ApiType::Mana => {
+            // Parse mana abilities: A:AB$ Mana | Cost$ T | Produced$ G
+            let produced_str = params.get("Produced")?;
+
+            // Parse the produced mana into a ManaCost
+            // Simple cases: G, W, U, B, R, C (single color)
+            // Complex cases: "Combo W U" (choice), "Any" (any color), "C C" (multiple colorless)
+            use crate::core::ManaCost;
+
+            let mana_cost = if produced_str == "Any" {
+                // Any color - for now, default to colorless
+                // TODO: Implement player choice for "Any"
+                ManaCost::from_string("C")
+            } else if produced_str.starts_with("Combo") {
+                // Combo means choice between colors
+                // For now, just use the first color mentioned
+                // TODO: Implement player choice for Combo
+                let colors = produced_str.strip_prefix("Combo").unwrap_or("").trim();
+                let first_color = colors.split_whitespace().next().unwrap_or("C");
+                ManaCost::from_string(first_color)
+            } else {
+                // Direct specification: "G", "C C", "W U", etc.
+                ManaCost::from_string(produced_str)
+            };
+
+            // Check for Amount$ parameter (e.g., Amount$ 2 for Sol Ring)
+            let amount = params.get("Amount").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+
+            // Multiply mana by amount
+            let final_mana = mana_cost.multiply(amount);
+
+            Some(Effect::AddMana {
+                player: PlayerId::new(0), // Placeholder - filled in when activated
+                mana: final_mana,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -220,5 +257,35 @@ mod tests {
         let effect = params_to_effect(&params);
 
         assert!(effect.is_none(), "Should return None for unsupported API types");
+    }
+
+    #[test]
+    fn test_convert_mana_ability() {
+        // Basic mana ability: tap to add one green mana
+        let params = AbilityParams::parse("A:AB$ Mana | Cost$ T | Produced$ G").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::AddMana { player: _, mana } => {
+                // Verify the mana cost represents {G}
+                assert_eq!(mana.green, 1);
+                assert_eq!(mana.colorless, 0);
+            }
+            _ => panic!("Expected AddMana effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_mana_ability_with_amount() {
+        // Sol Ring: tap to add two colorless mana
+        let params = AbilityParams::parse("A:AB$ Mana | Cost$ T | Produced$ C | Amount$ 2").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::AddMana { player: _, mana } => {
+                assert_eq!(mana.colorless, 2);
+            }
+            _ => panic!("Expected AddMana effect"),
+        }
     }
 }
