@@ -5,7 +5,7 @@
 
 use mtg_forge_rs::{
     game::{random_controller::RandomController, GameLoop, VerbosityLevel},
-    loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
+    loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,
 };
 use std::path::PathBuf;
@@ -20,15 +20,12 @@ use std::path::PathBuf;
 #[tokio::test]
 async fn test_full_game_undo_replay() -> Result<()> {
     // Load card database (lazy loading - only loads cards from deck)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load test deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // ===== Phase 1: Play initial game =====
@@ -439,15 +436,12 @@ async fn test_action_undo() -> Result<()> {
     use mtg_forge_rs::core::{Card, CardType};
 
     // Load card database
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load test deck
-    let deck_path = PathBuf::from("decks/grizzly_bears.dck");
+    let deck_path = PathBuf::from("../decks/grizzly_bears.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     let game_init = GameInitializer::new(&card_db);
@@ -516,15 +510,12 @@ async fn test_aggressive_undo_snapshots() -> Result<()> {
     use rand::SeedableRng;
 
     // Load card database
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load test deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Initialize game
@@ -982,14 +973,11 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
     }
 
     // Load card database
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
     // Load test deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Initialize game
