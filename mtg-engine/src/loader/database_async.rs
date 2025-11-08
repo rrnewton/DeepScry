@@ -277,6 +277,13 @@ impl CardDatabase {
         let cards = self.cards.read().await;
         cards.is_empty()
     }
+
+    /// Get all cards as an iterator (for statistics and analysis)
+    /// Returns an owned collection to iterate over (guards can't escape async)
+    pub async fn all_cards(&self) -> Vec<Arc<CardDefinition>> {
+        let cards = self.cards.read().await;
+        cards.values().cloned().collect()
+    }
 }
 
 #[cfg(test)]

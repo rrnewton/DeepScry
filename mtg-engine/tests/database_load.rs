@@ -194,6 +194,8 @@ async fn test_deck_directory(
 /// This is the ONLY test in the entire test suite that should call eager_load()
 #[tokio::test]
 async fn test_load_all_cards() -> Result<()> {
+    use std::collections::HashMap;
+
     // Use centralized cardsfolder resolution - will panic with helpful message if not found
     let cardsfolder = require_cardsfolder();
 
@@ -222,6 +224,141 @@ async fn test_load_all_cards() -> Result<()> {
     let grizzly_bears = card_db.get_card("Grizzly Bears").await?;
     assert!(grizzly_bears.is_some(), "Grizzly Bears should be in database");
     assert_eq!(grizzly_bears.unwrap().name.as_str(), "Grizzly Bears");
+
+    // Generate comprehensive statistics
+    println!("\n=== Card Database Statistics ===");
+
+    let all_cards = card_db.all_cards().await;
+
+    // Card type distribution
+    let mut type_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        for card_type in &card.types {
+            *type_counts.entry(format!("{:?}", card_type)).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Card Types ---");
+    let mut type_vec: Vec<_> = type_counts.iter().collect();
+    type_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (card_type, count) in type_vec {
+        println!("  {:12} {:6}", card_type, count);
+    }
+
+    // Color distribution
+    let mut color_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        for color in &card.colors {
+            *color_counts.entry(format!("{:?}", color)).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Colors ---");
+    let mut color_vec: Vec<_> = color_counts.iter().collect();
+    color_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (color, count) in color_vec {
+        println!("  {:12} {:6}", color, count);
+    }
+
+    // Top subtypes
+    let mut subtype_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        for subtype in &card.subtypes {
+            *subtype_counts.entry(subtype.as_str().to_string()).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Top 30 Subtypes ---");
+    let mut subtype_vec: Vec<_> = subtype_counts.iter().collect();
+    subtype_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (subtype, count) in subtype_vec.iter().take(30) {
+        println!("  {:20} {:6}", subtype, count);
+    }
+
+    // Keyword distribution
+    use mtg_forge_rs::core::Keyword;
+    let mut keyword_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
+        for keyword in &instantiated.keywords {
+            let keyword_name = match keyword {
+                Keyword::Flying => "Flying",
+                Keyword::FirstStrike => "First Strike",
+                Keyword::DoubleStrike => "Double Strike",
+                Keyword::Deathtouch => "Deathtouch",
+                Keyword::Haste => "Haste",
+                Keyword::Hexproof => "Hexproof",
+                Keyword::Indestructible => "Indestructible",
+                Keyword::Lifelink => "Lifelink",
+                Keyword::Menace => "Menace",
+                Keyword::Reach => "Reach",
+                Keyword::Trample => "Trample",
+                Keyword::Vigilance => "Vigilance",
+                Keyword::Defender => "Defender",
+                Keyword::Shroud => "Shroud",
+                Keyword::ChooseABackground => "Choose a Background",
+                Keyword::ProtectionFromRed => "Protection from Red",
+                Keyword::ProtectionFromBlue => "Protection from Blue",
+                Keyword::ProtectionFromBlack => "Protection from Black",
+                Keyword::ProtectionFromWhite => "Protection from White",
+                Keyword::ProtectionFromGreen => "Protection from Green",
+                Keyword::Madness(_) => "Madness",
+                Keyword::Flashback(_) => "Flashback",
+                Keyword::Enchant(_) => "Enchant",
+                Keyword::Other(s) => s.as_str(),
+            };
+            *keyword_counts.entry(keyword_name.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Top 30 Keywords ---");
+    let mut keyword_vec: Vec<_> = keyword_counts.iter().collect();
+    keyword_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (keyword, count) in keyword_vec.iter().take(30) {
+        println!("  {:25} {:6}", keyword, count);
+    }
+
+    // Ability statistics
+    let cards_with_effects = all_cards.iter().filter(|c| !c.raw_abilities.is_empty()).count();
+    let cards_with_keywords = all_cards.iter().filter(|c| !c.raw_keywords.is_empty()).count();
+
+    println!("\n--- Ability Statistics ---");
+    println!("  Cards with raw abilities:  {:6}", cards_with_effects);
+    println!("  Cards with keywords:       {:6}", cards_with_keywords);
+
+    // Trigger and activated ability counts
+    let mut cards_with_triggers = 0;
+    let mut cards_with_activated = 0;
+    for card in &all_cards {
+        let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
+        if !instantiated.triggers.is_empty() {
+            cards_with_triggers += 1;
+        }
+        if !instantiated.activated_abilities.is_empty() {
+            cards_with_activated += 1;
+        }
+    }
+
+    println!("  Cards with triggers:       {:6}", cards_with_triggers);
+    println!("  Cards with activated abs:  {:6}", cards_with_activated);
+
+    // Mana cost distribution
+    let mut cmc_counts = [0; 9]; // 0-7, and 8+ in index 8
+
+    for card in &all_cards {
+        let cmc = card.mana_cost.cmc();
+        let index = if cmc >= 8 { 8 } else { cmc as usize };
+        cmc_counts[index] += 1;
+    }
+
+    println!("\n--- Mana Cost Distribution ---");
+    for (cmc, count) in cmc_counts.iter().enumerate() {
+        if cmc < 8 {
+            println!("  CMC {}:                     {:6}", cmc, count);
+        } else {
+            println!("  CMC 8+:                    {:6}", count);
+        }
+    }
 
     Ok(())
 }
