@@ -283,9 +283,49 @@ impl CardDefinition {
         keywords
     }
 
-    /// Parse raw abilities into Effect objects (simplified)
-    /// This is a temporary solution until we have a full ability parser
+    /// Parse raw abilities into Effect objects
+    ///
+    /// Uses tokenized parsing (ability_parser) for safety and correctness.
+    /// Replaces unsafe substring matching with proper parameter extraction.
     fn parse_effects(&self) -> Vec<crate::core::Effect> {
+        use super::ability_parser::AbilityParams;
+        use super::effect_converter::params_to_effect;
+
+        let mut effects = Vec::new();
+
+        for ability in &self.raw_abilities {
+            // Skip non-spell/ability lines (triggers, statics, etc.)
+            // We only process A:SP$ (spell effects) and A:AB$ (activated abilities) here
+            // Triggers and statics are handled by parse_triggers() and future parse_static()
+            if !ability.starts_with("A:SP$") && !ability.starts_with("A:AB$") {
+                continue;
+            }
+
+            // Parse ability string into tokenized parameters
+            let params = match AbilityParams::parse(ability) {
+                Ok(p) => p,
+                Err(e) => {
+                    // Log parse error but continue processing other abilities
+                    eprintln!("Warning: Failed to parse ability '{}': {}", ability, e);
+                    continue;
+                }
+            };
+
+            // Convert parameters to Effect (if supported)
+            if let Some(effect) = params_to_effect(&params) {
+                effects.push(effect);
+            }
+            // Note: Unsupported API types are silently skipped (returns None)
+            // This is intentional - we don't want to spam warnings for every unsupported ability
+        }
+
+        effects
+    }
+
+    /// DEPRECATED: Old parsing logic preserved for reference
+    /// This will be removed after validation passes
+    #[allow(dead_code)]
+    fn parse_effects_old(&self) -> Vec<crate::core::Effect> {
         use crate::core::{Effect, PlayerId, TargetRef};
 
         let mut effects = Vec::new();

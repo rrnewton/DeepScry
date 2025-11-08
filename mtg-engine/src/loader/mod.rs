@@ -2,11 +2,13 @@
 //!
 //! Parsers for the Forge card format (.txt) and deck format (.dck)
 
+pub mod ability_parser;
 pub mod card;
 pub mod cardsfolder;
 pub mod database_async;
 pub mod deck;
 pub mod deck_async;
+pub mod effect_converter;
 pub mod game_init;
 
 pub use card::{CardDefinition, CardLoader};
