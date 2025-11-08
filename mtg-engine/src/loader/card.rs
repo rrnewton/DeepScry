@@ -672,7 +672,11 @@ impl CardDefinition {
     }
 
     /// Parse activated abilities (A:AB$ lines)
+    ///
+    /// Uses tokenized parsing for cost extraction. Effect parsing still uses
+    /// substring matching (TODO: migrate to params_to_effect).
     fn parse_activated_abilities(&self) -> Vec<crate::core::ActivatedAbility> {
+        use super::ability_parser::{AbilityParams, AbilityRecordType};
         use crate::core::{ActivatedAbility, Cost, Effect};
 
         let mut abilities = Vec::new();
@@ -683,19 +687,28 @@ impl CardDefinition {
                 continue;
             }
 
-            // Extract cost from Cost$ parameter
-            let cost = if let Some(cost_str) = ability.split("Cost$").nth(1) {
-                if let Some(cost_part) = cost_str.trim().split('|').next() {
-                    Cost::parse(cost_part.trim())
-                } else {
-                    None
+            // Parse ability string into tokenized parameters
+            let params = match AbilityParams::parse(ability) {
+                Ok(p) if p.record_type == AbilityRecordType::Ability => p,
+                Ok(_) => {
+                    eprintln!("Warning: Expected AB$ record type in '{}'", ability);
+                    continue;
                 }
+                Err(e) => {
+                    eprintln!("Warning: Failed to parse activated ability '{}': {}", ability, e);
+                    continue;
+                }
+            };
+
+            // Extract cost from Cost$ parameter
+            let cost = if let Some(cost_str) = params.get("Cost") {
+                Cost::parse(cost_str)
             } else {
                 None
             };
 
             if cost.is_none() {
-                continue; // Skip abilities we can't parse the cost for
+                continue; // Skip abilities without parseable cost
             }
             let cost = cost.unwrap();
 
