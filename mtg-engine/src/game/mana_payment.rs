@@ -31,8 +31,7 @@
 //! }
 //! ```
 
-use crate::core::{CardId, ManaCost};
-use crate::game::mana_colors::ManaColors;
+use crate::core::{CardId, ManaColor, ManaCost, ManaProduction, ManaProductionKind};
 
 /// Result of checking whether a mana cost can be paid
 ///
@@ -77,94 +76,8 @@ pub struct ManaSource {
     pub has_summoning_sickness: bool,
 }
 
-/// What mana a source can produce and at what cost
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ManaProduction {
-    /// The type of mana this source produces
-    pub kind: ManaProductionKind,
-
-    /// Optional activation cost (e.g., pay {2} to produce mana)
-    /// None means no mana cost (tap-only or free ability)
-    pub activation_cost: Option<ManaCost>,
-}
-
-impl ManaProduction {
-    /// Create a new mana production with no activation cost
-    pub fn free(kind: ManaProductionKind) -> Self {
-        Self {
-            kind,
-            activation_cost: None,
-        }
-    }
-
-    /// Create a new mana production with an activation cost
-    pub fn with_cost(kind: ManaProductionKind, cost: ManaCost) -> Self {
-        Self {
-            kind,
-            activation_cost: Some(cost),
-        }
-    }
-
-    /// Get the net mana delta (production - cost) for total mana bounds checking
-    /// This is an i8 because you can have negative delta (pay more than you produce)
-    pub fn net_delta(&self) -> i8 {
-        let production = 1; // Each source produces 1 mana (we'll handle Amount$ later)
-        let cost = self.activation_cost.as_ref().map(|c| c.cmc() as i8).unwrap_or(0);
-        production - cost
-    }
-}
-
-/// The kind of mana a source can produce
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ManaProductionKind {
-    /// Produces exactly one specific color (e.g., Mountain → {R})
-    Fixed(ManaColor),
-
-    /// Can produce one of several colors (e.g., Taiga → {R} or {G})
-    /// Uses a bitfield for efficient storage (1 byte vs 24+ bytes for Vec)
-    Choice(ManaColors),
-
-    /// Can produce any color (e.g., City of Brass)
-    AnyColor,
-
-    /// Produces colorless mana
-    Colorless,
-}
-
-/// Represents a color of mana
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ManaColor {
-    White,
-    Blue,
-    Black,
-    Red,
-    Green,
-}
-
-impl ManaColor {
-    /// Convert to single-character representation (W, U, B, R, G)
-    pub fn to_char(self) -> char {
-        match self {
-            ManaColor::White => 'W',
-            ManaColor::Blue => 'U',
-            ManaColor::Black => 'B',
-            ManaColor::Red => 'R',
-            ManaColor::Green => 'G',
-        }
-    }
-
-    /// Parse from single-character representation
-    pub fn from_char(c: char) -> Option<Self> {
-        match c {
-            'W' | 'w' => Some(ManaColor::White),
-            'U' | 'u' => Some(ManaColor::Blue),
-            'B' | 'b' => Some(ManaColor::Black),
-            'R' | 'r' => Some(ManaColor::Red),
-            'G' | 'g' => Some(ManaColor::Green),
-            _ => None,
-        }
-    }
-}
+// ManaProduction, ManaProductionKind, and ManaColor are now defined in core::mana_production
+// and re-exported above for backward compatibility
 
 /// Shared bounds checking logic for mana payment
 ///
@@ -668,6 +581,7 @@ impl GreedyManaResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::ManaColors;
 
     #[test]
     fn test_mana_color_conversion() {
@@ -793,7 +707,7 @@ mod tests {
             ManaSource {
                 card_id: CardId::new(1),
                 production: ManaProduction::free(ManaProductionKind::Choice(
-                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green),
                 )),
                 is_tapped: false,
                 has_summoning_sickness: false,
@@ -872,7 +786,7 @@ mod tests {
             ManaSource {
                 card_id: CardId::new(2),
                 production: ManaProduction::free(ManaProductionKind::Choice(
-                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green),
                 )), // Taiga
                 is_tapped: false,
                 has_summoning_sickness: false,
@@ -924,7 +838,7 @@ mod tests {
             ManaSource {
                 card_id: CardId::new(3),
                 production: ManaProduction::free(ManaProductionKind::Choice(
-                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green),
                 )), // Taiga
                 is_tapped: false,
                 has_summoning_sickness: false,
@@ -1091,7 +1005,7 @@ mod tests {
             ManaSource {
                 card_id: CardId::new(2),
                 production: ManaProduction::free(ManaProductionKind::Choice(
-                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green)
+                    ManaColors::new().with(ManaColor::Red).with(ManaColor::Green),
                 )),
                 is_tapped: false,
                 has_summoning_sickness: false,

@@ -1,7 +1,8 @@
 //! Card types and definitions
 
 use crate::core::{
-    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, ManaCost, PlayerId, Subtype, Trigger,
+    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, ManaCost, ManaProduction, PlayerId, Subtype,
+    Trigger,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -78,9 +79,17 @@ pub struct CardCache {
     pub name_is_forest: bool,
 
     // ==== Precomputed function results (eliminate runtime computation) ====
-    // Note: We don't cache ManaProduction directly to avoid circular dependency with game module.
-    // Instead, the mana_engine and game_loop functions read these cached flags and reconstruct
-    // the ManaProduction values as needed. This still eliminates all string allocations and parsing.
+    /// Precomputed mana production (upper bound, OR semantics)
+    /// - Default (empty Choice) = no mana production
+    /// - Fixed(color) = produces exactly one color
+    /// - Choice(colors) = can produce ONE of several colors (OR logic)
+    /// - AnyColor = can produce any color
+    /// - Colorless = produces colorless mana
+    ///
+    /// This is an UPPER BOUND - it represents what the card CAN produce, not accounting
+    /// for tap status, summoning sickness, or activation costs (which are always None/free for cached values).
+    /// 11 bytes total (2 bytes for ManaProductionKind + 9 bytes for Option<ManaCost>).
+    pub mana_production: ManaProduction,
 
     /// Precomputed: Does this spell require a target when cast?
     /// (from spell_requires_stack_target function in game_loop.rs)
@@ -97,6 +106,9 @@ impl CardCache {
     pub fn new(text: &str, name: &str) -> Self {
         let text_lower = text.to_lowercase();
         let name_lower = name.to_lowercase();
+
+        // Compute mana production from card text
+        let mana_production = Self::compute_mana_production(&text_lower);
 
         CardCache {
             // Store lowercase versions
@@ -124,9 +136,59 @@ impl CardCache {
             name_is_mountain: name_lower.contains("mountain"),
             name_is_forest: name_lower.contains("forest"),
 
-            // Precomputed function results (TODO: implement actual computation when we find these functions)
-            requires_stack_target: false,  // Will be computed during card loading
-            land_evaluation_value: 0,      // Will be computed during card loading
+            // Precomputed function results
+            mana_production,
+            requires_stack_target: false, // TODO: implement during card loading
+            land_evaluation_value: 0,     // TODO: implement during card loading
+        }
+    }
+
+    /// Compute mana production from lowercase card text
+    /// Returns an upper bound on what this card can produce (OR semantics)
+    fn compute_mana_production(text_lower: &str) -> ManaProduction {
+        use crate::core::{ManaColor, ManaProductionKind};
+        use crate::game::mana_colors::ManaColors;
+
+        // Check for any-color production first (most permissive)
+        if text_lower.contains("any color") {
+            return ManaProduction::free(ManaProductionKind::AnyColor);
+        }
+
+        // Check for colorless production
+        let produces_colorless = text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}");
+
+        // Build ManaColors bitfield from all colors this card can produce
+        let mut colors = ManaColors::new();
+
+        if text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}") {
+            colors.insert(ManaColor::White);
+        }
+        if text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}") {
+            colors.insert(ManaColor::Blue);
+        }
+        if text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}") {
+            colors.insert(ManaColor::Black);
+        }
+        if text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}") {
+            colors.insert(ManaColor::Red);
+        }
+        if text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}") {
+            colors.insert(ManaColor::Green);
+        }
+
+        // Prioritize colored mana over colorless
+        match colors.len() {
+            0 if produces_colorless => ManaProduction::free(ManaProductionKind::Colorless),
+            0 => ManaProduction::default(), // No mana production
+            1 => {
+                // Single color - use Fixed variant
+                let color = colors.iter().next().unwrap();
+                ManaProduction::free(ManaProductionKind::Fixed(color))
+            }
+            _ => {
+                // Multiple colors - use Choice variant (OR logic: choose one)
+                ManaProduction::free(ManaProductionKind::Choice(colors))
+            }
         }
     }
 }
@@ -565,5 +627,12 @@ mod tests {
         assert_eq!(card.get_counter(CounterType::Charge), 5);
         assert_eq!(card.get_counter(CounterType::P1P1), 1); // 2 - 1 = 1
         assert_eq!(card.get_counter(CounterType::M1M1), 0);
+    }
+
+    #[test]
+    fn test_cardcache_size() {
+        // Print size for debugging allocation issues
+        eprintln!("sizeof(CardCache) = {} bytes", std::mem::size_of::<CardCache>());
+        eprintln!("sizeof(Card) = {} bytes", std::mem::size_of::<Card>());
     }
 }

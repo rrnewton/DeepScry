@@ -42,9 +42,10 @@ pub use interactive_controller::InteractiveController;
 pub use logger::{GameLogger, LogEntry, OutputFormat, OutputMode};
 pub use mana_colors::ManaColors;
 pub use mana_engine::{ManaCapacity, ManaEngine};
-pub use mana_payment::{
-    GreedyManaResolver, ManaColor, ManaPaymentResolver, ManaProduction, ManaSource, PaymentResult, SimpleManaResolver,
-};
+pub use mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource, PaymentResult, SimpleManaResolver};
+
+// Re-export mana production types from core for convenience
+pub use crate::core::{ManaColor, ManaProduction, ManaProductionKind};
 pub use phase::{Phase, Step, TurnStructure};
 pub use random_controller::RandomController;
 pub use replay_controller::{ReplayChoice, ReplayController};

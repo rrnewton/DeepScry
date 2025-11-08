@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```
-//! use mtg_forge_rs::game::mana_payment::ManaColor;
+//! use mtg_forge_rs::core::ManaColor;
 //! use mtg_forge_rs::game::mana_colors::ManaColors;
 //!
 //! // Create a set with Red and Green (dual land like Taiga)
@@ -33,7 +33,8 @@
 //! }
 //! ```
 
-use crate::game::mana_payment::ManaColor;
+use crate::core::ManaColor;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Efficient bitfield representation of a set of mana colors
@@ -51,7 +52,7 @@ use std::fmt;
 /// Bit 4: Green  (G)
 /// Bits 5-7: Unused (reserved for future colors or flags)
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct ManaColors {
     bits: u8,
 }
@@ -84,15 +85,6 @@ impl ManaColors {
     pub fn from_slice(colors: &[ManaColor]) -> Self {
         let mut result = Self::new();
         for &color in colors {
-            result = result.with(color);
-        }
-        result
-    }
-
-    /// Create a set from an iterator of colors
-    pub fn from_iter<I: IntoIterator<Item = ManaColor>>(colors: I) -> Self {
-        let mut result = Self::new();
-        for color in colors {
             result = result.with(color);
         }
         result
@@ -251,6 +243,16 @@ impl fmt::Display for ManaColors {
     }
 }
 
+impl std::iter::FromIterator<ManaColor> for ManaColors {
+    fn from_iter<I: IntoIterator<Item = ManaColor>>(iter: I) -> Self {
+        let mut result = Self::new();
+        for color in iter {
+            result = result.with(color);
+        }
+        result
+    }
+}
+
 // Convenience constructors for common combinations
 impl ManaColors {
     /// All five colors (WUBRG)
@@ -351,9 +353,7 @@ mod tests {
 
     #[test]
     fn test_builder_pattern() {
-        let taiga = ManaColors::new()
-            .with(ManaColor::Red)
-            .with(ManaColor::Green);
+        let taiga = ManaColors::new().with(ManaColor::Red).with(ManaColor::Green);
 
         assert_eq!(taiga.len(), 2);
         assert!(taiga.contains(ManaColor::Red));
@@ -376,9 +376,7 @@ mod tests {
 
     #[test]
     fn test_iteration() {
-        let colors = ManaColors::new()
-            .with(ManaColor::Red)
-            .with(ManaColor::Green);
+        let colors = ManaColors::new().with(ManaColor::Red).with(ManaColor::Green);
 
         let collected: Vec<_> = colors.iter().collect();
         assert_eq!(collected.len(), 2);
@@ -398,12 +396,8 @@ mod tests {
 
     #[test]
     fn test_set_operations() {
-        let rg = ManaColors::new()
-            .with(ManaColor::Red)
-            .with(ManaColor::Green);
-        let ub = ManaColors::new()
-            .with(ManaColor::Blue)
-            .with(ManaColor::Black);
+        let rg = ManaColors::new().with(ManaColor::Red).with(ManaColor::Green);
+        let ub = ManaColors::new().with(ManaColor::Blue).with(ManaColor::Black);
 
         let union = rg.union(&ub);
         assert_eq!(union.len(), 4);

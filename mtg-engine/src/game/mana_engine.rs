@@ -112,12 +112,9 @@
 //! - **Mana filtering**: Track color identity restrictions (e.g., Commander format)
 //! - **Cost reduction**: Handle effects like Goblin Electromancer that reduce spell costs
 
-use crate::core::{CardId, ManaCost, PlayerId};
+use crate::core::{CardId, ManaColor, ManaCost, ManaProduction, ManaProductionKind, PlayerId};
 use crate::game::mana_colors::ManaColors;
-use crate::game::mana_payment::{
-    GreedyManaResolver, ManaColor, ManaPaymentResolver, ManaProduction, ManaProductionKind, ManaSource,
-    SimpleManaResolver,
-};
+use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource, SimpleManaResolver};
 use crate::game::GameState;
 
 /// Maximum mana production capacity
@@ -473,7 +470,7 @@ fn get_simple_mana_color(land_name: &str) -> Option<char> {
 /// Detects patterns like "{T}: Add {G}" or "Add one mana of any color" in oracle text.
 /// This is used to identify creatures like Llanowar Elves and Birds of Paradise.
 ///
-/// This function is trivial - it just reads precomputed cache flags.
+/// This function is trivial - it just checks the precomputed mana_production field.
 #[inline(always)]
 fn has_mana_ability(card: &crate::core::Card) -> bool {
     use crate::core::CardType;
@@ -483,74 +480,37 @@ fn has_mana_ability(card: &crate::core::Card) -> bool {
         return false;
     }
 
-    // All work is done via precomputed CardCache flags (no allocations, no string operations)
-    card.cache.text_contains_tap_colon && card.cache.text_contains_add
-        || (card.cache.text_contains_add && card.cache.text_contains_mana)
+    // Check if the card produces any mana (reads precomputed cache field)
+    card.cache.mana_production.produces_mana()
 }
 
 /// Determine mana production for a creature with mana abilities
 ///
-/// Analyzes oracle text to determine what mana a creature can produce.
+/// Simply returns the precomputed mana_production from CardCache.
+/// This function is trivial - just reads a cached field.
+///
 /// Examples:
 /// - Llanowar Elves "{T}: Add {G}" → Fixed(Green)
 /// - Birds of Paradise "{T}: Add one mana of any color" → AnyColor
 /// - Bloom Tender (can produce multiple colors) → Choice(ManaColors with all available colors)
 #[inline(always)]
 fn get_creature_mana_production(card: &crate::core::Card) -> Option<ManaProduction> {
-    // All work is done via precomputed CardCache flags (no allocations, no string operations)
-
-    // Check for any-color production (Birds of Paradise pattern)
-    if card.cache.text_contains_any_color {
-        return Some(ManaProduction::free(ManaProductionKind::AnyColor));
-    }
-
-    // Check for colorless production
-    if card.cache.text_produces_colorless {
-        return Some(ManaProduction::free(ManaProductionKind::Colorless));
-    }
-
-    // Build ManaColors bitfield from all colors this card can produce
-    // This handles creatures that can produce multiple different colors
-    let mut colors = ManaColors::new();
-
-    if card.cache.text_produces_white {
-        colors.insert(ManaColor::White);
-    }
-    if card.cache.text_produces_blue {
-        colors.insert(ManaColor::Blue);
-    }
-    if card.cache.text_produces_black {
-        colors.insert(ManaColor::Black);
-    }
-    if card.cache.text_produces_red {
-        colors.insert(ManaColor::Red);
-    }
-    if card.cache.text_produces_green {
-        colors.insert(ManaColor::Green);
-    }
-
-    // Return appropriate production based on number of colors
-    match colors.len() {
-        0 => None,  // No mana production detected
-        1 => {
-            // Single color - use Fixed variant
-            let color = colors.iter().next().unwrap();
-            Some(ManaProduction::free(ManaProductionKind::Fixed(color)))
-        }
-        _ => {
-            // Multiple colors - use Choice variant (OR logic: choose one)
-            Some(ManaProduction::free(ManaProductionKind::Choice(colors)))
-        }
+    // Read precomputed mana production from cache (no allocations, no string operations)
+    if card.cache.mana_production.produces_mana() {
+        Some(card.cache.mana_production)
+    } else {
+        None
     }
 }
 
 /// Determine mana production for complex lands
 ///
-/// Analyzes card subtypes and abilities to determine what mana a land can produce.
+/// For lands, checks both the cached mana_production (from oracle text) and subtypes (for dual lands).
 /// Returns None if this isn't a mana-producing land or should be handled by simple check.
+///
 /// Examples:
 /// - Taiga (dual land with Plains and Mountain subtypes) → Choice([W, R])
-/// - City of Brass → AnyColor
+/// - City of Brass (cached from "any color" text) → AnyColor
 #[inline(always)]
 fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProduction> {
     use crate::core::CardType;
@@ -560,17 +520,16 @@ fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProductio
         return None;
     }
 
-    // Check oracle text for any-color lands (City of Brass pattern)
-    // Example: "Add one mana of any color"
-    // All work is done via precomputed CardCache flags (no allocations, no string operations)
-    if card.cache.text_contains_any_color {
-        return Some(ManaProduction::free(ManaProductionKind::AnyColor));
+    // First check cached mana production (from oracle text)
+    // This handles lands like "City of Brass" with "Add one mana of any color"
+    if card.cache.mana_production.produces_mana() {
+        return Some(card.cache.mana_production);
     }
 
     // Check for dual lands by looking at basic land subtypes
+    // (This can't be precomputed because subtypes come from card definitions, not oracle text)
     let mut colors = ManaColors::new();
 
-    // Check subtypes for basic land types
     for subtype in &card.subtypes {
         let color = match subtype.as_str() {
             "Plains" => Some(ManaColor::White),

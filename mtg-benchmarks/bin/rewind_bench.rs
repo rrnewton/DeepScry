@@ -44,8 +44,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 mod benchlib;
 
 use benchlib::{
-    allocator::allocator_name,
-    BatchBenchmark, FakePar, LoggingMode, ParPinned, ParRayon, RestartStrategy,
+    allocator::allocator_name, BatchBenchmark, FakePar, LoggingMode, ParPinned, ParRayon, RestartStrategy,
     RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use clap::Parser;
@@ -417,7 +416,12 @@ fn run_parallel_pinned(
 
 /// Print benchmark results (with allocation tracking)
 #[cfg(not(feature = "dhat-heap"))]
-fn print_results(metrics: &benchlib::GameMetrics, total_games: usize, duration_secs: f64, stats: &benchlib::allocator::AllocStats) {
+fn print_results(
+    metrics: &benchlib::GameMetrics,
+    total_games: usize,
+    duration_secs: f64,
+    stats: &benchlib::allocator::AllocStats,
+) {
     println!();
     println!("=== Results ===");
     println!("Total games: {}", total_games);
