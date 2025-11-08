@@ -55,7 +55,7 @@ pub fn require_cardsfolder() -> PathBuf {
          Please ensure the cardsfolder symlink exists:\n\
          - From repository root: ln -s forge-java/forge-gui/res/cardsfolder cardsfolder\n\
          \n\
-         Future: set CARDSFOLDER environment variable to override search path."
+         Future: set CARDSFOLDER environment variable to override search path.",
     )
 }
 

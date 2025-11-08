@@ -224,7 +224,7 @@ async fn test_load_cards_and_decks() -> Result<()> {
     assert!(grizzly_bears.is_some(), "Grizzly Bears should be in database");
     assert_eq!(grizzly_bears.unwrap().name.as_str(), "Grizzly Bears");
 
-     // Test loading decks from forge-java
+    // Test loading decks from forge-java
     // Known limitation: Double-faced cards (DFCs) and modal double-faced cards (MDFCs)
     // are stored in files with both face names combined, but decks reference only one face.
     // Example: 'Ludevic, Necrogenius' is in 'ludevic_necrogenius_olag_ludevics_hubris.txt'

@@ -5,7 +5,7 @@
 
 use mtg_forge_rs::{
     game::{zero_controller::ZeroController, FixedScriptController, GameLoop, HeuristicController, VerbosityLevel},
-    loader::AsyncCardDatabase as CardDatabase,
+    loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
     Result,
 };
@@ -17,13 +17,10 @@ use std::path::PathBuf;
 /// to attack with Grizzly Bears when the opponent has no creatures.
 #[tokio::test]
 async fn test_grizzly_bears_attacks_empty_board() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/grizzly_bears_should_attack.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/grizzly_bears_should_attack.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -75,13 +72,10 @@ async fn test_grizzly_bears_attacks_empty_board() -> Result<()> {
 /// This is a simpler test to verify basic puzzle loading works correctly.
 #[tokio::test]
 async fn test_puzzle_loading_with_zero_controller() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/grizzly_bears_should_attack.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/grizzly_bears_should_attack.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -127,13 +121,10 @@ async fn test_puzzle_loading_with_zero_controller() -> Result<()> {
 #[ignore] // TODO: Fix ability activation logging capture
 #[tokio::test]
 async fn test_royal_assassin_with_log_capture() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/royal_assassin_kills_attacker.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/royal_assassin_kills_attacker.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -270,13 +261,10 @@ async fn test_royal_assassin_with_log_capture() -> Result<()> {
 /// can attack safely against an opponent with no flying blockers.
 #[tokio::test]
 async fn test_serra_angel_flying_attack() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/serra_angel_should_attack.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/serra_angel_should_attack.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -325,13 +313,10 @@ async fn test_serra_angel_flying_attack() -> Result<()> {
 /// can attack safely even when the opponent has ground blockers.
 #[tokio::test]
 async fn test_flying_vs_ground_blockers() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/flying_vs_ground.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/flying_vs_ground.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -381,13 +366,10 @@ async fn test_flying_vs_ground_blockers() -> Result<()> {
 /// (2/1 first strike) should be able to beat Grizzly Bears (2/2) in combat.
 #[tokio::test]
 async fn test_first_strike_combat() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/first_strike_combat.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/first_strike_combat.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -436,13 +418,10 @@ async fn test_first_strike_combat() -> Result<()> {
 /// large creatures and decides to attack when it has a clear size advantage.
 #[tokio::test]
 async fn test_large_creature_attack() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/large_creature_attack.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/large_creature_attack.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -491,13 +470,10 @@ async fn test_large_creature_attack() -> Result<()> {
 /// and that the AI recognizes their value for both offense and defense.
 #[tokio::test]
 async fn test_vigilance_blocks_back() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/vigilance_blocks_back.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/vigilance_blocks_back.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -544,13 +520,10 @@ async fn test_vigilance_blocks_back() -> Result<()> {
 /// effectively or let damage through depending on evaluation.
 #[tokio::test]
 async fn test_multi_blocker_optimization() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/multi_blocker_optimization.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/multi_blocker_optimization.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -598,13 +571,10 @@ async fn test_multi_blocker_optimization() -> Result<()> {
 /// and does not attempt to attack with creatures that have it.
 #[tokio::test]
 async fn test_defender_shouldnt_attack() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/defender_shouldnt_attack.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/defender_shouldnt_attack.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -667,13 +637,10 @@ async fn test_defender_shouldnt_attack() -> Result<()> {
 /// the AI should target the more valuable creature (Serra Angel).
 #[tokio::test]
 async fn test_spell_targeting_removal() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/spell_targeting_removal.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/spell_targeting_removal.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -774,13 +741,10 @@ async fn test_spell_targeting_removal() -> Result<()> {
 /// reach can block flying creatures.
 #[tokio::test]
 async fn test_reach_blocks_flyer() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/reach_blocks_flyer.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/reach_blocks_flyer.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -826,13 +790,10 @@ async fn test_reach_blocks_flyer() -> Result<()> {
 /// to save creatures or make favorable trades in combat.
 #[tokio::test]
 async fn test_pump_spell_combat_trick() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/pump_spell_combat_trick.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/pump_spell_combat_trick.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -874,13 +835,10 @@ async fn test_pump_spell_combat_trick() -> Result<()> {
 /// be blocked by black creatures.
 #[tokio::test]
 async fn test_protection_from_color() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/protection_from_color.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/protection_from_color.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -929,13 +887,10 @@ async fn test_protection_from_color() -> Result<()> {
 /// properly handled by the AI. Juggernaut must attack each turn if able.
 #[tokio::test]
 async fn test_must_attack_creature() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/must_attack_creature.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/must_attack_creature.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -997,13 +952,10 @@ async fn test_must_attack_creature() -> Result<()> {
 /// dealing minimal lethal to blockers and trampling over excess damage.
 #[tokio::test]
 async fn test_trample_damage_assignment() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/trample_damage_assignment.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/trample_damage_assignment.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1044,13 +996,10 @@ async fn test_trample_damage_assignment() -> Result<()> {
 /// evaluate who wins the race.
 #[tokio::test]
 async fn test_life_race_decision() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/life_race_decision.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/life_race_decision.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1099,13 +1048,10 @@ async fn test_life_race_decision() -> Result<()> {
 /// value trade. Trading a 2/2 to kill a 4/4 is good value for the defender.
 #[tokio::test]
 async fn test_favorable_trade_blocking() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/favorable_trade_blocking.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/favorable_trade_blocking.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1146,13 +1092,10 @@ async fn test_favorable_trade_blocking() -> Result<()> {
 /// effects like Elvish Visionary's card draw.
 #[tokio::test]
 async fn test_etb_trigger_evaluation() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/etb_trigger_evaluation.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/etb_trigger_evaluation.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1198,13 +1141,10 @@ async fn test_etb_trigger_evaluation() -> Result<()> {
 /// A creature with lifelink gains life during combat, which can swing races.
 #[tokio::test]
 async fn test_lifelink_race_evaluation() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/lifelink_race_evaluation.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/lifelink_race_evaluation.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1252,13 +1192,10 @@ async fn test_lifelink_race_evaluation() -> Result<()> {
 /// when facing multiple attackers of different sizes and abilities.
 #[tokio::test]
 async fn test_multiple_threats_priority() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/multiple_threats_priority.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/multiple_threats_priority.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1305,13 +1242,10 @@ async fn test_multiple_threats_priority() -> Result<()> {
 /// regeneration and uses the ability to save creatures from combat damage.
 #[tokio::test]
 async fn test_regeneration_evaluation() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/regeneration_evaluation.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/regeneration_evaluation.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1351,13 +1285,10 @@ async fn test_regeneration_evaluation() -> Result<()> {
 /// dealing damage before normal combat damage, enabling favorable trades.
 #[tokio::test]
 async fn test_first_strike_advantage() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/first_strike_advantage.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/first_strike_advantage.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1405,13 +1336,10 @@ async fn test_first_strike_advantage() -> Result<()> {
 /// damage, targeting, blocking, and enchanting from the specified color.
 #[tokio::test]
 async fn test_protection_mechanics() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/protection_from_color.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/protection_from_color.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1460,13 +1388,10 @@ async fn test_protection_mechanics() -> Result<()> {
 /// and curves out properly rather than leaving mana unspent each turn.
 #[tokio::test]
 async fn test_mana_efficiency() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/mana_efficiency.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/mana_efficiency.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1512,13 +1437,10 @@ async fn test_mana_efficiency() -> Result<()> {
 /// and prioritizes creatures with beneficial ETB triggers over vanilla creatures.
 #[tokio::test]
 async fn test_card_advantage_value() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/card_advantage_value.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/card_advantage_value.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1557,13 +1479,10 @@ async fn test_card_advantage_value() -> Result<()> {
 /// like Prodigal Sorcerer for maximum value (killing creatures or dealing damage).
 #[tokio::test]
 async fn test_activated_ability_timing() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/activated_ability_timing.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/activated_ability_timing.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1634,13 +1553,10 @@ async fn test_activated_ability_timing() -> Result<()> {
 /// pump spells like Giant Growth during combat to save creatures or win combat.
 #[tokio::test]
 async fn test_combat_trick_instant() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/combat_trick_instant.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/combat_trick_instant.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1681,13 +1597,10 @@ async fn test_combat_trick_instant() -> Result<()> {
 /// lethal damage to blockers and trample over excess.
 #[tokio::test]
 async fn test_damage_ordering_decision() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/damage_ordering_decision.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/damage_ordering_decision.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1735,13 +1648,10 @@ async fn test_damage_ordering_decision() -> Result<()> {
 /// targeted removal or when sacrifice is beneficial.
 #[tokio::test]
 async fn test_sacrifice_for_value() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/sacrifice_for_value.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/sacrifice_for_value.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1781,13 +1691,10 @@ async fn test_sacrifice_for_value() -> Result<()> {
 /// when casting spells that require specific colors of mana.
 #[tokio::test]
 async fn test_multi_color_mana_decision() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/multi_color_mana_decision.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/multi_color_mana_decision.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1827,13 +1734,10 @@ async fn test_multi_color_mana_decision() -> Result<()> {
 /// holding them for bigger threats vs using them immediately on smaller threats.
 #[tokio::test]
 async fn test_removal_timing_decision() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/removal_timing_decision.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/removal_timing_decision.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1904,13 +1808,10 @@ async fn test_removal_timing_decision() -> Result<()> {
 /// evasive creatures (like flying) when opponent lacks answers.
 #[tokio::test]
 async fn test_evasion_creature_priority() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/evasion_creature_priority.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/evasion_creature_priority.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -1960,13 +1861,10 @@ async fn test_evasion_creature_priority() -> Result<()> {
 /// is valuable against a wide board state with multiple creatures.
 #[tokio::test]
 async fn test_board_wipe_vs_spot_removal() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/board_wipe_vs_spot_removal.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/board_wipe_vs_spot_removal.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2037,13 +1935,10 @@ async fn test_board_wipe_vs_spot_removal() -> Result<()> {
 /// to allocate to X spells like Fireball for maximum impact.
 #[tokio::test]
 async fn test_x_spell_mana_allocation() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/x_spell_mana_allocation.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/x_spell_mana_allocation.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2091,13 +1986,10 @@ async fn test_x_spell_mana_allocation() -> Result<()> {
 /// minimizing damage and maximizing favorable trades.
 #[tokio::test]
 async fn test_blocking_optimization_complex() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/blocking_optimization_complex.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/blocking_optimization_complex.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2145,13 +2037,10 @@ async fn test_blocking_optimization_complex() -> Result<()> {
 /// trade with or beat Scathe Zombies (2/2) in combat.
 #[tokio::test]
 async fn test_first_strike_combat_math() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/first_strike_combat_math.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/first_strike_combat_math.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2198,13 +2087,10 @@ async fn test_first_strike_combat_math() -> Result<()> {
 /// to target creatures or go face for lethal damage.
 #[tokio::test]
 async fn test_direct_damage_targeting() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/direct_damage_targeting.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/direct_damage_targeting.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2252,13 +2138,10 @@ async fn test_direct_damage_targeting() -> Result<()> {
 /// Prodigal Sorcerer's tap ability to ping opponent's creatures.
 #[tokio::test]
 async fn test_activated_ability_usage() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/activated_ability_usage.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/activated_ability_usage.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2329,13 +2212,10 @@ async fn test_activated_ability_usage() -> Result<()> {
 /// tap ability to deal 1 damage to the opponent.
 #[tokio::test]
 async fn test_prodigal_sorcerer_pinging() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/prodigal_sorcerer_ping.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/prodigal_sorcerer_ping.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2382,13 +2262,10 @@ async fn test_prodigal_sorcerer_pinging() -> Result<()> {
 /// This verifies that the AI recognizes mana dorks as mana sources.
 #[tokio::test]
 async fn test_llanowar_elves_mana_ramp() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/mana_dork_ramp.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/mana_dork_ramp.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2457,13 +2334,10 @@ async fn test_llanowar_elves_mana_ramp() -> Result<()> {
 /// This verifies that the AI activates pump abilities when beneficial.
 #[tokio::test]
 async fn test_shivan_dragon_pump_ability() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/shivan_dragon_pump.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/shivan_dragon_pump.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
@@ -2507,13 +2381,10 @@ async fn test_shivan_dragon_pump_ability() -> Result<()> {
 /// This verifies that static abilities requiring attack are enforced.
 #[tokio::test]
 async fn test_juggernaut_must_attack() -> Result<()> {
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
 
-    // Load puzzle file
-    let puzzle_path = PathBuf::from("test_puzzles/juggernaut_must_attack.pzl");
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/juggernaut_must_attack.pzl");
     let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
     let puzzle = PuzzleFile::parse(&puzzle_contents)?;
 
