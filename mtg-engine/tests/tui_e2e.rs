@@ -5,7 +5,7 @@
 
 use mtg_forge_rs::{
     game::{zero_controller::ZeroController, GameLoop, VerbosityLevel},
-    loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
+    loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,
 };
 use std::path::PathBuf;
@@ -14,16 +14,12 @@ use std::path::PathBuf;
 #[tokio::test]
 async fn test_tui_zero_vs_zero_simple_bolt() -> Result<()> {
     // Load card database (lazy loading - only loads cards from deck)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        // Skip test if cardsfolder doesn't exist
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only cards from the deck
 
-    // Load test decks
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    // Load test decks (integration tests run from mtg-engine/ directory)
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Initialize game (this will lazily load Mountain and Lightning Bolt from cardsfolder)
@@ -86,15 +82,12 @@ async fn test_tui_zero_vs_zero_simple_bolt() -> Result<()> {
 #[tokio::test]
 async fn test_tui_deterministic_with_seed() -> Result<()> {
     // Load card database (lazy loading)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
-    // Load test deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    // Load test deck (integration tests run from mtg-engine/ directory)
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Run the same game twice with the same seed
@@ -132,15 +125,12 @@ async fn test_tui_deterministic_with_seed() -> Result<()> {
 #[tokio::test]
 async fn test_tui_runs_to_completion() -> Result<()> {
     // Load card database (lazy loading)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load test deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Run a game and verify it completes
@@ -179,15 +169,12 @@ async fn test_tui_runs_to_completion() -> Result<()> {
 #[tokio::test]
 async fn test_tui_random_vs_random_deals_damage() -> Result<()> {
     // Load card database (lazy loading)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load test deck with Mountains and Lightning Bolts
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Run a game with random controllers
@@ -253,15 +240,12 @@ async fn test_discard_to_hand_size() -> Result<()> {
     use mtg_forge_rs::core::{Card, CardType, EntityId};
 
     // Load card database (lazy loading)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load test deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Initialize game
@@ -331,18 +315,15 @@ async fn test_discard_to_hand_size() -> Result<()> {
 #[tokio::test]
 async fn test_creature_combat_game() -> Result<()> {
     // Load card database (lazy loading)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load creature decks
-    let vigilance_deck_path = PathBuf::from("decks/vigilance_deck.dck");
+    let vigilance_deck_path = PathBuf::from("../decks/vigilance_deck.dck");
     let vigilance_deck = DeckLoader::load_from_file(&vigilance_deck_path)?;
 
-    let bears_deck_path = PathBuf::from("decks/grizzly_bears.dck");
+    let bears_deck_path = PathBuf::from("../decks/grizzly_bears.dck");
     let bears_deck = DeckLoader::load_from_file(&bears_deck_path)?;
 
     // Run a game with random controllers
@@ -438,18 +419,15 @@ async fn test_different_deck_matchup() -> Result<()> {
     use mtg_forge_rs::core::CardType;
 
     // Load card database (lazy loading)
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
     // Note: No eager_load() - GameInitializer will lazily load only deck cards
 
     // Load two different decks
-    let bolt_deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let bolt_deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let bolt_deck = DeckLoader::load_from_file(&bolt_deck_path)?;
 
-    let bears_deck_path = PathBuf::from("decks/grizzly_bears.dck");
+    let bears_deck_path = PathBuf::from("../decks/grizzly_bears.dck");
     let bears_deck = DeckLoader::load_from_file(&bears_deck_path)?;
 
     // Run multiple games to test consistency
@@ -586,14 +564,11 @@ async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
     use mtg_forge_rs::core::{Card, CardType, EntityId, ManaCost};
 
     // Load card database
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
     // Load a simple deck
-    let deck_path = PathBuf::from("decks/simple_bolt.dck");
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck");
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Initialize game
