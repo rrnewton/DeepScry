@@ -2,7 +2,10 @@
 //!
 //! Loads card definitions from Forge's cardsfolder format
 
-use crate::core::{Card, CardName, CardType, Color, Keyword, KeywordSet, ManaCost, Subtype, Trigger, TriggerEvent};
+use crate::core::{
+    Card, CardName, CardType, Color, KeywordComplex, KeywordSet, KeywordSimple, ManaCost, Subtype, Trigger,
+    TriggerEvent,
+};
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
 use std::fs;
@@ -233,7 +236,7 @@ impl CardDefinition {
 
     /// Parse raw keywords into KeywordSet
     fn parse_keywords(&self) -> KeywordSet {
-        let mut keywords = Vec::new();
+        let mut keyword_set = KeywordSet::new();
 
         for keyword_str in &self.raw_keywords {
             // Check if keyword has a parameter (colon separated)
@@ -242,46 +245,44 @@ impl CardDefinition {
                 let param = param.trim();
 
                 // Keywords with parameters
-                let keyword = match kw {
-                    "Madness" => Keyword::Madness(param.to_string()),
-                    "Flashback" => Keyword::Flashback(param.to_string()),
-                    "Enchant" => Keyword::Enchant(param.to_string()),
-                    _ => Keyword::Other(keyword_str.clone()),
+                let complex_keyword = match kw {
+                    "Madness" => KeywordComplex::Madness(param.to_string()),
+                    "Flashback" => KeywordComplex::Flashback(param.to_string()),
+                    "Enchant" => KeywordComplex::Enchant(param.to_string()),
+                    _ => KeywordComplex::Other(keyword_str.clone()),
                 };
-                keywords.push(keyword);
+                keyword_set.push_complex(complex_keyword);
             } else {
                 // Simple keywords (no parameters)
                 let kw = keyword_str.trim();
-                let keyword = match kw {
-                    "Flying" => Keyword::Flying,
-                    "First Strike" => Keyword::FirstStrike,
-                    "Double Strike" => Keyword::DoubleStrike,
-                    "Deathtouch" => Keyword::Deathtouch,
-                    "Haste" => Keyword::Haste,
-                    "Hexproof" => Keyword::Hexproof,
-                    "Indestructible" => Keyword::Indestructible,
-                    "Lifelink" => Keyword::Lifelink,
-                    "Menace" => Keyword::Menace,
-                    "Reach" => Keyword::Reach,
-                    "Trample" => Keyword::Trample,
-                    "Vigilance" => Keyword::Vigilance,
-                    "Defender" => Keyword::Defender,
-                    "Shroud" => Keyword::Shroud,
-                    "Choose a Background" => Keyword::ChooseABackground,
+                match kw {
+                    "Flying" => keyword_set.insert_simple(KeywordSimple::Flying),
+                    "First Strike" => keyword_set.insert_simple(KeywordSimple::FirstStrike),
+                    "Double Strike" => keyword_set.insert_simple(KeywordSimple::DoubleStrike),
+                    "Deathtouch" => keyword_set.insert_simple(KeywordSimple::Deathtouch),
+                    "Haste" => keyword_set.insert_simple(KeywordSimple::Haste),
+                    "Hexproof" => keyword_set.insert_simple(KeywordSimple::Hexproof),
+                    "Indestructible" => keyword_set.insert_simple(KeywordSimple::Indestructible),
+                    "Lifelink" => keyword_set.insert_simple(KeywordSimple::Lifelink),
+                    "Menace" => keyword_set.insert_simple(KeywordSimple::Menace),
+                    "Reach" => keyword_set.insert_simple(KeywordSimple::Reach),
+                    "Trample" => keyword_set.insert_simple(KeywordSimple::Trample),
+                    "Vigilance" => keyword_set.insert_simple(KeywordSimple::Vigilance),
+                    "Defender" => keyword_set.insert_simple(KeywordSimple::Defender),
+                    "Shroud" => keyword_set.insert_simple(KeywordSimple::Shroud),
+                    "Choose a Background" => keyword_set.insert_simple(KeywordSimple::ChooseABackground),
                     // Protection variants
-                    "Protection from red" => Keyword::ProtectionFromRed,
-                    "Protection from blue" => Keyword::ProtectionFromBlue,
-                    "Protection from black" => Keyword::ProtectionFromBlack,
-                    "Protection from white" => Keyword::ProtectionFromWhite,
-                    "Protection from green" => Keyword::ProtectionFromGreen,
-                    _ => Keyword::Other(keyword_str.clone()),
-                };
-                keywords.push(keyword);
+                    "Protection from red" => keyword_set.insert_simple(KeywordSimple::ProtectionFromRed),
+                    "Protection from blue" => keyword_set.insert_simple(KeywordSimple::ProtectionFromBlue),
+                    "Protection from black" => keyword_set.insert_simple(KeywordSimple::ProtectionFromBlack),
+                    "Protection from white" => keyword_set.insert_simple(KeywordSimple::ProtectionFromWhite),
+                    "Protection from green" => keyword_set.insert_simple(KeywordSimple::ProtectionFromGreen),
+                    _ => keyword_set.push_complex(KeywordComplex::Other(keyword_str.to_string())),
+                }
             }
         }
 
-        // Convert Vec<Keyword> to KeywordSet
-        KeywordSet::from_keyword_vec(keywords)
+        keyword_set
     }
 
     /// Parse raw abilities into Effect objects

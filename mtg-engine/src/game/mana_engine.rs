@@ -270,7 +270,8 @@ impl ManaEngine {
                     // Determine if this source has summoning sickness (for creatures with mana abilities)
                     let has_summoning_sickness = if card.is_creature() {
                         if let Some(entered_turn) = card.turn_entered_battlefield {
-                            entered_turn == game.turn.turn_number && !card.has_keyword(&crate::core::Keyword::Haste)
+                            entered_turn == game.turn.turn_number
+                                && !card.has_keyword_simple(crate::core::KeywordSimple::Haste)
                         } else {
                             false
                         }

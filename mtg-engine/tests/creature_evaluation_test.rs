@@ -5,7 +5,7 @@
 //!
 //! Reference: forge-java/forge-ai/src/main/java/forge/ai/CreatureEvaluator.java
 
-use mtg_forge_rs::core::{Card, CardId, CardType, Keyword, PlayerId};
+use mtg_forge_rs::core::{Card, CardId, CardType, KeywordSimple, PlayerId};
 use mtg_forge_rs::game::HeuristicController;
 
 /// Helper to create a basic creature card for testing
@@ -57,8 +57,8 @@ fn test_serra_angel_evaluation() {
     // Total: 80 + 20 + 60 + 40 + 25 + 40 + 40 = 305
 
     let mut card = create_creature("Serra Angel", 4, 4, 5);
-    card.keywords.push(Keyword::Flying);
-    card.keywords.push(Keyword::Vigilance);
+    card.keywords.insert_simple(KeywordSimple::Flying);
+    card.keywords.insert_simple(KeywordSimple::Vigilance);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -83,7 +83,7 @@ fn test_shivan_dragon_evaluation() {
     // Total: 80 + 20 + 75 + 50 + 30 + 50 = 305
 
     let mut card = create_creature("Shivan Dragon", 5, 5, 6);
-    card.keywords.push(Keyword::Flying);
+    card.keywords.insert_simple(KeywordSimple::Flying);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -181,7 +181,7 @@ fn test_wall_of_omens_evaluation() {
     // Total: 80 + 20 + 0 + 40 + 10 - 40 = 110
 
     let mut card = create_creature("Wall of Omens", 0, 4, 2);
-    card.keywords.push(Keyword::Defender);
+    card.keywords.insert_simple(KeywordSimple::Defender);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -203,7 +203,7 @@ fn test_double_strike_creature() {
     // Total: 80 + 20 + 15 + 20 + 10 + 25 = 170
 
     let mut card = create_creature("Boros Swiftblade", 1, 2, 2);
-    card.keywords.push(Keyword::DoubleStrike);
+    card.keywords.insert_simple(KeywordSimple::DoubleStrike);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -225,7 +225,7 @@ fn test_first_strike_creature() {
     // Total: 80 + 20 + 30 + 10 + 5 + 20 = 165
 
     let mut card = create_creature("Elite Vanguard", 2, 1, 1);
-    card.keywords.push(Keyword::FirstStrike);
+    card.keywords.insert_simple(KeywordSimple::FirstStrike);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -247,7 +247,7 @@ fn test_deathtouch_creature() {
     // Total: 80 + 20 + 15 + 10 + 5 + 25 = 155
 
     let mut card = create_creature("Typhoid Rats", 1, 1, 1);
-    card.keywords.push(Keyword::Deathtouch);
+    card.keywords.insert_simple(KeywordSimple::Deathtouch);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -269,7 +269,7 @@ fn test_lifelink_creature() {
     // Total: 80 + 20 + 30 + 20 + 10 + 20 = 180
 
     let mut card = create_creature("Ajani's Pridemate", 2, 2, 2);
-    card.keywords.push(Keyword::Lifelink);
+    card.keywords.insert_simple(KeywordSimple::Lifelink);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -291,7 +291,7 @@ fn test_trample_creature() {
     // Total: 80 + 20 + 45 + 30 + 10 + 10 = 195
 
     let mut card = create_creature("Kalonian Tusker", 3, 3, 2);
-    card.keywords.push(Keyword::Trample);
+    card.keywords.insert_simple(KeywordSimple::Trample);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -313,7 +313,7 @@ fn test_menace_creature() {
     // Total: 80 + 20 + 30 + 20 + 10 + 8 = 168
 
     let mut card = create_creature("Bloodcrazed Goblin", 2, 2, 2);
-    card.keywords.push(Keyword::Menace);
+    card.keywords.insert_simple(KeywordSimple::Menace);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -335,7 +335,7 @@ fn test_reach_creature() {
     // Total: 80 + 20 + 30 + 40 + 20 + 5 = 195
 
     let mut card = create_creature("Giant Spider", 2, 4, 4);
-    card.keywords.push(Keyword::Reach);
+    card.keywords.insert_simple(KeywordSimple::Reach);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -357,7 +357,7 @@ fn test_hexproof_creature() {
     // Total: 80 + 20 + 15 + 10 + 5 + 35 = 165
 
     let mut card = create_creature("Slippery Bogle", 1, 1, 1);
-    card.keywords.push(Keyword::Hexproof);
+    card.keywords.insert_simple(KeywordSimple::Hexproof);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -380,8 +380,8 @@ fn test_indestructible_creature() {
     // Total: 80 + 20 + 165 + 110 + 55 + 50 + 70 = 550
 
     let mut card = create_creature("Darksteel Colossus", 11, 11, 11);
-    card.keywords.push(Keyword::Indestructible);
-    card.keywords.push(Keyword::Trample);
+    card.keywords.insert_simple(KeywordSimple::Indestructible);
+    card.keywords.insert_simple(KeywordSimple::Trample);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);
@@ -404,7 +404,7 @@ fn test_shroud_creature() {
     // Total: 80 + 20 + 45 + 20 + 15 + 30 = 210
 
     let mut card = create_creature("Troll Ascetic", 3, 2, 3);
-    card.keywords.push(Keyword::Shroud);
+    card.keywords.insert_simple(KeywordSimple::Shroud);
 
     let controller = HeuristicController::new(PlayerId::new(1));
     let score = controller.evaluate_creature(&card);

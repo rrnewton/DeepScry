@@ -19,7 +19,7 @@ macro_rules! log_if_verbose {
     };
 }
 
-use crate::core::{CardId, PlayerId};
+use crate::core::{CardId, KeywordSimple, PlayerId};
 use crate::game::controller::PlayerController;
 use crate::game::controller::{
     format_attackers_prompt, format_blockers_prompt, format_choice_menu, format_discard_prompt, GameStateView,
@@ -1046,8 +1046,7 @@ impl<'a> GameLoop<'a> {
                     // Check for summoning sickness (creatures that entered this turn and don't have haste)
                     let has_summoning_sickness = if card.is_creature() {
                         if let Some(entered_turn) = card.turn_entered_battlefield {
-                            entered_turn == self.game.turn.turn_number
-                                && !card.has_keyword(&crate::core::Keyword::Haste)
+                            entered_turn == self.game.turn.turn_number && !card.has_keyword_simple(KeywordSimple::Haste)
                         } else {
                             false
                         }
@@ -2848,7 +2847,7 @@ impl<'a> GameLoop<'a> {
                     // Check for summoning sickness
                     // Creatures can't attack the turn they entered unless they have haste
                     let has_summoning_sickness = if let Some(entered_turn) = card.turn_entered_battlefield {
-                        entered_turn == self.game.turn.turn_number && !card.has_keyword(&crate::core::Keyword::Haste)
+                        entered_turn == self.game.turn.turn_number && !card.has_keyword_simple(KeywordSimple::Haste)
                     } else {
                         false
                     };

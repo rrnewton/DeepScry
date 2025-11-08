@@ -1,8 +1,8 @@
 //! Card types and definitions
 
 use crate::core::{
-    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, ManaCost, ManaProduction,
-    PlayerId, Subtype, Trigger,
+    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, KeywordSimple, ManaCost,
+    ManaProduction, PlayerId, Subtype, Trigger,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -334,20 +334,24 @@ impl Card {
         self.keywords.contains_keyword(keyword)
     }
 
+    pub fn has_keyword_simple(&self, keyword: KeywordSimple) -> bool {
+        self.keywords.contains_simple(keyword)
+    }
+
     pub fn has_flying(&self) -> bool {
-        self.has_keyword(&Keyword::Flying)
+        self.keywords.contains_simple(KeywordSimple::Flying)
     }
 
     pub fn has_reach(&self) -> bool {
-        self.has_keyword(&Keyword::Reach)
+        self.keywords.contains_simple(KeywordSimple::Reach)
     }
 
     pub fn has_first_strike(&self) -> bool {
-        self.has_keyword(&Keyword::FirstStrike)
+        self.keywords.contains_simple(KeywordSimple::FirstStrike)
     }
 
     pub fn has_double_strike(&self) -> bool {
-        self.has_keyword(&Keyword::DoubleStrike)
+        self.keywords.contains_simple(KeywordSimple::DoubleStrike)
     }
 
     /// Returns true if this creature deals damage in the normal damage step
@@ -357,35 +361,35 @@ impl Card {
     }
 
     pub fn has_trample(&self) -> bool {
-        self.has_keyword(&Keyword::Trample)
+        self.keywords.contains_simple(KeywordSimple::Trample)
     }
 
     pub fn has_lifelink(&self) -> bool {
-        self.has_keyword(&Keyword::Lifelink)
+        self.keywords.contains_simple(KeywordSimple::Lifelink)
     }
 
     pub fn has_deathtouch(&self) -> bool {
-        self.has_keyword(&Keyword::Deathtouch)
+        self.keywords.contains_simple(KeywordSimple::Deathtouch)
     }
 
     pub fn has_menace(&self) -> bool {
-        self.has_keyword(&Keyword::Menace)
+        self.keywords.contains_simple(KeywordSimple::Menace)
     }
 
     pub fn has_hexproof(&self) -> bool {
-        self.has_keyword(&Keyword::Hexproof)
+        self.keywords.contains_simple(KeywordSimple::Hexproof)
     }
 
     pub fn has_indestructible(&self) -> bool {
-        self.has_keyword(&Keyword::Indestructible)
+        self.keywords.contains_simple(KeywordSimple::Indestructible)
     }
 
     pub fn has_defender(&self) -> bool {
-        self.has_keyword(&Keyword::Defender)
+        self.keywords.contains_simple(KeywordSimple::Defender)
     }
 
     pub fn has_shroud(&self) -> bool {
-        self.has_keyword(&Keyword::Shroud)
+        self.keywords.contains_simple(KeywordSimple::Shroud)
     }
 
     pub fn tap(&mut self) {

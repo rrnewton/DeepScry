@@ -9,7 +9,7 @@
 //! - AiController.java (core logic)
 //! - CreatureEvaluator.java (creature scoring)
 
-use crate::core::{Card, CardId, Keyword, ManaCost, PlayerId, SpellAbility};
+use crate::core::{Card, CardId, KeywordComplex, KeywordSimple, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
@@ -140,26 +140,25 @@ impl HeuristicController {
         // Java: if (StaticAbilityCantAttackBlock.cantBlockBy(c, null)) { value += addValue(power * 10, "unblockable"); }
         // For now, we'll check for explicit Other keyword
         // TODO: Implement full static ability check
-        let is_unblockable = card
-            .keywords
-            .iter()
-            .any(|k| matches!(k, Keyword::Other(s) if s.contains("can't be blocked") || s.contains("unblockable")));
+        let is_unblockable = card.keywords.iter_complex().any(
+            |k| matches!(k, KeywordComplex::Other(s) if s.contains("can't be blocked") || s.contains("unblockable")),
+        );
 
         if !is_unblockable {
             // Other evasion keywords - not yet in enum, check via Other variant
             // TODO: Add Fear, Intimidate, Skulk to Keyword enum
             let has_fear = card
                 .keywords
-                .iter()
-                .any(|k| matches!(k, Keyword::Other(s) if s.contains("Fear")));
+                .iter_complex()
+                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Fear")));
             let has_intimidate = card
                 .keywords
-                .iter()
-                .any(|k| matches!(k, Keyword::Other(s) if s.contains("Intimidate")));
+                .iter_complex()
+                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Intimidate")));
             let has_skulk = card
                 .keywords
-                .iter()
-                .any(|k| matches!(k, Keyword::Other(s) if s.contains("Skulk")));
+                .iter_complex()
+                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Skulk")));
 
             if has_fear {
                 value += power * 6;
@@ -205,7 +204,7 @@ impl HeuristicController {
             }
 
             // Java: if (c.hasKeyword(Keyword.VIGILANCE)) { value += addValue((power * 5) + (toughness * 5), "vigilance"); }
-            if card.has_keyword(&Keyword::Vigilance) {
+            if card.has_keyword_simple(KeywordSimple::Vigilance) {
                 value += (power * 5) + (toughness * 5);
             }
 
@@ -213,12 +212,12 @@ impl HeuristicController {
             // TODO: Add Infect, Wither to Keyword enum
             let has_infect = card
                 .keywords
-                .iter()
-                .any(|k| matches!(k, Keyword::Other(s) if s.contains("Infect")));
+                .iter_complex()
+                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Infect")));
             let has_wither = card
                 .keywords
-                .iter()
-                .any(|k| matches!(k, Keyword::Other(s) if s.contains("Wither")));
+                .iter_complex()
+                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither")));
 
             if has_infect {
                 value += power * 15;
@@ -559,8 +558,8 @@ impl HeuristicController {
         let has_combat_effect = attacker.has_lifelink()
             || attacker
                 .keywords
-                .iter()
-                .any(|k| matches!(k, Keyword::Other(s) if s.contains("Wither") || s.contains("Afflict")));
+                .iter_complex()
+                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither") || s.contains("Afflict")));
 
         // Collect all potential blockers from opponents
         let potential_blockers: Vec<&Card> = view
@@ -577,8 +576,8 @@ impl HeuristicController {
         let dangerous_blockers_present = potential_blockers.iter().any(|b| {
             b.has_lifelink()
                 || b.keywords
-                    .iter()
-                    .any(|k| matches!(k, Keyword::Other(s) if s.contains("Wither")))
+                    .iter_complex()
+                    .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither")))
         });
 
         // Initialize factors
@@ -613,8 +612,8 @@ impl HeuristicController {
                 let is_dangerous_blocker = blocker.has_lifelink()
                     || blocker
                         .keywords
-                        .iter()
-                        .any(|k| matches!(k, Keyword::Other(s) if s.contains("Wither")));
+                        .iter_complex()
+                        .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither")));
 
                 if is_dangerous_blocker {
                     can_kill_all_dangerous = false;
@@ -1380,7 +1379,7 @@ impl HeuristicController {
             let current_turn = view.turn_number();
             if turn_entered == current_turn {
                 // Has summon sickness unless it has haste
-                let has_haste = source.keywords.iter().any(|k| matches!(k, Keyword::Haste));
+                let has_haste = source.has_keyword_simple(KeywordSimple::Haste);
                 if !has_haste {
                     return false;
                 }
@@ -2721,7 +2720,7 @@ mod tests {
 
     #[test]
     fn test_pump_spell_evasion_granting() {
-        use crate::core::{Card, CardType, Keyword};
+        use crate::core::{Card, CardType};
 
         let player_id = EntityId::new(1);
         let controller = HeuristicController::new(player_id);
@@ -2737,7 +2736,7 @@ mod tests {
         flying_creature.power = Some(1);
         flying_creature.toughness = Some(1);
         flying_creature.types.push(CardType::Creature);
-        flying_creature.keywords.push(Keyword::Flying);
+        flying_creature.keywords.insert_simple(KeywordSimple::Flying);
 
         // Scenario 1: Ground creature attacks, flying creature tries to block
         // can_block_simple(attacker, blocker, keywords_on_attacker)
