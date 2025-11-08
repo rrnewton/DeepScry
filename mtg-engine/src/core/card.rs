@@ -19,8 +19,8 @@ pub enum CardType {
     Planeswalker,
 }
 
-/// Cache for expensive string operations on Card
-/// Pre-computed at card load time to avoid repeated allocations during gameplay
+/// Cache for expensive string operations and precomputed properties on Card
+/// Pre-computed at card load time to avoid repeated allocations and computations during gameplay
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardCache {
     /// Lowercase version of card.text (computed once)
@@ -76,6 +76,20 @@ pub struct CardCache {
 
     /// Name contains "forest"
     pub name_is_forest: bool,
+
+    // ==== Precomputed function results (eliminate runtime computation) ====
+    // Note: We don't cache ManaProduction directly to avoid circular dependency with game module.
+    // Instead, the mana_engine and game_loop functions read these cached flags and reconstruct
+    // the ManaProduction values as needed. This still eliminates all string allocations and parsing.
+
+    /// Precomputed: Does this spell require a target when cast?
+    /// (from spell_requires_stack_target function in game_loop.rs)
+    pub requires_stack_target: bool,
+
+    /// Precomputed: Static value of this land for AI evaluation
+    /// (from evaluate_land function in game_state_evaluator.rs)
+    /// Only meaningful for lands, 0 for non-lands
+    pub land_evaluation_value: i32,
 }
 
 impl CardCache {
@@ -109,6 +123,10 @@ impl CardCache {
             name_is_swamp: name_lower.contains("swamp"),
             name_is_mountain: name_lower.contains("mountain"),
             name_is_forest: name_lower.contains("forest"),
+
+            // Precomputed function results (TODO: implement actual computation when we find these functions)
+            requires_stack_target: false,  // Will be computed during card loading
+            land_evaluation_value: 0,      // Will be computed during card loading
         }
     }
 }
