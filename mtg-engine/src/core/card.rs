@@ -212,7 +212,7 @@ pub struct Card {
     pub types: SmallVec<[CardType; 2]>,
 
     /// Card subtypes (e.g., "Goblin", "Warrior")
-    pub subtypes: SmallVec<[Subtype; 2]>,
+    pub subtypes: SmallVec<[Subtype; 3]>,
 
     /// Colors of the card
     pub colors: SmallVec<[Color; 2]>,
