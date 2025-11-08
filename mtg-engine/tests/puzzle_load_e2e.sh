@@ -22,20 +22,21 @@ echo
 echo "Will use: cargo run --bin mtg"
 echo
 
-# Check if cardsfolder exists
-if [[ ! -d "cardsfolder" ]]; then
-    echo -e "${YELLOW}Warning: cardsfolder not found, skipping test${NC}"
-    exit 0
-fi
-
-# Check if puzzle files exist
-if [[ ! -f "test_puzzles/grizzly_bears_should_attack.pzl" ]]; then
-    echo -e "${RED}Error: test_puzzles/grizzly_bears_should_attack.pzl not found${NC}"
+# Check if cardsfolder exists (tests run from mtg-engine/)
+if [[ ! -d "../cardsfolder" ]]; then
+    echo -e "${RED}Error: ../cardsfolder not found${NC}"
+    echo "Please ensure cardsfolder symlink exists at repository root"
     exit 1
 fi
 
-if [[ ! -f "test_puzzles/royal_assassin_kills_attacker.pzl" ]]; then
-    echo -e "${RED}Error: test_puzzles/royal_assassin_kills_attacker.pzl not found${NC}"
+# Check if puzzle files exist (tests run from mtg-engine/)
+if [[ ! -f "../test_puzzles/grizzly_bears_should_attack.pzl" ]]; then
+    echo -e "${RED}Error: ../test_puzzles/grizzly_bears_should_attack.pzl not found${NC}"
+    exit 1
+fi
+
+if [[ ! -f "../test_puzzles/royal_assassin_kills_attacker.pzl" ]]; then
+    echo -e "${RED}Error: ../test_puzzles/royal_assassin_kills_attacker.pzl not found${NC}"
     exit 1
 fi
 
@@ -43,14 +44,14 @@ EXIT_CODE=0
 
 # Test 1: Grizzly Bears puzzle
 echo "=== Test 1: Grizzly Bears Attack Puzzle ==="
-echo "Loading puzzle: test_puzzles/grizzly_bears_should_attack.pzl"
+echo "Loading puzzle: ../test_puzzles/grizzly_bears_should_attack.pzl"
 echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 12345 (deterministic)"
 echo
 
 # Since we call mtg twice total in this script, use cargo run each time
 if timeout 30s cargo run --bin mtg -- tui \
-    --start-state test_puzzles/grizzly_bears_should_attack.pzl \
+    --start-state ../test_puzzles/grizzly_bears_should_attack.pzl \
     --p1 heuristic \
     --p2 heuristic \
     --seed 12345 \
@@ -106,13 +107,13 @@ echo
 
 # Test 2: Royal Assassin puzzle
 echo "=== Test 2: Royal Assassin Puzzle ==="
-echo "Loading puzzle: test_puzzles/royal_assassin_kills_attacker.pzl"
+echo "Loading puzzle: ../test_puzzles/royal_assassin_kills_attacker.pzl"
 echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 42 (deterministic)"
 echo
 
 if timeout 30s cargo run --bin mtg -- tui \
-    --start-state test_puzzles/royal_assassin_kills_attacker.pzl \
+    --start-state ../test_puzzles/royal_assassin_kills_attacker.pzl \
     --p1 heuristic \
     --p2 heuristic \
     --seed 42 \
