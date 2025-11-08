@@ -68,7 +68,7 @@ clippy:
 # Detect code duplication
 code-dups:
 	which jscpd || npm install -g jscpd
-	jscpd src/ tests/ scripts/ --min-tokens=100
+	jscpd mtg-engine/ mtg-benchmarks/ scripts/ --min-tokens=100
 # pmd cpd --minimum-tokens=100 -d src -d tests -l rust
 # pmd cpd --minimum-tokens=100 -d scripts -d tests -l python
 
