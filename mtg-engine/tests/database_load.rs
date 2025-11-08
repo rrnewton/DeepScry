@@ -281,33 +281,33 @@ async fn test_load_all_cards() -> Result<()> {
     for card in &all_cards {
         let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
         for keyword in &instantiated.keywords {
-            let keyword_name = match keyword {
-                Keyword::Flying => "Flying",
-                Keyword::FirstStrike => "First Strike",
-                Keyword::DoubleStrike => "Double Strike",
-                Keyword::Deathtouch => "Deathtouch",
-                Keyword::Haste => "Haste",
-                Keyword::Hexproof => "Hexproof",
-                Keyword::Indestructible => "Indestructible",
-                Keyword::Lifelink => "Lifelink",
-                Keyword::Menace => "Menace",
-                Keyword::Reach => "Reach",
-                Keyword::Trample => "Trample",
-                Keyword::Vigilance => "Vigilance",
-                Keyword::Defender => "Defender",
-                Keyword::Shroud => "Shroud",
-                Keyword::ChooseABackground => "Choose a Background",
-                Keyword::ProtectionFromRed => "Protection from Red",
-                Keyword::ProtectionFromBlue => "Protection from Blue",
-                Keyword::ProtectionFromBlack => "Protection from Black",
-                Keyword::ProtectionFromWhite => "Protection from White",
-                Keyword::ProtectionFromGreen => "Protection from Green",
-                Keyword::Madness(_) => "Madness",
-                Keyword::Flashback(_) => "Flashback",
-                Keyword::Enchant(_) => "Enchant",
-                Keyword::Other(s) => s.as_str(),
+            let keyword_name: String = match keyword {
+                Keyword::Flying => "Flying".to_string(),
+                Keyword::FirstStrike => "First Strike".to_string(),
+                Keyword::DoubleStrike => "Double Strike".to_string(),
+                Keyword::Deathtouch => "Deathtouch".to_string(),
+                Keyword::Haste => "Haste".to_string(),
+                Keyword::Hexproof => "Hexproof".to_string(),
+                Keyword::Indestructible => "Indestructible".to_string(),
+                Keyword::Lifelink => "Lifelink".to_string(),
+                Keyword::Menace => "Menace".to_string(),
+                Keyword::Reach => "Reach".to_string(),
+                Keyword::Trample => "Trample".to_string(),
+                Keyword::Vigilance => "Vigilance".to_string(),
+                Keyword::Defender => "Defender".to_string(),
+                Keyword::Shroud => "Shroud".to_string(),
+                Keyword::ChooseABackground => "Choose a Background".to_string(),
+                Keyword::ProtectionFromRed => "Protection from Red".to_string(),
+                Keyword::ProtectionFromBlue => "Protection from Blue".to_string(),
+                Keyword::ProtectionFromBlack => "Protection from Black".to_string(),
+                Keyword::ProtectionFromWhite => "Protection from White".to_string(),
+                Keyword::ProtectionFromGreen => "Protection from Green".to_string(),
+                Keyword::Madness(_) => "Madness".to_string(),
+                Keyword::Flashback(_) => "Flashback".to_string(),
+                Keyword::Enchant(_) => "Enchant".to_string(),
+                Keyword::Other(s) => s.clone(),
             };
-            *keyword_counts.entry(keyword_name.to_string()).or_insert(0) += 1;
+            *keyword_counts.entry(keyword_name).or_insert(0) += 1;
         }
     }
 

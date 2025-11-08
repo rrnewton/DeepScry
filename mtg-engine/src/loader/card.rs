@@ -2,7 +2,7 @@
 //!
 //! Loads card definitions from Forge's cardsfolder format
 
-use crate::core::{Card, CardName, CardType, Color, Keyword, ManaCost, Subtype, Trigger, TriggerEvent};
+use crate::core::{Card, CardName, CardType, Color, Keyword, KeywordSet, ManaCost, Subtype, Trigger, TriggerEvent};
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
 use std::fs;
@@ -231,8 +231,8 @@ impl CardDefinition {
         card
     }
 
-    /// Parse raw keywords into Keyword objects
-    fn parse_keywords(&self) -> Vec<Keyword> {
+    /// Parse raw keywords into KeywordSet
+    fn parse_keywords(&self) -> KeywordSet {
         let mut keywords = Vec::new();
 
         for keyword_str in &self.raw_keywords {
@@ -280,7 +280,8 @@ impl CardDefinition {
             }
         }
 
-        keywords
+        // Convert Vec<Keyword> to KeywordSet
+        KeywordSet::from_keyword_vec(keywords)
     }
 
     /// Parse raw abilities into Effect objects

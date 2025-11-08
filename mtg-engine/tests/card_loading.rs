@@ -185,9 +185,10 @@ fn test_instantiate_with_madness() -> Result<()> {
 
     // Verify Madness keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    assert!(matches!(card.keywords[0], Keyword::Madness(_)));
+    let first_keyword = card.keywords.iter().next().unwrap();
+    assert!(matches!(first_keyword, Keyword::Madness(_)));
 
-    if let Keyword::Madness(cost) = &card.keywords[0] {
+    if let Keyword::Madness(cost) = first_keyword {
         assert_eq!(cost, "1 R");
     }
 
@@ -210,9 +211,10 @@ fn test_instantiate_with_flashback() -> Result<()> {
 
     // Verify Flashback keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    assert!(matches!(card.keywords[0], Keyword::Flashback(_)));
+    let first_keyword = card.keywords.iter().next().unwrap();
+    assert!(matches!(first_keyword, Keyword::Flashback(_)));
 
-    if let Keyword::Flashback(cost) = &card.keywords[0] {
+    if let Keyword::Flashback(cost) = first_keyword {
         assert_eq!(cost, "3 R");
     }
 
@@ -235,9 +237,10 @@ fn test_instantiate_with_enchant() -> Result<()> {
 
     // Verify Enchant keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    assert!(matches!(card.keywords[0], Keyword::Enchant(_)));
+    let first_keyword = card.keywords.iter().next().unwrap();
+    assert!(matches!(first_keyword, Keyword::Enchant(_)));
 
-    if let Keyword::Enchant(target_type) = &card.keywords[0] {
+    if let Keyword::Enchant(target_type) = first_keyword {
         assert_eq!(target_type, "Creature");
     }
 

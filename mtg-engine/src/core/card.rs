@@ -1,8 +1,8 @@
 //! Card types and definitions
 
 use crate::core::{
-    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, ManaCost, ManaProduction, PlayerId, Subtype,
-    Trigger,
+    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, ManaCost, ManaProduction,
+    PlayerId, Subtype, Trigger,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -251,7 +251,8 @@ pub struct Card {
     pub counters: SmallVec<[(CounterType, u8); 2]>,
 
     /// Keyword abilities (Flying, First Strike, etc.)
-    pub keywords: Vec<Keyword>,
+    /// Now uses KeywordSet for efficient O(1) simple keyword lookups
+    pub keywords: KeywordSet,
 
     /// Effects that execute when this card resolves
     /// For spells: effects execute when spell resolves
@@ -294,7 +295,7 @@ impl Card {
             tapped: false,
             turn_entered_battlefield: None,
             counters: SmallVec::new(),
-            keywords: Vec::new(),
+            keywords: KeywordSet::new(),
             effects: Vec::new(),
             triggers: Vec::new(),
             activated_abilities: Vec::new(),
@@ -330,7 +331,7 @@ impl Card {
     }
 
     pub fn has_keyword(&self, keyword: &Keyword) -> bool {
-        self.keywords.contains(keyword)
+        self.keywords.contains_keyword(keyword)
     }
 
     pub fn has_flying(&self) -> bool {

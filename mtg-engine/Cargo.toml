@@ -23,6 +23,7 @@ smallvec = { version = "1.11", features = ["serde", "union"] }
 smallmap = { version = "1.4", features = ["serde"] }
 bumpalo = { version = "3.16", features = ["collections"] }
 typed-arena = "2.0"
+enumset = { version = "1.1", features = ["serde"] }
 
 # Error handling
 anyhow = "1.0"
