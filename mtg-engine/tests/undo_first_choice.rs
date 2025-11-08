@@ -13,7 +13,7 @@ use mtg_forge_rs::{
         random_controller::RandomController,
         GameLoop, VerbosityLevel,
     },
-    loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
+    loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,
 };
 use smallvec::SmallVec;
@@ -159,14 +159,11 @@ impl PlayerController for UndoFirstChoiceController {
 #[tokio::test]
 async fn test_undo_first_choice_forest() -> Result<()> {
     // Load card database
-    let cardsfolder = PathBuf::from("cardsfolder");
-    if !cardsfolder.exists() {
-        return Ok(());
-    }
+    let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
-    // Use simple deck with just forests
-    let deck_path = PathBuf::from("decks/simple_bolt.dck"); // Has mountains, but we'll add forests manually
+    // Use simple deck with just forests (integration tests run from mtg-engine/ directory)
+    let deck_path = PathBuf::from("../decks/simple_bolt.dck"); // Has mountains, but we'll add forests manually
     let deck = DeckLoader::load_from_file(&deck_path)?;
 
     // Initialize game
