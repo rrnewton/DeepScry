@@ -1,8 +1,8 @@
 //! Card types and definitions
 
 use crate::core::{
-    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, KeywordSimple, ManaCost,
-    ManaProduction, PlayerId, Subtype, Trigger,
+    CardId, CardName, Color, CounterType, Effect, GameEntity, KeywordSet, KeywordSimple, ManaCost, ManaProduction,
+    PlayerId, Subtype, Trigger,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -328,10 +328,6 @@ impl Card {
 
     pub fn is_aura(&self) -> bool {
         self.is_enchantment() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("aura"))
-    }
-
-    pub fn has_keyword(&self, keyword: &Keyword) -> bool {
-        self.keywords.contains_keyword(keyword)
     }
 
     pub fn has_keyword_simple(&self, keyword: KeywordSimple) -> bool {

@@ -14,49 +14,6 @@ pub enum TargetRef {
     None,
 }
 
-/// Keyword abilities in MTG
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Keyword {
-    // Evergreen keywords (no parameters)
-    Flying,
-    FirstStrike,
-    DoubleStrike,
-    Deathtouch,
-    Haste,
-    Hexproof,
-    Indestructible,
-    Lifelink,
-    Menace,
-    Reach,
-    Trample,
-    Vigilance,
-    Defender,
-
-    // Protection
-    ProtectionFromRed,
-    ProtectionFromBlue,
-    ProtectionFromBlack,
-    ProtectionFromWhite,
-    ProtectionFromGreen,
-
-    // Shroud
-    Shroud,
-
-    // Keywords with parameters (stored as raw strings for now)
-    /// Madness cost (e.g., "Madness:1 R")
-    Madness(String),
-    /// Flashback cost (e.g., "Flashback:3 R")
-    Flashback(String),
-    /// Enchant type (e.g., "Enchant:Creature")
-    Enchant(String),
-
-    // Commander-specific
-    ChooseABackground,
-
-    // Catch-all for other keywords
-    Other(String),
-}
-
 /// Basic card effects that can be executed
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {

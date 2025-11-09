@@ -2,7 +2,7 @@
 //!
 //! Tests that verify cards from cardsfolder can be loaded and parsed correctly
 
-use mtg_forge_rs::core::{CardType, Keyword};
+use mtg_forge_rs::core::{CardType, KeywordComplex, KeywordSimple};
 use mtg_forge_rs::loader::CardLoader;
 use mtg_forge_rs::Result;
 use std::path::PathBuf;
@@ -159,12 +159,11 @@ fn test_instantiate_with_keywords() -> Result<()> {
 
     // Verify keywords were parsed
     assert_eq!(card.keywords.len(), 2);
-    assert!(card.keywords.contains(&Keyword::Flying));
-    assert!(card.keywords.contains(&Keyword::ProtectionFromRed));
+    assert!(card.keywords.contains_simple(KeywordSimple::Flying));
+    assert!(card.keywords.contains_simple(KeywordSimple::ProtectionFromRed));
 
     // Verify helper methods
     assert!(card.has_flying());
-    assert!(card.has_keyword(&Keyword::ProtectionFromRed));
 
     Ok(())
 }
@@ -185,12 +184,16 @@ fn test_instantiate_with_madness() -> Result<()> {
 
     // Verify Madness keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    let first_keyword = card.keywords.iter().next().unwrap();
-    assert!(matches!(first_keyword, Keyword::Madness(_)));
-
-    if let Keyword::Madness(cost) = first_keyword {
-        assert_eq!(cost, "1 R");
-    }
+    let madness_keywords: Vec<_> = card
+        .keywords
+        .iter_complex()
+        .filter_map(|kw| match kw {
+            KeywordComplex::Madness(cost) => Some(cost.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(madness_keywords.len(), 1);
+    assert_eq!(madness_keywords[0], "1 R");
 
     Ok(())
 }
@@ -211,12 +214,16 @@ fn test_instantiate_with_flashback() -> Result<()> {
 
     // Verify Flashback keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    let first_keyword = card.keywords.iter().next().unwrap();
-    assert!(matches!(first_keyword, Keyword::Flashback(_)));
-
-    if let Keyword::Flashback(cost) = first_keyword {
-        assert_eq!(cost, "3 R");
-    }
+    let flashback_keywords: Vec<_> = card
+        .keywords
+        .iter_complex()
+        .filter_map(|kw| match kw {
+            KeywordComplex::Flashback(cost) => Some(cost.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(flashback_keywords.len(), 1);
+    assert_eq!(flashback_keywords[0], "3 R");
 
     Ok(())
 }
@@ -237,12 +244,16 @@ fn test_instantiate_with_enchant() -> Result<()> {
 
     // Verify Enchant keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    let first_keyword = card.keywords.iter().next().unwrap();
-    assert!(matches!(first_keyword, Keyword::Enchant(_)));
-
-    if let Keyword::Enchant(target_type) = first_keyword {
-        assert_eq!(target_type, "Creature");
-    }
+    let enchant_keywords: Vec<_> = card
+        .keywords
+        .iter_complex()
+        .filter_map(|kw| match kw {
+            KeywordComplex::Enchant(target) => Some(target.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(enchant_keywords.len(), 1);
+    assert_eq!(enchant_keywords[0], "Creature");
 
     Ok(())
 }

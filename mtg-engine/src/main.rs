@@ -2030,37 +2030,49 @@ async fn run_stats() -> Result<()> {
     }
 
     // Keyword distribution
-    use mtg_forge_rs::core::Keyword;
     let mut keyword_counts: HashMap<String, usize> = HashMap::new();
     for card in &all_cards {
         let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
-        for keyword in &instantiated.keywords {
-            let keyword_name: String = match keyword {
-                Keyword::Flying => "Flying".to_string(),
-                Keyword::FirstStrike => "First Strike".to_string(),
-                Keyword::DoubleStrike => "Double Strike".to_string(),
-                Keyword::Deathtouch => "Deathtouch".to_string(),
-                Keyword::Haste => "Haste".to_string(),
-                Keyword::Hexproof => "Hexproof".to_string(),
-                Keyword::Indestructible => "Indestructible".to_string(),
-                Keyword::Lifelink => "Lifelink".to_string(),
-                Keyword::Menace => "Menace".to_string(),
-                Keyword::Reach => "Reach".to_string(),
-                Keyword::Trample => "Trample".to_string(),
-                Keyword::Vigilance => "Vigilance".to_string(),
-                Keyword::Defender => "Defender".to_string(),
-                Keyword::Shroud => "Shroud".to_string(),
-                Keyword::ChooseABackground => "Choose a Background".to_string(),
-                Keyword::ProtectionFromRed => "Protection from Red".to_string(),
-                Keyword::ProtectionFromBlue => "Protection from Blue".to_string(),
-                Keyword::ProtectionFromBlack => "Protection from Black".to_string(),
-                Keyword::ProtectionFromWhite => "Protection from White".to_string(),
-                Keyword::ProtectionFromGreen => "Protection from Green".to_string(),
-                Keyword::Madness(_) => "Madness".to_string(),
-                Keyword::Flashback(_) => "Flashback".to_string(),
-                Keyword::Enchant(_) => "Enchant".to_string(),
-                Keyword::Other(s) => s.clone(),
-            };
+
+        // Count simple keywords (use Debug formatting which gives clean names)
+        for simple in instantiated.keywords.iter_simple() {
+            let keyword_name = format!("{:?}", simple);
+            *keyword_counts.entry(keyword_name).or_insert(0) += 1;
+        }
+
+        // Count complex keywords (strip parameter for aggregation)
+        for complex in instantiated.keywords.iter_complex() {
+            let keyword_name = match complex {
+                mtg_forge_rs::core::KeywordComplex::Madness(_) => "Madness",
+                mtg_forge_rs::core::KeywordComplex::Flashback(_) => "Flashback",
+                mtg_forge_rs::core::KeywordComplex::Kicker(_) => "Kicker",
+                mtg_forge_rs::core::KeywordComplex::Cycling(_) => "Cycling",
+                mtg_forge_rs::core::KeywordComplex::Equip(_) => "Equip",
+                mtg_forge_rs::core::KeywordComplex::Morph(_) => "Morph",
+                mtg_forge_rs::core::KeywordComplex::Evoke(_) => "Evoke",
+                mtg_forge_rs::core::KeywordComplex::Buyback(_) => "Buyback",
+                mtg_forge_rs::core::KeywordComplex::Echo(_) => "Echo",
+                mtg_forge_rs::core::KeywordComplex::Suspend(_) => "Suspend",
+                mtg_forge_rs::core::KeywordComplex::Enchant(_) => "Enchant",
+                mtg_forge_rs::core::KeywordComplex::Landwalk(_) => "Landwalk",
+                mtg_forge_rs::core::KeywordComplex::Affinity(_) => "Affinity",
+                mtg_forge_rs::core::KeywordComplex::Protection(_) => "Protection",
+                mtg_forge_rs::core::KeywordComplex::Offering(_) => "Offering",
+                mtg_forge_rs::core::KeywordComplex::Champion(_) => "Champion",
+                mtg_forge_rs::core::KeywordComplex::Amplify(_) => "Amplify",
+                mtg_forge_rs::core::KeywordComplex::Annihilator(_) => "Annihilator",
+                mtg_forge_rs::core::KeywordComplex::Bushido(_) => "Bushido",
+                mtg_forge_rs::core::KeywordComplex::Fading(_) => "Fading",
+                mtg_forge_rs::core::KeywordComplex::Vanishing(_) => "Vanishing",
+                mtg_forge_rs::core::KeywordComplex::Dredge(_) => "Dredge",
+                mtg_forge_rs::core::KeywordComplex::Modular(_) => "Modular",
+                mtg_forge_rs::core::KeywordComplex::Absorb(_) => "Absorb",
+                mtg_forge_rs::core::KeywordComplex::HexproofFrom(_) => "Hexproof From",
+                mtg_forge_rs::core::KeywordComplex::PartnerWith(_) => "Partner With",
+                mtg_forge_rs::core::KeywordComplex::Companion(_) => "Companion",
+                mtg_forge_rs::core::KeywordComplex::Other(s) => s.as_str(),
+            }
+            .to_string();
             *keyword_counts.entry(keyword_name).or_insert(0) += 1;
         }
     }
