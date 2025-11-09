@@ -373,6 +373,9 @@ enum Commands {
         #[arg(long, value_name = "K")]
         log_tail: Option<usize>,
     },
+
+    /// Print statistics about the card database
+    Stats {},
 }
 
 #[tokio::main]
@@ -537,6 +540,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+        Commands::Stats {} => run_stats().await?,
     }
 
     Ok(())
@@ -1955,6 +1959,158 @@ async fn run_resume(
 
             eprintln!("\n>>> Game log saved: {} lines written to:", log_count);
             eprintln!("    {}", log_path.display());
+        }
+    }
+
+    Ok(())
+}
+
+/// Print statistics about the card database
+async fn run_stats() -> Result<()> {
+    use std::collections::HashMap;
+
+    println!("=== MTG Forge Rust - Card Database Statistics ===\n");
+
+    // Find and load cardsfolder
+    let cardsfolder = find_cardsfolder();
+    let card_db = CardDatabase::new(cardsfolder);
+
+    println!("Loading full card database...");
+    let (loaded, duration) = card_db.eager_load().await?;
+    println!("Successfully loaded {} cards in {:?}\n", loaded, duration);
+
+    // Generate comprehensive statistics
+    println!("=== Card Database Statistics ===");
+
+    let all_cards = card_db.all_cards().await;
+
+    // Card type distribution
+    let mut type_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        for card_type in &card.types {
+            *type_counts.entry(format!("{:?}", card_type)).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Card Types ---");
+    let mut type_vec: Vec<_> = type_counts.iter().collect();
+    type_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (card_type, count) in type_vec {
+        println!("  {:12} {:6}", card_type, count);
+    }
+
+    // Color distribution
+    let mut color_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        for color in &card.colors {
+            *color_counts.entry(format!("{:?}", color)).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Colors ---");
+    let mut color_vec: Vec<_> = color_counts.iter().collect();
+    color_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (color, count) in color_vec {
+        println!("  {:12} {:6}", color, count);
+    }
+
+    // Top subtypes
+    let mut subtype_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        for subtype in &card.subtypes {
+            *subtype_counts.entry(subtype.as_str().to_string()).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Top 30 Subtypes ---");
+    let mut subtype_vec: Vec<_> = subtype_counts.iter().collect();
+    subtype_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (subtype, count) in subtype_vec.iter().take(30) {
+        println!("  {:20} {:6}", subtype, count);
+    }
+
+    // Keyword distribution
+    use mtg_forge_rs::core::Keyword;
+    let mut keyword_counts: HashMap<String, usize> = HashMap::new();
+    for card in &all_cards {
+        let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
+        for keyword in &instantiated.keywords {
+            let keyword_name: String = match keyword {
+                Keyword::Flying => "Flying".to_string(),
+                Keyword::FirstStrike => "First Strike".to_string(),
+                Keyword::DoubleStrike => "Double Strike".to_string(),
+                Keyword::Deathtouch => "Deathtouch".to_string(),
+                Keyword::Haste => "Haste".to_string(),
+                Keyword::Hexproof => "Hexproof".to_string(),
+                Keyword::Indestructible => "Indestructible".to_string(),
+                Keyword::Lifelink => "Lifelink".to_string(),
+                Keyword::Menace => "Menace".to_string(),
+                Keyword::Reach => "Reach".to_string(),
+                Keyword::Trample => "Trample".to_string(),
+                Keyword::Vigilance => "Vigilance".to_string(),
+                Keyword::Defender => "Defender".to_string(),
+                Keyword::Shroud => "Shroud".to_string(),
+                Keyword::ChooseABackground => "Choose a Background".to_string(),
+                Keyword::ProtectionFromRed => "Protection from Red".to_string(),
+                Keyword::ProtectionFromBlue => "Protection from Blue".to_string(),
+                Keyword::ProtectionFromBlack => "Protection from Black".to_string(),
+                Keyword::ProtectionFromWhite => "Protection from White".to_string(),
+                Keyword::ProtectionFromGreen => "Protection from Green".to_string(),
+                Keyword::Madness(_) => "Madness".to_string(),
+                Keyword::Flashback(_) => "Flashback".to_string(),
+                Keyword::Enchant(_) => "Enchant".to_string(),
+                Keyword::Other(s) => s.clone(),
+            };
+            *keyword_counts.entry(keyword_name).or_insert(0) += 1;
+        }
+    }
+
+    println!("\n--- Top 30 Keywords ---");
+    let mut keyword_vec: Vec<_> = keyword_counts.iter().collect();
+    keyword_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (keyword, count) in keyword_vec.iter().take(30) {
+        println!("  {:25} {:6}", keyword, count);
+    }
+
+    // Ability statistics
+    let cards_with_effects = all_cards.iter().filter(|c| !c.raw_abilities.is_empty()).count();
+    let cards_with_keywords = all_cards.iter().filter(|c| !c.raw_keywords.is_empty()).count();
+
+    println!("\n--- Ability Statistics ---");
+    println!("  Cards with raw abilities:  {:6}", cards_with_effects);
+    println!("  Cards with keywords:       {:6}", cards_with_keywords);
+
+    // Trigger and activated ability counts
+    let mut cards_with_triggers = 0;
+    let mut cards_with_activated = 0;
+    for card in &all_cards {
+        let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
+        if !instantiated.triggers.is_empty() {
+            cards_with_triggers += 1;
+        }
+        if !instantiated.activated_abilities.is_empty() {
+            cards_with_activated += 1;
+        }
+    }
+
+    println!("  Cards with triggers:       {:6}", cards_with_triggers);
+    println!("  Cards with activated abs:  {:6}", cards_with_activated);
+
+    // Mana cost distribution
+    let mut cmc_counts = [0; 9]; // 0-7, and 8+ in index 8
+
+    for card in &all_cards {
+        let cmc = card.mana_cost.cmc();
+        let index = if cmc >= 8 { 8 } else { cmc as usize };
+        cmc_counts[index] += 1;
+    }
+
+    println!("\n--- Mana Cost Distribution ---");
+    for (cmc, count) in cmc_counts.iter().enumerate() {
+        if cmc < 8 {
+            println!("  CMC {}:                     {:6}", cmc, count);
+        } else {
+            println!("  CMC 8+:                    {:6}", count);
         }
     }
 
