@@ -2034,46 +2034,47 @@ async fn run_stats() -> Result<()> {
     for card in &all_cards {
         let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
 
-        // Count simple keywords (use Debug formatting which gives clean names)
-        for simple in instantiated.keywords.iter_simple() {
-            let keyword_name = format!("{:?}", simple);
-            *keyword_counts.entry(keyword_name).or_insert(0) += 1;
-        }
-
-        // Count complex keywords (strip parameter for aggregation)
-        for complex in instantiated.keywords.iter_complex() {
-            let keyword_name = match complex {
-                mtg_forge_rs::core::KeywordComplex::Madness(_) => "Madness",
-                mtg_forge_rs::core::KeywordComplex::Flashback(_) => "Flashback",
-                mtg_forge_rs::core::KeywordComplex::Kicker(_) => "Kicker",
-                mtg_forge_rs::core::KeywordComplex::Cycling(_) => "Cycling",
-                mtg_forge_rs::core::KeywordComplex::Equip(_) => "Equip",
-                mtg_forge_rs::core::KeywordComplex::Morph(_) => "Morph",
-                mtg_forge_rs::core::KeywordComplex::Evoke(_) => "Evoke",
-                mtg_forge_rs::core::KeywordComplex::Buyback(_) => "Buyback",
-                mtg_forge_rs::core::KeywordComplex::Echo(_) => "Echo",
-                mtg_forge_rs::core::KeywordComplex::Suspend(_) => "Suspend",
-                mtg_forge_rs::core::KeywordComplex::Enchant(_) => "Enchant",
-                mtg_forge_rs::core::KeywordComplex::Landwalk(_) => "Landwalk",
-                mtg_forge_rs::core::KeywordComplex::Affinity(_) => "Affinity",
-                mtg_forge_rs::core::KeywordComplex::Protection(_) => "Protection",
-                mtg_forge_rs::core::KeywordComplex::Offering(_) => "Offering",
-                mtg_forge_rs::core::KeywordComplex::Champion(_) => "Champion",
-                mtg_forge_rs::core::KeywordComplex::Amplify(_) => "Amplify",
-                mtg_forge_rs::core::KeywordComplex::Annihilator(_) => "Annihilator",
-                mtg_forge_rs::core::KeywordComplex::Bushido(_) => "Bushido",
-                mtg_forge_rs::core::KeywordComplex::Fading(_) => "Fading",
-                mtg_forge_rs::core::KeywordComplex::Vanishing(_) => "Vanishing",
-                mtg_forge_rs::core::KeywordComplex::Dredge(_) => "Dredge",
-                mtg_forge_rs::core::KeywordComplex::Modular(_) => "Modular",
-                mtg_forge_rs::core::KeywordComplex::Absorb(_) => "Absorb",
-                mtg_forge_rs::core::KeywordComplex::HexproofFrom(_) => "Hexproof From",
-                mtg_forge_rs::core::KeywordComplex::PartnerWith(_) => "Partner With",
-                mtg_forge_rs::core::KeywordComplex::Companion(_) => "Companion",
-                mtg_forge_rs::core::KeywordComplex::Other(s) => s.as_str(),
+        // Count all keywords
+        for keyword in instantiated.keywords.iter() {
+            // For simple keywords (no args), just use Debug formatting
+            if let Some(args) = instantiated.keywords.get_args(keyword) {
+                // Complex keyword - strip parameter for aggregation
+                let keyword_name = match args {
+                    mtg_forge_rs::core::KeywordArgs::Madness { .. } => "Madness",
+                    mtg_forge_rs::core::KeywordArgs::Flashback { .. } => "Flashback",
+                    mtg_forge_rs::core::KeywordArgs::Kicker { .. } => "Kicker",
+                    mtg_forge_rs::core::KeywordArgs::Cycling { .. } => "Cycling",
+                    mtg_forge_rs::core::KeywordArgs::Equip { .. } => "Equip",
+                    mtg_forge_rs::core::KeywordArgs::Morph { .. } => "Morph",
+                    mtg_forge_rs::core::KeywordArgs::Evoke { .. } => "Evoke",
+                    mtg_forge_rs::core::KeywordArgs::Buyback { .. } => "Buyback",
+                    mtg_forge_rs::core::KeywordArgs::Echo { .. } => "Echo",
+                    mtg_forge_rs::core::KeywordArgs::Suspend { .. } => "Suspend",
+                    mtg_forge_rs::core::KeywordArgs::Enchant { .. } => "Enchant",
+                    mtg_forge_rs::core::KeywordArgs::Landwalk { .. } => "Landwalk",
+                    mtg_forge_rs::core::KeywordArgs::Affinity { .. } => "Affinity",
+                    mtg_forge_rs::core::KeywordArgs::Protection { .. } => "Protection",
+                    mtg_forge_rs::core::KeywordArgs::Offering { .. } => "Offering",
+                    mtg_forge_rs::core::KeywordArgs::Champion { .. } => "Champion",
+                    mtg_forge_rs::core::KeywordArgs::Amplify { .. } => "Amplify",
+                    mtg_forge_rs::core::KeywordArgs::Annihilator { .. } => "Annihilator",
+                    mtg_forge_rs::core::KeywordArgs::Bushido { .. } => "Bushido",
+                    mtg_forge_rs::core::KeywordArgs::Fading { .. } => "Fading",
+                    mtg_forge_rs::core::KeywordArgs::Vanishing { .. } => "Vanishing",
+                    mtg_forge_rs::core::KeywordArgs::Dredge { .. } => "Dredge",
+                    mtg_forge_rs::core::KeywordArgs::Modular { .. } => "Modular",
+                    mtg_forge_rs::core::KeywordArgs::Absorb { .. } => "Absorb",
+                    mtg_forge_rs::core::KeywordArgs::HexproofFrom { .. } => "Hexproof From",
+                    mtg_forge_rs::core::KeywordArgs::PartnerWith { .. } => "Partner With",
+                    mtg_forge_rs::core::KeywordArgs::Companion { .. } => "Companion",
+                }
+                .to_string();
+                *keyword_counts.entry(keyword_name).or_insert(0) += 1;
+            } else {
+                // Simple keyword - use Debug formatting
+                let keyword_name = format!("{:?}", keyword);
+                *keyword_counts.entry(keyword_name).or_insert(0) += 1;
             }
-            .to_string();
-            *keyword_counts.entry(keyword_name).or_insert(0) += 1;
         }
     }
 

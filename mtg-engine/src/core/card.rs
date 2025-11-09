@@ -1,8 +1,8 @@
 //! Card types and definitions
 
 use crate::core::{
-    CardId, CardName, Color, CounterType, Effect, GameEntity, KeywordSet, KeywordSimple, ManaCost, ManaProduction,
-    PlayerId, Subtype, Trigger,
+    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, ManaCost, ManaProduction, PlayerId,
+    Subtype, Trigger,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -330,24 +330,24 @@ impl Card {
         self.is_enchantment() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("aura"))
     }
 
-    pub fn has_keyword_simple(&self, keyword: KeywordSimple) -> bool {
-        self.keywords.contains_simple(keyword)
+    pub fn has_keyword(&self, keyword: Keyword) -> bool {
+        self.keywords.contains(keyword)
     }
 
     pub fn has_flying(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Flying)
+        self.keywords.contains(Keyword::Flying)
     }
 
     pub fn has_reach(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Reach)
+        self.keywords.contains(Keyword::Reach)
     }
 
     pub fn has_first_strike(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::FirstStrike)
+        self.keywords.contains(Keyword::FirstStrike)
     }
 
     pub fn has_double_strike(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::DoubleStrike)
+        self.keywords.contains(Keyword::DoubleStrike)
     }
 
     /// Returns true if this creature deals damage in the normal damage step
@@ -357,35 +357,35 @@ impl Card {
     }
 
     pub fn has_trample(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Trample)
+        self.keywords.contains(Keyword::Trample)
     }
 
     pub fn has_lifelink(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Lifelink)
+        self.keywords.contains(Keyword::Lifelink)
     }
 
     pub fn has_deathtouch(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Deathtouch)
+        self.keywords.contains(Keyword::Deathtouch)
     }
 
     pub fn has_menace(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Menace)
+        self.keywords.contains(Keyword::Menace)
     }
 
     pub fn has_hexproof(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Hexproof)
+        self.keywords.contains(Keyword::Hexproof)
     }
 
     pub fn has_indestructible(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Indestructible)
+        self.keywords.contains(Keyword::Indestructible)
     }
 
     pub fn has_defender(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Defender)
+        self.keywords.contains(Keyword::Defender)
     }
 
     pub fn has_shroud(&self) -> bool {
-        self.keywords.contains_simple(KeywordSimple::Shroud)
+        self.keywords.contains(Keyword::Shroud)
     }
 
     pub fn tap(&mut self) {

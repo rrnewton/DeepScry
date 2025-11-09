@@ -1,6 +1,6 @@
 //! Game actions and mechanics
 
-use crate::core::{CardId, CardType, Cost, Effect, KeywordSimple, PlayerId, TargetRef, TriggerEvent};
+use crate::core::{CardId, CardType, Cost, Effect, Keyword, PlayerId, TargetRef, TriggerEvent};
 use crate::game::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
@@ -1617,7 +1617,7 @@ impl GameState {
         // Check for summoning sickness
         // Creatures can't attack the turn they entered the battlefield unless they have haste
         if let Some(entered_turn) = card.turn_entered_battlefield {
-            if entered_turn == self.turn.turn_number && !card.has_keyword_simple(KeywordSimple::Haste) {
+            if entered_turn == self.turn.turn_number && !card.has_keyword(Keyword::Haste) {
                 return Err(MtgError::InvalidAction(
                     "Creature has summoning sickness and can't attack this turn".to_string(),
                 ));
@@ -1636,7 +1636,7 @@ impl GameState {
         self.combat.declare_attacker(card_id, defending_player);
 
         // Tap the creature (unless it has vigilance)
-        let has_vigilance = self.cards.get(card_id)?.has_keyword_simple(KeywordSimple::Vigilance);
+        let has_vigilance = self.cards.get(card_id)?.has_keyword(Keyword::Vigilance);
         if !has_vigilance {
             // Capture log size before tap
             let prior_log_size = self.logger.log_count();
@@ -1694,12 +1694,12 @@ impl GameState {
 
         // Check Flying/Reach restrictions (MTG rule 702.9)
         // A creature with Flying can only be blocked by creatures with Flying or Reach
-        let blocker_has_flying = blocker.has_keyword_simple(KeywordSimple::Flying);
-        let blocker_has_reach = blocker.has_keyword_simple(KeywordSimple::Reach);
+        let blocker_has_flying = blocker.has_keyword(Keyword::Flying);
+        let blocker_has_reach = blocker.has_keyword(Keyword::Reach);
 
         for &attacker_id in &attackers {
             let attacker = self.cards.get(attacker_id)?;
-            let attacker_has_flying = attacker.has_keyword_simple(KeywordSimple::Flying);
+            let attacker_has_flying = attacker.has_keyword(Keyword::Flying);
 
             if attacker_has_flying && !blocker_has_flying && !blocker_has_reach {
                 return Err(MtgError::InvalidAction(
@@ -2980,7 +2980,7 @@ mod tests {
         creature.power = Some(4);
         creature.toughness = Some(1);
         creature.controller = p1_id;
-        creature.keywords.insert_simple(KeywordSimple::Haste);
+        creature.keywords.insert(Keyword::Haste);
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
 
@@ -3007,7 +3007,7 @@ mod tests {
         creature.power = Some(0);
         creature.toughness = Some(8);
         creature.controller = p1_id;
-        creature.keywords.insert_simple(KeywordSimple::Defender);
+        creature.keywords.insert(Keyword::Defender);
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
 
@@ -3168,7 +3168,7 @@ mod tests {
         attacker.power = Some(1);
         attacker.toughness = Some(2);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Flying);
+        attacker.keywords.insert(Keyword::Flying);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -3249,7 +3249,7 @@ mod tests {
         attacker.power = Some(1);
         attacker.toughness = Some(2);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Flying);
+        attacker.keywords.insert(Keyword::Flying);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -3261,8 +3261,8 @@ mod tests {
         blocker.power = Some(2);
         blocker.toughness = Some(3);
         blocker.controller = p2_id;
-        blocker.keywords.insert_simple(KeywordSimple::Flying);
-        blocker.keywords.insert_simple(KeywordSimple::Reach);
+        blocker.keywords.insert(Keyword::Flying);
+        blocker.keywords.insert(Keyword::Reach);
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
 
@@ -3395,7 +3395,7 @@ mod tests {
         attacker.power = Some(2);
         attacker.toughness = Some(2);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::DoubleStrike);
+        attacker.keywords.insert(Keyword::DoubleStrike);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -3407,7 +3407,7 @@ mod tests {
         blocker.power = Some(2);
         blocker.toughness = Some(2);
         blocker.controller = p2_id;
-        blocker.keywords.insert_simple(KeywordSimple::FirstStrike);
+        blocker.keywords.insert(Keyword::FirstStrike);
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
 
@@ -3592,7 +3592,7 @@ mod tests {
         blocker.power = Some(2);
         blocker.toughness = Some(2);
         blocker.controller = p2_id;
-        blocker.keywords.insert_simple(KeywordSimple::FirstStrike);
+        blocker.keywords.insert(Keyword::FirstStrike);
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
 
@@ -3756,7 +3756,7 @@ mod tests {
         attacker.power = Some(5);
         attacker.toughness = Some(5);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Trample);
+        attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -3815,7 +3815,7 @@ mod tests {
         attacker.power = Some(3);
         attacker.toughness = Some(3);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Trample);
+        attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -3931,7 +3931,7 @@ mod tests {
         attacker.power = Some(7);
         attacker.toughness = Some(7);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Trample);
+        attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4007,7 +4007,7 @@ mod tests {
         attacker.power = Some(3);
         attacker.toughness = Some(3);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Lifelink);
+        attacker.keywords.insert(Keyword::Lifelink);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4066,7 +4066,7 @@ mod tests {
         attacker.power = Some(4);
         attacker.toughness = Some(4);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Lifelink);
+        attacker.keywords.insert(Keyword::Lifelink);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4124,7 +4124,7 @@ mod tests {
         blocker.power = Some(2);
         blocker.toughness = Some(2);
         blocker.controller = p2_id;
-        blocker.keywords.insert_simple(KeywordSimple::Lifelink);
+        blocker.keywords.insert(Keyword::Lifelink);
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
 
@@ -4186,8 +4186,8 @@ mod tests {
         attacker.power = Some(5);
         attacker.toughness = Some(5);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Lifelink);
-        attacker.keywords.insert_simple(KeywordSimple::Trample);
+        attacker.keywords.insert(Keyword::Lifelink);
+        attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4255,7 +4255,7 @@ mod tests {
         attacker.power = Some(1);
         attacker.toughness = Some(1);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Deathtouch);
+        attacker.keywords.insert(Keyword::Deathtouch);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4324,7 +4324,7 @@ mod tests {
         blocker.power = Some(1);
         blocker.toughness = Some(1);
         blocker.controller = p2_id;
-        blocker.keywords.insert_simple(KeywordSimple::Deathtouch);
+        blocker.keywords.insert(Keyword::Deathtouch);
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
 
@@ -4371,8 +4371,8 @@ mod tests {
         attacker.power = Some(5);
         attacker.toughness = Some(5);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Deathtouch);
-        attacker.keywords.insert_simple(KeywordSimple::Trample);
+        attacker.keywords.insert(Keyword::Deathtouch);
+        attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4440,7 +4440,7 @@ mod tests {
         attacker.power = Some(3);
         attacker.toughness = Some(3);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Deathtouch);
+        attacker.keywords.insert(Keyword::Deathtouch);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4518,7 +4518,7 @@ mod tests {
         attacker.power = Some(3);
         attacker.toughness = Some(3);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Menace);
+        attacker.keywords.insert(Keyword::Menace);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4585,7 +4585,7 @@ mod tests {
         attacker.power = Some(3);
         attacker.toughness = Some(3);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Menace);
+        attacker.keywords.insert(Keyword::Menace);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4627,7 +4627,7 @@ mod tests {
         attacker.power = Some(5);
         attacker.toughness = Some(5);
         attacker.controller = p1_id;
-        attacker.keywords.insert_simple(KeywordSimple::Menace);
+        attacker.keywords.insert(Keyword::Menace);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
         game.battlefield.add(attacker_id);
@@ -4705,7 +4705,7 @@ mod tests {
         hexproof_creature.types.push(CardType::Creature);
         hexproof_creature.power = Some(1);
         hexproof_creature.toughness = Some(1);
-        hexproof_creature.keywords.insert_simple(KeywordSimple::Hexproof);
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
 
@@ -4765,7 +4765,7 @@ mod tests {
         hexproof_creature.types.push(CardType::Creature);
         hexproof_creature.power = Some(1);
         hexproof_creature.toughness = Some(1);
-        hexproof_creature.keywords.insert_simple(KeywordSimple::Hexproof);
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
 
@@ -4817,7 +4817,7 @@ mod tests {
         hexproof_creature.types.push(CardType::Creature);
         hexproof_creature.power = Some(1);
         hexproof_creature.toughness = Some(1);
-        hexproof_creature.keywords.insert_simple(KeywordSimple::Hexproof);
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
 
@@ -4871,7 +4871,7 @@ mod tests {
         hexproof_creature.types.push(CardType::Creature);
         hexproof_creature.power = Some(1);
         hexproof_creature.toughness = Some(1);
-        hexproof_creature.keywords.insert_simple(KeywordSimple::Hexproof);
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
 
@@ -4915,7 +4915,7 @@ mod tests {
         indestructible.types.push(CardType::Creature);
         indestructible.power = Some(2);
         indestructible.toughness = Some(2);
-        indestructible.keywords.insert_simple(KeywordSimple::Indestructible);
+        indestructible.keywords.insert(Keyword::Indestructible);
         indestructible.controller = p1_id;
         indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(indestructible_id, indestructible);
@@ -4971,7 +4971,7 @@ mod tests {
         indestructible.types.push(CardType::Creature);
         indestructible.power = Some(0);
         indestructible.toughness = Some(1);
-        indestructible.keywords.insert_simple(KeywordSimple::Indestructible);
+        indestructible.keywords.insert(Keyword::Indestructible);
         game.cards.insert(indestructible_id, indestructible);
         game.battlefield.add(indestructible_id);
 
@@ -5015,7 +5015,7 @@ mod tests {
         deathtouch.types.push(CardType::Creature);
         deathtouch.power = Some(1);
         deathtouch.toughness = Some(1);
-        deathtouch.keywords.insert_simple(KeywordSimple::Deathtouch);
+        deathtouch.keywords.insert(Keyword::Deathtouch);
         deathtouch.controller = p1_id;
         deathtouch.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(deathtouch_id, deathtouch);
@@ -5027,7 +5027,7 @@ mod tests {
         indestructible.types.push(CardType::Creature);
         indestructible.power = Some(5);
         indestructible.toughness = Some(5);
-        indestructible.keywords.insert_simple(KeywordSimple::Indestructible);
+        indestructible.keywords.insert(Keyword::Indestructible);
         indestructible.controller = p2_id;
         indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(indestructible_id, indestructible);
@@ -5079,7 +5079,7 @@ mod tests {
         indestructible.types.push(CardType::Creature);
         indestructible.power = Some(3);
         indestructible.toughness = Some(3);
-        indestructible.keywords.insert_simple(KeywordSimple::Indestructible);
+        indestructible.keywords.insert(Keyword::Indestructible);
         indestructible.controller = p1_id;
         indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(indestructible_id, indestructible);
@@ -5140,7 +5140,7 @@ mod tests {
         shroud_creature.types.push(CardType::Creature);
         shroud_creature.power = Some(1);
         shroud_creature.toughness = Some(1);
-        shroud_creature.keywords.insert_simple(KeywordSimple::Shroud);
+        shroud_creature.keywords.insert(Keyword::Shroud);
         game.cards.insert(shroud_creature_id, shroud_creature);
         game.battlefield.add(shroud_creature_id);
 
@@ -5195,7 +5195,7 @@ mod tests {
         shroud_creature.types.push(CardType::Creature);
         shroud_creature.power = Some(1);
         shroud_creature.toughness = Some(1);
-        shroud_creature.keywords.insert_simple(KeywordSimple::Shroud);
+        shroud_creature.keywords.insert(Keyword::Shroud);
         game.cards.insert(shroud_creature_id, shroud_creature);
         game.battlefield.add(shroud_creature_id);
 
@@ -5254,7 +5254,7 @@ mod tests {
         shroud_creature.types.push(CardType::Creature);
         shroud_creature.power = Some(1);
         shroud_creature.toughness = Some(1);
-        shroud_creature.keywords.insert_simple(KeywordSimple::Shroud);
+        shroud_creature.keywords.insert(Keyword::Shroud);
         game.cards.insert(shroud_creature_id, shroud_creature);
         game.battlefield.add(shroud_creature_id);
 

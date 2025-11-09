@@ -9,7 +9,7 @@
 //! - AiController.java (core logic)
 //! - CreatureEvaluator.java (creature scoring)
 
-use crate::core::{Card, CardId, KeywordComplex, KeywordSimple, ManaCost, PlayerId, SpellAbility};
+use crate::core::{Card, CardId, Keyword, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
@@ -138,27 +138,15 @@ impl HeuristicController {
 
         // Unblockable check
         // Java: if (StaticAbilityCantAttackBlock.cantBlockBy(c, null)) { value += addValue(power * 10, "unblockable"); }
-        // For now, we'll check for explicit Other keyword
-        // TODO: Implement full static ability check
-        let is_unblockable = card.keywords.iter_complex().any(
-            |k| matches!(k, KeywordComplex::Other(s) if s.contains("can't be blocked") || s.contains("unblockable")),
-        );
+        // TODO: Implement full static ability check - for now we skip unblockable keywords
+        // as they are not yet properly represented in the Keyword enum
+        let is_unblockable = false;
 
         if !is_unblockable {
-            // Other evasion keywords - not yet in enum, check via Other variant
-            // TODO: Add Fear, Intimidate, Skulk to Keyword enum
-            let has_fear = card
-                .keywords
-                .iter_complex()
-                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Fear")));
-            let has_intimidate = card
-                .keywords
-                .iter_complex()
-                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Intimidate")));
-            let has_skulk = card
-                .keywords
-                .iter_complex()
-                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Skulk")));
+            // Check for evasion keywords
+            let has_fear = card.has_keyword(Keyword::Fear);
+            let has_intimidate = card.has_keyword(Keyword::Intimidate);
+            let has_skulk = card.has_keyword(Keyword::Skulk);
 
             if has_fear {
                 value += power * 6;
@@ -204,20 +192,13 @@ impl HeuristicController {
             }
 
             // Java: if (c.hasKeyword(Keyword.VIGILANCE)) { value += addValue((power * 5) + (toughness * 5), "vigilance"); }
-            if card.has_keyword_simple(KeywordSimple::Vigilance) {
+            if card.has_keyword(Keyword::Vigilance) {
                 value += (power * 5) + (toughness * 5);
             }
 
-            // Infect, Wither: Not in Keyword enum yet, check via Other
-            // TODO: Add Infect, Wither to Keyword enum
-            let has_infect = card
-                .keywords
-                .iter_complex()
-                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Infect")));
-            let has_wither = card
-                .keywords
-                .iter_complex()
-                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither")));
+            // Check for Infect and Wither keywords
+            let has_infect = card.has_keyword(Keyword::Infect);
+            let has_wither = card.has_keyword(Keyword::Wither);
 
             if has_infect {
                 value += power * 15;
@@ -555,11 +536,8 @@ impl HeuristicController {
         let attacker_value = self.evaluate_creature(attacker);
 
         // Combat effect keywords (gain value even if blocked)
-        let has_combat_effect = attacker.has_lifelink()
-            || attacker
-                .keywords
-                .iter_complex()
-                .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither") || s.contains("Afflict")));
+        // Note: Afflict is not yet in the Keyword enum, so we skip it for now
+        let has_combat_effect = attacker.has_lifelink() || attacker.has_keyword(Keyword::Wither);
 
         // Collect all potential blockers from opponents
         let potential_blockers: Vec<&Card> = view
@@ -573,12 +551,9 @@ impl HeuristicController {
         let can_be_blocked = number_of_blockers > 0;
 
         // Track if there are dangerous blockers (with combat effects)
-        let dangerous_blockers_present = potential_blockers.iter().any(|b| {
-            b.has_lifelink()
-                || b.keywords
-                    .iter_complex()
-                    .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither")))
-        });
+        let dangerous_blockers_present = potential_blockers
+            .iter()
+            .any(|b| b.has_lifelink() || b.has_keyword(Keyword::Wither));
 
         // Initialize factors
         let mut can_be_killed = false;
@@ -609,11 +584,7 @@ impl HeuristicController {
                 can_kill_all = false;
 
                 // Check if this blocker is dangerous
-                let is_dangerous_blocker = blocker.has_lifelink()
-                    || blocker
-                        .keywords
-                        .iter_complex()
-                        .any(|k| matches!(k, KeywordComplex::Other(s) if s.contains("Wither")));
+                let is_dangerous_blocker = blocker.has_lifelink() || blocker.has_keyword(Keyword::Wither);
 
                 if is_dangerous_blocker {
                     can_kill_all_dangerous = false;
@@ -1379,7 +1350,7 @@ impl HeuristicController {
             let current_turn = view.turn_number();
             if turn_entered == current_turn {
                 // Has summon sickness unless it has haste
-                let has_haste = source.has_keyword_simple(KeywordSimple::Haste);
+                let has_haste = source.has_keyword(Keyword::Haste);
                 if !has_haste {
                     return false;
                 }
@@ -2736,7 +2707,7 @@ mod tests {
         flying_creature.power = Some(1);
         flying_creature.toughness = Some(1);
         flying_creature.types.push(CardType::Creature);
-        flying_creature.keywords.insert_simple(KeywordSimple::Flying);
+        flying_creature.keywords.insert(Keyword::Flying);
 
         // Scenario 1: Ground creature attacks, flying creature tries to block
         // can_block_simple(attacker, blocker, keywords_on_attacker)

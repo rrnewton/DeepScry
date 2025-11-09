@@ -2,7 +2,7 @@
 //!
 //! Tests that verify cards from cardsfolder can be loaded and parsed correctly
 
-use mtg_forge_rs::core::{CardType, KeywordComplex, KeywordSimple};
+use mtg_forge_rs::core::{CardType, Keyword, KeywordArgs};
 use mtg_forge_rs::loader::CardLoader;
 use mtg_forge_rs::Result;
 use std::path::PathBuf;
@@ -159,8 +159,8 @@ fn test_instantiate_with_keywords() -> Result<()> {
 
     // Verify keywords were parsed
     assert_eq!(card.keywords.len(), 2);
-    assert!(card.keywords.contains_simple(KeywordSimple::Flying));
-    assert!(card.keywords.contains_simple(KeywordSimple::ProtectionFromRed));
+    assert!(card.keywords.contains(Keyword::Flying));
+    assert!(card.keywords.contains(Keyword::ProtectionFromRed));
 
     // Verify helper methods
     assert!(card.has_flying());
@@ -184,16 +184,15 @@ fn test_instantiate_with_madness() -> Result<()> {
 
     // Verify Madness keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    let madness_keywords: Vec<_> = card
-        .keywords
-        .iter_complex()
-        .filter_map(|kw| match kw {
-            KeywordComplex::Madness(cost) => Some(cost.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(madness_keywords.len(), 1);
-    assert_eq!(madness_keywords[0], "1 R");
+    assert!(card.keywords.contains(Keyword::Madness));
+
+    // Get the args and verify they're correctly parsed
+    if let Some(KeywordArgs::Madness { cost }) = card.keywords.get_args(Keyword::Madness) {
+        assert_eq!(cost.generic, 1);
+        assert_eq!(cost.red, 1);
+    } else {
+        panic!("Expected Madness args");
+    }
 
     Ok(())
 }
@@ -214,16 +213,15 @@ fn test_instantiate_with_flashback() -> Result<()> {
 
     // Verify Flashback keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    let flashback_keywords: Vec<_> = card
-        .keywords
-        .iter_complex()
-        .filter_map(|kw| match kw {
-            KeywordComplex::Flashback(cost) => Some(cost.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(flashback_keywords.len(), 1);
-    assert_eq!(flashback_keywords[0], "3 R");
+    assert!(card.keywords.contains(Keyword::Flashback));
+
+    // Get the args and verify they're correctly parsed
+    if let Some(KeywordArgs::Flashback { cost }) = card.keywords.get_args(Keyword::Flashback) {
+        assert_eq!(cost.generic, 3);
+        assert_eq!(cost.red, 1);
+    } else {
+        panic!("Expected Flashback args");
+    }
 
     Ok(())
 }
@@ -244,16 +242,14 @@ fn test_instantiate_with_enchant() -> Result<()> {
 
     // Verify Enchant keyword was parsed with parameter
     assert_eq!(card.keywords.len(), 1);
-    let enchant_keywords: Vec<_> = card
-        .keywords
-        .iter_complex()
-        .filter_map(|kw| match kw {
-            KeywordComplex::Enchant(target) => Some(target.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(enchant_keywords.len(), 1);
-    assert_eq!(enchant_keywords[0], "Creature");
+    assert!(card.keywords.contains(Keyword::Enchant));
+
+    // Get the args and verify they're correctly parsed
+    if let Some(KeywordArgs::Enchant { card_type }) = card.keywords.get_args(Keyword::Enchant) {
+        assert_eq!(card_type.as_str(), "Creature");
+    } else {
+        panic!("Expected Enchant args");
+    }
 
     Ok(())
 }

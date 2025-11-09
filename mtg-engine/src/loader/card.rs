@@ -3,8 +3,7 @@
 //! Loads card definitions from Forge's cardsfolder format
 
 use crate::core::{
-    Card, CardName, CardType, Color, KeywordComplex, KeywordSet, KeywordSimple, ManaCost, Subtype, Trigger,
-    TriggerEvent,
+    Card, CardName, CardType, Color, Keyword, KeywordArgs, KeywordSet, ManaCost, Subtype, Trigger, TriggerEvent,
 };
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
@@ -244,40 +243,171 @@ impl CardDefinition {
                 let kw = kw.trim();
                 let param = param.trim();
 
-                // Keywords with parameters
-                let complex_keyword = match kw {
-                    "Madness" => KeywordComplex::Madness(param.to_string()),
-                    "Flashback" => KeywordComplex::Flashback(param.to_string()),
-                    "Enchant" => KeywordComplex::Enchant(param.to_string()),
-                    _ => KeywordComplex::Other(keyword_str.clone()),
-                };
-                keyword_set.push_complex(complex_keyword);
+                // Parse keywords with parameters into strongly-typed KeywordArgs
+                match kw {
+                    "Madness" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Madness { cost });
+                    }
+                    "Flashback" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Flashback { cost });
+                    }
+                    "Kicker" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Kicker { cost });
+                    }
+                    "Cycling" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Cycling { cost });
+                    }
+                    "Equip" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Equip { cost });
+                    }
+                    "Morph" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Morph { cost });
+                    }
+                    "Evoke" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Evoke { cost });
+                    }
+                    "Buyback" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Buyback { cost });
+                    }
+                    "Echo" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Echo { cost });
+                    }
+                    "Suspend" => {
+                        // Suspend format: "Suspend:3:G" -> time_counters=3, cost=G
+                        if let Some((time_str, cost_str)) = param.split_once(':') {
+                            if let Ok(time_counters) = time_str.trim().parse::<u8>() {
+                                let cost = ManaCost::from_string(cost_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Suspend { time_counters, cost });
+                            }
+                        }
+                    }
+                    "Enchant" => {
+                        let card_type = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::Enchant { card_type });
+                    }
+                    "Landwalk" => {
+                        let land_type = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::Landwalk { land_type });
+                    }
+                    "Affinity" => {
+                        let card_type = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::Affinity { card_type });
+                    }
+                    "Protection" => {
+                        let from = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::Protection { from });
+                    }
+                    "Offering" => {
+                        let creature_type = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::Offering { creature_type });
+                    }
+                    "Champion" => {
+                        let creature_type = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::Champion { creature_type });
+                    }
+                    "Amplify" => {
+                        // Amplify format: "Amplify:2:Beast" -> amount=2, creature_type=Beast
+                        if let Some((amount_str, type_str)) = param.split_once(':') {
+                            if let Ok(amount) = amount_str.trim().parse::<u8>() {
+                                let creature_type = Subtype::new(type_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Amplify { amount, creature_type });
+                            }
+                        }
+                    }
+                    "Annihilator" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Annihilator { amount });
+                        }
+                    }
+                    "Bushido" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Bushido { amount });
+                        }
+                    }
+                    "Fading" => {
+                        if let Ok(counters) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Fading { counters });
+                        }
+                    }
+                    "Vanishing" => {
+                        if let Ok(counters) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Vanishing { counters });
+                        }
+                    }
+                    "Dredge" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Dredge { amount });
+                        }
+                    }
+                    "Modular" => {
+                        if let Ok(counters) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Modular { counters });
+                        }
+                    }
+                    "Absorb" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Absorb { amount });
+                        }
+                    }
+                    "Hexproof" => {
+                        // HexproofFrom (e.g., "Hexproof:Blue")
+                        keyword_set.insert_complex(KeywordArgs::HexproofFrom {
+                            from: param.to_string(),
+                        });
+                    }
+                    "Partner" => {
+                        // PartnerWith (e.g., "Partner:Regna")
+                        let card_name = CardName::new(param);
+                        keyword_set.insert_complex(KeywordArgs::PartnerWith { card_name });
+                    }
+                    "Companion" => {
+                        keyword_set.insert_complex(KeywordArgs::Companion {
+                            restriction: param.to_string(),
+                        });
+                    }
+                    _ => {
+                        // Unknown parameterized keyword - log warning
+                        eprintln!("Warning: Unknown parameterized keyword '{}' in '{}'", kw, keyword_str);
+                    }
+                }
             } else {
                 // Simple keywords (no parameters)
                 let kw = keyword_str.trim();
                 match kw {
-                    "Flying" => keyword_set.insert_simple(KeywordSimple::Flying),
-                    "First Strike" => keyword_set.insert_simple(KeywordSimple::FirstStrike),
-                    "Double Strike" => keyword_set.insert_simple(KeywordSimple::DoubleStrike),
-                    "Deathtouch" => keyword_set.insert_simple(KeywordSimple::Deathtouch),
-                    "Haste" => keyword_set.insert_simple(KeywordSimple::Haste),
-                    "Hexproof" => keyword_set.insert_simple(KeywordSimple::Hexproof),
-                    "Indestructible" => keyword_set.insert_simple(KeywordSimple::Indestructible),
-                    "Lifelink" => keyword_set.insert_simple(KeywordSimple::Lifelink),
-                    "Menace" => keyword_set.insert_simple(KeywordSimple::Menace),
-                    "Reach" => keyword_set.insert_simple(KeywordSimple::Reach),
-                    "Trample" => keyword_set.insert_simple(KeywordSimple::Trample),
-                    "Vigilance" => keyword_set.insert_simple(KeywordSimple::Vigilance),
-                    "Defender" => keyword_set.insert_simple(KeywordSimple::Defender),
-                    "Shroud" => keyword_set.insert_simple(KeywordSimple::Shroud),
-                    "Choose a Background" => keyword_set.insert_simple(KeywordSimple::ChooseABackground),
+                    "Flying" => keyword_set.insert(Keyword::Flying),
+                    "First Strike" => keyword_set.insert(Keyword::FirstStrike),
+                    "Double Strike" => keyword_set.insert(Keyword::DoubleStrike),
+                    "Deathtouch" => keyword_set.insert(Keyword::Deathtouch),
+                    "Haste" => keyword_set.insert(Keyword::Haste),
+                    "Hexproof" => keyword_set.insert(Keyword::Hexproof),
+                    "Indestructible" => keyword_set.insert(Keyword::Indestructible),
+                    "Lifelink" => keyword_set.insert(Keyword::Lifelink),
+                    "Menace" => keyword_set.insert(Keyword::Menace),
+                    "Reach" => keyword_set.insert(Keyword::Reach),
+                    "Trample" => keyword_set.insert(Keyword::Trample),
+                    "Vigilance" => keyword_set.insert(Keyword::Vigilance),
+                    "Defender" => keyword_set.insert(Keyword::Defender),
+                    "Shroud" => keyword_set.insert(Keyword::Shroud),
+                    "Choose a Background" => keyword_set.insert(Keyword::ChooseABackground),
                     // Protection variants
-                    "Protection from red" => keyword_set.insert_simple(KeywordSimple::ProtectionFromRed),
-                    "Protection from blue" => keyword_set.insert_simple(KeywordSimple::ProtectionFromBlue),
-                    "Protection from black" => keyword_set.insert_simple(KeywordSimple::ProtectionFromBlack),
-                    "Protection from white" => keyword_set.insert_simple(KeywordSimple::ProtectionFromWhite),
-                    "Protection from green" => keyword_set.insert_simple(KeywordSimple::ProtectionFromGreen),
-                    _ => keyword_set.push_complex(KeywordComplex::Other(keyword_str.to_string())),
+                    "Protection from red" => keyword_set.insert(Keyword::ProtectionFromRed),
+                    "Protection from blue" => keyword_set.insert(Keyword::ProtectionFromBlue),
+                    "Protection from black" => keyword_set.insert(Keyword::ProtectionFromBlack),
+                    "Protection from white" => keyword_set.insert(Keyword::ProtectionFromWhite),
+                    "Protection from green" => keyword_set.insert(Keyword::ProtectionFromGreen),
+                    _ => {
+                        // Unknown simple keyword - log warning
+                        eprintln!("Warning: Unknown simple keyword '{}'", keyword_str);
+                    }
                 }
             }
         }
