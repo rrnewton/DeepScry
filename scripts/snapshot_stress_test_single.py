@@ -35,19 +35,20 @@ def print_color(color: str, message: str):
     print(f"{color}{message}{NC}")
 
 def find_mtg_binary() -> Path:
-    """Find the mtg binary (debug or release)"""
+    """Find the mtg binary (RELEASE ONLY). Error if not found.
+
+    Snapshot stress tests must run against the optimized release build to ensure
+    realistic performance and avoid debug-only behavior differences.
+    """
     workspace = Path.cwd()
-    debug_bin = workspace / "target" / "debug" / "mtg"
     release_bin = workspace / "target" / "release" / "mtg"
 
-    if debug_bin.exists():
-        return debug_bin
-    elif release_bin.exists():
+    if release_bin.exists():
         return release_bin
-    else:
-        print_color(RED, "Error: mtg binary not found")
-        print("Please build the project first with 'cargo build'")
-        sys.exit(1)
+
+    print_color(RED, "Error: release mtg binary not found at target/release/mtg")
+    print("Please build the project first with 'cargo build --release'")
+    sys.exit(1)
 
 def extract_choice_from_line(line: str) -> Optional[int]:
     """Extract the choice index from a RANDOM or HEURISTIC log line"""
