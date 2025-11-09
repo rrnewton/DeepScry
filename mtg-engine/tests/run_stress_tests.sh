@@ -77,6 +77,8 @@ fi
 # Default decks to test if none specified
 if [ ${#DECK_ARGS[@]} -eq 0 ]; then
     DECKS=(
+        # decks/old_school/01_rogue_rogerbrand.dck
+        # decks/old_school/02_thedeck_peterschnidrig.dck
         "royal_assassin"
         "white_aggro_4ed"
         "grizzly_bears"

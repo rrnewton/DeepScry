@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 
 /// Simple keywords with no parameters
 /// These are stored as a bitset using EnumSet for O(1) operations
+/// Total: 92 simple keywords matching Java Forge's SimpleKeyword.class keywords
 #[derive(Debug, EnumSetType, Serialize, Deserialize)]
+#[enumset(repr = "u128")]
 pub enum KeywordSimple {
-    // Evergreen keywords
+    // Evergreen keywords (appear in most sets)
     Flying,
     FirstStrike,
     DoubleStrike,
@@ -29,28 +31,178 @@ pub enum KeywordSimple {
     Vigilance,
     Defender,
     Shroud,
+    Flash,
 
-    // Protection (specific colors - could be parameterized in future)
+    // Evasion abilities
+    Fear,
+    Intimidate,
+    Horsemanship,
+    Shadow,
+    Skulk,
+
+    // Protection (specific colors - full Protection is parameterized)
     ProtectionFromRed,
     ProtectionFromBlue,
     ProtectionFromBlack,
     ProtectionFromWhite,
     ProtectionFromGreen,
 
-    // Commander-specific
+    // Combat-related
+    Banding,
+    Flanking,
+    Phasing,
+    Wither,
+    Infect,
+
+    // Keyword actions/abilities
+    Changeling,
+    Convoke,
+    Delve,
+    Improvise,
+    SplitSecond,
+    Cascade,
+    Storm,
+    Gravestorm,
+    Conspire,
+    Retrace,
+    Prowess,
+
+    // Set-specific mechanics (alphabetically sorted)
+    Aftermath,
+    Ascend,
+    Assist,
+    Bargain,
+    BattleCry,
+    Cipher,
+    Compleated,
+    Daybound,
+    Decayed,
+    Demonstrate,
+    Dethrone,
+    Devoid,
+    DoubleAgenda,
+    DoubleTeam,
+    Enlist,
+    Epic,
+    Evolve,
+    Exalted,
+    Exploit,
+    Extort,
+    ForMirrodin,
+    Fuse,
+    Gift,
+    Haunt,
+    HiddenAgenda,
+    Ingest,
+    JobSelect,
+    JumpStart,
+    LivingMetal,
+    LivingWeapon,
+    Melee,
+    Mentor,
+    Myriad,
+    Nightbound,
+    Persist,
+    Provoke,
+    Ravenous,
+    ReadAhead,
+    Rebound,
+    Riot,
+    Soulbond,
+    SpaceSculptor,
+    Spree,
+    StartYourEngines,
+    Sunburst,
+    Tiered,
+    Training,
+    UmbraArmor,
+    Undaunted,
+    Undying,
+    Unleash,
+
+    // Commander/Multiplayer
     ChooseABackground,
+    DoctorsCompanion,
+    FriendsForever,
+    PartnerSurvivors,
+    PartnerFatherAndSon,
+    PartnerCharacterSelect,
+
+    // Mayflash variants
+    MayFlashSac,
 }
 
 /// Complex keywords with parameters (stored as strings for now)
+/// These keywords have parameters like costs, types, or amounts
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KeywordComplex {
+    // Keywords with cost parameters
     /// Madness cost (e.g., "Madness:1 R")
     Madness(String),
     /// Flashback cost (e.g., "Flashback:3 R")
     Flashback(String),
+    /// Kicker cost (e.g., "Kicker:2")
+    Kicker(String),
+    /// Cycling cost (e.g., "Cycling:2")
+    Cycling(String),
+    /// Equip cost (e.g., "Equip:2")
+    Equip(String),
+    /// Morph cost (e.g., "Morph:3 G")
+    Morph(String),
+    /// Evoke cost (e.g., "Evoke:2 G")
+    Evoke(String),
+    /// Buyback cost (e.g., "Buyback:3")
+    Buyback(String),
+    /// Echo cost (e.g., "Echo:2 G")
+    Echo(String),
+    /// Suspend cost and time counters (e.g., "Suspend:3:G")
+    Suspend(String),
+
+    // Keywords with type parameters
     /// Enchant type (e.g., "Enchant:Creature")
     Enchant(String),
-    /// Catch-all for other keywords not yet implemented
+    /// Landwalk type (e.g., "Landwalk:Island")
+    Landwalk(String),
+    /// Affinity type (e.g., "Affinity:Artifact")
+    Affinity(String),
+    /// Protection (e.g., "Protection:Red", "Protection:Artifacts")
+    Protection(String),
+    /// Offering type (e.g., "Offering:Spirit")
+    Offering(String),
+    /// Champion type (e.g., "Champion:Goblin")
+    Champion(String),
+
+    // Keywords with amount parameters
+    /// Amplify (e.g., "Amplify:2:Beast")
+    Amplify(String),
+    /// Annihilator amount (e.g., "Annihilator:2")
+    Annihilator(String),
+    /// Bushido amount (e.g., "Bushido:2")
+    Bushido(String),
+    /// Fading counters (e.g., "Fading:3")
+    Fading(String),
+    /// Vanishing counters (e.g., "Vanishing:3")
+    Vanishing(String),
+    /// Dredge amount (e.g., "Dredge:3")
+    Dredge(String),
+    /// Modular counters (e.g., "Modular:2")
+    Modular(String),
+    /// Absorb amount (e.g., "Absorb:2")
+    Absorb(String),
+
+    // Hexproof variants
+    /// Hexproof from (e.g., "Hexproof:Blue", "Hexproof:instants")
+    HexproofFrom(String),
+
+    // Partner variant with parameter
+    /// Partner with specific (e.g., "Partner:Regna")
+    PartnerWith(String),
+
+    // Companion deck restriction
+    /// Companion restriction (e.g., "Companion:...")
+    Companion(String),
+
+    /// Catch-all for other keywords not yet explicitly supported
     Other(String),
 }
 
@@ -121,6 +273,7 @@ impl KeywordSet {
 
     /// Iterate over all keywords as Keyword enum values (migration helper)
     /// This provides backward compatibility for code that expects to iterate over Vec<Keyword>
+    /// NOTE: New keywords not in the old Keyword enum are mapped to Keyword::Other
     pub fn iter(&self) -> impl Iterator<Item = Keyword> + '_ {
         // Chain simple keywords (converted to Keyword) with complex keywords (converted to Keyword)
         let simple_iter = self.iter_simple().map(|simple| match simple {
@@ -144,13 +297,17 @@ impl KeywordSet {
             KeywordSimple::ProtectionFromWhite => Keyword::ProtectionFromWhite,
             KeywordSimple::ProtectionFromGreen => Keyword::ProtectionFromGreen,
             KeywordSimple::ChooseABackground => Keyword::ChooseABackground,
+            // All other keywords map to Other for backward compatibility
+            _ => Keyword::Other(format!("{:?}", simple)),
         });
 
         let complex_iter = self.iter_complex().map(|complex| match complex {
             KeywordComplex::Madness(cost) => Keyword::Madness(cost.clone()),
             KeywordComplex::Flashback(cost) => Keyword::Flashback(cost.clone()),
             KeywordComplex::Enchant(target) => Keyword::Enchant(target.clone()),
+            // All other complex keywords (including new ones) map to Other
             KeywordComplex::Other(s) => Keyword::Other(s.clone()),
+            _ => Keyword::Other(format!("{:?}", complex)),
         });
 
         simple_iter.chain(complex_iter)
@@ -269,6 +426,7 @@ impl KeywordSet {
     }
 
     /// Convert this KeywordSet back to Vec<Keyword> (for migration/compatibility)
+    /// NOTE: New keywords not in the old Keyword enum are mapped to Keyword::Other
     pub fn to_keyword_vec(&self) -> Vec<Keyword> {
         let mut result = Vec::new();
 
@@ -295,6 +453,8 @@ impl KeywordSet {
                 KeywordSimple::ProtectionFromWhite => Keyword::ProtectionFromWhite,
                 KeywordSimple::ProtectionFromGreen => Keyword::ProtectionFromGreen,
                 KeywordSimple::ChooseABackground => Keyword::ChooseABackground,
+                // Map all other new keywords to Other for backward compatibility
+                _ => Keyword::Other(format!("{:?}", simple)),
             };
             result.push(keyword);
         }
@@ -306,6 +466,8 @@ impl KeywordSet {
                 KeywordComplex::Flashback(cost) => Keyword::Flashback(cost.clone()),
                 KeywordComplex::Enchant(target) => Keyword::Enchant(target.clone()),
                 KeywordComplex::Other(s) => Keyword::Other(s.clone()),
+                // Map all other new complex keywords to Other
+                _ => Keyword::Other(format!("{:?}", complex)),
             };
             result.push(keyword);
         }
