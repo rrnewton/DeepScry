@@ -374,6 +374,484 @@ impl CardDefinition {
                             restriction: param.to_string(),
                         });
                     }
+                    // ===== COST-BASED KEYWORDS (additional) =====
+                    "Aura swap" | "AuraSwap" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::AuraSwap { cost });
+                    }
+                    "Bestow" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Bestow { cost });
+                    }
+                    "Blitz" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Blitz { cost });
+                    }
+                    "Cumulative upkeep" | "CumulativeUpkeep" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::CumulativeUpkeep { cost });
+                    }
+                    "Dash" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Dash { cost });
+                    }
+                    "Disguise" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Disguise { cost });
+                    }
+                    "Disturb" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Disturb { cost });
+                    }
+                    "Embalm" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Embalm { cost });
+                    }
+                    "Encore" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Encore { cost });
+                    }
+                    "Entwine" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Entwine { cost });
+                    }
+                    "Escalate" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Escalate { cost });
+                    }
+                    "Escape" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Escape { cost });
+                    }
+                    "Eternalize" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Eternalize { cost });
+                    }
+                    "Foretell" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Foretell { cost });
+                    }
+                    "Fortify" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Fortify { cost });
+                    }
+                    "Freerunning" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Freerunning { cost });
+                    }
+                    "Harmonize" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Harmonize { cost });
+                    }
+                    "Level up" | "LevelUp" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::LevelUp { cost });
+                    }
+                    "MayFlashCost" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::MayFlashCost { cost });
+                    }
+                    "Megamorph" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Megamorph { cost });
+                    }
+                    "Miracle" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Miracle { cost });
+                    }
+                    "More Than Meets the Eye" | "MoreThanMeetsTheEye" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::MoreThanMeetsTheEye { cost });
+                    }
+                    "Multikicker" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Multikicker { cost });
+                    }
+                    "Mutate" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Mutate { cost });
+                    }
+                    "Offspring" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Offspring { cost });
+                    }
+                    "Outlast" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Outlast { cost });
+                    }
+                    "Overload" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Overload { cost });
+                    }
+                    "Plot" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Plot { cost });
+                    }
+                    "Prowl" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Prowl { cost });
+                    }
+                    "Prototype" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Prototype { cost });
+                    }
+                    "Reconfigure" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Reconfigure { cost });
+                    }
+                    "Reflect" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Reflect { cost });
+                    }
+                    "Scavenge" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Scavenge { cost });
+                    }
+                    "Sneak" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Sneak { cost });
+                    }
+                    "Specialize" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Specialize { cost });
+                    }
+                    "Spectacle" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Spectacle { cost });
+                    }
+                    "Squad" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Squad { cost });
+                    }
+                    "Strive" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Strive { cost });
+                    }
+                    "Surge" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Surge { cost });
+                    }
+                    "Transfigure" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Transfigure { cost });
+                    }
+                    "Transmute" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Transmute { cost });
+                    }
+                    "Unearth" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Unearth { cost });
+                    }
+                    "Ward" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Ward { cost });
+                    }
+                    "Warp" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Warp { cost });
+                    }
+                    "Web-slinging" | "WebSlinging" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::WebSlinging { cost });
+                    }
+                    // ===== AMOUNT-BASED KEYWORDS =====
+                    "Afflict" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Afflict { amount });
+                        }
+                    }
+                    "Afterlife" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Afterlife { amount });
+                        }
+                    }
+                    "Bloodthirst" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Bloodthirst { amount });
+                        }
+                    }
+                    "Casualty" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Casualty { amount });
+                        }
+                    }
+                    "Crew" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Crew { amount });
+                        }
+                    }
+                    "Fabricate" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Fabricate { amount });
+                        }
+                    }
+                    "Frenzy" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Frenzy { amount });
+                        }
+                    }
+                    "Graft" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Graft { amount });
+                        }
+                    }
+                    "Hideaway" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Hideaway { amount });
+                        }
+                    }
+                    "Mobilize" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Mobilize { amount });
+                        }
+                    }
+                    "Poisonous" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Poisonous { amount });
+                        }
+                    }
+                    "Rampage" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Rampage { amount });
+                        }
+                    }
+                    "Renown" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Renown { amount });
+                        }
+                    }
+                    "Ripple" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Ripple { amount });
+                        }
+                    }
+                    "Saddle" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Saddle { amount });
+                        }
+                    }
+                    "Soulshift" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Soulshift { amount });
+                        }
+                    }
+                    "Starting intensity" | "StartingIntensity" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::StartingIntensity { amount });
+                        }
+                    }
+                    "Station" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Station { amount });
+                        }
+                    }
+                    "Toxic" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Toxic { amount });
+                        }
+                    }
+                    "Tribute" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Tribute { amount });
+                        }
+                    }
+                    // ===== COST + AMOUNT KEYWORDS =====
+                    "Adapt" => {
+                        // Format: "Adapt:AMOUNT:COST"
+                        if let Some((amount_str, cost_str)) = param.split_once(':') {
+                            if let Ok(amount) = amount_str.trim().parse::<u8>() {
+                                let cost = ManaCost::from_string(cost_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Adapt { cost, amount });
+                            }
+                        }
+                    }
+                    "Awaken" => {
+                        // Format: "Awaken:AMOUNT:COST"
+                        if let Some((amount_str, cost_str)) = param.split_once(':') {
+                            if let Ok(amount) = amount_str.trim().parse::<u8>() {
+                                let cost = ManaCost::from_string(cost_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Awaken { cost, amount });
+                            }
+                        }
+                    }
+                    "Backup" => {
+                        // Format: "Backup:AMOUNT" (amount only, no cost!)
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Backup { amount });
+                        }
+                    }
+                    "Impending" => {
+                        // Format: "Impending:AMOUNT:COST"
+                        if let Some((amount_str, cost_str)) = param.split_once(':') {
+                            if let Ok(amount) = amount_str.trim().parse::<u8>() {
+                                let cost = ManaCost::from_string(cost_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Impending { cost, amount });
+                            }
+                        }
+                    }
+                    "Monstrosity" => {
+                        // Format: "Monstrosity:AMOUNT:COST"
+                        if let Some((amount_str, cost_str)) = param.split_once(':') {
+                            if let Ok(amount) = amount_str.trim().parse::<u8>() {
+                                let cost = ManaCost::from_string(cost_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Monstrosity { cost, amount });
+                            }
+                        }
+                    }
+                    "Reinforce" => {
+                        // Format: "Reinforce:AMOUNT:COST"
+                        if let Some((amount_str, cost_str)) = param.split_once(':') {
+                            if let Ok(amount) = amount_str.trim().parse::<u8>() {
+                                let cost = ManaCost::from_string(cost_str.trim());
+                                keyword_set.insert_complex(KeywordArgs::Reinforce { cost, amount });
+                            }
+                        }
+                    }
+                    // ===== COST + TYPE KEYWORDS =====
+                    "Splice" => {
+                        // Format: "Splice:TYPE:COST"
+                        if let Some((type_str, cost_str)) = param.split_once(':') {
+                            let card_type = Subtype::new(type_str.trim());
+                            let cost = ManaCost::from_string(cost_str.trim());
+                            keyword_set.insert_complex(KeywordArgs::Splice { cost, card_type });
+                        }
+                    }
+                    "Typecycling" | "TypeCycling" => {
+                        // Format: "Typecycling:TYPE:COST" or "TypeCycling:TYPE:COST"
+                        if let Some((type_str, cost_str)) = param.split_once(':') {
+                            let card_type = Subtype::new(type_str.trim());
+                            let cost = ManaCost::from_string(cost_str.trim());
+                            keyword_set.insert_complex(KeywordArgs::Typecycling { cost, card_type });
+                        }
+                    }
+                    // ===== TYPE-BASED KEYWORDS (additional) =====
+                    "Bands with other" | "BandsWithOther" => {
+                        // Format: "Bands with other:TYPE"
+                        let creature_type = Subtype::new(param);
+                        keyword_set.insert_complex(KeywordArgs::BandsWithOther { creature_type });
+                    }
+                    // ===== SPECIAL COMPLEX KEYWORDS =====
+                    "Emerge" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Emerge { cost });
+                    }
+                    "Firebending" => {
+                        keyword_set.insert_complex(KeywordArgs::Firebending {
+                            mana: param.to_string(),
+                        });
+                    }
+                    "Ninjutsu" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Ninjutsu { cost });
+                    }
+                    "Craft" => {
+                        keyword_set.insert_complex(KeywordArgs::Craft {
+                            requirements: param.to_string(),
+                        });
+                    }
+                    "Devour" => {
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Devour { amount });
+                        }
+                    }
+                    // ===== SAGA AND CLASS ENCHANTMENT KEYWORDS =====
+                    "Chapter" => {
+                        // Format: "Chapter:3:DBCantBlock,DBSearch,DBToken"
+                        if let Some((chapter_num_str, abilities_str)) = param.split_once(':') {
+                            if let Ok(chapter_number) = chapter_num_str.trim().parse::<u8>() {
+                                keyword_set.insert_complex(KeywordArgs::Chapter {
+                                    chapter_number,
+                                    abilities: abilities_str.trim().to_string(),
+                                });
+                            }
+                        }
+                    }
+                    "Class" => {
+                        // Format: "Class:2:W:AddTrigger$ TriggerEnter"
+                        let parts: Vec<&str> = param.split(':').collect();
+                        if parts.len() >= 3 {
+                            if let Ok(level) = parts[0].trim().parse::<u8>() {
+                                let cost = parts[1].trim().to_string();
+                                let abilities = parts[2..].join(":").trim().to_string();
+                                keyword_set.insert_complex(KeywordArgs::Class { level, cost, abilities });
+                            }
+                        }
+                    }
+                    // ===== ETB (ENTER THE BATTLEFIELD) KEYWORDS =====
+                    "ETBReplacement" => {
+                        // Format: "ETBReplacement:Copy:DBCopy:Optional"
+                        if let Some((effect_type_str, details_str)) = param.split_once(':') {
+                            keyword_set.insert_complex(KeywordArgs::ETBReplacement {
+                                effect_type: effect_type_str.trim().to_string(),
+                                details: details_str.trim().to_string(),
+                            });
+                        }
+                    }
+                    "etbCounter" => {
+                        // Format: "etbCounter:P1P1:2" or "etbCounter:LOYALTY:Y:no Condition:..."
+                        let parts: Vec<&str> = param.split(':').collect();
+                        if parts.len() >= 2 {
+                            let counter_type = parts[0].trim().to_string();
+                            let amount = parts[1].trim().to_string();
+                            let condition = if parts.len() > 2 {
+                                parts[2..].join(":").trim().to_string()
+                            } else {
+                                String::new()
+                            };
+                            keyword_set.insert_complex(KeywordArgs::EtbCounter {
+                                counter_type,
+                                amount,
+                                condition,
+                            });
+                        }
+                    }
+                    // ===== ADDITIONAL SPECIAL KEYWORDS =====
+                    "Haunt" => {
+                        keyword_set.insert_complex(KeywordArgs::Haunt {
+                            trigger: param.to_string(),
+                        });
+                    }
+                    "Replicate" => {
+                        keyword_set.insert_complex(KeywordArgs::Replicate {
+                            cost: param.to_string(),
+                        });
+                    }
+                    "MayEffectFromOpeningHand" => {
+                        keyword_set.insert_complex(KeywordArgs::MayEffectFromOpeningHand {
+                            effect: param.to_string(),
+                        });
+                    }
+                    "Mayhem" => {
+                        keyword_set.insert_complex(KeywordArgs::Mayhem {
+                            cost: param.to_string(),
+                        });
+                    }
+                    "Recover" => {
+                        let cost = ManaCost::from_string(param);
+                        keyword_set.insert_complex(KeywordArgs::Recover { cost });
+                    }
+                    "Visit" => {
+                        keyword_set.insert_complex(KeywordArgs::Visit {
+                            trigger: param.to_string(),
+                        });
+                    }
+                    "DeckLimit" => {
+                        // Format: "DeckLimit:1:Description"
+                        if let Some((limit_str, description)) = param.split_once(':') {
+                            if let Ok(limit) = limit_str.trim().parse::<u8>() {
+                                keyword_set.insert_complex(KeywordArgs::DeckLimit {
+                                    limit,
+                                    description: description.trim().to_string(),
+                                });
+                            }
+                        }
+                    }
+                    "Dungeon" => {
+                        keyword_set.insert_complex(KeywordArgs::Dungeon {
+                            rooms: param.to_string(),
+                        });
+                    }
                     _ => {
                         // Unknown parameterized keyword - log warning
                         eprintln!("Warning: Unknown parameterized keyword '{}' in '{}'", kw, keyword_str);
@@ -383,6 +861,7 @@ impl CardDefinition {
                 // Simple keywords (no parameters)
                 let kw = keyword_str.trim();
                 match kw {
+                    // ===== EVERGREEN KEYWORDS =====
                     "Flying" => keyword_set.insert(Keyword::Flying),
                     "First Strike" => keyword_set.insert(Keyword::FirstStrike),
                     "Double Strike" => keyword_set.insert(Keyword::DoubleStrike),
@@ -397,13 +876,103 @@ impl CardDefinition {
                     "Vigilance" => keyword_set.insert(Keyword::Vigilance),
                     "Defender" => keyword_set.insert(Keyword::Defender),
                     "Shroud" => keyword_set.insert(Keyword::Shroud),
-                    "Choose a Background" => keyword_set.insert(Keyword::ChooseABackground),
-                    // Protection variants
+                    "Flash" => keyword_set.insert(Keyword::Flash),
+                    // ===== EVASION ABILITIES =====
+                    "Fear" => keyword_set.insert(Keyword::Fear),
+                    "Intimidate" => keyword_set.insert(Keyword::Intimidate),
+                    "Horsemanship" => keyword_set.insert(Keyword::Horsemanship),
+                    "Shadow" => keyword_set.insert(Keyword::Shadow),
+                    "Skulk" => keyword_set.insert(Keyword::Skulk),
+                    // ===== PROTECTION (specific colors) =====
                     "Protection from red" => keyword_set.insert(Keyword::ProtectionFromRed),
                     "Protection from blue" => keyword_set.insert(Keyword::ProtectionFromBlue),
                     "Protection from black" => keyword_set.insert(Keyword::ProtectionFromBlack),
                     "Protection from white" => keyword_set.insert(Keyword::ProtectionFromWhite),
                     "Protection from green" => keyword_set.insert(Keyword::ProtectionFromGreen),
+                    // ===== COMBAT-RELATED =====
+                    "Banding" => keyword_set.insert(Keyword::Banding),
+                    "Flanking" => keyword_set.insert(Keyword::Flanking),
+                    "Phasing" => keyword_set.insert(Keyword::Phasing),
+                    "Wither" => keyword_set.insert(Keyword::Wither),
+                    "Infect" => keyword_set.insert(Keyword::Infect),
+                    // ===== KEYWORD ACTIONS/ABILITIES =====
+                    "Changeling" => keyword_set.insert(Keyword::Changeling),
+                    "Convoke" => keyword_set.insert(Keyword::Convoke),
+                    "Delve" => keyword_set.insert(Keyword::Delve),
+                    "Improvise" => keyword_set.insert(Keyword::Improvise),
+                    "Split second" | "SplitSecond" => keyword_set.insert(Keyword::SplitSecond),
+                    "Cascade" => keyword_set.insert(Keyword::Cascade),
+                    "Storm" => keyword_set.insert(Keyword::Storm),
+                    "Gravestorm" => keyword_set.insert(Keyword::Gravestorm),
+                    "Conspire" => keyword_set.insert(Keyword::Conspire),
+                    "Retrace" => keyword_set.insert(Keyword::Retrace),
+                    "Prowess" => keyword_set.insert(Keyword::Prowess),
+                    // ===== SET-SPECIFIC MECHANICS =====
+                    "Aftermath" => keyword_set.insert(Keyword::Aftermath),
+                    "Ascend" => keyword_set.insert(Keyword::Ascend),
+                    "Assist" => keyword_set.insert(Keyword::Assist),
+                    "Bargain" => keyword_set.insert(Keyword::Bargain),
+                    "Battle cry" | "BattleCry" => keyword_set.insert(Keyword::BattleCry),
+                    "Cipher" => keyword_set.insert(Keyword::Cipher),
+                    "Compleated" => keyword_set.insert(Keyword::Compleated),
+                    "Daybound" => keyword_set.insert(Keyword::Daybound),
+                    "Decayed" => keyword_set.insert(Keyword::Decayed),
+                    "Demonstrate" => keyword_set.insert(Keyword::Demonstrate),
+                    "Dethrone" => keyword_set.insert(Keyword::Dethrone),
+                    "Devoid" => keyword_set.insert(Keyword::Devoid),
+                    "Double agenda" | "DoubleAgenda" => keyword_set.insert(Keyword::DoubleAgenda),
+                    "Double team" | "DoubleTeam" => keyword_set.insert(Keyword::DoubleTeam),
+                    "Enlist" => keyword_set.insert(Keyword::Enlist),
+                    "Epic" => keyword_set.insert(Keyword::Epic),
+                    "Evolve" => keyword_set.insert(Keyword::Evolve),
+                    "Exalted" => keyword_set.insert(Keyword::Exalted),
+                    "Exploit" => keyword_set.insert(Keyword::Exploit),
+                    "Extort" => keyword_set.insert(Keyword::Extort),
+                    "For Mirrodin!" | "ForMirrodin" => keyword_set.insert(Keyword::ForMirrodin),
+                    "Fuse" => keyword_set.insert(Keyword::Fuse),
+                    "Gift" => keyword_set.insert(Keyword::Gift),
+                    "Hidden agenda" | "HiddenAgenda" => keyword_set.insert(Keyword::HiddenAgenda),
+                    "Ingest" => keyword_set.insert(Keyword::Ingest),
+                    "Job select" | "JobSelect" => keyword_set.insert(Keyword::JobSelect),
+                    "Jump-start" | "JumpStart" => keyword_set.insert(Keyword::JumpStart),
+                    "Living metal" | "LivingMetal" => keyword_set.insert(Keyword::LivingMetal),
+                    "Living weapon" | "LivingWeapon" => keyword_set.insert(Keyword::LivingWeapon),
+                    "Melee" => keyword_set.insert(Keyword::Melee),
+                    "Mentor" => keyword_set.insert(Keyword::Mentor),
+                    "Myriad" => keyword_set.insert(Keyword::Myriad),
+                    "Nightbound" => keyword_set.insert(Keyword::Nightbound),
+                    "Persist" => keyword_set.insert(Keyword::Persist),
+                    "Provoke" => keyword_set.insert(Keyword::Provoke),
+                    "Ravenous" => keyword_set.insert(Keyword::Ravenous),
+                    "Read ahead" | "ReadAhead" => keyword_set.insert(Keyword::ReadAhead),
+                    "Rebound" => keyword_set.insert(Keyword::Rebound),
+                    "Riot" => keyword_set.insert(Keyword::Riot),
+                    "Soulbond" => keyword_set.insert(Keyword::Soulbond),
+                    "Space sculptor" | "SpaceSculptor" => keyword_set.insert(Keyword::SpaceSculptor),
+                    "Spree" => keyword_set.insert(Keyword::Spree),
+                    "Start your engines" | "StartYourEngines" => keyword_set.insert(Keyword::StartYourEngines),
+                    "Sunburst" => keyword_set.insert(Keyword::Sunburst),
+                    "Tiered" => keyword_set.insert(Keyword::Tiered),
+                    "Training" => keyword_set.insert(Keyword::Training),
+                    "Totem armor" | "UmbraArmor" => keyword_set.insert(Keyword::UmbraArmor),
+                    "Undaunted" => keyword_set.insert(Keyword::Undaunted),
+                    "Undying" => keyword_set.insert(Keyword::Undying),
+                    "Unleash" => keyword_set.insert(Keyword::Unleash),
+                    // ===== COMMANDER/MULTIPLAYER =====
+                    "Choose a Background" => keyword_set.insert(Keyword::ChooseABackground),
+                    "Doctor's companion" | "DoctorsCompanion" => keyword_set.insert(Keyword::DoctorsCompanion),
+                    "Friends forever" | "FriendsForever" => keyword_set.insert(Keyword::FriendsForever),
+                    "Partner Survivors" | "PartnerSurvivors" => keyword_set.insert(Keyword::PartnerSurvivors),
+                    "Partner Father and Son" | "PartnerFatherAndSon" => {
+                        keyword_set.insert(Keyword::PartnerFatherAndSon)
+                    }
+                    "Partner Character Select" | "PartnerCharacterSelect" => {
+                        keyword_set.insert(Keyword::PartnerCharacterSelect)
+                    }
+                    // Partner (no arguments) - complex keyword for Java compatibility
+                    "Partner" => keyword_set.insert_complex(KeywordArgs::Partner),
+                    // ===== MAYFLASH VARIANTS =====
+                    "MayFlashSac" => keyword_set.insert(Keyword::MayFlashSac),
                     _ => {
                         // Unknown simple keyword - log warning
                         eprintln!("Warning: Unknown simple keyword '{}'", keyword_str);
