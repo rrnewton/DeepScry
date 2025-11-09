@@ -2023,6 +2023,7 @@ async fn run_stats() -> Result<()> {
     }
 
     println!("\n--- Top 30 Subtypes ---");
+    println!("  Total distinct subtypes: {}", subtype_counts.len());
     let mut subtype_vec: Vec<_> = subtype_counts.iter().collect();
     subtype_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (subtype, count) in subtype_vec.iter().take(30) {
@@ -2079,6 +2080,7 @@ async fn run_stats() -> Result<()> {
     }
 
     println!("\n--- Top 30 Keywords ---");
+    println!("  Total distinct keywords: {}", keyword_counts.len());
     let mut keyword_vec: Vec<_> = keyword_counts.iter().collect();
     keyword_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (keyword, count) in keyword_vec.iter().take(30) {
