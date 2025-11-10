@@ -439,6 +439,61 @@ impl GameState {
             .collect()
     }
 
+    /// Get a creature's effective power including Equipment buffs
+    ///
+    /// This calculates the creature's power with all bonuses applied:
+    /// - Base power
+    /// - +1/+1 and -1/-1 counters
+    /// - Temporary power_bonus
+    /// - Equipment buffs (e.g., Spider-Suit's +2/+2)
+    ///
+    /// ## Equipment Buff Rules
+    /// Currently implements hardcoded buffs for common Equipment:
+    /// - Spider-Suit: +2/+2
+    /// - TODO: Parse static abilities from card data (Phase 3)
+    pub fn get_effective_power(&self, creature_id: CardId) -> Result<i32> {
+        let creature = self.cards.get(creature_id)?;
+        let mut power = creature.current_power() as i32;
+
+        // Add Equipment buffs
+        let equipment_list = self.get_attached_equipment(creature_id);
+        for equip_id in equipment_list {
+            let equipment = self.cards.get(equip_id)?;
+            // TODO: Parse static abilities from card data
+            // For now, hardcode Spider-Suit's +2/+2
+            if equipment.name.as_str().eq_ignore_ascii_case("Spider-Suit") {
+                power += 2;
+            }
+        }
+
+        Ok(power)
+    }
+
+    /// Get a creature's effective toughness including Equipment buffs
+    ///
+    /// This calculates the creature's toughness with all bonuses applied:
+    /// - Base toughness
+    /// - +1/+1 and -1/-1 counters
+    /// - Temporary toughness_bonus
+    /// - Equipment buffs (e.g., Spider-Suit's +2/+2)
+    pub fn get_effective_toughness(&self, creature_id: CardId) -> Result<i32> {
+        let creature = self.cards.get(creature_id)?;
+        let mut toughness = creature.current_toughness() as i32;
+
+        // Add Equipment buffs
+        let equipment_list = self.get_attached_equipment(creature_id);
+        for equip_id in equipment_list {
+            let equipment = self.cards.get(equip_id)?;
+            // TODO: Parse static abilities from card data
+            // For now, hardcode Spider-Suit's +2/+2
+            if equipment.name.as_str().eq_ignore_ascii_case("Spider-Suit") {
+                toughness += 2;
+            }
+        }
+
+        Ok(toughness)
+    }
+
     /// Get valid targets for a spell's effects
     ///
     /// This function filters game entities to find valid targets based on:

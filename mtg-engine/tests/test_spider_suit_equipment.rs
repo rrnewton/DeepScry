@@ -287,11 +287,133 @@ fn test_multiple_equipment() {
     );
 }
 
-// TODO(mtg-98df7d): Add test for Equipment buffs when continuous effects are implemented
-// #[test]
-// #[ignore = "Equipment buffs not yet implemented"]
-// fn test_spider_suit_buff() {
-//     // Setup: Spider-Suit attached to Spider-Punk (2/1)
-//     // Verify: Spider-Punk has 4/3 (base 2/1 + equipment +2/+2)
-//     // Verify: Combat damage reflects buffed power
-// }
+/// Test Equipment buffs
+#[test]
+fn test_spider_suit_buff() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Spider-Suit (Equipment with +2/+2)
+    let spider_suit_id = game.cards.next_id();
+    let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
+    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.controller = p1_id;
+    game.cards.insert(spider_suit_id, spider_suit);
+
+    // Create Spider-Punk (2/1 Creature)
+    let spider_punk_id = game.cards.next_id();
+    let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
+    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.power = Some(2);
+    spider_punk.toughness = Some(1);
+    spider_punk.controller = p1_id;
+    game.cards.insert(spider_punk_id, spider_punk);
+
+    // Put both on battlefield
+    game.battlefield.add(spider_suit_id);
+    game.battlefield.add(spider_punk_id);
+
+    // Check base stats
+    let creature = game.cards.get(spider_punk_id).expect("Creature should exist");
+    assert_eq!(creature.current_power(), 2, "Base power should be 2");
+    assert_eq!(creature.current_toughness(), 1, "Base toughness should be 1");
+
+    // Check effective stats without Equipment
+    assert_eq!(
+        game.get_effective_power(spider_punk_id).unwrap(),
+        2,
+        "Effective power without Equipment should be 2"
+    );
+    assert_eq!(
+        game.get_effective_toughness(spider_punk_id).unwrap(),
+        1,
+        "Effective toughness without Equipment should be 1"
+    );
+
+    // Attach Equipment
+    game.attach_equipment(spider_suit_id, spider_punk_id)
+        .expect("Should attach Equipment");
+
+    // Check effective stats WITH Equipment (+2/+2 from Spider-Suit)
+    assert_eq!(
+        game.get_effective_power(spider_punk_id).unwrap(),
+        4,
+        "Effective power with Spider-Suit should be 4 (2 + 2)"
+    );
+    assert_eq!(
+        game.get_effective_toughness(spider_punk_id).unwrap(),
+        3,
+        "Effective toughness with Spider-Suit should be 3 (1 + 2)"
+    );
+
+    // Detach Equipment
+    game.detach_equipment(spider_suit_id)
+        .expect("Should detach Equipment");
+
+    // Check stats return to normal
+    assert_eq!(
+        game.get_effective_power(spider_punk_id).unwrap(),
+        2,
+        "Effective power after detachment should be 2"
+    );
+    assert_eq!(
+        game.get_effective_toughness(spider_punk_id).unwrap(),
+        1,
+        "Effective toughness after detachment should be 1"
+    );
+}
+
+/// Test multiple Equipment buffs stack
+#[test]
+fn test_multiple_equipment_buffs() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create two Spider-Suits
+    let suit1_id = game.cards.next_id();
+    let mut suit1 = Card::new(suit1_id, CardName::from("Spider-Suit"), p1_id);
+    suit1.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    suit1.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    suit1.controller = p1_id;
+    game.cards.insert(suit1_id, suit1);
+
+    let suit2_id = game.cards.next_id();
+    let mut suit2 = Card::new(suit2_id, CardName::from("Spider-Suit"), p1_id);
+    suit2.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    suit2.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    suit2.controller = p1_id;
+    game.cards.insert(suit2_id, suit2);
+
+    // Create Bear (2/2 Creature)
+    let bear_id = game.cards.next_id();
+    let mut bear = Card::new(bear_id, CardName::from("Bear"), p1_id);
+    bear.types = SmallVec::from_vec(vec![CardType::Creature]);
+    bear.power = Some(2);
+    bear.toughness = Some(2);
+    bear.controller = p1_id;
+    game.cards.insert(bear_id, bear);
+
+    // Put all on battlefield
+    game.battlefield.add(suit1_id);
+    game.battlefield.add(suit2_id);
+    game.battlefield.add(bear_id);
+
+    // Attach both Equipment
+    game.attach_equipment(suit1_id, bear_id)
+        .expect("Should attach first Equipment");
+    game.attach_equipment(suit2_id, bear_id)
+        .expect("Should attach second Equipment");
+
+    // Check stats with both Equipment (+2/+2 + +2/+2 = +4/+4)
+    assert_eq!(
+        game.get_effective_power(bear_id).unwrap(),
+        6,
+        "Effective power with 2 Spider-Suits should be 6 (2 + 2 + 2)"
+    );
+    assert_eq!(
+        game.get_effective_toughness(bear_id).unwrap(),
+        6,
+        "Effective toughness with 2 Spider-Suits should be 6 (2 + 2 + 2)"
+    );
+}
