@@ -327,4 +327,87 @@ K:Equip:3
             "Spider-Suit should be on battlefield after resolve"
         );
     }
+
+    #[test]
+    fn test_equip_ability_e2e_activation() {
+        // E2E test: Directly test Equip ability activation and attachment
+        use crate::core::Keyword;
+        use crate::loader::CardLoader;
+
+        // Create game with two players
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Load Spider-Suit from card data (has Equip:3 and grants +2/+2)
+        let spider_suit_content = r#"
+Name:Spider-Suit
+ManaCost:1
+Types:Artifact Equipment
+S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2 | AddType$ Spider & Hero | Description$ Equipped creature gets +2/+2 and is a Spider Hero in addition to its other types.
+K:Equip:3
+"#;
+        let spider_suit_def = CardLoader::parse(spider_suit_content).expect("Should parse Spider-Suit");
+        let spider_suit_id = game.cards.next_id();
+        let mut spider_suit = spider_suit_def.instantiate(spider_suit_id, p1_id);
+        spider_suit.controller = p1_id;
+
+        // Verify Spider-Suit has Equip keyword and ability
+        assert!(spider_suit.keywords.contains(Keyword::Equip));
+        assert_eq!(spider_suit.activated_abilities.len(), 1);
+        assert!(spider_suit.activated_abilities[0].sorcery_speed);
+
+        game.cards.insert(spider_suit_id, spider_suit);
+
+        // Create a 2/2 creature for P1
+        let creature_id = game.cards.next_id();
+        let mut creature = Card::new(creature_id, CardName::from("Grizzly Bears"), p1_id);
+        creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+        creature.power = Some(2);
+        creature.toughness = Some(2);
+        creature.controller = p1_id;
+        game.cards.insert(creature_id, creature);
+
+        // Put both on battlefield
+        game.battlefield.add(spider_suit_id);
+        game.battlefield.add(creature_id);
+
+        // Verify creature starts at 2/2 with no Equipment
+        let creature_before = game.cards.get(creature_id).expect("Creature should exist");
+        assert_eq!(creature_before.power, Some(2));
+        assert_eq!(creature_before.toughness, Some(2));
+
+        let spider_suit_before = game.cards.get(spider_suit_id).expect("Spider-Suit should exist");
+        assert!(
+            spider_suit_before.attached_to.is_none(),
+            "Spider-Suit should not be attached yet"
+        );
+
+        // Manually activate the Equip ability by calling attach_equipment
+        // (This is what would happen when the ability resolves)
+        game.attach_equipment(spider_suit_id, creature_id)
+            .expect("Should be able to attach Equipment");
+
+        // Verify Spider-Suit is now attached to creature
+        let spider_suit_after = game.cards.get(spider_suit_id).expect("Spider-Suit should exist");
+        assert_eq!(
+            spider_suit_after.attached_to,
+            Some(creature_id),
+            "Spider-Suit should be attached to creature"
+        );
+
+        // Verify the static ability is present
+        // Note: The actual application of static abilities to power/toughness bonuses
+        // requires integration with the layer system and continuous effect processing,
+        // which is tracked in a separate issue. For now, we verify the attachment works.
+        assert_eq!(
+            spider_suit_after.static_abilities.len(),
+            1,
+            "Spider-Suit should have 1 static ability"
+        );
+
+        println!("✓ E2E test passed: Spider-Suit successfully equipped to creature");
+        println!("  - Equipment attached: Spider-Suit → Grizzly Bears");
+        println!("  - Static ability present: grants +2/+2 to equipped creature");
+        println!("  - Note: P/T bonus application requires layer system integration (future work)");
+    }
 }
