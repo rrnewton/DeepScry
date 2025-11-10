@@ -100,6 +100,17 @@ pub enum Effect {
         /// Whether to shuffle after searching
         shuffle: bool,
     },
+
+    /// Attach Equipment to target creature
+    /// Example: Spider-Suit's Equip ability
+    /// Corresponds to: K:Equip:3
+    /// The source_equipment field is filled in when the ability is activated
+    AttachEquipment {
+        /// The Equipment to attach (filled in during activation)
+        source_equipment: CardId,
+        /// Target creature to attach to
+        target_creature: CardId,
+    },
 }
 
 /// Events that can trigger abilities

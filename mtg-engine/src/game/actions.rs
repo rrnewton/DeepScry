@@ -1234,6 +1234,20 @@ impl GameState {
                     self.shuffle_library(*player);
                 }
             }
+            Effect::AttachEquipment {
+                source_equipment,
+                target_creature,
+            } => {
+                // Attach Equipment to target creature
+                // Skip if target is still placeholder (0) - no valid targets found
+                if target_creature.as_u32() == 0 {
+                    // Ability fizzles - no valid targets
+                    return Ok(());
+                }
+
+                // Call the attach_equipment method from Phase 1
+                self.attach_equipment(*source_equipment, *target_creature)?;
+            }
         }
         Ok(())
     }

@@ -1308,6 +1308,26 @@ impl<'a> GameLoop<'a> {
                     destination
                 );
             }
+            Effect::AttachEquipment {
+                source_equipment,
+                target_creature,
+            } => {
+                let equipment_name = self
+                    .game
+                    .cards
+                    .get(*source_equipment)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let creature_name = self
+                    .game
+                    .cards
+                    .get(*target_creature)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message =
+                    format!("{equipment_name} ({source_equipment}) attaches to {creature_name} ({target_creature})");
+                self.game.logger.normal(&message);
+            }
         }
     }
 

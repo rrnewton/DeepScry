@@ -90,6 +90,73 @@ mod tests {
     }
 
     #[test]
+    fn test_equipment_has_equip_ability() {
+        // Test that Equipment with K:Equip:X gets an implicit activated ability
+        use crate::loader::CardLoader;
+
+        // Create a game
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Parse Spider-Suit from its card data text
+        let spider_suit_content = r#"
+Name:Spider-Suit
+ManaCost:1
+Types:Artifact Equipment
+S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2 | AddType$ Spider & Hero | Description$ Equipped creature gets +2/+2 and is a Spider Hero in addition to its other types.
+K:Equip:3
+"#;
+        let spider_suit_def = CardLoader::parse(spider_suit_content).expect("Should parse Spider-Suit");
+
+        // Instantiate the card
+        let spider_suit_id = game.cards.next_id();
+        let spider_suit = spider_suit_def.instantiate(spider_suit_id, p1_id);
+
+        // Verify it has the Equip keyword
+        use crate::core::Keyword;
+        assert!(
+            spider_suit.keywords.contains(Keyword::Equip),
+            "Spider-Suit should have Equip keyword"
+        );
+
+        // Verify it has an activated ability
+        assert_eq!(
+            spider_suit.activated_abilities.len(),
+            1,
+            "Spider-Suit should have 1 activated ability (Equip)"
+        );
+
+        // Verify the ability has the right cost (Equip:3 means {{3}})
+        let equip_ability = &spider_suit.activated_abilities[0];
+        use crate::core::Cost;
+        match &equip_ability.cost {
+            Cost::Mana(mana_cost) => {
+                assert_eq!(mana_cost.generic, 3, "Equip ability should cost {{3}}");
+            }
+            other => panic!("Expected Mana cost, got {:?}", other),
+        }
+
+        // Verify the ability has an AttachEquipment effect
+        use crate::core::Effect;
+        assert_eq!(equip_ability.effects.len(), 1, "Equip ability should have 1 effect");
+        match &equip_ability.effects[0] {
+            Effect::AttachEquipment { source_equipment, .. } => {
+                assert_eq!(
+                    *source_equipment, spider_suit_id,
+                    "AttachEquipment effect should reference Spider-Suit"
+                );
+            }
+            other => panic!("Expected AttachEquipment effect, got {:?}", other),
+        }
+
+        // Verify the description (ManaCost Display doesn't include {})
+        assert_eq!(
+            equip_ability.description, "Equip 3",
+            "Equip ability should have correct description"
+        );
+    }
+
+    #[test]
     fn test_equipment_full_cast_and_resolve() {
         // Create a game with Spider-Suit in hand and a Mountain on the battlefield
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);

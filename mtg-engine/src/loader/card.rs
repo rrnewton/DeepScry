@@ -233,6 +233,33 @@ impl CardDefinition {
             }
         }
 
+        // Add implicit Equip activated ability for Equipment with Equip keyword
+        // Equipment with K:Equip:X should have an activated ability that attaches to a target creature
+        if card.is_artifact() && card.subtypes.iter().any(|st| st.as_str() == "Equipment") {
+            // Check if this Equipment has the Equip keyword with a cost
+            if let Some(KeywordArgs::Equip { cost }) = card.keywords.get_args(Keyword::Equip) {
+                use crate::core::{ActivatedAbility, CardId, Cost, Effect};
+
+                // Create activated ability: "{equip_cost}: Attach to target creature you control"
+                // The target_creature CardId will be filled in when the ability is activated
+                let ability_cost = Cost::Mana(*cost);
+
+                let effects = vec![Effect::AttachEquipment {
+                    source_equipment: id,            // This Equipment
+                    target_creature: CardId::new(0), // Placeholder - filled in during activation
+                }];
+
+                let description = format!("Equip {}", cost);
+
+                card.activated_abilities.push(ActivatedAbility::new(
+                    ability_cost,
+                    effects,
+                    description,
+                    false, // Not a mana ability
+                ));
+            }
+        }
+
         card
     }
 
