@@ -362,8 +362,8 @@ K:Equip:3
         let creature_id = game.cards.next_id();
         let mut creature = Card::new(creature_id, CardName::from("Grizzly Bears"), p1_id);
         creature.types = SmallVec::from_vec(vec![CardType::Creature]);
-        creature.power = Some(2);
-        creature.toughness = Some(2);
+        creature.set_power(Some(2));
+        creature.set_toughness(Some(2));
         creature.controller = p1_id;
         game.cards.insert(creature_id, creature);
 
@@ -373,8 +373,8 @@ K:Equip:3
 
         // Verify creature starts at 2/2 with no Equipment
         let creature_before = game.cards.get(creature_id).expect("Creature should exist");
-        assert_eq!(creature_before.power, Some(2));
-        assert_eq!(creature_before.toughness, Some(2));
+        assert_eq!(creature_before.base_power(), Some(2));
+        assert_eq!(creature_before.base_toughness(), Some(2));
 
         let spider_suit_before = game.cards.get(spider_suit_id).expect("Spider-Suit should exist");
         assert!(

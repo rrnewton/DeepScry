@@ -1061,8 +1061,8 @@ impl<'a> GameLoop<'a> {
 
                     // Format card display based on type
                     if card.is_creature() {
-                        let power = card.power.unwrap_or(0) + card.power_bonus as i8;
-                        let toughness = card.toughness.unwrap_or(0) + card.toughness_bonus as i8;
+                        let power = card.current_power() + card.power_bonus as i8;
+                        let toughness = card.current_toughness() + card.toughness_bonus as i8;
                         println!(
                             "    {} ({}) - {}/{}{}{}",
                             card.name, card_id, power, toughness, tap_status, sickness_status
@@ -1649,8 +1649,8 @@ impl<'a> GameLoop<'a> {
 
                     // Get power/toughness for more detail
                     if let Ok(card) = self.game.cards.get(*attacker_id) {
-                        let power = card.power.unwrap_or(0);
-                        let toughness = card.toughness.unwrap_or(0);
+                        let power = card.current_power();
+                        let toughness = card.current_toughness();
                         let message = format!(
                             "{} declares {} ({}) ({}/{}) as attacker",
                             self.get_player_name(active_player),
@@ -2168,8 +2168,8 @@ impl<'a> GameLoop<'a> {
                         "{} ({}) enters the battlefield as a {}/{} creature",
                         card_name,
                         spell_id,
-                        card.power.unwrap_or(0),
-                        card.toughness.unwrap_or(0)
+                        card.current_power(),
+                        card.current_toughness()
                     );
                     self.game.logger.normal(&message);
                 }

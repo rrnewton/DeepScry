@@ -188,7 +188,7 @@ impl InteractiveController {
                         "Opponent"
                     };
                     let pt = if card.is_creature() {
-                        format!(" {}/{}", card.power.unwrap_or(0), card.toughness.unwrap_or(0))
+                        format!(" {}/{}", card.current_power(), card.current_toughness())
                     } else {
                         String::new()
                     };
@@ -334,7 +334,7 @@ impl InteractiveController {
 
             // Power/Toughness for creatures
             if card.is_creature() {
-                println!("P/T: {}/{}", card.power.unwrap_or(0), card.toughness.unwrap_or(0));
+                println!("P/T: {}/{}", card.current_power(), card.current_toughness());
             }
 
             // Card text

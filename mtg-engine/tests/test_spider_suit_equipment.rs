@@ -187,8 +187,8 @@ fn test_equipment_attachment() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
-    spider_punk.power = Some(2);
-    spider_punk.toughness = Some(1);
+    spider_punk.set_power(Some(2));
+    spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -283,8 +283,8 @@ fn test_multiple_equipment() {
     let creature_id = game.cards.next_id();
     let mut creature = Card::new(creature_id, CardName::from("Bear"), p1_id);
     creature.types = SmallVec::from_vec(vec![CardType::Creature]);
-    creature.power = Some(2);
-    creature.toughness = Some(2);
+    creature.set_power(Some(2));
+    creature.set_toughness(Some(2));
     creature.controller = p1_id;
     game.cards.insert(creature_id, creature);
 
@@ -322,8 +322,8 @@ fn test_spider_suit_buff() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
-    spider_punk.power = Some(2);
-    spider_punk.toughness = Some(1);
+    spider_punk.set_power(Some(2));
+    spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -401,8 +401,8 @@ fn test_multiple_equipment_buffs() {
     let bear_id = game.cards.next_id();
     let mut bear = Card::new(bear_id, CardName::from("Bear"), p1_id);
     bear.types = SmallVec::from_vec(vec![CardType::Creature]);
-    bear.power = Some(2);
-    bear.toughness = Some(2);
+    bear.set_power(Some(2));
+    bear.set_toughness(Some(2));
     bear.controller = p1_id;
     game.cards.insert(bear_id, bear);
 
@@ -448,8 +448,8 @@ fn test_equipment_combat_damage_calculation() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
-    spider_punk.power = Some(2);
-    spider_punk.toughness = Some(1);
+    spider_punk.set_power(Some(2));
+    spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -492,8 +492,8 @@ fn test_equipment_detaches_when_creature_dies() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
-    spider_punk.power = Some(2);
-    spider_punk.toughness = Some(1);
+    spider_punk.set_power(Some(2));
+    spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 

@@ -218,10 +218,14 @@ pub struct Card {
     pub colors: SmallVec<[Color; 2]>,
 
     /// Power (for creatures)
-    pub power: Option<i8>,
+    /// PRIVATE: Use current_power() to get effective power (includes counters & bonuses)
+    /// Only accessed directly inside current_power() implementation
+    power: Option<i8>,
 
     /// Toughness (for creatures)
-    pub toughness: Option<i8>,
+    /// PRIVATE: Use current_toughness() to get effective toughness (includes counters & bonuses)
+    /// Only accessed directly inside current_toughness() implementation
+    toughness: Option<i8>,
 
     /// Temporary power bonus (until end of turn)
     pub power_bonus: i32,
@@ -496,7 +500,30 @@ impl Card {
         self.text = text;
     }
 
+    /// Get base power (without counters or bonuses)
+    /// Most code should use current_power() instead
+    pub fn base_power(&self) -> Option<i8> {
+        self.power
+    }
+
+    /// Set base power
+    pub fn set_power(&mut self, power: Option<i8>) {
+        self.power = power;
+    }
+
+    /// Get base toughness (without counters or bonuses)
+    /// Most code should use current_toughness() instead
+    pub fn base_toughness(&self) -> Option<i8> {
+        self.toughness
+    }
+
+    /// Set base toughness
+    pub fn set_toughness(&mut self, toughness: Option<i8>) {
+        self.toughness = toughness;
+    }
+
     /// Get current power (including counters and temporary bonuses)
+    /// This is the canonical method for reading creature power
     pub fn current_power(&self) -> i8 {
         let base = self.power.unwrap_or(0);
         let plus_counters = self.get_counter(CounterType::P1P1) as i8;
@@ -506,6 +533,7 @@ impl Card {
     }
 
     /// Get current toughness (including counters and temporary bonuses)
+    /// This is the canonical method for reading creature toughness
     pub fn current_toughness(&self) -> i8 {
         let base = self.toughness.unwrap_or(0);
         let plus_counters = self.get_counter(CounterType::P1P1) as i8;
@@ -548,8 +576,8 @@ mod tests {
         let owner = PlayerId::new(100);
         let mut card = Card::new(id, "Test Creature", owner);
 
-        card.power = Some(2);
-        card.toughness = Some(2);
+        card.set_power(Some(2));
+        card.set_toughness(Some(2));
 
         assert_eq!(card.current_power(), 2);
         assert_eq!(card.current_toughness(), 2);
@@ -569,8 +597,8 @@ mod tests {
         let owner = PlayerId::new(100);
         let mut card = Card::new(id, "Test Creature", owner);
 
-        card.power = Some(2);
-        card.toughness = Some(2);
+        card.set_power(Some(2));
+        card.set_toughness(Some(2));
 
         // Add 3 +1/+1 counters
         card.add_counter(CounterType::P1P1, 3);

@@ -14,8 +14,8 @@ fn create_creature(name: &str, power: i8, toughness: i8, cmc: u8) -> Card {
     let owner = PlayerId::new(1);
     let mut card = Card::new(card_id, name, owner);
     card.types.push(CardType::Creature);
-    card.power = Some(power);
-    card.toughness = Some(toughness);
+    card.set_power(Some(power));
+    card.set_toughness(Some(toughness));
     // Set mana cost to generic mana for simplicity
     let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
     mana_cost.generic = cmc;

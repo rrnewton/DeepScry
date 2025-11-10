@@ -165,8 +165,8 @@ impl CardDefinition {
         card.types = SmallVec::from_slice(&self.types);
         card.subtypes = self.subtypes.iter().cloned().collect();
         card.colors = SmallVec::from_slice(&self.colors);
-        card.power = self.power;
-        card.toughness = self.toughness;
+        card.set_power(self.power);
+        card.set_toughness(self.toughness);
         card.text = self.oracle.clone();
 
         // Populate cache after text is set (avoids allocation in gameplay)

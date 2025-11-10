@@ -78,8 +78,8 @@ pub fn format_attackers_prompt(view: &GameStateView, available_creatures: &[Card
             // Try to get power/toughness info
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = card.power.unwrap_or(0);
-                    let toughness = card.toughness.unwrap_or(0);
+                    let power = card.current_power();
+                    let toughness = card.current_toughness();
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -108,8 +108,8 @@ pub fn format_blockers_prompt(view: &GameStateView, available_blockers: &[CardId
         let name = view.card_name(card_id).unwrap_or_else(|| format!("Card {card_id:?}"));
         if let Some(card) = view.get_card(card_id) {
             if card.is_creature() {
-                let power = card.power.unwrap_or(0);
-                let toughness = card.toughness.unwrap_or(0);
+                let power = card.current_power();
+                let toughness = card.current_toughness();
                 output.push_str(&format!("  [{}] {} {}/{}\n", idx, name, power, toughness));
             } else {
                 output.push_str(&format!("  [{}] {}\n", idx, name));
@@ -129,8 +129,8 @@ pub fn format_blockers_prompt(view: &GameStateView, available_blockers: &[CardId
 
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = card.power.unwrap_or(0);
-                    let toughness = card.toughness.unwrap_or(0);
+                    let power = card.current_power();
+                    let toughness = card.current_toughness();
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -185,8 +185,8 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
             // Try to get additional info
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = card.power.unwrap_or(0);
-                    let toughness = card.toughness.unwrap_or(0);
+                    let power = card.current_power();
+                    let toughness = card.current_toughness();
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));

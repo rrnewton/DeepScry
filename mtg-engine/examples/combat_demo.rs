@@ -342,8 +342,8 @@ fn main() {
                             println!(
                                 "    - {} ({}/{})",
                                 card.name,
-                                card.power.unwrap_or(0),
-                                card.toughness.unwrap_or(0)
+                                card.current_power(),
+                                card.current_toughness()
                             );
                         }
                     }
@@ -361,8 +361,8 @@ fn main() {
                             println!(
                                 "    - {} ({}/{}) is blocking",
                                 blocker.name,
-                                blocker.power.unwrap_or(0),
-                                blocker.toughness.unwrap_or(0)
+                                blocker.current_power(),
+                                blocker.current_toughness()
                             );
                         }
                     }
@@ -474,8 +474,8 @@ fn create_creature(
     let card_id = game.next_card_id();
     let mut card = Card::new(card_id, name.to_string(), owner);
     card.types.push(CardType::Creature);
-    card.power = Some(power);
-    card.toughness = Some(toughness);
+    card.set_power(Some(power));
+    card.set_toughness(Some(toughness));
     card.controller = owner;
     game.cards.insert(card_id, card);
     game.battlefield.add(card_id);
@@ -500,8 +500,8 @@ fn print_battlefield(game: &GameState, alice: EntityId<Player>, bob: EntityId<Pl
                 if card.controller == alice && card.is_creature() {
                     Some((
                         card.name.as_str(),
-                        card.power.unwrap_or(0),
-                        card.toughness.unwrap_or(0),
+                        card.current_power(),
+                        card.current_toughness(),
                         card.tapped,
                     ))
                 } else {
@@ -535,8 +535,8 @@ fn print_battlefield(game: &GameState, alice: EntityId<Player>, bob: EntityId<Pl
                 if card.controller == bob && card.is_creature() {
                     Some((
                         card.name.as_str(),
-                        card.power.unwrap_or(0),
-                        card.toughness.unwrap_or(0),
+                        card.current_power(),
+                        card.current_toughness(),
                         card.tapped,
                     ))
                 } else {

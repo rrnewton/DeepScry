@@ -203,8 +203,8 @@ impl GameState {
 
         // Base P/T from printed card
         let base = (
-            creature.power.unwrap_or(0) as i32,
-            creature.toughness.unwrap_or(0) as i32,
+            creature.current_power() as i32,
+            creature.current_toughness() as i32,
         );
 
         // Layer 7a (CR 613.4a): Characteristic-defining abilities

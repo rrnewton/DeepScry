@@ -78,7 +78,7 @@ p1battlefield=Grizzly Bears
                 card.name,
                 if card.tapped { "tapped" } else { "untapped" }
             );
-            if let (Some(p), Some(t)) = (card.power, card.toughness) {
+            if let (Some(p), Some(t)) = (card.base_power(), card.base_toughness()) {
                 println!("    {}/{}", p, t);
             }
         }

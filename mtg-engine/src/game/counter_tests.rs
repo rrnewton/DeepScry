@@ -12,8 +12,8 @@ fn test_put_counter_effect() {
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
     creature.types.push(CardType::Creature);
-    creature.power = Some(2);
-    creature.toughness = Some(2);
+    creature.set_power(Some(2));
+    creature.set_toughness(Some(2));
     game.cards.insert(creature_id, creature);
     game.battlefield.add(creature_id);
 
@@ -42,8 +42,8 @@ fn test_remove_counter_effect() {
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
     creature.types.push(CardType::Creature);
-    creature.power = Some(2);
-    creature.toughness = Some(2);
+    creature.set_power(Some(2));
+    creature.set_toughness(Some(2));
     creature.add_counter(CounterType::P1P1, 5);
     game.cards.insert(creature_id, creature);
     game.battlefield.add(creature_id);
@@ -72,8 +72,8 @@ fn test_counter_undo() {
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
     creature.types.push(CardType::Creature);
-    creature.power = Some(2);
-    creature.toughness = Some(2);
+    creature.set_power(Some(2));
+    creature.set_toughness(Some(2));
     game.cards.insert(creature_id, creature);
     game.battlefield.add(creature_id);
 
@@ -105,8 +105,8 @@ fn test_counter_annihilation_through_effects() {
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
     creature.types.push(CardType::Creature);
-    creature.power = Some(2);
-    creature.toughness = Some(2);
+    creature.set_power(Some(2));
+    creature.set_toughness(Some(2));
     game.cards.insert(creature_id, creature);
     game.battlefield.add(creature_id);
 

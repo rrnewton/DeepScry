@@ -43,8 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let attendant_id = game.next_entity_id();
     let mut attendant = Card::new(attendant_id, "Soul's Attendant".to_string(), alice_id);
     attendant.types.push(CardType::Creature);
-    attendant.power = Some(1);
-    attendant.toughness = Some(1);
+    attendant.set_power(Some(1));
+    attendant.set_toughness(Some(1));
     attendant.mana_cost = ManaCost::from_string("W");
     attendant.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
@@ -70,8 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let visionary_id = game.next_entity_id();
     let mut visionary = Card::new(visionary_id, "Elvish Visionary".to_string(), alice_id);
     visionary.types.push(CardType::Creature);
-    visionary.power = Some(1);
-    visionary.toughness = Some(1);
+    visionary.set_power(Some(1));
+    visionary.set_toughness(Some(1));
     visionary.mana_cost = ManaCost::from_string("1G");
     visionary.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bears_id = game.next_entity_id();
     let mut bears = Card::new(bears_id, "Grizzly Bears".to_string(), bob_id);
     bears.types.push(CardType::Creature);
-    bears.power = Some(2);
-    bears.toughness = Some(2);
+    bears.set_power(Some(2));
+    bears.set_toughness(Some(2));
     bears.mana_cost = ManaCost::from_string("1G");
 
     game.cards.insert(bears_id, bears);
@@ -114,8 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kavu_id = game.next_entity_id();
     let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), alice_id);
     kavu.types.push(CardType::Creature);
-    kavu.power = Some(4);
-    kavu.toughness = Some(2);
+    kavu.set_power(Some(4));
+    kavu.set_toughness(Some(2));
     kavu.mana_cost = ManaCost::from_string("3R");
     kavu.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
@@ -155,8 +155,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for card_id in &game.battlefield.cards {
         if let Ok(card) = game.cards.get(*card_id) {
             if card.owner == alice_id {
-                let p = card.power.unwrap_or(0) as i32;
-                let t = card.toughness.unwrap_or(0) as i32;
+                let p = card.current_power() as i32;
+                let t = card.current_toughness() as i32;
                 let pb = card.power_bonus;
                 let tb = card.toughness_bonus;
                 if pb != 0 || tb != 0 {

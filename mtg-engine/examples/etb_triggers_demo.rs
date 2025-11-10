@@ -58,8 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_id = game.next_entity_id();
     let mut target = Card::new(target_id, "Grizzly Bears".to_string(), bob_id);
     target.types.push(CardType::Creature);
-    target.power = Some(2);
-    target.toughness = Some(2);
+    target.set_power(Some(2));
+    target.set_toughness(Some(2));
     target.mana_cost = ManaCost::from_string("1G");
     game.cards.insert(target_id, target);
     game.battlefield.add(target_id);
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("Alice casts Elvish Visionary (1G)");
         println!("Mana cost: {}", creature.mana_cost);
-        println!("P/T: {}/{}", creature.power.unwrap(), creature.toughness.unwrap());
+        println!("P/T: {}/{}", creature.base_power().unwrap(), creature.base_toughness().unwrap());
         println!("Triggers: {}", creature.triggers.len());
 
         if !creature.triggers.is_empty() {
@@ -106,8 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Elvish Visionary".to_string(), alice_id);
         creature.types.push(CardType::Creature);
-        creature.power = Some(1);
-        creature.toughness = Some(1);
+        creature.set_power(Some(1));
+        creature.set_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("1G");
         creature.triggers.push(Trigger::new(
             TriggerEvent::EntersBattlefield,
@@ -142,7 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check if Grizzly Bears is still alive
     let bears_alive_before = game.battlefield.contains(target_id);
-    let bears_toughness_before = game.cards.get(target_id).ok().and_then(|c| c.toughness).unwrap_or(0);
+    let bears_toughness_before = game.cards.get(target_id).ok().map(|c| c.current_toughness()).unwrap_or(0);
 
     println!(
         "Before: Bob's Grizzly Bears (2/{}) - {}",
@@ -154,8 +154,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kavu_id = game.next_entity_id();
     let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), alice_id);
     kavu.types.push(CardType::Creature);
-    kavu.power = Some(4);
-    kavu.toughness = Some(2);
+    kavu.set_power(Some(4));
+    kavu.set_toughness(Some(2));
     kavu.mana_cost = ManaCost::from_string("3R");
     kavu.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,

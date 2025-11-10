@@ -1823,7 +1823,7 @@ impl FancyTuiController {
         let is_creature = card.as_ref().map(|c| c.is_creature()).unwrap_or(false);
         let pt_str = if is_creature {
             card.as_ref()
-                .map(|c| format!("{}/{}", c.power.unwrap_or(0), c.toughness.unwrap_or(0)))
+                .map(|c| format!("{}/{}", c.current_power(), c.current_toughness()))
                 .unwrap_or_default()
         } else {
             String::new()
@@ -1946,8 +1946,8 @@ impl FancyTuiController {
                 if card.is_creature() {
                     lines.push(Line::from(format!(
                         "P/T: {}/{}",
-                        card.power.unwrap_or(0),
-                        card.toughness.unwrap_or(0)
+                        card.current_power(),
+                        card.current_toughness()
                     )));
                 }
 
