@@ -157,6 +157,76 @@ K:Equip:3
     }
 
     #[test]
+    fn test_equip_ability_target_validation() {
+        // Test that Equip ability only targets creatures you control
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create Spider-Suit (Equipment with Equip:3)
+        let spider_suit_id = game.cards.next_id();
+        let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
+        spider_suit.mana_cost = ManaCost::from_string("1");
+        spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+        spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+        spider_suit.controller = p1_id;
+
+        // Add the Equip activated ability manually (normally added by instantiate)
+        use crate::core::{ActivatedAbility, Cost, Effect};
+        let equip_cost = Cost::Mana(ManaCost::from_string("3"));
+        let equip_effects = vec![Effect::AttachEquipment {
+            source_equipment: spider_suit_id,
+            target_creature: crate::core::CardId::new(0), // Placeholder
+        }];
+        spider_suit.activated_abilities.push(ActivatedAbility::new(
+            equip_cost,
+            equip_effects,
+            "Equip 3".to_string(),
+            false,
+        ));
+        game.cards.insert(spider_suit_id, spider_suit);
+
+        // Create P1's creature (valid target)
+        let p1_creature_id = game.cards.next_id();
+        let mut p1_creature = Card::new(p1_creature_id, CardName::from("Grizzly Bears"), p1_id);
+        p1_creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+        p1_creature.controller = p1_id;
+        game.cards.insert(p1_creature_id, p1_creature);
+
+        // Create P2's creature (invalid target - opponent controls it)
+        let p2_creature_id = game.cards.next_id();
+        let mut p2_creature = Card::new(p2_creature_id, CardName::from("Savannah Lions"), p2_id);
+        p2_creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+        p2_creature.controller = p2_id;
+        game.cards.insert(p2_creature_id, p2_creature);
+
+        // Put Equipment and creatures on battlefield
+        game.battlefield.add(spider_suit_id);
+        game.battlefield.add(p1_creature_id);
+        game.battlefield.add(p2_creature_id);
+
+        // Get valid targets for Equip ability (ability index 0)
+        let valid_targets = game
+            .get_valid_targets_for_ability(spider_suit_id, 0)
+            .expect("Should get valid targets");
+
+        // Should only include P1's creature, not P2's creature
+        assert_eq!(
+            valid_targets.len(),
+            1,
+            "Should have exactly 1 valid target (P1's creature)"
+        );
+        assert!(
+            valid_targets.contains(&p1_creature_id),
+            "Should include P1's creature as valid target"
+        );
+        assert!(
+            !valid_targets.contains(&p2_creature_id),
+            "Should NOT include P2's creature (opponent controls it)"
+        );
+    }
+
+    #[test]
     fn test_equipment_full_cast_and_resolve() {
         // Create a game with Spider-Suit in hand and a Mountain on the battlefield
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);

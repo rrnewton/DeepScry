@@ -776,6 +776,35 @@ impl GameState {
                         }
                     }
                 }
+                Effect::AttachEquipment { target_creature, .. } if target_creature.as_u32() == 0 => {
+                    // Equip targets "creature you control" (CR 702.6a)
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            // Must be a creature
+                            let mut is_valid = card.is_creature();
+
+                            // Must be controlled by the ability's controller
+                            if card.controller != ability_controller {
+                                is_valid = false;
+                            }
+
+                            // Cannot target creatures with shroud
+                            if card.has_shroud() {
+                                is_valid = false;
+                            }
+
+                            // Hexproof doesn't apply (we control both the Equipment and the target)
+                            // but let's keep the check for consistency
+                            if card.has_hexproof() && card.owner != ability_controller {
+                                is_valid = false;
+                            }
+
+                            if is_valid {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 _ => {
                     // Other effects either don't need targets or already have them specified
                 }
