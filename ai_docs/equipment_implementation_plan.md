@@ -1,17 +1,4 @@
----
-title: Implement Equipment attachment system
-status: open
-priority: 2
-issue_type: feature
-depends_on:
-  mtg-3: discovered-from
-created_at: 2025-11-10T11:52:25.419378578+00:00
-updated_at: 2025-11-10T12:02:31.189168862+00:00
----
-
-# Description
-
-## Equipment Attachment Implementation Plan
+# Equipment Attachment Implementation Plan
 
 Based on study of Java Forge implementation (2025-11-10).
 
@@ -233,28 +220,3 @@ Our initial Rust implementation will:
 2. Add helper methods to GameState for finding attached Equipment
 3. Implement basic continuous effects for P/T modification
 4. Test incrementally with Spider-Suit example
-
----
-
-## Implementation Analysis Complete (2025-11-10)
-
-Completed detailed analysis of Java Forge Equipment implementation:
-
-**Java Forge Key Components**:
-- Card.entityAttachedTo field (single GameEntity reference)
-- AttachEffect.resolve() for Equip ability resolution
-- StaticAbilityContinuous with layered effect system
-- Selector language: "Creature.EquippedBy" filters affected cards
-
-**Rust Implementation Strategy**:
-- Card.attached_to: Option<CardId> for Equipment→Creature tracking
-- New continuous_effects.rs module for effect evaluation
-- Equip activated ability with sorcery timing
-- State-based actions for detachment
-- Parse S:Mode$Continuous from card data
-
-**Estimated Work**: ~10-11 hours across 5 phases
-**Status**: Ready to begin implementation
-**Next Step**: Phase 1 - Add attached_to field to Card struct
-
-See ai_docs/equipment_implementation_plan.md for complete details.
