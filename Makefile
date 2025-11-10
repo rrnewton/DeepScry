@@ -109,8 +109,6 @@ validate-impl:
 validate-impl-sequential:
 	@echo "=== Starting sequential validation ==="
 	@echo ""
-	@$(MAKE) validate-fmt-check-step
-	@echo ""
 	@$(MAKE) validate-clippy-step
 	@echo ""
 	@$(MAKE) validate-test-step
@@ -121,12 +119,8 @@ validate-impl-sequential:
 	@echo ""
 
 # Parallel validation steps - these will run concurrently when invoked with -j
-.PHONY: validate-parallel-steps validate-impl-sequential validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step
-validate-parallel-steps: validate-fmt-check-step validate-clippy-step validate-test-step validate-examples-step deck_list
-
-validate-fmt-check-step:
-	@$(MAKE) fmt-check
-	@echo "✓ fmt-check completed"
+.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-test-step validate-examples-step
+validate-parallel-steps: validate-clippy-step validate-test-step validate-examples-step deck_list
 
 validate-clippy-step:
 	@$(MAKE) clippy

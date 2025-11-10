@@ -170,6 +170,13 @@ fi
 if [ "$HAS_REGULAR_CHANGES" = true ] || [ "$HAS_SUBMODULE_CHANGES" = true ]; then
     # If --no-wip-commit is set, skip WIP commit creation but continue with validation
     if [ "$NO_WIP_COMMIT" = true ]; then
+        # Format code before validation (even without WIP commit)
+        echo ""
+        echo -e "${CYAN}Formatting code before validation...${NC}"
+        cargo fmt --all
+        echo -e "${CYAN}✓ Code formatted${NC}"
+        echo ""
+
         echo ""
         echo -e "${YELLOW}Warning: Working copy has uncommitted changes (--no-wip-commit specified)${NC}"
         echo ""
@@ -207,6 +214,13 @@ if [ "$HAS_REGULAR_CHANGES" = true ] || [ "$HAS_SUBMODULE_CHANGES" = true ]; the
             echo ""
             exit 1
         fi
+
+        # Format code before creating WIP commit
+        echo ""
+        echo -e "${CYAN}Formatting code before validation...${NC}"
+        cargo fmt --all
+        echo -e "${CYAN}✓ Code formatted${NC}"
+        echo ""
 
         # Create temporary WIP commit
         echo ""
