@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod combat;
+pub mod continuous_effects;
 pub mod controller;
 pub mod fancy_tui_controller;
 pub mod fixed_script_controller;
@@ -33,6 +34,7 @@ mod test_spider_suit;
 
 pub use actions::GameAction;
 pub use combat::CombatState;
+pub use continuous_effects::PTBreakdown;
 pub use controller::{format_choice_menu, GameStateView, PlayerController};
 pub use fancy_tui_controller::FancyTuiController;
 pub use fixed_script_controller::FixedScriptController;

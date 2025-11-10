@@ -449,59 +449,43 @@ impl GameState {
             .collect()
     }
 
-    /// Get a creature's effective power including Equipment buffs
+    /// Get a creature's effective power using CR 613 layer system.
     ///
-    /// This calculates the creature's power with all bonuses applied:
-    /// - Base power
-    /// - +1/+1 and -1/-1 counters
-    /// - Temporary power_bonus
-    /// - Equipment buffs (e.g., Spider-Suit's +2/+2)
+    /// ## Comprehensive Rules 613.4 (Layer 7: Power and Toughness)
     ///
-    /// ## Equipment Buff Rules
-    /// Currently implements hardcoded buffs for common Equipment:
-    /// - Spider-Suit: +2/+2
-    /// - TODO: Parse static abilities from card data (Phase 3)
+    /// This implements the full layer calculation:
+    /// 1. Layer 7a (CHARACTERISTIC): Characteristic-defining abilities (e.g., Tarmogoyf)
+    /// 2. Layer 7b (SETPT): Effects that SET P/T (e.g., "becomes 0/1")
+    /// 3. Layer 7c (MODIFYPT): Effects and counters that MODIFY P/T (Equipment, +1/+1 counters)
+    /// 4. Layer 7d (SWITCH): Effects that switch P/T
+    ///
+    /// See `continuous_effects::PTBreakdown` for detailed implementation.
+    ///
+    /// ## Current Implementation Status
+    ///
+    /// - ✅ Layer 7a: Stubbed (no characteristic-defining abilities yet)
+    /// - ✅ Layer 7b: Stubbed (no set P/T effects yet)
+    /// - ✅ Layer 7c: Equipment bonuses + counter bonuses
+    /// - ✅ Layer 7d: Stubbed (no switch effects yet)
+    ///
+    /// ## Returns
+    ///
+    /// Final power after applying all layers, or error if creature not found.
     pub fn get_effective_power(&self, creature_id: CardId) -> Result<i32> {
-        let creature = self.cards.get(creature_id)?;
-        let mut power = creature.current_power() as i32;
-
-        // Add Equipment buffs
-        let equipment_list = self.get_attached_equipment(creature_id);
-        for equip_id in equipment_list {
-            let equipment = self.cards.get(equip_id)?;
-            // TODO: Parse static abilities from card data
-            // For now, hardcode Spider-Suit's +2/+2
-            if equipment.name.as_str().eq_ignore_ascii_case("Spider-Suit") {
-                power += 2;
-            }
-        }
-
-        Ok(power)
+        let breakdown = self.get_pt_breakdown(creature_id)?;
+        Ok(breakdown.power())
     }
 
-    /// Get a creature's effective toughness including Equipment buffs
+    /// Get a creature's effective toughness using CR 613 layer system.
     ///
-    /// This calculates the creature's toughness with all bonuses applied:
-    /// - Base toughness
-    /// - +1/+1 and -1/-1 counters
-    /// - Temporary toughness_bonus
-    /// - Equipment buffs (e.g., Spider-Suit's +2/+2)
+    /// See `get_effective_power()` for full documentation of the layer system.
+    ///
+    /// ## Returns
+    ///
+    /// Final toughness after applying all layers, or error if creature not found.
     pub fn get_effective_toughness(&self, creature_id: CardId) -> Result<i32> {
-        let creature = self.cards.get(creature_id)?;
-        let mut toughness = creature.current_toughness() as i32;
-
-        // Add Equipment buffs
-        let equipment_list = self.get_attached_equipment(creature_id);
-        for equip_id in equipment_list {
-            let equipment = self.cards.get(equip_id)?;
-            // TODO: Parse static abilities from card data
-            // For now, hardcode Spider-Suit's +2/+2
-            if equipment.name.as_str().eq_ignore_ascii_case("Spider-Suit") {
-                toughness += 2;
-            }
-        }
-
-        Ok(toughness)
+        let breakdown = self.get_pt_breakdown(creature_id)?;
+        Ok(breakdown.toughness())
     }
 
     /// Get valid targets for a spell's effects
