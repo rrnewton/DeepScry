@@ -81,12 +81,15 @@ impl RichInputController {
     ) -> Option<SpellAbility> {
         let cmd = command.trim().to_lowercase();
 
-        // Handle numeric choice (0-based indexing matching menu display)
-        // Choice N selects available[N] where N is 0..available.len()
-        // Out of bounds values pass priority
+        // Handle numeric choice (matching menu display format from format_choice_menu)
+        // [0] = Pass priority (return None)
+        // [1] to [N] = available[0] to available[N-1] (menu indices shifted by 1)
+        // Out of bounds values (idx > available.len()) also pass priority
         if let Ok(idx) = cmd.parse::<usize>() {
-            if idx < available.len() {
-                return Some(available[idx].clone());
+            if idx == 0 {
+                return None; // [0] = Pass priority
+            } else if idx <= available.len() {
+                return Some(available[idx - 1].clone()); // [1] = available[0], [2] = available[1], etc.
             } else {
                 return None; // Out of bounds = pass priority
             }
@@ -401,8 +404,8 @@ mod tests {
     #[test]
     fn test_numeric_choice() {
         let player_id = EntityId::new(1);
-        // Use 0-based indexing: choice "0" selects first ability (index 0)
-        let mut controller = RichInputController::new(player_id, vec!["0".to_string()]);
+        // Choice "1" selects first ability (available[0]), matching menu format where [0] = Pass
+        let mut controller = RichInputController::new(player_id, vec!["1".to_string()]);
         let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
@@ -412,6 +415,22 @@ mod tests {
 
         let choice = controller.choose_spell_ability_to_play(&view, &abilities);
         assert!(choice.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_numeric_choice_pass() {
+        let player_id = EntityId::new(1);
+        // Choice "0" means pass priority
+        let mut controller = RichInputController::new(player_id, vec!["0".to_string()]);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let abilities = vec![SpellAbility::PlayLand {
+            card_id: EntityId::new(10),
+        }];
+
+        let choice = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(choice.unwrap().is_none()); // Should pass (return None)
     }
 
     #[test]

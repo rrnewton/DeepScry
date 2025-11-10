@@ -1,0 +1,25 @@
+[metadata]
+Name:Spider-Suit Equipment Bug
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:Demonstrates bug where Equipment artifacts don't resolve from the stack to battlefield. Spider-Suit should enter the battlefield as an Equipment artifact after casting.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Spider-Suit; Mountain
+p0battlefield=Mountain
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

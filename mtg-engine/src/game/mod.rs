@@ -28,6 +28,8 @@ pub mod zero_controller;
 mod controller_tests;
 #[cfg(test)]
 mod counter_tests;
+#[cfg(test)]
+mod test_spider_suit;
 
 pub use actions::GameAction;
 pub use combat::CombatState;
