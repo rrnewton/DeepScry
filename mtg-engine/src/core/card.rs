@@ -338,7 +338,11 @@ impl Card {
     }
 
     pub fn is_equipment(&self) -> bool {
-        self.is_artifact() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("equipment"))
+        self.is_artifact()
+            && self
+                .subtypes
+                .iter()
+                .any(|s| s.as_str().eq_ignore_ascii_case("equipment"))
     }
 
     /// Check if this Equipment/Aura is currently attached to something

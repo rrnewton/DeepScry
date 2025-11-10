@@ -236,6 +236,37 @@ impl GameState {
 
     /// Move a card from one zone to another
     pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
+        // State-based action: If a creature is leaving the battlefield, detach all Equipment from it
+        if from == Zone::Battlefield {
+            if let Ok(card) = self.cards.get(card_id) {
+                if card.is_creature() {
+                    // Collect Equipment to detach (to avoid borrow issues)
+                    let equipment_to_detach: Vec<CardId> = self
+                        .battlefield
+                        .cards
+                        .iter()
+                        .filter_map(|&equip_id| {
+                            let equip = self.cards.get(equip_id).ok()?;
+                            if equip.is_equipment() && equip.attached_to == Some(card_id) {
+                                Some(equip_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Detach all Equipment
+                    for equip_id in equipment_to_detach {
+                        if let Ok(equip) = self.cards.get_mut(equip_id) {
+                            equip.attached_to = None;
+                            self.logger
+                                .verbose(&format!("{} detaches (creature left battlefield)", equip.name));
+                        }
+                    }
+                }
+            }
+        }
+
         // Remove from source zone
         let removed = match from {
             Zone::Battlefield => self.battlefield.remove(card_id),

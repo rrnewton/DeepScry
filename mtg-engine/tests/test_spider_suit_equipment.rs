@@ -23,6 +23,7 @@
 
 use mtg_forge_rs::core::{Card, CardName, CardType, ManaCost, Subtype};
 use mtg_forge_rs::game::GameState;
+use mtg_forge_rs::zones::Zone;
 use smallvec::SmallVec;
 
 #[test]
@@ -219,7 +220,10 @@ fn test_equipment_attachment() {
 
     // Verify detachment
     let equipment = game.cards.get(spider_suit_id).expect("Equipment should exist");
-    assert!(!equipment.is_attached(), "Equipment should not be attached after detach");
+    assert!(
+        !equipment.is_attached(),
+        "Equipment should not be attached after detach"
+    );
     assert_eq!(
         equipment.get_attached_to(),
         None,
@@ -277,14 +281,8 @@ fn test_multiple_equipment() {
     // Verify both are attached
     let attached = game.get_attached_equipment(creature_id);
     assert_eq!(attached.len(), 2, "Should have two Equipment attached");
-    assert!(
-        attached.contains(&equip1_id),
-        "Should include first Equipment"
-    );
-    assert!(
-        attached.contains(&equip2_id),
-        "Should include second Equipment"
-    );
+    assert!(attached.contains(&equip1_id), "Should include first Equipment");
+    assert!(attached.contains(&equip2_id), "Should include second Equipment");
 }
 
 /// Test Equipment buffs
@@ -348,8 +346,7 @@ fn test_spider_suit_buff() {
     );
 
     // Detach Equipment
-    game.detach_equipment(spider_suit_id)
-        .expect("Should detach Equipment");
+    game.detach_equipment(spider_suit_id).expect("Should detach Equipment");
 
     // Check stats return to normal
     assert_eq!(
@@ -415,5 +412,121 @@ fn test_multiple_equipment_buffs() {
         game.get_effective_toughness(bear_id).unwrap(),
         6,
         "Effective toughness with 2 Spider-Suits should be 6 (2 + 2 + 2)"
+    );
+}
+
+/// Test Equipment buffs are calculated correctly for combat
+/// NOTE: This test verifies the buff calculation works, but doesn't test full combat workflow
+/// (which requires player controllers). Combat integration is tested via e2e tests.
+#[test]
+fn test_equipment_combat_damage_calculation() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Spider-Suit (Equipment with +2/+2)
+    let spider_suit_id = game.cards.next_id();
+    let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
+    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.controller = p1_id;
+    game.cards.insert(spider_suit_id, spider_suit);
+
+    // Create Spider-Punk (2/1 Creature)
+    let spider_punk_id = game.cards.next_id();
+    let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
+    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.power = Some(2);
+    spider_punk.toughness = Some(1);
+    spider_punk.controller = p1_id;
+    game.cards.insert(spider_punk_id, spider_punk);
+
+    // Put both on battlefield
+    game.battlefield.add(spider_suit_id);
+    game.battlefield.add(spider_punk_id);
+
+    // Attach Equipment to Spider-Punk
+    game.attach_equipment(spider_suit_id, spider_punk_id)
+        .expect("Should attach Equipment");
+
+    // Verify buffed power is calculated correctly for combat
+    // Combat damage calculation in assign_combat_damage() uses get_effective_power()
+    assert_eq!(
+        game.get_effective_power(spider_punk_id).unwrap(),
+        4,
+        "Spider-Punk should have 4 power with Equipment (2 base + 2 from Equipment)"
+    );
+
+    // Verify base power unchanged
+    let creature = game.cards.get(spider_punk_id).unwrap();
+    assert_eq!(creature.current_power(), 2, "Base power should still be 2");
+}
+
+/// Test Equipment detaches when creature dies (state-based action)
+#[test]
+fn test_equipment_detaches_when_creature_dies() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Spider-Suit (Equipment)
+    let spider_suit_id = game.cards.next_id();
+    let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
+    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.controller = p1_id;
+    game.cards.insert(spider_suit_id, spider_suit);
+
+    // Create Spider-Punk (2/1 Creature)
+    let spider_punk_id = game.cards.next_id();
+    let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
+    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.power = Some(2);
+    spider_punk.toughness = Some(1);
+    spider_punk.controller = p1_id;
+    game.cards.insert(spider_punk_id, spider_punk);
+
+    // Put both on battlefield
+    game.battlefield.add(spider_suit_id);
+    game.battlefield.add(spider_punk_id);
+
+    // Attach Equipment
+    game.attach_equipment(spider_suit_id, spider_punk_id)
+        .expect("Should attach Equipment");
+
+    // Verify Equipment is attached
+    let equipment = game.cards.get(spider_suit_id).expect("Equipment should exist");
+    assert!(equipment.is_attached(), "Equipment should be attached");
+    assert_eq!(equipment.get_attached_to(), Some(spider_punk_id));
+
+    // Move creature to graveyard (simulating death)
+    game.move_card(spider_punk_id, Zone::Battlefield, Zone::Graveyard, p1_id)
+        .expect("Should move creature to graveyard");
+
+    // Verify Equipment detached automatically (state-based action)
+    let equipment = game.cards.get(spider_suit_id).expect("Equipment should exist");
+    assert!(
+        !equipment.is_attached(),
+        "Equipment should auto-detach when creature dies"
+    );
+    assert_eq!(
+        equipment.get_attached_to(),
+        None,
+        "Equipment should not be attached to anything"
+    );
+
+    // Equipment should still be on battlefield
+    assert!(
+        game.battlefield.contains(spider_suit_id),
+        "Equipment should remain on battlefield"
+    );
+
+    // Creature should be in graveyard
+    assert!(
+        !game.battlefield.contains(spider_punk_id),
+        "Creature should not be on battlefield"
+    );
+    let zones = game.get_player_zones(p1_id).unwrap();
+    assert!(
+        zones.graveyard.contains(spider_punk_id),
+        "Creature should be in graveyard"
     );
 }

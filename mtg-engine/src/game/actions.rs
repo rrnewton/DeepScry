@@ -369,11 +369,13 @@ impl GameState {
         let equipment_name = equipment.name.to_string();
         if let Some(old_target) = equipment.attached_to {
             // Log detachment
-            let old_target_name = self.cards.get(old_target).map(|c| c.name.to_string()).unwrap_or_else(|_| "unknown".to_string());
-            self.logger.verbose(&format!(
-                "{} detaches from {}",
-                equipment_name, old_target_name
-            ));
+            let old_target_name = self
+                .cards
+                .get(old_target)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            self.logger
+                .verbose(&format!("{} detaches from {}", equipment_name, old_target_name));
         }
 
         // Attach to new target
@@ -381,7 +383,11 @@ impl GameState {
         equipment.attached_to = Some(target_id);
 
         // Log attachment
-        let target_name = self.cards.get(target_id).map(|c| c.name.to_string()).unwrap_or_else(|_| "unknown".to_string());
+        let target_name = self
+            .cards
+            .get(target_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
         self.logger
             .verbose(&format!("{} attaches to {}", equipment_name, target_name));
 
@@ -406,7 +412,11 @@ impl GameState {
 
         if let Some(target_id) = target_id_opt {
             // Log detachment
-            let target_name = self.cards.get(target_id).map(|c| c.name.to_string()).unwrap_or_else(|_| "unknown".to_string());
+            let target_name = self
+                .cards
+                .get(target_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
             self.logger
                 .verbose(&format!("{} detaches from {}", equipment_name, target_name));
 
@@ -2022,7 +2032,10 @@ impl GameState {
                 continue; // This creature doesn't deal damage in this step
             }
 
-            let mut remaining_power = attacker.current_power();
+            // Use effective power (includes Equipment buffs)
+            let mut remaining_power = self
+                .get_effective_power(attacker_id)
+                .unwrap_or(attacker.current_power() as i32);
 
             if remaining_power <= 0 {
                 continue; // 0 or negative power deals no damage
@@ -2071,13 +2084,13 @@ impl GameState {
                         // MTG Rules 510.1c: With trample OR multiple blockers,
                         // assign at least lethal to each before moving to next.
                         // For simplicity, we assign exactly lethal.
-                        remaining_power.min(lethal_damage)
+                        remaining_power.min(lethal_damage as i32)
                     };
 
                     if damage_to_assign > 0 {
-                        *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign as i32;
+                        *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign;
                         // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign as i32;
+                        *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign;
                         // Track deathtouch damage (MTG Rules 702.2b)
                         if has_deathtouch {
                             deathtouch_damaged_creatures.insert(*blocker_id);
@@ -2091,9 +2104,9 @@ impl GameState {
                 // MTG Rules 702.19
                 if attacker.has_trample() && remaining_power > 0 {
                     if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
-                        *damage_to_players.entry(defending_player).or_insert(0) += remaining_power as i32;
+                        *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                         // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power as i32;
+                        *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
                     }
                 }
 
@@ -2118,11 +2131,14 @@ impl GameState {
                         continue;
                     }
 
-                    let blocker_power = blocker.current_power();
+                    // Use effective power (includes Equipment buffs)
+                    let blocker_power = self
+                        .get_effective_power(*blocker_id)
+                        .unwrap_or(blocker.current_power() as i32);
                     if blocker_power > 0 {
-                        *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power as i32;
+                        *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
                         // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power as i32;
+                        *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
                         // Track deathtouch damage from blocker (MTG Rules 702.2b)
                         if blocker.has_deathtouch() {
                             deathtouch_damaged_creatures.insert(attacker_id);
@@ -2132,9 +2148,9 @@ impl GameState {
             } else {
                 // Unblocked attacker deals damage to defending player
                 if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
-                    *damage_to_players.entry(defending_player).or_insert(0) += remaining_power as i32;
+                    *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                     // Track damage for lifelink
-                    *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power as i32;
+                    *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
                 }
             }
         }
