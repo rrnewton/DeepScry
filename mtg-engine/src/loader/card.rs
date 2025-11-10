@@ -184,6 +184,9 @@ impl CardDefinition {
         // Parse activated abilities
         card.activated_abilities = self.parse_activated_abilities();
 
+        // Parse static abilities (continuous effects)
+        card.static_abilities = self.parse_static_abilities();
+
         // Add implicit mana ability for basic lands
         // Basic lands (Plains, Island, Swamp, Mountain, Forest) have an implicit "{T}: Add {color}"
         // ability that's not written in the card file
@@ -1255,6 +1258,97 @@ impl CardDefinition {
             // Only add if we have effects
             if !effects.is_empty() {
                 abilities.push(ActivatedAbility::new(cost, effects, description, is_mana_ability));
+            }
+        }
+
+        abilities
+    }
+
+    /// Parse static abilities (S: lines) that create continuous effects
+    ///
+    /// Parses S:Mode$ Continuous lines from card data, which define Equipment bonuses,
+    /// anthem effects, and other continuous effects that don't use the stack.
+    ///
+    /// ## Example Spider-Suit
+    ///
+    /// ```text
+    /// S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2
+    /// ```
+    ///
+    /// This creates a StaticAbility::ModifyPT that grants +2/+2 to the equipped creature
+    /// in CR 613 Layer 7c (MODIFYPT).
+    fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
+        use crate::core::{AffectedSelector, StaticAbility};
+        let mut abilities = Vec::new();
+
+        for ability in &self.raw_abilities {
+            if !ability.starts_with("S:") {
+                continue;
+            }
+
+            // Parse S:Mode$ Continuous lines
+            if !ability.contains("Mode$ Continuous") {
+                continue;
+            }
+
+            // Parse parameters by splitting on |
+            let mut affected = AffectedSelector::Self_;
+            let mut power = 0;
+            let mut toughness = 0;
+            let mut description = String::new();
+
+            // Split by | and parse each parameter
+            for param in ability.split('|') {
+                let param = param.trim();
+                if let Some((key, value)) = param.split_once('$') {
+                    let key = key.trim();
+                    let value = value.trim();
+
+                    match key {
+                        "Affected" => {
+                            affected = match value {
+                                "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
+                                "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
+                                "Creature" => AffectedSelector::AllCreatures,
+                                "Card.Self" => AffectedSelector::Self_,
+                                _ => {
+                                    eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
+                                    AffectedSelector::Self_
+                                }
+                            };
+                        }
+                        "AddPower" => {
+                            // Remove leading + if present, then parse
+                            let value_trimmed = value.trim_start_matches('+');
+                            power = value_trimmed.parse().unwrap_or_else(|_| {
+                                eprintln!("Warning: Failed to parse AddPower$ '{}' in '{}'", value, ability);
+                                0
+                            });
+                        }
+                        "AddToughness" => {
+                            // Remove leading + if present, then parse
+                            let value_trimmed = value.trim_start_matches('+');
+                            toughness = value_trimmed.parse().unwrap_or_else(|_| {
+                                eprintln!("Warning: Failed to parse AddToughness$ '{}' in '{}'", value, ability);
+                                0
+                            });
+                        }
+                        "Description" => {
+                            description = value.to_string();
+                        }
+                        _ => {} // Ignore other parameters (e.g., AddType$)
+                    }
+                }
+            }
+
+            // Only create the ability if we have a power or toughness bonus
+            if power != 0 || toughness != 0 {
+                abilities.push(StaticAbility::ModifyPT {
+                    affected,
+                    power,
+                    toughness,
+                    description,
+                });
             }
         }
 

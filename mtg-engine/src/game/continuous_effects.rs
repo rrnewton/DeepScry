@@ -177,7 +177,7 @@ impl GameState {
     ///
     /// - ✅ Layer 7a: Stubbed (returns None - no characteristic-defining abilities yet)
     /// - ✅ Layer 7b: Stubbed (returns None - no set P/T effects yet)
-    /// - ✅ Layer 7c (effects): Calculates Equipment bonuses (hardcoded Spider-Suit for now)
+    /// - ✅ Layer 7c (effects): Parses and applies Equipment bonuses from static abilities
     /// - ✅ Layer 7c (counters): Calculates +1/+1 and -1/-1 counter bonuses
     /// - ✅ Layer 7d: Stubbed (returns false - no switch effects yet)
     ///
@@ -246,13 +246,15 @@ impl GameState {
     /// ## Current Implementation
     ///
     /// - Finds all Equipment attached to the creature
-    /// - Hardcoded: Spider-Suit grants +2/+2
-    /// - TODO (Phase 3): Parse static abilities from card data instead of hardcoding
+    /// - Reads parsed static abilities (StaticAbility::ModifyPT) from Equipment
+    /// - Applies bonuses from abilities that affect Creature.EquippedBy
     ///
     /// ## Returns
     ///
     /// `(power_bonus, toughness_bonus)` from all continuous effects.
     fn calculate_modifypt_effects(&self, creature_id: CardId) -> Result<(i32, i32)> {
+        use crate::core::{AffectedSelector, StaticAbility};
+
         let mut power_bonus = 0;
         let mut toughness_bonus = 0;
 
@@ -262,12 +264,37 @@ impl GameState {
         for equip_id in equipment_list {
             let equipment = self.cards.get(equip_id)?;
 
-            // TODO(mtg-98df7d): Replace with parsed static abilities
-            // Instead of hardcoding Spider-Suit, parse:
-            //   S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2
-            if equipment.name.as_str().eq_ignore_ascii_case("Spider-Suit") {
-                power_bonus += 2;
-                toughness_bonus += 2;
+            // Process all static abilities on this Equipment
+            for ability in &equipment.static_abilities {
+                match ability {
+                    StaticAbility::ModifyPT {
+                        affected,
+                        power,
+                        toughness,
+                        description: _,
+                    } => {
+                        // Check if this ability affects the equipped creature
+                        match affected {
+                            AffectedSelector::CreatureEquippedBy => {
+                                // This Equipment grants bonuses to the creature it's attached to
+                                power_bonus += power;
+                                toughness_bonus += toughness;
+                            }
+                            AffectedSelector::CreaturesYouControl => {
+                                // TODO: Check if creature_id is controlled by equipment's owner
+                                // For now, skip these (anthems are not Equipment-specific)
+                            }
+                            AffectedSelector::AllCreatures => {
+                                // TODO: Apply to all creatures on battlefield
+                                // For now, skip these (mass effects are rare on Equipment)
+                            }
+                            AffectedSelector::Self_ => {
+                                // Equipment affecting itself (not the equipped creature)
+                                // Skip - not relevant for this creature's P/T
+                            }
+                        }
+                    }
+                }
             }
         }
 

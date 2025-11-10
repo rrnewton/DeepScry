@@ -21,10 +21,31 @@
 //!
 //! See tracking issue mtg-TODO for Equipment implementation.
 
-use mtg_forge_rs::core::{Card, CardName, CardType, ManaCost, Subtype};
+use mtg_forge_rs::core::{
+    AffectedSelector, Card, CardId, CardName, CardType, ManaCost, PlayerId, StaticAbility, Subtype,
+};
 use mtg_forge_rs::game::GameState;
 use mtg_forge_rs::zones::Zone;
 use smallvec::SmallVec;
+
+/// Helper function to create a Spider-Suit Equipment card with its static ability
+fn create_spider_suit(id: CardId, owner: PlayerId) -> Card {
+    let mut spider_suit = Card::new(id, CardName::from("Spider-Suit"), owner);
+    spider_suit.mana_cost = ManaCost::from_string("1");
+    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+
+    // Add static ability: +2/+2 to equipped creature
+    // Corresponds to: S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2
+    spider_suit.static_abilities.push(StaticAbility::ModifyPT {
+        affected: AffectedSelector::CreatureEquippedBy,
+        power: 2,
+        toughness: 2,
+        description: "Equipped creature gets +2/+2".to_string(),
+    });
+
+    spider_suit
+}
 
 #[test]
 fn test_spider_suit_enters_battlefield() {
@@ -293,9 +314,7 @@ fn test_spider_suit_buff() {
 
     // Create Spider-Suit (Equipment with +2/+2)
     let spider_suit_id = game.cards.next_id();
-    let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    let mut spider_suit = create_spider_suit(spider_suit_id, p1_id);
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
 
@@ -369,16 +388,12 @@ fn test_multiple_equipment_buffs() {
 
     // Create two Spider-Suits
     let suit1_id = game.cards.next_id();
-    let mut suit1 = Card::new(suit1_id, CardName::from("Spider-Suit"), p1_id);
-    suit1.types = SmallVec::from_vec(vec![CardType::Artifact]);
-    suit1.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    let mut suit1 = create_spider_suit(suit1_id, p1_id);
     suit1.controller = p1_id;
     game.cards.insert(suit1_id, suit1);
 
     let suit2_id = game.cards.next_id();
-    let mut suit2 = Card::new(suit2_id, CardName::from("Spider-Suit"), p1_id);
-    suit2.types = SmallVec::from_vec(vec![CardType::Artifact]);
-    suit2.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    let mut suit2 = create_spider_suit(suit2_id, p1_id);
     suit2.controller = p1_id;
     game.cards.insert(suit2_id, suit2);
 
@@ -425,9 +440,7 @@ fn test_equipment_combat_damage_calculation() {
 
     // Create Spider-Suit (Equipment with +2/+2)
     let spider_suit_id = game.cards.next_id();
-    let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    let mut spider_suit = create_spider_suit(spider_suit_id, p1_id);
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
 

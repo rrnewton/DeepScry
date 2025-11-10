@@ -162,6 +162,65 @@ impl Trigger {
     }
 }
 
+/// Static ability that creates continuous effects
+///
+/// ## CR 613: Interaction of Continuous Effects
+///
+/// Static abilities create continuous effects that modify characteristics
+/// of game objects. They are always "on" and don't use the stack.
+///
+/// Example from Spider-Suit:
+/// ```text
+/// S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2
+/// ```
+///
+/// This creates a continuous effect in Layer 7c (MODIFYPT) that gives
+/// the equipped creature +2/+2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StaticAbility {
+    /// Continuous effect that modifies power/toughness
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | AddPower$ X | AddToughness$ Y`
+    /// Applied in CR 613 Layer 7c (MODIFYPT)
+    ModifyPT {
+        /// Selector for which cards are affected
+        /// Example: "Creature.EquippedBy" = creature equipped by this Equipment
+        /// Example: "Creature.YouCtrl" = creatures you control
+        affected: AffectedSelector,
+
+        /// Power bonus (can be negative)
+        power: i32,
+
+        /// Toughness bonus (can be negative)
+        toughness: i32,
+
+        /// Description for logging
+        description: String,
+    },
+}
+
+/// Selector for which cards are affected by a static ability
+///
+/// Parsed from the `Affected$` parameter in card scripts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AffectedSelector {
+    /// The creature equipped by this Equipment
+    /// Corresponds to: `Affected$ Creature.EquippedBy`
+    CreatureEquippedBy,
+
+    /// Creatures you control
+    /// Corresponds to: `Affected$ Creature.YouCtrl`
+    CreaturesYouControl,
+
+    /// All creatures
+    /// Corresponds to: `Affected$ Creature`
+    AllCreatures,
+
+    /// This card itself
+    /// Corresponds to: `Affected$ Card.Self`
+    Self_,
+}
+
 /// Cache for expensive string operations on ActivatedAbility
 /// Pre-computed at ability creation time to avoid repeated allocations during gameplay
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

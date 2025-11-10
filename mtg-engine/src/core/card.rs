@@ -267,6 +267,11 @@ pub struct Card {
     /// These can be activated by paying their cost
     pub activated_abilities: Vec<crate::core::ActivatedAbility>,
 
+    /// Static abilities that create continuous effects
+    /// Example: Equipment giving +2/+2 to equipped creature
+    /// Applied via CR 613 layer system
+    pub static_abilities: Vec<crate::core::StaticAbility>,
+
     /// Equipment/Aura attachment tracking
     /// - For Equipment/Aura: points to the creature this is attached to
     /// - For other cards: should be None
@@ -305,6 +310,7 @@ impl Card {
             effects: Vec::new(),
             triggers: Vec::new(),
             activated_abilities: Vec::new(),
+            static_abilities: Vec::new(),
             attached_to: None,
         }
     }
