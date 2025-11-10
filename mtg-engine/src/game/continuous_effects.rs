@@ -24,6 +24,9 @@
 //!   - Example: Anthem effects ("Creatures you control get +1/+1")
 //!   - Example: +1/+1 counters, -1/-1 counters
 //!   - **Note**: CR 613.4c explicitly includes both effects AND counters in this layer
+//!   - **Implementation**: We separate effects and counters into distinct fields
+//!     (`modifypt_effects` and `modifypt_counters`) for code clarity, matching
+//!     Java Forge's `StatBreakdown` structure. Both cite CR 613.4c.
 //!
 //! - **Layer 7d (SWITCH)**: Effects that switch power and toughness (CR 613.4d)
 //!   - Example: "Switch target creature's power and toughness"
@@ -41,10 +44,25 @@ use crate::Result;
 
 /// Power/Toughness breakdown showing contribution from each layer.
 ///
-/// This structure implements the calculation from CR 613.4:
+/// This structure implements the calculation from CR 613.4 with an explicit
+/// separation of continuous effects and counters (matching Java Forge):
 /// ```text
-/// Final P/T = characteristic_value → setpt_value → modifypt_boost → switch
+/// Final P/T = base → Layer 7a → Layer 7b → Layer 7c (effects) → Layer 7c (counters) → Layer 7d
 /// ```
+///
+/// ## Design Choice: Separating Effects and Counters
+///
+/// **CR 613.4c states**: "Effects and counters that modify power and/or toughness"
+/// are applied in the same layer. However, like Java Forge's `StatBreakdown`, we
+/// separate them into distinct fields (`modifypt_effects` and `modifypt_counters`)
+/// because:
+///
+/// 1. **Code clarity**: Effects (Equipment, anthems) are conceptually different from counters
+/// 2. **Debugging**: Easier to see what each source contributes to final P/T
+/// 3. **Java Forge compatibility**: Matches their proven architecture exactly
+///
+/// Both fields cite CR 613.4c and are applied sequentially within that layer.
+/// The final result is identical to applying them simultaneously.
 ///
 /// ## CR 613.5 Example (Gray Ogre)
 ///
@@ -75,14 +93,23 @@ pub struct PTBreakdown {
     pub setpt_value: Option<(i32, i32)>,
 
     /// Layer 7c (CR 613.4c): Continuous effects that MODIFY P/T.
-    /// This includes Equipment bonuses, anthem effects, etc.
+    ///
+    /// This includes Equipment bonuses, anthem effects, Giant Growth, etc.
     /// These ADD to the current P/T.
+    ///
+    /// **Note**: Applied BEFORE `modifypt_counters` in our implementation,
+    /// though CR 613.4c technically groups them in the same layer.
     pub modifypt_effects: (i32, i32),
 
     /// Layer 7c (CR 613.4c): Counters that modify P/T.
-    /// CR 613.4c groups these with modifypt_effects, but we separate them
-    /// for clarity (matching Java Forge's StatBreakdown structure).
+    ///
+    /// This includes +1/+1 counters, -1/-1 counters, etc.
     /// These ADD to the current P/T.
+    ///
+    /// **Implementation Note**: While CR 613.4c groups "effects and counters"
+    /// together in the same layer, we separate them into distinct fields
+    /// (like Java Forge's `StatBreakdown`) for code clarity. Both cite the
+    /// same CR 613.4c rule. Applied AFTER `modifypt_effects`.
     pub modifypt_counters: (i32, i32),
 
     /// Layer 7d (CR 613.4d): Has power/toughness been switched?
