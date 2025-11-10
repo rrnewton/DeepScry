@@ -154,6 +154,9 @@ K:Equip:3
             equip_ability.description, "Equip 3",
             "Equip ability should have correct description"
         );
+
+        // Verify it's marked as sorcery-speed (CR 702.6a: "Activate only as a sorcery")
+        assert!(equip_ability.sorcery_speed, "Equip ability should be sorcery-speed");
     }
 
     #[test]

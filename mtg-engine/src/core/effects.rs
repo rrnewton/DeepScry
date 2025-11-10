@@ -282,6 +282,11 @@ pub struct ActivatedAbility {
     /// Whether this is a mana ability (doesn't use the stack)
     pub is_mana_ability: bool,
 
+    /// Whether this ability can only be activated at sorcery speed
+    /// "Activate only as a sorcery" (CR 602.5d, CR 307.5)
+    /// Requires: priority, main phase, your turn, stack empty
+    pub sorcery_speed: bool,
+
     /// Cache for expensive string operations (computed at creation time)
     pub cache: AbilityCache,
 }
@@ -296,6 +301,21 @@ impl ActivatedAbility {
             effects,
             description,
             is_mana_ability,
+            sorcery_speed: false, // Default to instant speed
+            cache,
+        }
+    }
+
+    /// Create a new sorcery-speed activated ability
+    pub fn new_sorcery_speed(cost: crate::core::Cost, effects: Vec<Effect>, description: String) -> Self {
+        let cache = AbilityCache::new(&description);
+
+        ActivatedAbility {
+            cost,
+            effects,
+            description,
+            is_mana_ability: false, // Sorcery-speed abilities are not mana abilities
+            sorcery_speed: true,
             cache,
         }
     }

@@ -3056,8 +3056,19 @@ impl<'a> GameLoop<'a> {
                     }
 
                     // TODO: Check other cost types (sacrifice, discard, etc.)
-                    // TODO: Check timing restrictions (sorcery speed abilities)
                     // TODO: Check activation limits
+
+                    // Check sorcery-speed timing restrictions (CR 602.5d, CR 307.5)
+                    // Sorcery-speed abilities require: main phase, your turn, stack empty
+                    if ability.sorcery_speed {
+                        let is_main_phase = self.game.turn.current_step.is_sorcery_speed();
+                        let is_your_turn = card.controller == self.game.turn.active_player;
+                        let stack_empty = self.game.stack.is_empty();
+
+                        if !is_main_phase || !is_your_turn || !stack_empty {
+                            can_activate = false;
+                        }
+                    }
 
                     // TODO(mtg-70): Check if ability has valid targets
                     // For targeting abilities, check that there's at least one valid target

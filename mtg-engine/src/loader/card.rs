@@ -251,12 +251,9 @@ impl CardDefinition {
 
                 let description = format!("Equip {}", cost);
 
-                card.activated_abilities.push(ActivatedAbility::new(
-                    ability_cost,
-                    effects,
-                    description,
-                    false, // Not a mana ability
-                ));
+                // Equip is sorcery-speed (CR 702.6a: "Activate only as a sorcery")
+                card.activated_abilities
+                    .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
             }
         }
 
