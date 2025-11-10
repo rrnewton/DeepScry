@@ -267,6 +267,12 @@ pub struct Card {
     /// These can be activated by paying their cost
     pub activated_abilities: Vec<crate::core::ActivatedAbility>,
 
+    /// Equipment/Aura attachment tracking
+    /// - For Equipment/Aura: points to the creature this is attached to
+    /// - For other cards: should be None
+    /// - Used to track Equipment→Creature and Aura→Permanent relationships
+    pub attached_to: Option<CardId>,
+
     /// Cache for expensive string operations (computed at load time)
     /// Avoids repeated to_lowercase() and contains() allocations during gameplay
     pub cache: CardCache,
@@ -299,6 +305,7 @@ impl Card {
             effects: Vec::new(),
             triggers: Vec::new(),
             activated_abilities: Vec::new(),
+            attached_to: None,
         }
     }
 
@@ -328,6 +335,20 @@ impl Card {
 
     pub fn is_aura(&self) -> bool {
         self.is_enchantment() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("aura"))
+    }
+
+    pub fn is_equipment(&self) -> bool {
+        self.is_artifact() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("equipment"))
+    }
+
+    /// Check if this Equipment/Aura is currently attached to something
+    pub fn is_attached(&self) -> bool {
+        self.attached_to.is_some()
+    }
+
+    /// Get the card this Equipment/Aura is attached to
+    pub fn get_attached_to(&self) -> Option<CardId> {
+        self.attached_to
     }
 
     pub fn has_keyword(&self, keyword: Keyword) -> bool {

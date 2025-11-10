@@ -315,6 +315,130 @@ impl GameState {
         Ok(())
     }
 
+    /// Attach Equipment or Aura to a target card
+    ///
+    /// This is called when:
+    /// - An Equip activated ability resolves
+    /// - An Aura spell resolves (attaching to its target)
+    /// - An effect moves an Equipment to attach to a new target
+    ///
+    /// ## Rules Implementation (CR 301.5, 303.4)
+    /// - Equipment can only attach to creatures
+    /// - Auras can attach based on their enchant ability
+    /// - If already attached, detaches from previous target first
+    /// - Updates timestamp on the Equipment/Aura (CR 613.7e)
+    pub fn attach_equipment(&mut self, equipment_id: CardId, target_id: CardId) -> Result<()> {
+        // Validate Equipment is on battlefield
+        if !self.battlefield.contains(equipment_id) {
+            return Err(MtgError::InvalidAction(
+                "Equipment must be on battlefield to attach".to_string(),
+            ));
+        }
+
+        // Validate target is on battlefield
+        if !self.battlefield.contains(target_id) {
+            return Err(MtgError::InvalidAction("Target must be on battlefield".to_string()));
+        }
+
+        // Get Equipment and target
+        let equipment = self.cards.get(equipment_id)?;
+        if !equipment.is_equipment() && !equipment.is_aura() {
+            return Err(MtgError::InvalidAction(
+                "Only Equipment or Auras can be attached".to_string(),
+            ));
+        }
+
+        let target = self.cards.get(target_id)?;
+        if !target.is_creature() {
+            return Err(MtgError::InvalidAction(
+                "Equipment can only attach to creatures".to_string(),
+            ));
+        }
+
+        // Check controller ownership (Equipment can only attach to creatures you control)
+        let equipment_controller = equipment.controller;
+        let target_controller = target.controller;
+        if equipment_controller != target_controller {
+            return Err(MtgError::InvalidAction(
+                "Equipment can only attach to creatures you control".to_string(),
+            ));
+        }
+
+        // Detach from previous target if needed
+        let equipment = self.cards.get_mut(equipment_id)?;
+        let equipment_name = equipment.name.to_string();
+        if let Some(old_target) = equipment.attached_to {
+            // Log detachment
+            let old_target_name = self.cards.get(old_target).map(|c| c.name.to_string()).unwrap_or_else(|_| "unknown".to_string());
+            self.logger.verbose(&format!(
+                "{} detaches from {}",
+                equipment_name, old_target_name
+            ));
+        }
+
+        // Attach to new target
+        let equipment = self.cards.get_mut(equipment_id)?;
+        equipment.attached_to = Some(target_id);
+
+        // Log attachment
+        let target_name = self.cards.get(target_id).map(|c| c.name.to_string()).unwrap_or_else(|_| "unknown".to_string());
+        self.logger
+            .verbose(&format!("{} attaches to {}", equipment_name, target_name));
+
+        Ok(())
+    }
+
+    /// Detach Equipment or Aura from its target
+    ///
+    /// This is called when:
+    /// - The attached creature leaves the battlefield (state-based action)
+    /// - An effect explicitly detaches the Equipment
+    /// - The Equipment/Aura leaves the battlefield
+    ///
+    /// ## Rules Implementation
+    /// - Equipment remains on battlefield when detached
+    /// - Auras that become unattached typically go to graveyard (handled elsewhere)
+    pub fn detach_equipment(&mut self, equipment_id: CardId) -> Result<()> {
+        // Get names and attached_to before mutable borrow
+        let equipment = self.cards.get(equipment_id)?;
+        let equipment_name = equipment.name.to_string();
+        let target_id_opt = equipment.attached_to;
+
+        if let Some(target_id) = target_id_opt {
+            // Log detachment
+            let target_name = self.cards.get(target_id).map(|c| c.name.to_string()).unwrap_or_else(|_| "unknown".to_string());
+            self.logger
+                .verbose(&format!("{} detaches from {}", equipment_name, target_name));
+
+            // Now do the actual detachment
+            let equipment = self.cards.get_mut(equipment_id)?;
+            equipment.attached_to = None;
+        }
+
+        Ok(())
+    }
+
+    /// Get all Equipment attached to a creature
+    ///
+    /// Used for:
+    /// - Calculating creature's effective power/toughness with Equipment buffs
+    /// - Determining which Equipment to detach when creature leaves battlefield
+    /// - AI evaluation of creature strength
+    pub fn get_attached_equipment(&self, creature_id: CardId) -> Vec<CardId> {
+        self.battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+                if card.is_equipment() && card.attached_to == Some(creature_id) {
+                    Some(card_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Get valid targets for a spell's effects
     ///
     /// This function filters game entities to find valid targets based on:

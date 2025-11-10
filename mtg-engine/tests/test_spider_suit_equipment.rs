@@ -147,12 +147,151 @@ fn test_spider_suit_full_cast_resolve_workflow() {
     assert!(!game.stack.contains(spider_suit_id), "Should not be on stack");
 }
 
-// TODO(mtg-TODO): Add test for Equipment attachment when implemented
+/// Test Equipment attachment basics
+#[test]
+fn test_equipment_attachment() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Spider-Suit (Equipment)
+    let spider_suit_id = game.cards.next_id();
+    let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
+    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.controller = p1_id;
+    game.cards.insert(spider_suit_id, spider_suit);
+
+    // Create Spider-Punk (2/1 Creature)
+    let spider_punk_id = game.cards.next_id();
+    let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
+    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.power = Some(2);
+    spider_punk.toughness = Some(1);
+    spider_punk.controller = p1_id;
+    game.cards.insert(spider_punk_id, spider_punk);
+
+    // Put both on battlefield
+    game.battlefield.add(spider_suit_id);
+    game.battlefield.add(spider_punk_id);
+
+    // Verify initial state
+    assert!(
+        game.battlefield.contains(spider_suit_id),
+        "Spider-Suit should be on battlefield"
+    );
+    assert!(
+        game.battlefield.contains(spider_punk_id),
+        "Spider-Punk should be on battlefield"
+    );
+
+    let equipment = game.cards.get(spider_suit_id).expect("Equipment should exist");
+    assert!(!equipment.is_attached(), "Equipment should not be attached initially");
+
+    // Attach Equipment to creature
+    let attach_result = game.attach_equipment(spider_suit_id, spider_punk_id);
+    assert!(
+        attach_result.is_ok(),
+        "Should successfully attach Equipment: {:?}",
+        attach_result
+    );
+
+    // Verify attachment
+    let equipment = game.cards.get(spider_suit_id).expect("Equipment should exist");
+    assert!(equipment.is_attached(), "Equipment should now be attached");
+    assert_eq!(
+        equipment.get_attached_to(),
+        Some(spider_punk_id),
+        "Equipment should be attached to Spider-Punk"
+    );
+
+    // Verify Equipment is found by get_attached_equipment
+    let attached = game.get_attached_equipment(spider_punk_id);
+    assert_eq!(attached.len(), 1, "Should have one Equipment attached");
+    assert_eq!(attached[0], spider_suit_id, "Should be Spider-Suit");
+
+    // Test detachment
+    let detach_result = game.detach_equipment(spider_suit_id);
+    assert!(
+        detach_result.is_ok(),
+        "Should successfully detach Equipment: {:?}",
+        detach_result
+    );
+
+    // Verify detachment
+    let equipment = game.cards.get(spider_suit_id).expect("Equipment should exist");
+    assert!(!equipment.is_attached(), "Equipment should not be attached after detach");
+    assert_eq!(
+        equipment.get_attached_to(),
+        None,
+        "Equipment should not be attached to anything"
+    );
+
+    // Equipment should still be on battlefield
+    assert!(
+        game.battlefield.contains(spider_suit_id),
+        "Equipment should remain on battlefield after detach"
+    );
+}
+
+/// Test multiple Equipment on same creature
+#[test]
+fn test_multiple_equipment() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create two Equipment
+    let equip1_id = game.cards.next_id();
+    let mut equip1 = Card::new(equip1_id, CardName::from("Sword"), p1_id);
+    equip1.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    equip1.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equip1.controller = p1_id;
+    game.cards.insert(equip1_id, equip1);
+
+    let equip2_id = game.cards.next_id();
+    let mut equip2 = Card::new(equip2_id, CardName::from("Shield"), p1_id);
+    equip2.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    equip2.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equip2.controller = p1_id;
+    game.cards.insert(equip2_id, equip2);
+
+    // Create creature
+    let creature_id = game.cards.next_id();
+    let mut creature = Card::new(creature_id, CardName::from("Bear"), p1_id);
+    creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+    creature.power = Some(2);
+    creature.toughness = Some(2);
+    creature.controller = p1_id;
+    game.cards.insert(creature_id, creature);
+
+    // Put all on battlefield
+    game.battlefield.add(equip1_id);
+    game.battlefield.add(equip2_id);
+    game.battlefield.add(creature_id);
+
+    // Attach both Equipment
+    game.attach_equipment(equip1_id, creature_id)
+        .expect("Should attach first Equipment");
+    game.attach_equipment(equip2_id, creature_id)
+        .expect("Should attach second Equipment");
+
+    // Verify both are attached
+    let attached = game.get_attached_equipment(creature_id);
+    assert_eq!(attached.len(), 2, "Should have two Equipment attached");
+    assert!(
+        attached.contains(&equip1_id),
+        "Should include first Equipment"
+    );
+    assert!(
+        attached.contains(&equip2_id),
+        "Should include second Equipment"
+    );
+}
+
+// TODO(mtg-98df7d): Add test for Equipment buffs when continuous effects are implemented
 // #[test]
-// #[ignore = "Equipment attachment not yet implemented"]
-// fn test_spider_suit_equip_and_buff() {
-//     // Setup: Spider-Suit on battlefield, Spider-Punk on battlefield, mana for equip
-//     // Action: Activate equip ability targeting Spider-Punk
-//     // Verify: Spider-Punk gains +2/+2 and Spider Hero types
-//     // Verify: Spider-Punk's combat damage reflects the buff
+// #[ignore = "Equipment buffs not yet implemented"]
+// fn test_spider_suit_buff() {
+//     // Setup: Spider-Suit attached to Spider-Punk (2/1)
+//     // Verify: Spider-Punk has 4/3 (base 2/1 + equipment +2/+2)
+//     // Verify: Combat damage reflects buffed power
 // }
