@@ -92,7 +92,8 @@ impl RichInputController {
 
             // Check if this was a wildcard separator
             if cmd.trim() == "*" {
-                // Skip the wildcard and get the next actual command
+                // Enter wildcard mode and get the next actual command
+                self.wildcard_mode = true;
                 return self.next_command();
             }
 
@@ -101,7 +102,9 @@ impl RichInputController {
                 // Consume the wildcard
                 self.current_index += 1;
                 self.wildcard_mode = true;
-            } else {
+            } else if !self.wildcard_mode {
+                // Only reset to false if we weren't already in wildcard mode
+                // (prevents recursive next_command calls from resetting the flag)
                 self.wildcard_mode = false;
             }
 
@@ -261,15 +264,28 @@ impl PlayerController for RichInputController {
         if let Some(command_str) = self.peek_command() {
             let command = command_str.to_string();
 
+            // Check if this is a wildcard separator - if so, consume it and enter wildcard mode
+            if command.trim() == "*" {
+                // Consume the wildcard and enter wildcard mode
+                self.current_index += 1;
+                self.wildcard_mode = true;
+                // Now recursively call to process the next actual command
+                return self.choose_spell_ability_to_play(view, available);
+            }
+
             // Try to parse it
             let result = Self::parse_spell_ability_choice(&command, view, available);
 
-            // In wildcard mode, only advance if we found a match
+            // Check if this is an explicit pass command
+            let cmd_trimmed = command.trim().to_lowercase();
+            let is_explicit_pass = cmd_trimmed == "pass" || cmd_trimmed == "p" || cmd_trimmed == "0";
+
+            // In wildcard mode, only advance if we found a match or explicit pass
             if self.wildcard_mode {
-                if result.is_some() {
-                    // Found a match! Consume the command and exit wildcard mode
-                    self.next_command();
+                if result.is_some() || is_explicit_pass {
+                    // Found a match or explicit pass! Exit wildcard mode first, then consume
                     self.wildcard_mode = false;
+                    self.next_command();
                     ChoiceResult::Ok(result)
                 } else {
                     // No match - pass priority and stay in wildcard mode
@@ -277,10 +293,6 @@ impl PlayerController for RichInputController {
                 }
             } else {
                 // Normal mode - command MUST match or error
-                // Check if command is explicit "pass" or "0"
-                let cmd_trimmed = command.trim().to_lowercase();
-                let is_explicit_pass = cmd_trimmed == "pass" || cmd_trimmed == "p" || cmd_trimmed == "0";
-
                 if result.is_some() || is_explicit_pass {
                     // Valid command or explicit pass - consume and execute
                     self.next_command();
@@ -725,5 +737,77 @@ mod tests {
         if let ChoiceResult::Ok(choice) = result2 {
             assert!(choice.is_none()); // Passes priority, waiting for fireball
         }
+    }
+
+    #[test]
+    fn test_wildcard_at_beginning() {
+        let player_id = EntityId::new(1);
+        // Wildcard at the start means immediately enter wildcard mode
+        let mut controller = RichInputController::new(player_id, vec!["*".to_string(), "cast fireball".to_string()]);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // First choice: wildcard mode active, "cast fireball" doesn't match
+        // Should pass priority without error
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(matches!(result, ChoiceResult::Ok(_)));
+        if let ChoiceResult::Ok(choice) = result {
+            assert!(choice.is_none()); // Passes priority, waiting for fireball
+        }
+
+        // Controller should still be in wildcard mode
+        assert!(controller.wildcard_mode);
+    }
+
+    #[test]
+    fn test_first_command_must_match_strictly() {
+        let player_id = EntityId::new(1);
+        // First command is NOT a wildcard, so it must match strictly
+        let mut controller = RichInputController::new(player_id, vec!["cast fireball".to_string()]);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // Should ERROR because "cast fireball" doesn't match and we're not in wildcard mode
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(matches!(result, ChoiceResult::Error(_)));
+        if let ChoiceResult::Error(msg) = result {
+            assert!(msg.contains("cast fireball"));
+            assert!(msg.contains("did not match"));
+        }
+    }
+
+    #[test]
+    fn test_wildcard_at_beginning_then_match() {
+        let player_id = EntityId::new(1);
+        // Start with wildcard, then command matches available action
+        let mut controller = RichInputController::new(
+            player_id,
+            vec!["*".to_string(), "0".to_string()], // 0 = pass
+        );
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // First choice: wildcard mode, "0" (pass) always matches
+        // Should execute the pass and exit wildcard mode
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(matches!(result, ChoiceResult::Ok(_)));
+        if let ChoiceResult::Ok(choice) = result {
+            assert!(choice.is_none()); // Pass priority
+        }
+
+        // Should have exited wildcard mode after match
+        assert!(!controller.wildcard_mode);
+
+        // Should have consumed both wildcard and the "0" command
+        assert_eq!(controller.current_index, 2);
     }
 }
