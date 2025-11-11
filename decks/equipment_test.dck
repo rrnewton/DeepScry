@@ -1,0 +1,10 @@
+[metadata]
+Name=Equipment Test Deck
+Description=Deck to test Equipment mechanics with Bonesplitter and Grizzly Bears.
+
+[Main]
+24 Forest
+16 Grizzly Bears
+20 Bonesplitter
+
+[Sideboard]
