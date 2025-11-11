@@ -202,10 +202,7 @@ impl GameState {
         let creature = self.cards.get(creature_id)?;
 
         // Base P/T from printed card
-        let base = (
-            creature.current_power() as i32,
-            creature.current_toughness() as i32,
-        );
+        let base = (creature.current_power() as i32, creature.current_toughness() as i32);
 
         // Layer 7a (CR 613.4a): Characteristic-defining abilities
         // TODO: Implement for creatures like Tarmogoyf (*/* based on card types)

@@ -76,7 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("Alice casts Elvish Visionary (1G)");
         println!("Mana cost: {}", creature.mana_cost);
-        println!("P/T: {}/{}", creature.base_power().unwrap(), creature.base_toughness().unwrap());
+        println!(
+            "P/T: {}/{}",
+            creature.base_power().unwrap(),
+            creature.base_toughness().unwrap()
+        );
         println!("Triggers: {}", creature.triggers.len());
 
         if !creature.triggers.is_empty() {
@@ -142,7 +146,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check if Grizzly Bears is still alive
     let bears_alive_before = game.battlefield.contains(target_id);
-    let bears_toughness_before = game.cards.get(target_id).ok().map(|c| c.current_toughness()).unwrap_or(0);
+    let bears_toughness_before = game
+        .cards
+        .get(target_id)
+        .ok()
+        .map(|c| c.current_toughness())
+        .unwrap_or(0);
 
     println!(
         "Before: Bob's Grizzly Bears (2/{}) - {}",

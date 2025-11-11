@@ -19,10 +19,17 @@
 //! ## Wildcard Separator
 //!
 //! Use `*` to skip choices until the next command matches:
-//! - `play mountain * cast fireball` - Play mountain, then pass priority until "cast fireball" is available
-//! - `equip accorder * attack grizzly` - Equip, then pass until attack phase
+//! - `play mountain;*;cast fireball` - Play mountain, then pass priority until "cast fireball" is available
+//! - `equip accorder;*;attack grizzly` - Equip, then pass until attack phase
 //!
 //! This allows flexible scripts that don't need to specify every single priority pass.
+//!
+//! ## Error Handling
+//!
+//! - **Normal mode**: Commands MUST match an available action or be an explicit pass ("pass", "p", "0").
+//!   If a command doesn't match, the controller returns an error with available actions.
+//! - **Wildcard mode**: Non-matching commands cause the controller to pass priority and wait for a match.
+//!   No error is raised - the controller keeps waiting until the command becomes available.
 //!
 //! ## Blocking Syntax
 //!
@@ -67,10 +74,10 @@ impl RichInputController {
         }
     }
 
-    /// Check if the next command after current is a wildcard
-    fn next_is_wildcard(&self) -> bool {
-        if self.current_index + 1 < self.commands.len() {
-            self.commands[self.current_index + 1].trim() == "*"
+    /// Check if the current command (at current_index) is a wildcard
+    fn current_is_wildcard(&self) -> bool {
+        if self.current_index < self.commands.len() {
+            self.commands[self.current_index].trim() == "*"
         } else {
             false
         }
@@ -89,8 +96,8 @@ impl RichInputController {
                 return self.next_command();
             }
 
-            // Check if next command is a wildcard - if so, enter wildcard mode
-            if self.next_is_wildcard() {
+            // Check if current command (after advancing) is a wildcard - if so, enter wildcard mode
+            if self.current_is_wildcard() {
                 // Consume the wildcard
                 self.current_index += 1;
                 self.wildcard_mode = true;
@@ -263,15 +270,43 @@ impl PlayerController for RichInputController {
                     // Found a match! Consume the command and exit wildcard mode
                     self.next_command();
                     self.wildcard_mode = false;
-                    return ChoiceResult::Ok(result);
+                    ChoiceResult::Ok(result)
                 } else {
                     // No match - pass priority and stay in wildcard mode
-                    return ChoiceResult::Ok(None);
+                    ChoiceResult::Ok(None)
                 }
             } else {
-                // Normal mode - consume the command regardless of match
-                self.next_command();
-                return ChoiceResult::Ok(result);
+                // Normal mode - command MUST match or error
+                // Check if command is explicit "pass" or "0"
+                let cmd_trimmed = command.trim().to_lowercase();
+                let is_explicit_pass = cmd_trimmed == "pass" || cmd_trimmed == "p" || cmd_trimmed == "0";
+
+                if result.is_some() || is_explicit_pass {
+                    // Valid command or explicit pass - consume and execute
+                    self.next_command();
+                    ChoiceResult::Ok(result)
+                } else {
+                    // Command didn't match any available action - ERROR
+                    self.next_command(); // Consume the bad command to avoid infinite loop
+                    ChoiceResult::Error(format!(
+                        "Command '{}' did not match any available action. Available actions: {:?}",
+                        command,
+                        available
+                            .iter()
+                            .filter_map(|a| match a {
+                                SpellAbility::PlayLand { card_id } => {
+                                    view.card_name(*card_id).map(|n| format!("play {}", n))
+                                }
+                                SpellAbility::CastSpell { card_id } => {
+                                    view.card_name(*card_id).map(|n| format!("cast {}", n))
+                                }
+                                SpellAbility::ActivateAbility { card_id, .. } => {
+                                    view.card_name(*card_id).map(|n| format!("activate {}", n))
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    ))
+                }
             }
         } else {
             // No more commands - pass priority
@@ -582,50 +617,45 @@ mod tests {
     #[test]
     fn test_equip_command() {
         let player_id = EntityId::new(1);
+        // Without actual card names in the test view, "equip accorder" won't match and should error
         let mut controller = RichInputController::new(player_id, vec!["equip accorder".to_string()]);
         let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let equipment_id = EntityId::new(10);
-        let abilities = vec![
-            SpellAbility::ActivateAbility {
-                card_id: equipment_id,
-                ability_index: 0,
-            },
-        ];
+        let abilities = vec![SpellAbility::ActivateAbility {
+            card_id: equipment_id,
+            ability_index: 0,
+        }];
 
-        // Mock the card name lookup by creating a test scenario
-        // Note: In real usage, the view would have access to card names
-        // For this test, we verify the command parsing logic works
         let choice = controller.choose_spell_ability_to_play(&view, &abilities);
-        // Without actual card data in the test view, this will pass (None)
-        // In a real game with "Accorder's Shield" card, it would match
-        assert!(choice.is_ok());
+        // Without actual card data, this should error
+        assert!(matches!(choice, ChoiceResult::Error(_)));
     }
 
     #[test]
     fn test_activate_command() {
         let player_id = EntityId::new(1);
+        // Without actual card names, "activate forest" won't match and should error
         let mut controller = RichInputController::new(player_id, vec!["activate forest".to_string()]);
         let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
 
         let land_id = EntityId::new(20);
-        let abilities = vec![
-            SpellAbility::ActivateAbility {
-                card_id: land_id,
-                ability_index: 0,
-            },
-        ];
+        let abilities = vec![SpellAbility::ActivateAbility {
+            card_id: land_id,
+            ability_index: 0,
+        }];
 
         let choice = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert!(choice.is_ok());
+        // Without actual card data, this should error
+        assert!(matches!(choice, ChoiceResult::Error(_)));
     }
 
     #[test]
     fn test_activate_command_with_index() {
         let player_id = EntityId::new(1);
-        // Test indexed activation: "activate forest[2]" should select second ability
+        // Without actual card names, indexed activation should also error
         let mut controller = RichInputController::new(player_id, vec!["activate forest[2]".to_string()]);
         let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
         let view = GameStateView::new(&game, player_id);
@@ -643,7 +673,57 @@ mod tests {
         ];
 
         let choice = controller.choose_spell_ability_to_play(&view, &abilities);
-        assert!(choice.is_ok());
-        // With proper card name lookup, this would select the second ability
+        // Without actual card data, this should error
+        assert!(matches!(choice, ChoiceResult::Error(_)));
+    }
+
+    #[test]
+    fn test_command_error_on_no_match() {
+        let player_id = EntityId::new(1);
+        // Command "cast fireball" should error when fireball is not available
+        let mut controller = RichInputController::new(player_id, vec!["cast fireball".to_string()]);
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        // Should return an error because "cast fireball" doesn't match "play land"
+        assert!(matches!(result, ChoiceResult::Error(_)));
+        if let ChoiceResult::Error(msg) = result {
+            assert!(msg.contains("cast fireball"));
+            assert!(msg.contains("did not match"));
+        }
+    }
+
+    #[test]
+    fn test_wildcard_mode_no_error_on_no_match() {
+        let player_id = EntityId::new(1);
+        // In wildcard mode, "cast fireball" should pass priority (not error) when not available
+        let mut controller = RichInputController::new(
+            player_id,
+            vec!["pass".to_string(), "*".to_string(), "cast fireball".to_string()],
+        );
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // First choice: "pass" - should work
+        let result1 = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(matches!(result1, ChoiceResult::Ok(_)));
+        if let ChoiceResult::Ok(choice) = result1 {
+            assert!(choice.is_none());
+        }
+
+        // Now in wildcard mode, waiting for "cast fireball"
+        // Should pass priority without error
+        let result2 = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(matches!(result2, ChoiceResult::Ok(_)));
+        if let ChoiceResult::Ok(choice) = result2 {
+            assert!(choice.is_none()); // Passes priority, waiting for fireball
+        }
     }
 }
