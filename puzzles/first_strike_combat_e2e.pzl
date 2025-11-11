@@ -1,0 +1,25 @@
+[metadata]
+Name:First Strike Combat Demonstration
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Demonstrates First Strike combat mechanics. Black Knight (2/2 First Strike) attacks, Grizzly Bears (2/2 vanilla) blocks. Black Knight should deal damage first, killing Grizzly Bears before it can deal damage back. Result: Black Knight survives, Grizzly Bears dies.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Swamp; Swamp; Black Knight
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=
