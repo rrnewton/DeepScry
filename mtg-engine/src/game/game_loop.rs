@@ -2682,6 +2682,15 @@ impl<'a> GameLoop<'a> {
                                                     amount: *amount,
                                                 }
                                             }
+                                            crate::core::Effect::AttachEquipment {
+                                                source_equipment,
+                                                target_creature,
+                                            } if target_creature.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                                crate::core::Effect::AttachEquipment {
+                                                    source_equipment: *source_equipment,
+                                                    target_creature: chosen_targets_vec[0],
+                                                }
+                                            }
                                             _ => effect.clone(),
                                         };
 

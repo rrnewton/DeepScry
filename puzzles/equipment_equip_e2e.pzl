@@ -1,0 +1,25 @@
+[metadata]
+Name:Equipment Equip E2E Demonstration
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Demonstrates complete Equipment workflow: Accorder's Shield (+0/+3, Vigilance) and Grizzly Bears (2/2) are on battlefield with 4 Forests. Activate Equip ability (costs {3}) to attach Shield to Bears, making them 2/5 with Vigilance. Then attack with buffed creature.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Forest; Forest; Accorder's Shield; Grizzly Bears
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=5
+p1hand=
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=
