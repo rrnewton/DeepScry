@@ -16,6 +16,14 @@
 //!   - `activate forest[2]` - Activate second ability (1-indexed)
 //!   - `attack serra` - Attack with Serra Angel
 //!
+//! ## Wildcard Separator
+//!
+//! Use `*` to skip choices until the next command matches:
+//! - `play mountain * cast fireball` - Play mountain, then pass priority until "cast fireball" is available
+//! - `equip accorder * attack grizzly` - Equip, then pass until attack phase
+//!
+//! This allows flexible scripts that don't need to specify every single priority pass.
+//!
 //! ## Blocking Syntax
 //!
 //! Comma-separated clauses: `BlackKnight blocks WhiteKnight, SerraAngel blocks RoyalAssassin`
@@ -31,6 +39,8 @@ pub struct RichInputController {
     commands: Vec<String>,
     /// Current index in the command queue
     current_index: usize,
+    /// Whether we're in wildcard mode (waiting for a specific command to match)
+    wildcard_mode: bool,
 }
 
 impl RichInputController {
@@ -44,14 +54,50 @@ impl RichInputController {
             player_id,
             commands,
             current_index: 0,
+            wildcard_mode: false,
         }
     }
 
-    /// Get the next command from the script
+    /// Peek at the current command without consuming it
+    fn peek_command(&self) -> Option<&str> {
+        if self.current_index < self.commands.len() {
+            Some(&self.commands[self.current_index])
+        } else {
+            None
+        }
+    }
+
+    /// Check if the next command after current is a wildcard
+    fn next_is_wildcard(&self) -> bool {
+        if self.current_index + 1 < self.commands.len() {
+            self.commands[self.current_index + 1].trim() == "*"
+        } else {
+            false
+        }
+    }
+
+    /// Get the next command from the script and advance the index
+    /// Automatically skips wildcard separators and enters wildcard mode
     fn next_command(&mut self) -> Option<String> {
         if self.current_index < self.commands.len() {
             let cmd = self.commands[self.current_index].clone();
             self.current_index += 1;
+
+            // Check if this was a wildcard separator
+            if cmd.trim() == "*" {
+                // Skip the wildcard and get the next actual command
+                return self.next_command();
+            }
+
+            // Check if next command is a wildcard - if so, enter wildcard mode
+            if self.next_is_wildcard() {
+                // Consume the wildcard
+                self.current_index += 1;
+                self.wildcard_mode = true;
+            } else {
+                self.wildcard_mode = false;
+            }
+
             Some(cmd)
         } else {
             None
@@ -204,8 +250,29 @@ impl PlayerController for RichInputController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        if let Some(command) = self.next_command() {
-            ChoiceResult::Ok(Self::parse_spell_ability_choice(&command, view, available))
+        // Peek at the next command without consuming it
+        if let Some(command_str) = self.peek_command() {
+            let command = command_str.to_string();
+
+            // Try to parse it
+            let result = Self::parse_spell_ability_choice(&command, view, available);
+
+            // In wildcard mode, only advance if we found a match
+            if self.wildcard_mode {
+                if result.is_some() {
+                    // Found a match! Consume the command and exit wildcard mode
+                    self.next_command();
+                    self.wildcard_mode = false;
+                    return ChoiceResult::Ok(result);
+                } else {
+                    // No match - pass priority and stay in wildcard mode
+                    return ChoiceResult::Ok(None);
+                }
+            } else {
+                // Normal mode - consume the command regardless of match
+                self.next_command();
+                return ChoiceResult::Ok(result);
+            }
         } else {
             // No more commands - pass priority
             ChoiceResult::Ok(None)
@@ -415,10 +482,11 @@ impl serde::Serialize for RichInputController {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("RichInputController", 3)?;
+        let mut state = serializer.serialize_struct("RichInputController", 4)?;
         state.serialize_field("player_id", &self.player_id)?;
         state.serialize_field("commands", &self.commands)?;
         state.serialize_field("current_index", &self.current_index)?;
+        state.serialize_field("wildcard_mode", &self.wildcard_mode)?;
         state.end()
     }
 }
@@ -433,6 +501,8 @@ impl<'de> serde::Deserialize<'de> for RichInputController {
             player_id: PlayerId,
             commands: Vec<String>,
             current_index: usize,
+            #[serde(default)]
+            wildcard_mode: bool,
         }
 
         let data = RichInputControllerData::deserialize(deserializer)?;
@@ -440,6 +510,7 @@ impl<'de> serde::Deserialize<'de> for RichInputController {
             player_id: data.player_id,
             commands: data.commands,
             current_index: data.current_index,
+            wildcard_mode: data.wildcard_mode,
         })
     }
 }
