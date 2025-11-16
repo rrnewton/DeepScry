@@ -1,0 +1,25 @@
+[metadata]
+Name:Wildcard Multi-Command Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Tests wildcard multi-command syntax for Fixed controller. Player 1 passes priority multiple times before attacking. Player 2 passes priority before blocking. The wildcard (*) separator allows the script to skip irrelevant priority passes and only execute when specific actions are available.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Plains; Plains; Silvercoat Lion
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

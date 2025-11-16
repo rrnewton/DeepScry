@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Continue an agent play session with one more choice
+# Continue an agent play session with one or more choices
 # Usage: ./agentplay/continue_game.sh [--game-dir=path] <choice>
 #        ./agentplay/continue_game.sh [--game-dir=path] --p1 <choice>
 #        ./agentplay/continue_game.sh [--game-dir=path] --p2 <choice>
@@ -7,11 +7,16 @@
 # The script auto-detects whose turn it is from the snapshot.
 # You can optionally specify --p1 or --p2 for sanity checking.
 #
+# Supports multiple commands separated by semicolons and wildcard syntax:
+#   - Use semicolons to separate multiple commands: "play mountain;cast bolt"
+#   - Use * as wildcard to skip priority passes: "play mountain;*;cast bolt"
+#
 # Examples:
 #   ./agentplay/continue_game.sh "1"                # Auto-detect whose turn (uses current.game)
 #   ./agentplay/continue_game.sh --p1 "1"           # Assert it's P1's turn
 #   ./agentplay/continue_game.sh --p2 "0"           # Assert it's P2's turn
 #   ./agentplay/continue_game.sh --p1 "play mountain"
+#   ./agentplay/continue_game.sh --p1 "play mountain;*;cast bolt"  # Multiple commands with wildcard
 #   ./agentplay/continue_game.sh --game-dir=042.game "1"  # Continue specific game
 
 set -euo pipefail
@@ -87,6 +92,7 @@ if [[ -z "$CHOICE" ]]; then
     echo "  $0 \"1\"                # Auto-detect whose turn (uses current.game)"
     echo "  $0 --p1 \"1\"           # Assert it's P1's turn"
     echo "  $0 --p2 \"0\"           # Assert it's P2's turn"
+    echo "  $0 --p1 \"play mountain;*;cast bolt\"  # Multiple commands with wildcard"
     echo "  $0 --game-dir=042.game \"1\"  # Continue specific game"
     exit 1
 fi
