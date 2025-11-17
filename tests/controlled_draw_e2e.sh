@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# Get absolute path to workspace root (script is in tests/)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,19 +23,21 @@ NC='\033[0m' # No Color
 echo "=== Controlled Draw (--p1-draw / --p2-draw) E2E Test ==="
 echo
 
-# Check if cardsfolder exists (tests run from mtg-engine/)
-if [[ ! -d "../cardsfolder" ]]; then
-    echo -e "${RED}Error: ../cardsfolder not found${NC}"
+# Check if cardsfolder exists
+if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
+    echo -e "${RED}Error: $WORKSPACE_ROOT/cardsfolder not found${NC}"
     echo "Please ensure cardsfolder symlink exists at repository root"
     exit 1
 fi
 
-# Check if test deck exists (tests run from mtg-engine/)
-DECK="../decks/simple_bolt.dck"
+# Check if test deck exists
+DECK="$WORKSPACE_ROOT/decks/simple_bolt.dck"
 if [[ ! -f "$DECK" ]]; then
     echo -e "${RED}Error: $DECK not found${NC}"
     exit 1
 fi
+
+cd "$WORKSPACE_ROOT"
 
 echo "Test deck: $DECK"
 echo "This deck has 60 cards (20 Mountains, 40 Lightning Bolts)"

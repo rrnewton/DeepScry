@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Get absolute path to workspace root (script is in tests/)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,17 +25,19 @@ echo
 echo "Will use: cargo run --bin mtg"
 echo
 
-# Check if test deck exists (relative to workspace root from mtg-engine/)
-if [[ ! -f "../decks/simple_bolt.dck" ]]; then
-    echo -e "${RED}Error: ../decks/simple_bolt.dck not found${NC}"
+# Check if test deck exists
+if [[ ! -f "$WORKSPACE_ROOT/decks/simple_bolt.dck" ]]; then
+    echo -e "${RED}Error: $WORKSPACE_ROOT/decks/simple_bolt.dck not found${NC}"
     exit 1
 fi
 
-# Check if cardsfolder exists (relative to workspace root from mtg-engine/)
-if [[ ! -d "../cardsfolder" ]]; then
-    echo -e "${YELLOW}Warning: ../cardsfolder not found, skipping test${NC}"
+# Check if cardsfolder exists
+if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
+    echo -e "${YELLOW}Warning: $WORKSPACE_ROOT/cardsfolder not found, skipping test${NC}"
     exit 0
 fi
+
+cd "$WORKSPACE_ROOT"
 
 echo "Test: TUI controller vs Zero controller with deterministic seed"
 echo "Strategy: Provide scripted inputs that match ZeroController behavior"
@@ -71,8 +77,8 @@ echo
 # Redirect stderr to capture game output
 # Since we only call mtg once, use cargo run
 if echo -e "$INPUT_SEQUENCE" | timeout 30s cargo run --bin mtg -- tui \
-    ../decks/simple_bolt.dck \
-    ../decks/simple_bolt.dck \
+    "$WORKSPACE_ROOT/decks/simple_bolt.dck" \
+    "$WORKSPACE_ROOT/decks/simple_bolt.dck" \
     --p1 tui \
     --p2 zero \
     --seed 42 \

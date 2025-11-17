@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# Get absolute path to workspace root (script is in tests/)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -22,36 +26,38 @@ echo
 echo "Will use: cargo run --bin mtg"
 echo
 
-# Check if cardsfolder exists (tests run from mtg-engine/)
-if [[ ! -d "../cardsfolder" ]]; then
-    echo -e "${RED}Error: ../cardsfolder not found${NC}"
+# Check if cardsfolder exists
+if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
+    echo -e "${RED}Error: $WORKSPACE_ROOT/cardsfolder not found${NC}"
     echo "Please ensure cardsfolder symlink exists at repository root"
     exit 1
 fi
 
-# Check if puzzle files exist (tests run from mtg-engine/)
-if [[ ! -f "../test_puzzles/grizzly_bears_should_attack.pzl" ]]; then
-    echo -e "${RED}Error: ../test_puzzles/grizzly_bears_should_attack.pzl not found${NC}"
+# Check if puzzle files exist
+if [[ ! -f "$WORKSPACE_ROOT/test_puzzles/grizzly_bears_should_attack.pzl" ]]; then
+    echo -e "${RED}Error: $WORKSPACE_ROOT/test_puzzles/grizzly_bears_should_attack.pzl not found${NC}"
     exit 1
 fi
 
-if [[ ! -f "../test_puzzles/royal_assassin_kills_attacker.pzl" ]]; then
-    echo -e "${RED}Error: ../test_puzzles/royal_assassin_kills_attacker.pzl not found${NC}"
+if [[ ! -f "$WORKSPACE_ROOT/test_puzzles/royal_assassin_kills_attacker.pzl" ]]; then
+    echo -e "${RED}Error: $WORKSPACE_ROOT/test_puzzles/royal_assassin_kills_attacker.pzl not found${NC}"
     exit 1
 fi
+
+cd "$WORKSPACE_ROOT"
 
 EXIT_CODE=0
 
 # Test 1: Grizzly Bears puzzle
 echo "=== Test 1: Grizzly Bears Attack Puzzle ==="
-echo "Loading puzzle: ../test_puzzles/grizzly_bears_should_attack.pzl"
+echo "Loading puzzle: $WORKSPACE_ROOT/test_puzzles/grizzly_bears_should_attack.pzl"
 echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 12345 (deterministic)"
 echo
 
 # Since we call mtg twice total in this script, use cargo run each time
 if timeout 30s cargo run --bin mtg -- tui \
-    --start-state ../test_puzzles/grizzly_bears_should_attack.pzl \
+    --start-state "$WORKSPACE_ROOT/test_puzzles/grizzly_bears_should_attack.pzl" \
     --p1 heuristic \
     --p2 heuristic \
     --seed 12345 \
@@ -107,13 +113,13 @@ echo
 
 # Test 2: Royal Assassin puzzle
 echo "=== Test 2: Royal Assassin Puzzle ==="
-echo "Loading puzzle: ../test_puzzles/royal_assassin_kills_attacker.pzl"
+echo "Loading puzzle: $WORKSPACE_ROOT/test_puzzles/royal_assassin_kills_attacker.pzl"
 echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 42 (deterministic)"
 echo
 
 if timeout 30s cargo run --bin mtg -- tui \
-    --start-state ../test_puzzles/royal_assassin_kills_attacker.pzl \
+    --start-state "$WORKSPACE_ROOT/test_puzzles/royal_assassin_kills_attacker.pzl" \
     --p1 heuristic \
     --p2 heuristic \
     --seed 42 \

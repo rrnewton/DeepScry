@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Get absolute path to workspace root (script is in tests/)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,9 +27,11 @@ echo
 echo "Will use: cargo run --bin mtg"
 echo
 
+cd "$WORKSPACE_ROOT"
+
 # Create test deck for attacker (minimal - just bears and lands)
-ATTACKER_DECK="decks/heuristic_test_attacker.dck"
-mkdir -p decks
+ATTACKER_DECK="$WORKSPACE_ROOT/decks/heuristic_test_attacker.dck"
+mkdir -p "$WORKSPACE_ROOT/decks"
 cat > "$ATTACKER_DECK" << 'EOF'
 [metadata]
 Name=Heuristic Test - Attacker
@@ -37,7 +43,7 @@ Description=Minimal deck for testing Grizzly Bears attacking
 EOF
 
 # Create test deck for defender (no creatures - cannot block)
-DEFENDER_DECK="decks/heuristic_test_defender_no_blockers.dck"
+DEFENDER_DECK="$WORKSPACE_ROOT/decks/heuristic_test_defender_no_blockers.dck"
 cat > "$DEFENDER_DECK" << 'EOF'
 [metadata]
 Name=Heuristic Test - Defender (No Creatures)
@@ -53,7 +59,7 @@ echo "  Defender: $DEFENDER_DECK (Plains only - no blockers)"
 echo
 
 # Check if cardsfolder exists
-if [[ ! -d "cardsfolder" ]]; then
+if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
     echo -e "${YELLOW}Warning: cardsfolder not found, skipping test${NC}"
     exit 0
 fi

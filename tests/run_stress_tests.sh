@@ -20,8 +20,10 @@
 
 set -e  # Exit on error
 
-# Change to repository root (script is in mtg-engine/tests/, need to go up 2 levels)
-cd "$(dirname "$0")/../.."
+# Get absolute path to workspace root (script is in tests/)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$WORKSPACE_ROOT"
 
 # Parse command line arguments
 FORCE_SEQUENTIAL=false

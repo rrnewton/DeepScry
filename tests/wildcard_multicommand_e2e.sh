@@ -22,6 +22,10 @@
 
 set -euo pipefail
 
+# Get absolute path to workspace root (script is in tests/)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 echo "========================================"
 echo "Wildcard Multi-Command E2E Test"
 echo "========================================"
@@ -44,9 +48,10 @@ echo ""
 
 # Run the game with wildcard multi-command scripts
 # Use timeout to prevent hanging
-# Note: Tests run from mtg-engine/ directory, so puzzle is at ../puzzles/
+# Use absolute path to puzzle file
+cd "$WORKSPACE_ROOT"
 if OUTPUT=$(timeout 30s cargo run --bin mtg -- tui \
-    --start-state ../puzzles/wildcard_multicommand_e2e.pzl \
+    --start-state "$WORKSPACE_ROOT/puzzles/wildcard_multicommand_e2e.pzl" \
     --p1=fixed \
     --p2=zero \
     --p1-fixed-inputs='pass; *; attack silvercoat' \
