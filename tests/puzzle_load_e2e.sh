@@ -10,9 +10,12 @@
 
 set -euo pipefail
 
-# Get absolute path to workspace root (script is in tests/)
+# Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
+# Ensure release binary is built
+ensure_mtg_binary
 
 # Colors for output
 RED='\033[0;31m'
@@ -23,7 +26,6 @@ NC='\033[0m' # No Color
 echo "=== Puzzle Loading E2E Test ==="
 echo
 
-echo "Will use: cargo run --bin mtg"
 echo
 
 # Check if cardsfolder exists
@@ -55,8 +57,7 @@ echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 12345 (deterministic)"
 echo
 
-# Since we call mtg twice total in this script, use cargo run each time
-if timeout 30s cargo run --bin mtg -- tui \
+if timeout 30s "$MTG_BIN" tui \
     --start-state "$WORKSPACE_ROOT/test_puzzles/grizzly_bears_should_attack.pzl" \
     --p1 heuristic \
     --p2 heuristic \
@@ -118,7 +119,7 @@ echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 42 (deterministic)"
 echo
 
-if timeout 30s cargo run --bin mtg -- tui \
+if timeout 30s "$MTG_BIN" tui \
     --start-state "$WORKSPACE_ROOT/test_puzzles/royal_assassin_kills_attacker.pzl" \
     --p1 heuristic \
     --p2 heuristic \

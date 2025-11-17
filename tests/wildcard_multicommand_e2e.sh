@@ -22,9 +22,12 @@
 
 set -euo pipefail
 
-# Get absolute path to workspace root (script is in tests/)
+# Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
+# Ensure release binary is built
+ensure_mtg_binary
 
 echo "========================================"
 echo "Wildcard Multi-Command E2E Test"
@@ -46,11 +49,8 @@ echo ""
 echo "Running test..."
 echo ""
 
-# Run the game with wildcard multi-command scripts
-# Use timeout to prevent hanging
-# Use absolute path to puzzle file
-cd "$WORKSPACE_ROOT"
-if OUTPUT=$(timeout 30s cargo run --bin mtg -- tui \
+# Run the game with wildcard multi-command scripts using release binary
+if OUTPUT=$(timeout 30s "$MTG_BIN" tui \
     --start-state "$WORKSPACE_ROOT/puzzles/wildcard_multicommand_e2e.pzl" \
     --p1=fixed \
     --p2=zero \

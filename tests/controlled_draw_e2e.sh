@@ -10,10 +10,12 @@
 
 set -euo pipefail
 
-# Get absolute path to workspace root (script is in tests/)
+# Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
 
+# Ensure release binary is built
+ensure_mtg_binary
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -56,14 +58,11 @@ echo "P2 requested hand (5 cards): $P2_CARDS"
 echo "Each hand will be filled to 7 cards with 2 random cards"
 echo
 
-# Single game test - use cargo run since we only call mtg once
+# Run the game with controlled hands using release binary
 echo "Running game with controlled opening hands..."
-echo "Using: cargo run --bin mtg -- tui ..."
-echo
+echo ""
 
-# Run the game with controlled hands
-# We'll use --log-tail to limit output and --verbosity verbose to see hand contents
-if cargo run --bin mtg -- tui \
+if run_mtg tui \
     "$DECK" \
     "$DECK" \
     --p1=zero \

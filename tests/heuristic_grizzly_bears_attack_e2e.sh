@@ -11,9 +11,12 @@
 
 set -euo pipefail
 
-# Get absolute path to workspace root (script is in tests/)
+# Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
+# Ensure release binary is built
+ensure_mtg_binary
 
 # Colors for output
 RED='\033[0;31m'
@@ -24,7 +27,6 @@ NC='\033[0m' # No Color
 echo "=== HeuristicController: Grizzly Bears Attack Test ==="
 echo
 
-echo "Will use: cargo run --bin mtg"
 echo
 
 cd "$WORKSPACE_ROOT"
@@ -71,8 +73,7 @@ echo
 
 # Run the game with heuristic AI as P1, zero AI as P2
 # Use verbose output to see attack declarations
-# Since we only call mtg once, use cargo run
-if timeout 30s cargo run --bin mtg -- tui \
+if timeout 30s "$MTG_BIN" tui \
     "$ATTACKER_DECK" \
     "$DEFENDER_DECK" \
     --p1 heuristic \

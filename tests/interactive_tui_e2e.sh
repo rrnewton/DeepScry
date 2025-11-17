@@ -9,9 +9,12 @@
 
 set -euo pipefail
 
-# Get absolute path to workspace root (script is in tests/)
+# Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
+# Ensure release binary is built
+ensure_mtg_binary
 
 # Colors for output
 RED='\033[0;31m'
@@ -22,7 +25,6 @@ NC='\033[0m' # No Color
 echo "=== Interactive TUI E2E Test ==="
 echo
 
-echo "Will use: cargo run --bin mtg"
 echo
 
 # Check if test deck exists
@@ -75,8 +77,7 @@ echo
 # P1 = tui (interactive with piped input)
 # P2 = zero (deterministic choices)
 # Redirect stderr to capture game output
-# Since we only call mtg once, use cargo run
-if echo -e "$INPUT_SEQUENCE" | timeout 30s cargo run --bin mtg -- tui \
+if echo -e "$INPUT_SEQUENCE" | timeout 30s "$MTG_BIN" tui \
     "$WORKSPACE_ROOT/decks/simple_bolt.dck" \
     "$WORKSPACE_ROOT/decks/simple_bolt.dck" \
     --p1 tui \

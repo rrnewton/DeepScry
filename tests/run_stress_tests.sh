@@ -20,9 +20,10 @@
 
 set -e  # Exit on error
 
-# Get absolute path to workspace root (script is in tests/)
+# Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
 cd "$WORKSPACE_ROOT"
 
 # Parse command line arguments
@@ -102,9 +103,10 @@ MATCHUPS=(
 
 echo "=== MTG Snapshot/Resume Stress Tests ==="
 echo ""
-echo "Building release binary once (scripts call mtg many times)..."
-cargo build --release
-echo ""
+
+# Ensure release binary is built
+ensure_mtg_binary
+
 echo "Decks to test: ${DECKS[*]}"
 echo "Controller matchups: ${#MATCHUPS[@]}"
 echo ""
