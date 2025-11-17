@@ -22,7 +22,7 @@ set -e  # Exit on error
 
 # Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/test_helpers.sh"
+source "$SCRIPT_DIR/lib/test_helpers.sh"
 
 cd "$WORKSPACE_ROOT"
 

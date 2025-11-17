@@ -13,7 +13,7 @@ set -euo pipefail
 
 # Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/test_helpers.sh"
+source "$SCRIPT_DIR/lib/test_helpers.sh"
 
 # Ensure release binary is built
 ensure_mtg_binary

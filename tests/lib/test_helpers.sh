@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Shared helpers for E2E test scripts
+#
+# Usage: source "$SCRIPT_DIR/lib/test_helpers.sh"
+#
+# This file provides common functionality for all E2E test scripts:
+# - Path resolution (WORKSPACE_ROOT)
+# - Release binary building (ensure_mtg_binary)
+# - Consistent invocation patterns via run_mtg()
+
+# Get absolute path to workspace root (script is in tests/, helpers in tests/lib/)
+# Note: Caller must set SCRIPT_DIR before sourcing this file:
+#   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+#
+# If SCRIPT_DIR is not set, attempt to derive it from BASH_SOURCE
+if [ -z "$SCRIPT_DIR" ]; then
+    # When run as a test by the harness (not sourced), use the lib directory as reference
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # Go up one level from lib/ to tests/
+    export WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+else
+    # Normal case: SCRIPT_DIR set by caller (test script in tests/)
+    export WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
+# Ensure release binary exists and is up-to-date
+# This builds the binary once per test script invocation
+# Optional: Call this explicitly at the start of each test for consistent timing
+ensure_mtg_binary() {
+    cd "$WORKSPACE_ROOT"
+
+    # Always build release binary at start of each test
+    # This ensures tests use latest code and provides consistent timing
+    echo "Building release binary..."
+    cargo build --release --bin mtg
+    echo ""
+
+    # Set MTG_BIN for use in tests
+    export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
+
+    # Verify binary exists
+    if [ ! -f "$MTG_BIN" ]; then
+        echo "Error: Failed to build $MTG_BIN"
+        exit 1
+    fi
+}
+
+# Run mtg with given arguments
+# Usage: run_mtg tui deck1.dck deck2.dck --p1 heuristic ...
+#
+# If ensure_mtg_binary() was called first, uses the pre-built binary.
+# Otherwise, uses cargo run --release --bin mtg (builds on first invocation).
+run_mtg() {
+    if [ -n "$MTG_BIN" ] && [ -f "$MTG_BIN" ]; then
+        # Use pre-built binary if available
+        "$MTG_BIN" "$@"
+    else
+        # Fall back to cargo run (builds if needed)
+        cargo run --release --bin mtg -- "$@"
+    fi
+}
