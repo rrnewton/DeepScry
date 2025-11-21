@@ -1292,39 +1292,21 @@ impl GameState {
                 for _ in 0..*amount {
                     let token_id = self.next_card_id();
 
-                    // Parse token name from script name
+                    // Parse token name and properties from script name
                     // Example: "c_a_food_sac" -> "Food Token"
                     // Example: "gw_1_1_human_citizen" -> "Human Citizen Token"
-                    let token_name = if token_script.contains("food") {
-                        "Food Token".to_string()
-                    } else if token_script.contains("human_citizen") {
-                        "Human Citizen Token".to_string()
-                    } else {
-                        // Fallback: use the script name
-                        format!("{} Token", token_script)
-                    };
+                    // Example: "g_2_1_spider_reach" -> "Spider Token"
+                    let (token_name, token_type, token_subtypes, power, toughness, colors, keywords) =
+                        Self::parse_token_from_script(token_script);
 
                     let mut token = crate::core::Card::new(token_id, token_name.clone(), *controller);
                     token.controller = *controller;
-
-                    // Set token properties based on the script name (stub implementation)
-                    if token_script.contains("food") {
-                        // Food token: Artifact Food with "{2}, {T}, Sacrifice: Gain 3 life"
-                        token.types = smallvec::SmallVec::from_vec(vec![crate::core::CardType::Artifact]);
-                        token.subtypes = smallvec::SmallVec::from_vec(vec![crate::core::Subtype::from("Food")]);
-                        // TODO: Add sacrifice ability when we implement it
-                    } else if token_script.contains("human_citizen") {
-                        // 1/1 Human Citizen token
-                        token.types = smallvec::SmallVec::from_vec(vec![crate::core::CardType::Creature]);
-                        token.subtypes = smallvec::SmallVec::from_vec(vec![
-                            crate::core::Subtype::from("Human"),
-                            crate::core::Subtype::from("Citizen"),
-                        ]);
-                        token.set_power(Some(1));
-                        token.set_toughness(Some(1));
-                        token.colors =
-                            smallvec::SmallVec::from_vec(vec![crate::core::Color::Green, crate::core::Color::White]);
-                    }
+                    token.types = token_type;
+                    token.subtypes = token_subtypes;
+                    token.set_power(power);
+                    token.set_toughness(toughness);
+                    token.colors = colors;
+                    token.keywords = keywords;
 
                     // Add token to game
                     self.cards.insert(token_id, token);
@@ -2488,6 +2470,84 @@ impl GameState {
                 Ok(())
             }
         }
+    }
+
+    /// Parse token properties from token script name
+    ///
+    /// This is a stub implementation that hardcodes common token types.
+    /// TODO(mtg-d32d4d): Load full token definitions from tokenscripts/ directory
+    ///
+    /// Token script naming convention:
+    /// - `c_a_food_sac` -> Colorless Artifact (Food)
+    /// - `gw_1_1_human_citizen` -> Green/White 1/1 Human Citizen
+    /// - `g_2_1_spider_reach` -> Green 2/1 Spider with Reach
+    ///
+    /// Returns: (name, types, subtypes, power, toughness, colors, keywords)
+    #[allow(clippy::type_complexity)]
+    fn parse_token_from_script(
+        token_script: &str,
+    ) -> (
+        String,                                         // name
+        smallvec::SmallVec<[crate::core::CardType; 2]>, // types
+        smallvec::SmallVec<[crate::core::Subtype; 3]>,  // subtypes
+        Option<i8>,                                     // power
+        Option<i8>,                                     // toughness
+        smallvec::SmallVec<[crate::core::Color; 2]>,    // colors
+        crate::core::KeywordSet,                        // keywords
+    ) {
+        use crate::core::{CardType, Color, Keyword, KeywordSet, Subtype};
+
+        // Food token: "c_a_food_sac"
+        if token_script.contains("food") {
+            return (
+                "Food Token".to_string(),
+                smallvec::SmallVec::from_vec(vec![CardType::Artifact]),
+                smallvec::SmallVec::from_vec(vec![Subtype::from("Food")]),
+                None,
+                None,
+                smallvec::SmallVec::new(), // Colorless
+                KeywordSet::new(),
+            );
+        }
+
+        // Human Citizen token: "gw_1_1_human_citizen"
+        if token_script.contains("human_citizen") {
+            return (
+                "Human Citizen Token".to_string(),
+                smallvec::SmallVec::from_vec(vec![CardType::Creature]),
+                smallvec::SmallVec::from_vec(vec![Subtype::from("Human"), Subtype::from("Citizen")]),
+                Some(1),
+                Some(1),
+                smallvec::SmallVec::from_vec(vec![Color::Green, Color::White]),
+                KeywordSet::new(),
+            );
+        }
+
+        // Spider token: "g_2_1_spider_reach"
+        if token_script.contains("spider") && token_script.contains("reach") {
+            let mut keywords = KeywordSet::new();
+            keywords.insert(Keyword::Reach);
+            return (
+                "Spider Token".to_string(),
+                smallvec::SmallVec::from_vec(vec![CardType::Creature]),
+                smallvec::SmallVec::from_vec(vec![Subtype::from("Spider")]),
+                Some(2),
+                Some(1),
+                smallvec::SmallVec::from_vec(vec![Color::Green]),
+                keywords,
+            );
+        }
+
+        // Fallback: generic token with script name
+        (
+            format!("{} Token", token_script),
+            smallvec::SmallVec::from_vec(vec![CardType::Artifact]),
+            smallvec::SmallVec::new(),
+            None,
+            None,
+            smallvec::SmallVec::new(),
+            KeywordSet::new(),
+        )
     }
 }
 
