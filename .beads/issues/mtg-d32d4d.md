@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2025-11-21T01:03:59.768389132+00:00
-updated_at: 2025-11-21T01:30:55.333944908+00:00
+updated_at: 2025-11-21T15:21:19.861549816+00:00
 ---
 
 # Description
@@ -13,7 +13,7 @@ Spider-Man deck gameplay issues - ETB token creation
 
 ## Status
 
-PARTIALLY FIXED - ETB triggers now create tokens with enhanced support
+PARTIALLY FIXED - ETB triggers now create tokens from actual tokenscripts definitions
 
 ## Critical Issues Found
 
@@ -22,6 +22,7 @@ PARTIALLY FIXED - ETB triggers now create tokens with enhanced support
    - Root cause: Trigger parser didn't handle Execute$ parameter that references SVars with DB$ Token effects
    - **Fix**: Added parsing logic for Execute$ → SVar lookup → DB$ Token parameter extraction
    - **Enhancement**: Refactored token creation with centralized helper function
+   - **Token Loading**: Implemented proper token definition loading from tokenscripts/ directory
    - **Verification**: Spider-Ham now successfully creates Food tokens when cast
 
 2. **Friendly Neighborhood: Unknown Affected$ selector Land.AttachedBy** - NOT FIXED ❌
@@ -41,7 +42,36 @@ PARTIALLY FIXED - ETB triggers now create tokens with enhanced support
 
 ## Implementation Details
 
-### Code Changes (Commit 1: feat(triggers))
+### Commit 3: feat(tokens) - Token Loading System
+
+Replaced hardcoded token stubs with dynamic loading from tokenscripts/:
+
+1. **Token preloading during game initialization** (`game_init.rs:58-79`)
+   - Scans all deck cards for TokenScript$ references in SVars
+   - Loads referenced token definitions from tokenscripts/
+   - Caches definitions in GameState.token_definitions
+
+2. **Token definition extraction** (`card.rs:161-192`)
+   - New extract_token_scripts() method on CardDefinition
+   - Parses SVar lines containing "DB$ Token | TokenScript$ ..."
+   - Returns unique token script names for preloading
+
+3. **Token loading from tokenscripts** (`database_async.rs:244-282`)
+   - New get_token() method on AsyncCardDatabase
+   - Canonicalizes cardsfolder path (handles symlinks)
+   - Navigates to sibling tokenscripts/ directory
+
+4. **Token creation from cached definitions** (`actions.rs:1280-1324`)
+   - CreateToken effect now looks up cached token definition
+   - Instantiates tokens using CardDefinition.instantiate()
+   - Returns error if token not preloaded (fail fast)
+
+5. **GameState changes** (`state.rs:57-61, 120`)
+   - Added token_definitions: HashMap<String, Arc<CardDefinition>>
+   - Marked with #[serde(skip)] to exclude from snapshots
+   - Initialized empty in constructor
+
+### Commit 1: feat(triggers) - ETB Token Creation
 
 1. **mtg-engine/src/core/effects.rs** (lines 115-126)
    - Added `Effect::CreateToken` variant with:
@@ -62,71 +92,30 @@ PARTIALLY FIXED - ETB triggers now create tokens with enhanced support
    - Logs token creation
    - Added placeholder controller ID replacement (lines 1487-1499)
 
-4. **mtg-engine/src/game/game_loop.rs** (lines 1331-1341)
-   - Added logging case for `Effect::CreateToken`
+### Commit 2: refactor(tokens) - Common Token Types
 
-### Code Changes (Commit 2: refactor(tokens))
-
-5. **mtg-engine/src/game/actions.rs** (lines 2486-2550)
-   - Added `parse_token_from_script` helper method
+4. **mtg-engine/src/game/actions.rs** (lines 2486-2550)
+   - Added `parse_token_from_script` helper method (now removed in Commit 3)
    - Centralized token type parsing from script names
-   - Stub implementation for common token types:
-     - Food tokens: `c_a_food_sac` → Artifact Food
-     - Human Citizen tokens: `gw_1_1_human_citizen` → 1/1 G/W Creature
-     - Spider tokens: `g_2_1_spider_reach` → 2/1 Green Creature with Reach
-   - Fallback for unknown token types
-   - Proper type handling (SmallVec sizes, KeywordSet)
-
-6. **mtg-engine/src/game/actions.rs** (lines 1295-1309)
-   - Refactored CreateToken execution to use helper
-   - Cleaner code with single point of token definition
-
-### TODO: Token Definition Loading
-
-Currently using stub implementation that hardcodes token properties based on script name.
-Future work should load from `forge-java/forge-gui/res/tokenscripts/` directory to get full token definitions.
+   - Stub implementation for common token types (now replaced by actual loading)
 
 ## Test Results
 
 Created test deck `decks/spider_ham_test.dck` with Spider-Ham and verified:
+- Spider-Ham successfully creates Food Token on ETB
+- Token definitions properly loaded from tokenscripts/
+- All 492 unit tests pass
+- New E2E test: tests/spider_ham_tokens_e2e.sh
 
-```
-  Player1 casts Spider-Ham, Peter Porker (34) (putting on stack)
-  Tap Forest for {G}
-  Tap Forest for {G}
-  Spider-Ham, Peter Porker (34) resolves
-  Created Food Token under Player1's control
-  Spider-Ham, Peter Porker (34) enters the battlefield as a 2/2 creature
+## Remaining Work
 
-  Battlefield:
-    Forest (11) (tapped)
-    Forest (17) (tapped)
-    Spider-Ham, Peter Porker (34) - 2/2
-    Food Token (123)
-```
+The following issues still need to be addressed:
 
-Food token successfully created and appears on battlefield! ✅
-
-All validation checks passed:
-- Clippy: ✅
-- Unit tests: ✅ 491/491 passed (1 skipped)
-- Examples: ✅ 14/14 passed
-- E2E tests: ✅ All passed
-
-## Related Files
-
-- `cardsfolder/s/spider_ham_peter_porker.txt`
-- `cardsfolder/s/spiders_man_heroic_horde.txt` (uses Spider tokens)
-- `cardsfolder/f/friendly_neighborhood.txt` (uses Human Citizen tokens)
-- `forge-java/forge-gui/res/tokenscripts/c_a_food_sac.txt`
-- `forge-java/forge-gui/res/tokenscripts/gw_1_1_human_citizen.txt`
-- `forge-java/forge-gui/res/tokenscripts/g_2_1_spider_reach.txt`
-- `decks/spider_ham_test.dck` (test deck created)
-
-## Next Steps
-
-1. ✅ Implement token definition loading from tokenscripts/ directory (stub implementation complete)
-2. ❌ Implement Land.AttachedBy selector
-3. ❌ Implement comma-separated type list parsing
-4. ❌ Implement "Other" qualifier in type selectors
-5. ❌ Test other Spider-Man cards with complex abilities
+1. **Friendly Neighborhood selector** (`Land.AttachedBy`)
+   - Need to implement AttachedBy qualifier for Aura abilities
+   
+2. **Comma-separated type lists** (Spider-Ham's multi-animal ability)
+   - Need to parse comma-separated selectors in Affected$
+   
+3. **"Other" qualifier** (Spider-Punk's ability)
+   - Need to implement "Other" in type selectors
