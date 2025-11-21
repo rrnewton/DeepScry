@@ -1277,6 +1277,69 @@ impl GameState {
                 // Call the attach_equipment method from Phase 1
                 self.attach_equipment(*source_equipment, *target_creature)?;
             }
+            Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+            } => {
+                // Create token(s) on the battlefield
+                // MTG Rules 111.2: The player who creates a token is its owner and controller
+
+                // TODO(mtg-d32d4d): Load token definitions from tokenscripts/ directory
+                // For now, create a stub token with the token_script name
+                // Example: token_script = "c_a_food_sac" creates a Food token
+
+                for _ in 0..*amount {
+                    let token_id = self.next_card_id();
+
+                    // Parse token name from script name
+                    // Example: "c_a_food_sac" -> "Food Token"
+                    // Example: "gw_1_1_human_citizen" -> "Human Citizen Token"
+                    let token_name = if token_script.contains("food") {
+                        "Food Token".to_string()
+                    } else if token_script.contains("human_citizen") {
+                        "Human Citizen Token".to_string()
+                    } else {
+                        // Fallback: use the script name
+                        format!("{} Token", token_script)
+                    };
+
+                    let mut token = crate::core::Card::new(token_id, token_name.clone(), *controller);
+                    token.controller = *controller;
+
+                    // Set token properties based on the script name (stub implementation)
+                    if token_script.contains("food") {
+                        // Food token: Artifact Food with "{2}, {T}, Sacrifice: Gain 3 life"
+                        token.types = smallvec::SmallVec::from_vec(vec![crate::core::CardType::Artifact]);
+                        token.subtypes = smallvec::SmallVec::from_vec(vec![crate::core::Subtype::from("Food")]);
+                        // TODO: Add sacrifice ability when we implement it
+                    } else if token_script.contains("human_citizen") {
+                        // 1/1 Human Citizen token
+                        token.types = smallvec::SmallVec::from_vec(vec![crate::core::CardType::Creature]);
+                        token.subtypes = smallvec::SmallVec::from_vec(vec![
+                            crate::core::Subtype::from("Human"),
+                            crate::core::Subtype::from("Citizen"),
+                        ]);
+                        token.set_power(Some(1));
+                        token.set_toughness(Some(1));
+                        token.colors =
+                            smallvec::SmallVec::from_vec(vec![crate::core::Color::Green, crate::core::Color::White]);
+                    }
+
+                    // Add token to game
+                    self.cards.insert(token_id, token);
+
+                    // Put token onto the battlefield
+                    self.battlefield.add(token_id);
+
+                    // Log token creation
+                    self.logger.normal(&format!(
+                        "Created {} under {}'s control",
+                        token_name,
+                        self.get_player(*controller)?.name
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -1414,6 +1477,19 @@ impl GameState {
                                 toughness_bonus: *toughness_bonus,
                             };
                         }
+                    }
+                    Effect::CreateToken {
+                        controller,
+                        token_script,
+                        amount,
+                    } if controller.as_u32() == 0 => {
+                        // Placeholder player ID 0 means the controller of the trigger source
+                        let source_controller = self.cards.get(source_card_id)?.controller;
+                        effect = Effect::CreateToken {
+                            controller: source_controller,
+                            token_script: token_script.clone(),
+                            amount: *amount,
+                        };
                     }
                     _ => {}
                 }

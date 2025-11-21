@@ -111,6 +111,18 @@ pub enum Effect {
         /// Target creature to attach to
         target_creature: CardId,
     },
+
+    /// Create token(s) under a player's control
+    /// Example: Spider-Ham creates a Food token
+    /// Corresponds to: DB$ Token | TokenAmount$ 1 | TokenScript$ c_a_food_sac | TokenOwner$ You
+    CreateToken {
+        /// Player who will control the tokens
+        controller: PlayerId,
+        /// Token script name (e.g., "c_a_food_sac" for Food token)
+        token_script: String,
+        /// Number of tokens to create
+        amount: u8,
+    },
 }
 
 /// Events that can trigger abilities

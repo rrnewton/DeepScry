@@ -1172,6 +1172,57 @@ impl CardDefinition {
                     });
                 }
 
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
+                    // Look up the SVar that Execute$ references
+                    // Example: Execute$ TrigToken looks for "SVar:TrigToken:..."
+                    for ab in &self.raw_abilities {
+                        if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
+                            // Parse the SVar body
+                            if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                            {
+                                // Parse DB$ Token effects
+                                // Example: "DB$ Token | TokenAmount$ 1 | TokenScript$ c_a_food_sac | TokenOwner$ You"
+                                if body.contains("DB$ Token") {
+                                    // Parse token parameters
+                                    let mut token_script = String::new();
+                                    let mut token_amount = 1u8;
+
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+
+                                            match key {
+                                                "TokenScript" => {
+                                                    token_script = value.to_string();
+                                                }
+                                                "TokenAmount" => {
+                                                    if let Ok(amt) = value.parse::<u8>() {
+                                                        token_amount = amt;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    // Only add the token effect if we found a token script
+                                    if !token_script.is_empty() {
+                                        effects.push(Effect::CreateToken {
+                                            controller: PlayerId::new(0), // Placeholder - filled at trigger time
+                                            token_script,
+                                            amount: token_amount,
+                                        });
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 // Extract description from TriggerDescription$ if available
                 let description = params
                     .get("TriggerDescription")
@@ -1180,7 +1231,6 @@ impl CardDefinition {
 
                 // Note: This implements basic SVar resolution by searching across all raw_abilities
                 // for effect parameters. Proper SVar resolution would parse SVar: lines separately.
-                // TODO: Implement proper SVar parsing and Execute$ sub-ability resolution
 
                 triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
             }

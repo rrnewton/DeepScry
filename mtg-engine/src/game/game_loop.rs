@@ -1328,6 +1328,17 @@ impl<'a> GameLoop<'a> {
                     format!("{equipment_name} ({source_equipment}) attaches to {creature_name} ({target_creature})");
                 self.game.logger.normal(&message);
             }
+            Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let message = format!(
+                    "{source_name} ({source_id}) creates {amount} {token_script} token(s) under {controller_name}'s control"
+                );
+                self.game.logger.normal(&message);
+            }
         }
     }
 
