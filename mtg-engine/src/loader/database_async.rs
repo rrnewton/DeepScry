@@ -241,6 +241,46 @@ impl CardDatabase {
         Ok((loaded, duration))
     }
 
+    /// Load a token definition by script name
+    /// Token scripts are in forge-java/forge-gui/res/tokenscripts/
+    /// Example: "c_a_food_sac" -> "forge-java/forge-gui/res/tokenscripts/c_a_food_sac.txt"
+    pub async fn get_token(&self, token_script: &str) -> Result<Option<CardDefinition>> {
+        // Token scripts are stored in a sibling directory to cardsfolder
+        // cardsfolder is typically at: forge-java/forge-gui/res/cardsfolder/
+        // tokenscripts is at:         forge-java/forge-gui/res/tokenscripts/
+
+        // Resolve cardsfolder canonically to handle symlinks (e.g., ./cardsfolder -> forge-java/...)
+        let cardsfolder_canonical = std::fs::canonicalize(&self.cardsfolder)
+            .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to resolve cardsfolder path: {}", e)))?;
+
+        // Navigate up from cardsfolder to res/ and then into tokenscripts/
+        let token_path = cardsfolder_canonical
+            .parent()
+            .ok_or_else(|| MtgError::InvalidCardFormat("Invalid cardsfolder path".to_string()))?
+            .join("tokenscripts")
+            .join(format!("{}.txt", token_script));
+
+        if !token_path.exists() {
+            // Token file doesn't exist - this is not necessarily an error
+            // Some cards might reference tokens that don't have definitions yet
+            eprintln!(
+                "Warning: Token script '{}' not found at {}",
+                token_script,
+                token_path.display()
+            );
+            return Ok(None);
+        }
+
+        // Load the token definition asynchronously
+        match Self::load_card_async(token_path).await {
+            Ok(token_def) => Ok(Some(token_def)),
+            Err(e) => {
+                // Token file exists but failed to parse - this is an error
+                Err(e)
+            }
+        }
+    }
+
     /// Load a card from a file asynchronously
     async fn load_card_async(path: PathBuf) -> Result<CardDefinition> {
         let contents = tokio::fs::read_to_string(&path).await.map_err(MtgError::IoError)?;

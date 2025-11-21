@@ -1285,41 +1285,41 @@ impl GameState {
                 // Create token(s) on the battlefield
                 // MTG Rules 111.2: The player who creates a token is its owner and controller
 
-                // TODO(mtg-d32d4d): Load token definitions from tokenscripts/ directory
-                // For now, create a stub token with the token_script name
-                // Example: token_script = "c_a_food_sac" creates a Food token
+                // Look up token definition from cache (loaded during game initialization)
+                let token_def = self.token_definitions.get(token_script).cloned();
 
-                for _ in 0..*amount {
-                    let token_id = self.next_card_id();
+                if let Some(token_def) = token_def {
+                    // Use actual token definition from tokenscripts/
+                    for _ in 0..*amount {
+                        let token_id = self.next_card_id();
 
-                    // Parse token name and properties from script name
-                    // Example: "c_a_food_sac" -> "Food Token"
-                    // Example: "gw_1_1_human_citizen" -> "Human Citizen Token"
-                    // Example: "g_2_1_spider_reach" -> "Spider Token"
-                    let (token_name, token_type, token_subtypes, power, toughness, colors, keywords) =
-                        Self::parse_token_from_script(token_script);
+                        // Instantiate token from definition
+                        let mut token = token_def.instantiate(token_id, *controller);
 
-                    let mut token = crate::core::Card::new(token_id, token_name.clone(), *controller);
-                    token.controller = *controller;
-                    token.types = token_type;
-                    token.subtypes = token_subtypes;
-                    token.set_power(power);
-                    token.set_toughness(toughness);
-                    token.colors = colors;
-                    token.keywords = keywords;
+                        // Ensure controller is set correctly (owner and controller are the same for tokens)
+                        token.controller = *controller;
 
-                    // Add token to game
-                    self.cards.insert(token_id, token);
+                        // Add token to game
+                        let token_name = token.name.to_string();
+                        self.cards.insert(token_id, token);
 
-                    // Put token onto the battlefield
-                    self.battlefield.add(token_id);
+                        // Put token onto the battlefield
+                        self.battlefield.add(token_id);
 
-                    // Log token creation
-                    self.logger.normal(&format!(
-                        "Created {} under {}'s control",
-                        token_name,
-                        self.get_player(*controller)?.name
-                    ));
+                        // Log token creation
+                        self.logger.normal(&format!(
+                            "Created {} under {}'s control",
+                            token_name,
+                            self.get_player(*controller)?.name
+                        ));
+                    }
+                } else {
+                    // Token definition not found - this is an error
+                    // The token should have been preloaded during game initialization
+                    return Err(crate::MtgError::InvalidAction(format!(
+                        "Token definition not found: '{}' (should have been preloaded)",
+                        token_script
+                    )));
                 }
             }
         }
@@ -2470,84 +2470,6 @@ impl GameState {
                 Ok(())
             }
         }
-    }
-
-    /// Parse token properties from token script name
-    ///
-    /// This is a stub implementation that hardcodes common token types.
-    /// TODO(mtg-d32d4d): Load full token definitions from tokenscripts/ directory
-    ///
-    /// Token script naming convention:
-    /// - `c_a_food_sac` -> Colorless Artifact (Food)
-    /// - `gw_1_1_human_citizen` -> Green/White 1/1 Human Citizen
-    /// - `g_2_1_spider_reach` -> Green 2/1 Spider with Reach
-    ///
-    /// Returns: (name, types, subtypes, power, toughness, colors, keywords)
-    #[allow(clippy::type_complexity)]
-    fn parse_token_from_script(
-        token_script: &str,
-    ) -> (
-        String,                                         // name
-        smallvec::SmallVec<[crate::core::CardType; 2]>, // types
-        smallvec::SmallVec<[crate::core::Subtype; 3]>,  // subtypes
-        Option<i8>,                                     // power
-        Option<i8>,                                     // toughness
-        smallvec::SmallVec<[crate::core::Color; 2]>,    // colors
-        crate::core::KeywordSet,                        // keywords
-    ) {
-        use crate::core::{CardType, Color, Keyword, KeywordSet, Subtype};
-
-        // Food token: "c_a_food_sac"
-        if token_script.contains("food") {
-            return (
-                "Food Token".to_string(),
-                smallvec::SmallVec::from_vec(vec![CardType::Artifact]),
-                smallvec::SmallVec::from_vec(vec![Subtype::from("Food")]),
-                None,
-                None,
-                smallvec::SmallVec::new(), // Colorless
-                KeywordSet::new(),
-            );
-        }
-
-        // Human Citizen token: "gw_1_1_human_citizen"
-        if token_script.contains("human_citizen") {
-            return (
-                "Human Citizen Token".to_string(),
-                smallvec::SmallVec::from_vec(vec![CardType::Creature]),
-                smallvec::SmallVec::from_vec(vec![Subtype::from("Human"), Subtype::from("Citizen")]),
-                Some(1),
-                Some(1),
-                smallvec::SmallVec::from_vec(vec![Color::Green, Color::White]),
-                KeywordSet::new(),
-            );
-        }
-
-        // Spider token: "g_2_1_spider_reach"
-        if token_script.contains("spider") && token_script.contains("reach") {
-            let mut keywords = KeywordSet::new();
-            keywords.insert(Keyword::Reach);
-            return (
-                "Spider Token".to_string(),
-                smallvec::SmallVec::from_vec(vec![CardType::Creature]),
-                smallvec::SmallVec::from_vec(vec![Subtype::from("Spider")]),
-                Some(2),
-                Some(1),
-                smallvec::SmallVec::from_vec(vec![Color::Green]),
-                keywords,
-            );
-        }
-
-        // Fallback: generic token with script name
-        (
-            format!("{} Token", token_script),
-            smallvec::SmallVec::from_vec(vec![CardType::Artifact]),
-            smallvec::SmallVec::new(),
-            None,
-            None,
-            smallvec::SmallVec::new(),
-            KeywordSet::new(),
-        )
     }
 }
 

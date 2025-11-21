@@ -158,6 +158,39 @@ pub struct CardDefinition {
 }
 
 impl CardDefinition {
+    /// Extract all TokenScript references from this card's abilities
+    ///
+    /// Scans all raw_abilities for SVar lines containing "DB$ Token" and extracts
+    /// the TokenScript$ parameter value. Returns unique token script names.
+    ///
+    /// Example:
+    /// - Input: `SVar:TrigToken:DB$ Token | TokenScript$ c_a_food_sac | TokenAmount$ 1`
+    /// - Output: `["c_a_food_sac"]`
+    pub fn extract_token_scripts(&self) -> Vec<String> {
+        let mut token_scripts = std::collections::HashSet::new();
+
+        for ability in &self.raw_abilities {
+            // Look for SVar lines with DB$ Token
+            if ability.starts_with("SVar:") && ability.contains("DB$ Token") {
+                // Parse the SVar body for TokenScript$ parameter
+                // Format: "SVar:NAME:DB$ Token | TokenScript$ script_name | ..."
+                if let Some((_prefix, body)) = ability.split_once(':').and_then(|(_, rest)| rest.split_once(':')) {
+                    // Split by | and look for TokenScript$
+                    for param in body.split('|') {
+                        let param = param.trim();
+                        if let Some((key, value)) = param.split_once('$') {
+                            if key.trim() == "TokenScript" {
+                                token_scripts.insert(value.trim().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        token_scripts.into_iter().collect()
+    }
+
     /// Create a Card instance from this definition
     pub fn instantiate(&self, id: crate::core::CardId, owner: crate::core::PlayerId) -> Card {
         let mut card = Card::new(id, self.name.clone(), owner);

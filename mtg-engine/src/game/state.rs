@@ -53,6 +53,12 @@ pub struct GameState {
 
     /// Centralized logger for game events
     pub logger: GameLogger,
+
+    /// Token definitions cache (loaded at game initialization)
+    /// Maps token script name (e.g., "c_a_food_sac") to card definition
+    /// Not serialized - will be empty when loading from snapshot
+    #[serde(skip)]
+    pub token_definitions: std::collections::HashMap<String, std::sync::Arc<crate::loader::CardDefinition>>,
 }
 
 impl GameState {
@@ -111,6 +117,7 @@ impl GameState {
             next_entity_id: next_id,
             undo_log: UndoLog::new(),
             logger: GameLogger::new(),
+            token_definitions: std::collections::HashMap::new(),
         }
     }
 

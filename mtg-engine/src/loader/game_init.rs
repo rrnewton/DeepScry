@@ -55,6 +55,29 @@ impl<'a> GameInitializer<'a> {
             self.card_db.load_cards(&card_names).await?;
         }
 
+        // Scan all loaded cards for token script references
+        // This ensures we preload any tokens that cards might create
+        let mut token_scripts = std::collections::HashSet::new();
+        for card_name in &card_names {
+            if let Some(card_def) = self.card_db.get_card(card_name).await? {
+                for token_script in card_def.extract_token_scripts() {
+                    token_scripts.insert(token_script);
+                }
+            }
+        }
+
+        // Load all token definitions from tokenscripts/ directory
+        if !token_scripts.is_empty() {
+            for token_script in token_scripts {
+                // Token scripts are in forge-java/forge-gui/res/tokenscripts/
+                // Format: c_a_food_sac.txt
+                if let Some(token_def) = self.card_db.get_token(&token_script).await? {
+                    game.token_definitions
+                        .insert(token_script, std::sync::Arc::new(token_def));
+                }
+            }
+        }
+
         // Now load decks sequentially - cards will come from cache, ensuring deterministic order
         // Deck 1: card1, card2, card3, ...
         // Deck 2: card1, card2, card3, ...
