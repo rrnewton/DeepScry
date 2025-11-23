@@ -92,17 +92,35 @@ impl HeuristicController {
     ///
     /// Returns a score representing the creature's overall value.
     /// Higher scores indicate more valuable creatures.
-    pub fn evaluate_creature(&self, card: &Card) -> i32 {
-        self.evaluate_creature_impl(card, true, true)
+    ///
+    /// Uses effective P/T (after anthem effects, equipment, counters) for accurate evaluation.
+    pub fn evaluate_creature(&self, view: &GameStateView, card_id: CardId) -> i32 {
+        self.evaluate_creature_impl(view, card_id, true, true)
     }
 
     /// Internal implementation of creature evaluation with optional P/T and CMC consideration
     ///
     /// Parameters:
+    /// - view: Game state view for accessing effective P/T
+    /// - card_id: ID of the creature to evaluate
     /// - consider_pt: Whether to factor in power/toughness
     /// - consider_cmc: Whether to factor in mana cost
-    fn evaluate_creature_impl(&self, card: &Card, consider_pt: bool, consider_cmc: bool) -> i32 {
+    ///
+    /// Uses effective P/T from CR 613 layer system to properly account for anthem effects,
+    /// equipment bonuses, and counters when evaluating creature value.
+    fn evaluate_creature_impl(
+        &self,
+        view: &GameStateView,
+        card_id: CardId,
+        consider_pt: bool,
+        consider_cmc: bool,
+    ) -> i32 {
         let mut value = 80;
+
+        // Get the card from the view
+        let Some(card) = view.get_card(card_id) else {
+            return 0; // Card not found, return minimal value
+        };
 
         // Tokens are worth less than actual cards
         // Java: if (!c.isToken()) { value += addValue(20, "non-token"); }
@@ -110,8 +128,11 @@ impl HeuristicController {
         // For now, assume all cards are non-tokens
         value += 20;
 
-        let power = card.current_power() as i32;
-        let toughness = card.current_toughness() as i32;
+        // Use effective P/T after all continuous effects (anthem, equipment, counters)
+        let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+        let toughness = view
+            .get_effective_toughness(card_id)
+            .unwrap_or(card.current_toughness() as i32);
 
         // Stats scoring
         if consider_pt {
@@ -249,19 +270,19 @@ impl HeuristicController {
     /// Get the best creature from a list based on evaluation score
     ///
     /// Reference: ComputerUtilCard.sortByEvaluateCreature() and getBestCreatureAI()
-    fn get_best_creature<'a>(&self, creatures: &[&'a Card]) -> Option<&'a Card> {
-        creatures
+    fn get_best_creature(&self, view: &GameStateView, creature_ids: &[CardId]) -> Option<CardId> {
+        creature_ids
             .iter()
-            .max_by_key(|card| self.evaluate_creature(card))
+            .max_by_key(|&&card_id| self.evaluate_creature(view, card_id))
             .copied()
     }
 
     /// Get the worst creature from a list based on evaluation score
     #[allow(dead_code)] // Will be used for discard decisions
-    fn get_worst_creature<'a>(&self, creatures: &[&'a Card]) -> Option<&'a Card> {
-        creatures
+    fn get_worst_creature(&self, view: &GameStateView, creature_ids: &[CardId]) -> Option<CardId> {
+        creature_ids
             .iter()
-            .min_by_key(|card| self.evaluate_creature(card))
+            .min_by_key(|&&card_id| self.evaluate_creature(view, card_id))
             .copied()
     }
 
@@ -429,7 +450,7 @@ impl HeuristicController {
             if let SpellAbility::CastSpell { card_id } = ability {
                 if let Some(card) = view.get_card(*card_id) {
                     if card.is_creature() {
-                        let value = self.evaluate_creature(card);
+                        let value = self.evaluate_creature(view, *card_id);
                         if value > best_creature_value {
                             best_creature_value = value;
                             best_creature_ability = Some(ability.clone());
@@ -530,10 +551,25 @@ impl HeuristicController {
     /// Calculate combat factors for an attacker against available blockers
     ///
     /// Reference: AiAttackController.SpellAbilityFactors.calculate() (lines 1374-1454)
-    fn calculate_combat_factors(&self, attacker: &Card, view: &GameStateView) -> CombatFactors {
-        let _attacker_power = attacker.current_power() as i32;
-        let _attacker_toughness = attacker.current_toughness() as i32;
-        let attacker_value = self.evaluate_creature(attacker);
+    fn calculate_combat_factors(&self, attacker_id: CardId, view: &GameStateView) -> CombatFactors {
+        let Some(attacker) = view.get_card(attacker_id) else {
+            // Card not found, return default factors
+            return CombatFactors {
+                can_be_killed: false,
+                can_be_killed_by_one: false,
+                can_kill_all: false,
+                can_kill_all_dangerous: false,
+                is_worth_less_than_all_killers: false,
+                has_combat_effect: false,
+                dangerous_blockers_present: false,
+                can_be_blocked: false,
+                number_of_blockers: 0,
+            };
+        };
+
+        let _attacker_power = view.get_effective_power(attacker_id).unwrap_or(0);
+        let _attacker_toughness = view.get_effective_toughness(attacker_id).unwrap_or(0);
+        let attacker_value = self.evaluate_creature(view, attacker_id);
 
         // Combat effect keywords (gain value even if blocked)
         // Note: Afflict is not yet in the Keyword enum, so we skip it for now
@@ -563,10 +599,11 @@ impl HeuristicController {
         let mut is_worth_less_than_all_killers = true;
 
         // Evaluate each potential blocker
-        for blocker in &potential_blockers {
-            let _blocker_power = blocker.current_power() as i32;
-            let _blocker_toughness = blocker.current_toughness() as i32;
-            let blocker_value = self.evaluate_creature(blocker);
+        for &blocker in &potential_blockers {
+            let blocker_id = blocker.id;
+            let _blocker_power = view.get_effective_power(blocker_id).unwrap_or(0);
+            let _blocker_toughness = view.get_effective_toughness(blocker_id).unwrap_or(0);
+            let blocker_value = self.evaluate_creature(view, blocker_id);
 
             // Can this blocker kill the attacker?
             if self.can_destroy_attacker(attacker, blocker) {
@@ -764,7 +801,7 @@ impl HeuristicController {
             // With numerical advantage, attack with power > 0 creatures
             if power > 0 {
                 // Still check basic combat factors for terrible situations
-                let factors = self.calculate_combat_factors(attacker, view);
+                let factors = self.calculate_combat_factors(attacker.id, view);
 
                 // Don't attack if we'll definitely die for nothing
                 // But do attack if we can't be blocked or if opponent has few blockers
@@ -791,7 +828,7 @@ impl HeuristicController {
         }
 
         // Calculate combat factors using board state evaluation
-        let factors = self.calculate_combat_factors(attacker, view);
+        let factors = self.calculate_combat_factors(attacker.id, view);
 
         // Always attack if unblockable (Java logic line 1517, 1528, 1538, 1545, 1553)
         if !factors.can_be_blocked && power > 0 {
@@ -1424,30 +1461,42 @@ impl HeuristicController {
     /// - Filter out creatures already dying (toughness <= 0)
     fn choose_best_removal_target(&self, spell: &Card, view: &GameStateView) -> Option<CardId> {
         // Get all opponent creatures on the battlefield
-        let mut opponent_creatures: Vec<&Card> = view
+        let opponent_creature_ids: Vec<CardId> = view
             .battlefield()
             .iter()
-            .filter_map(|&id| view.get_card(id))
-            .filter(|c| c.owner != self.player_id && c.is_creature())
+            .copied()
+            .filter(|&id| {
+                if let Some(c) = view.get_card(id) {
+                    c.owner != self.player_id && c.is_creature()
+                } else {
+                    false
+                }
+            })
             .collect();
 
-        if opponent_creatures.is_empty() {
+        if opponent_creature_ids.is_empty() {
             return None;
         }
 
         // Filter out indestructible creatures (line 157)
-        opponent_creatures.retain(|c| !c.has_indestructible());
+        let opponent_creature_ids: Vec<CardId> = opponent_creature_ids
+            .into_iter()
+            .filter(|&id| view.get_card(id).map(|c| !c.has_indestructible()).unwrap_or(false))
+            .collect();
 
         // Filter out creatures that are already dying (toughness <= 0)
         // This is part of "filterCreaturesThatWillDieThisTurn" (line 197)
-        opponent_creatures.retain(|c| c.current_toughness() > 0);
+        let opponent_creature_ids: Vec<CardId> = opponent_creature_ids
+            .into_iter()
+            .filter(|&id| view.get_card(id).map(|c| c.current_toughness() > 0).unwrap_or(false))
+            .collect();
 
         // For damage-based removal, filter out creatures with too much toughness
         let has_damage = spell
             .effects
             .iter()
             .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
-        if has_damage {
+        let opponent_creature_ids = if has_damage {
             // Find the damage amount
             let damage_amount = spell
                 .effects
@@ -1462,10 +1511,19 @@ impl HeuristicController {
                 .unwrap_or(0);
 
             // Only target creatures with toughness <= damage amount
-            opponent_creatures.retain(|c| c.current_toughness() as i32 <= damage_amount);
-        }
+            opponent_creature_ids
+                .into_iter()
+                .filter(|&id| {
+                    view.get_card(id)
+                        .map(|c| c.current_toughness() as i32 <= damage_amount)
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            opponent_creature_ids
+        };
 
-        if opponent_creatures.is_empty() {
+        if opponent_creature_ids.is_empty() {
             return None;
         }
 
@@ -1477,7 +1535,7 @@ impl HeuristicController {
 
         // Select the best creature (highest evaluation score)
         // Reference: ComputerUtilCard.getBestCreatureAI() (line 224)
-        self.get_best_creature(&opponent_creatures).map(|c| c.id)
+        self.get_best_creature(view, &opponent_creature_ids)
     }
 
     /// Determine if we should block an attacker with a specific blocker
@@ -1519,8 +1577,8 @@ impl HeuristicController {
         };
 
         // Evaluate creatures to determine value trade
-        let blocker_value = self.evaluate_creature(blocker);
-        let attacker_value = self.evaluate_creature(attacker);
+        let blocker_value = self.evaluate_creature(view, blocker.id);
+        let attacker_value = self.evaluate_creature(view, attacker.id);
 
         // Java AiBlockController logic (simplified):
         // - Always block if we can kill attacker without dying (favorable trade)
@@ -1611,14 +1669,14 @@ impl HeuristicController {
         &self,
         attacker: &Card,
         available_blockers: &[&'a Card],
-        _view: &GameStateView,
+        view: &GameStateView,
     ) -> Option<Vec<&'a Card>> {
         // Don't gang block indestructible or regenerating creatures
         if attacker.has_indestructible() {
             return None;
         }
 
-        let attacker_value = self.evaluate_creature(attacker);
+        let attacker_value = self.evaluate_creature(view, attacker.id);
         let attacker_power = attacker.current_power() as i32;
 
         // Try to find 2-3 blockers that can kill the attacker with minimal losses
@@ -1640,7 +1698,8 @@ impl HeuristicController {
                         let gang = vec![first_strikers[i], first_strikers[j]];
                         if self.can_gang_kill(attacker, &gang) {
                             // Check if this is a good trade
-                            let total_blocker_value: i32 = gang.iter().map(|b| self.evaluate_creature(b)).sum();
+                            let total_blocker_value: i32 =
+                                gang.iter().map(|b| self.evaluate_creature(view, b.id)).sum();
 
                             // Gang block if we save value or are in danger
                             if total_blocker_value < attacker_value * 2 {
@@ -1657,7 +1716,7 @@ impl HeuristicController {
             let mut usable_blockers: Vec<&Card> = available_blockers
                 .iter()
                 .filter(|b| {
-                    let blocker_value = self.evaluate_creature(b);
+                    let blocker_value = self.evaluate_creature(view, b.id);
                     // Use blockers worth less than the attacker
                     blocker_value < attacker_value
                 })
@@ -1665,7 +1724,7 @@ impl HeuristicController {
                 .collect();
 
             // Sort by value (cheapest first) to minimize losses
-            usable_blockers.sort_by_key(|b| self.evaluate_creature(b));
+            usable_blockers.sort_by_key(|b| self.evaluate_creature(view, b.id));
 
             // Try combinations of 2 blockers
             for i in 0..usable_blockers.len().min(3) {
@@ -1682,8 +1741,8 @@ impl HeuristicController {
                     let blocker1_dies = blocker1.current_toughness() as i32 <= attacker_power;
                     let blocker2_dies = blocker2.current_toughness() as i32 <= attacker_power;
 
-                    let blocker1_value = self.evaluate_creature(blocker1);
-                    let blocker2_value = self.evaluate_creature(blocker2);
+                    let blocker1_value = self.evaluate_creature(view, blocker1.id);
+                    let blocker2_value = self.evaluate_creature(view, blocker2.id);
 
                     // Good gang block scenarios:
                     // 1. Kill attacker and only one blocker dies
@@ -1718,7 +1777,8 @@ impl HeuristicController {
                             let blocker2_dies = blocker2.current_toughness() as i32 <= attacker_power;
                             let blocker3_dies = blocker3.current_toughness() as i32 <= attacker_power;
 
-                            let total_blocker_value: i32 = gang.iter().map(|b| self.evaluate_creature(b)).sum();
+                            let total_blocker_value: i32 =
+                                gang.iter().map(|b| self.evaluate_creature(view, b.id)).sum();
 
                             // Good 3-blocker scenarios:
                             // 1. At least 2 blockers survive
@@ -1776,6 +1836,7 @@ impl HeuristicController {
     /// - Willing to trade equal-value creatures to prevent damage
     fn make_trade_blocks<'a>(
         &self,
+        view: &GameStateView,
         attackers: &[&'a Card],
         available_blockers: &[&'a Card],
         life_in_danger: bool,
@@ -1796,12 +1857,12 @@ impl HeuristicController {
             // Choose the worst (lowest value) killing blocker
             let worst_killer = killing_blockers
                 .iter()
-                .min_by_key(|b| self.evaluate_creature(b))
+                .min_by_key(|b| self.evaluate_creature(view, b.id))
                 .copied();
 
             if let Some(blocker) = worst_killer {
-                let blocker_value = self.evaluate_creature(blocker);
-                let attacker_value = self.evaluate_creature(attacker);
+                let blocker_value = self.evaluate_creature(view, blocker.id);
+                let attacker_value = self.evaluate_creature(view, attacker.id);
 
                 // Trade if:
                 // 1. Life is in danger (must stop damage)
@@ -1829,6 +1890,7 @@ impl HeuristicController {
     /// 4. Killing blockers worth less than attacker
     fn make_good_blocks<'a>(
         &self,
+        view: &GameStateView,
         attackers: &[&'a Card],
         available_blockers: &[&'a Card],
     ) -> Vec<(&'a Card, &'a Card)> {
@@ -1849,24 +1911,30 @@ impl HeuristicController {
                 let killing_safe = self.get_killing_blockers(attacker, &safe_blockers);
                 if !killing_safe.is_empty() {
                     // Choose the worst (lowest value) blocker that gets the job done
-                    chosen_blocker = killing_safe.iter().min_by_key(|b| self.evaluate_creature(b)).copied();
+                    chosen_blocker = killing_safe
+                        .iter()
+                        .min_by_key(|b| self.evaluate_creature(view, b.id))
+                        .copied();
                 }
                 // 2. Safe blockers (survive but don't kill) - only if not trample
                 else if !attacker.has_trample() {
                     // Choose the worst safe blocker
-                    chosen_blocker = safe_blockers.iter().min_by_key(|b| self.evaluate_creature(b)).copied();
+                    chosen_blocker = safe_blockers
+                        .iter()
+                        .min_by_key(|b| self.evaluate_creature(view, b.id))
+                        .copied();
                 }
             }
 
             // 3. If no safe blocker, look for killing blockers that trade favorably
             if chosen_blocker.is_none() {
                 let killing_blockers = self.get_killing_blockers(attacker, &remaining_blockers);
-                let attacker_value = self.evaluate_creature(attacker);
+                let attacker_value = self.evaluate_creature(view, attacker.id);
 
                 // Find killing blockers worth less than the attacker
                 let favorable_killers: Vec<&Card> = killing_blockers
                     .iter()
-                    .filter(|b| self.evaluate_creature(b) < attacker_value)
+                    .filter(|b| self.evaluate_creature(view, b.id) < attacker_value)
                     .copied()
                     .collect();
 
@@ -1874,7 +1942,7 @@ impl HeuristicController {
                     // Choose the worst favorable killer
                     chosen_blocker = favorable_killers
                         .iter()
-                        .min_by_key(|b| self.evaluate_creature(b))
+                        .min_by_key(|b| self.evaluate_creature(view, b.id))
                         .copied();
                 }
             }
@@ -1980,12 +2048,12 @@ impl HeuristicController {
         let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         // Sort attackers by threat level (highest value first)
-        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
+        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(view, c.id)));
 
         let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         // Phase 1a: Make good blocks (safe kills, safe blocks, favorable trades)
-        let good_blocks = self.make_good_blocks(&attacker_cards, &blocker_cards);
+        let good_blocks = self.make_good_blocks(view, &attacker_cards, &blocker_cards);
         for (blocker, attacker) in good_blocks {
             blocks.push((blocker.id, attacker.id));
             remaining_blockers.retain(|&id| id != blocker.id);
@@ -2027,7 +2095,7 @@ impl HeuristicController {
         let remaining_blocker_cards: Vec<&Card> =
             remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
-        let trade_blocks = self.make_trade_blocks(&attackers_left, &remaining_blocker_cards, life_in_danger);
+        let trade_blocks = self.make_trade_blocks(view, &attackers_left, &remaining_blocker_cards, life_in_danger);
         for (blocker, attacker) in trade_blocks {
             blocks.push((blocker.id, attacker.id));
             remaining_blockers.retain(|&id| id != blocker.id);
@@ -2074,12 +2142,12 @@ impl HeuristicController {
         let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
 
         let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
-        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
+        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(view, c.id)));
 
         // Phase 2a: Trade blocks first (more willing to trade when in danger)
         let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
-        let trade_blocks = self.make_trade_blocks(&attacker_cards, &blocker_cards, true);
+        let trade_blocks = self.make_trade_blocks(view, &attacker_cards, &blocker_cards, true);
         for (blocker, attacker) in trade_blocks {
             blocks.push((blocker.id, attacker.id));
             remaining_blockers.retain(|&id| id != blocker.id);
@@ -2092,7 +2160,7 @@ impl HeuristicController {
         let remaining_blocker_cards: Vec<&Card> =
             remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
-        let good_blocks = self.make_good_blocks(&attackers_left, &remaining_blocker_cards);
+        let good_blocks = self.make_good_blocks(view, &attackers_left, &remaining_blocker_cards);
         for (blocker, attacker) in good_blocks {
             blocks.push((blocker.id, attacker.id));
             remaining_blockers.retain(|&id| id != blocker.id);
@@ -2134,7 +2202,7 @@ impl HeuristicController {
         let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
 
         let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
-        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(c)));
+        attacker_cards.sort_by_key(|c| -(self.evaluate_creature(view, c.id)));
 
         // Phase 3a: Chump blocks first - block everything we can
         for attacker in &attacker_cards {
@@ -2159,7 +2227,7 @@ impl HeuristicController {
             let remaining_blocker_cards: Vec<&Card> =
                 remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
-            let trade_blocks = self.make_trade_blocks(&attackers_left, &remaining_blocker_cards, true);
+            let trade_blocks = self.make_trade_blocks(view, &attackers_left, &remaining_blocker_cards, true);
             for (blocker, attacker) in trade_blocks {
                 blocks.push((blocker.id, attacker.id));
                 remaining_blockers.retain(|&id| id != blocker.id);
@@ -2293,7 +2361,7 @@ impl HeuristicController {
                 None => continue,
             };
 
-            let attacker_value = self.evaluate_creature(attacker);
+            let attacker_value = self.evaluate_creature(view, attacker.id);
             let attacker_toughness = attacker.current_toughness() as i32;
 
             // Calculate current damage
@@ -2317,7 +2385,7 @@ impl HeuristicController {
                     }
 
                     let blocker_power = blocker.current_power() as i32;
-                    let blocker_value = self.evaluate_creature(blocker);
+                    let blocker_value = self.evaluate_creature(view, blocker.id);
 
                     // Add blocker if:
                     // 1. It contributes damage toward killing the attacker
@@ -2414,31 +2482,39 @@ impl PlayerController for HeuristicController {
         let spell_card = view.get_card(spell);
         let is_our_spell = spell_card.map(|c| c.owner == self.player_id).unwrap_or(false);
 
-        // Collect target cards
-        let mut target_cards: Vec<&Card> = valid_targets.iter().filter_map(|&id| view.get_card(id)).collect();
+        // Filter target IDs by ownership
+        let filtered_target_ids: Vec<CardId> = if is_our_spell {
+            // Target our best creature
+            valid_targets
+                .iter()
+                .filter(|&&id| view.get_card(id).map(|c| c.owner == self.player_id).unwrap_or(false))
+                .copied()
+                .collect()
+        } else {
+            // Target opponent's best creature
+            valid_targets
+                .iter()
+                .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                .copied()
+                .collect()
+        };
 
-        if target_cards.is_empty() {
+        if filtered_target_ids.is_empty() {
             // Fallback: just pick the first target
             let mut targets = SmallVec::new();
-            targets.push(valid_targets[0]);
+            if !valid_targets.is_empty() {
+                targets.push(valid_targets[0]);
+            }
             return ChoiceResult::Ok(targets);
         }
 
         // For our own spells (pumps), target our best creature
         // For opponent spells (removal), target their best creature
-        let target = if is_our_spell {
-            // Target our best creature
-            target_cards.retain(|c| c.owner == self.player_id);
-            self.get_best_creature(&target_cards)
-        } else {
-            // Target opponent's best creature
-            target_cards.retain(|c| c.owner != self.player_id);
-            self.get_best_creature(&target_cards)
-        };
+        let target = self.get_best_creature(view, &filtered_target_ids);
 
         let mut targets = SmallVec::new();
-        if let Some(target_card) = target {
-            targets.push(target_card.id);
+        if let Some(target_card_id) = target {
+            targets.push(target_card_id);
         } else if !valid_targets.is_empty() {
             // Fallback: just pick the first valid target
             targets.push(valid_targets[0]);
@@ -2581,7 +2657,7 @@ impl PlayerController for HeuristicController {
             if c.is_land() {
                 0 // Discard lands first
             } else if c.is_creature() {
-                self.evaluate_creature(c)
+                self.evaluate_creature(view, c.id)
             } else {
                 100 // Keep spells
             }
