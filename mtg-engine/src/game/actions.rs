@@ -1333,7 +1333,7 @@ impl GameState {
     ///
     /// TODO: In full MTG rules, triggers should go on the stack and wait for priority,
     /// but for simplicity we're executing them immediately.
-    pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
+    pub fn check_triggers(&mut self, event: TriggerEvent, _source_card_id: CardId) -> Result<()> {
         // Collect all triggered effects to execute (without holding a borrow on self.cards)
         let triggered_effects: Vec<(CardId, Vec<Effect>)> = self
             .battlefield
@@ -1350,6 +1350,15 @@ impl GameState {
                         .collect();
 
                     if !matching_triggers.is_empty() {
+                        eprintln!(
+                            "DEBUG: Found {} triggers on card {} ({})",
+                            matching_triggers.len(),
+                            card_id.as_u32(),
+                            card.name
+                        );
+                        for effect in &matching_triggers {
+                            eprintln!("  Trigger effect: {:?}", effect);
+                        }
                         Some((card_id, matching_triggers))
                     } else {
                         None
@@ -1361,14 +1370,14 @@ impl GameState {
             .collect();
 
         // Execute all triggered effects
-        for (_trigger_source, effects) in triggered_effects {
+        for (trigger_source, effects) in triggered_effects {
             for mut effect in effects {
                 // Fill in placeholder values in trigger effects
                 // Similar to resolve_spell, we need to fill in targets
                 match &mut effect {
                     Effect::DrawCards { player, .. } if player.as_u32() == 0 => {
                         // Placeholder player ID 0 means the controller of the trigger source
-                        let controller = self.cards.get(source_card_id)?.controller;
+                        let controller = self.cards.get(trigger_source)?.controller;
                         if let Effect::DrawCards { player: _, count } = effect {
                             effect = Effect::DrawCards {
                                 player: controller,
@@ -1381,7 +1390,7 @@ impl GameState {
                         amount,
                     } => {
                         // Find a valid target (opponent's creature)
-                        let controller = self.cards.get(source_card_id)?.controller;
+                        let controller = self.cards.get(trigger_source)?.controller;
                         if let Some(target_id) = self
                             .battlefield
                             .cards
@@ -1406,7 +1415,7 @@ impl GameState {
                     }
                     Effect::GainLife { player, amount } if player.as_u32() == 0 => {
                         // Placeholder player ID 0 means the controller of the trigger source
-                        let controller = self.cards.get(source_card_id)?.controller;
+                        let controller = self.cards.get(trigger_source)?.controller;
                         effect = Effect::GainLife {
                             player: controller,
                             amount: *amount,
@@ -1414,7 +1423,7 @@ impl GameState {
                     }
                     Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
                         // Find a valid target (opponent's creature)
-                        let controller = self.cards.get(source_card_id)?.controller;
+                        let controller = self.cards.get(trigger_source)?.controller;
                         if let Some(target_id) = self
                             .battlefield
                             .cards

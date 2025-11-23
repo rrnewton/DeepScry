@@ -1055,10 +1055,12 @@ impl CardDefinition {
         let mut effects = Vec::new();
 
         for ability in &self.raw_abilities {
-            // Skip non-spell/ability lines (triggers, statics, etc.)
-            // We only process A:SP$ (spell effects) and A:AB$ (activated abilities) here
-            // Triggers and statics are handled by parse_triggers() and future parse_static()
-            if !ability.starts_with("A:SP$") && !ability.starts_with("A:AB$") {
+            // Skip non-spell lines (triggers, activated abilities, statics, etc.)
+            // We only process A:SP$ (spell effects) here
+            // Activated abilities are handled by parse_activated_abilities()
+            // Triggers are handled by parse_triggers()
+            // Statics are handled by parse_static_abilities()
+            if !ability.starts_with("A:SP$") {
                 continue;
             }
 
