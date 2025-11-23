@@ -30,15 +30,21 @@ impl DeckLoader {
                 continue;
             }
 
-            // Format: "1 Card Name" or "1 Card Name|SET"
+            // Format: "1 Card Name" or "1 Card Name|SET" or "1 Card Name+|SET" (+ indicates foil)
             if let Some((count_str, rest)) = line.split_once(' ') {
                 if let Ok(count) = count_str.parse::<u8>() {
                     // Extract card name (before pipe if present)
-                    let card_name = if let Some((name, _set)) = rest.split_once('|') {
+                    let mut card_name = if let Some((name, _set)) = rest.split_once('|') {
                         name.trim().to_string()
                     } else {
                         rest.trim().to_string()
                     };
+
+                    // Strip trailing '+' which indicates foil/premium in Forge deck files
+                    if card_name.ends_with('+') {
+                        card_name.pop();
+                        card_name = card_name.trim().to_string();
+                    }
 
                     let entry = DeckEntry { card_name, count };
 
@@ -128,5 +134,31 @@ Name=Test Deck
         assert_eq!(deck.sideboard.len(), 1);
         assert_eq!(deck.sideboard[0].card_name, "Shock");
         assert_eq!(deck.sideboard[0].count, 15);
+    }
+
+    #[test]
+    fn test_parse_foil_cards() {
+        let content = r#"
+[metadata]
+Name=Foil Test
+
+[Main]
+1 Master of Etherium+|ALA
+2 Lightning Bolt+|M10
+1 Grizzly Bears
+"#;
+
+        let deck = DeckLoader::parse(content).unwrap();
+        assert_eq!(deck.main_deck.len(), 3);
+
+        // The '+' suffix should be stripped from foil cards
+        assert_eq!(deck.main_deck[0].card_name, "Master of Etherium");
+        assert_eq!(deck.main_deck[0].count, 1);
+
+        assert_eq!(deck.main_deck[1].card_name, "Lightning Bolt");
+        assert_eq!(deck.main_deck[1].count, 2);
+
+        assert_eq!(deck.main_deck[2].card_name, "Grizzly Bears");
+        assert_eq!(deck.main_deck[2].count, 1);
     }
 }
