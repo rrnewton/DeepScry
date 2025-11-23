@@ -289,6 +289,15 @@ impl GameState {
                                 // Equipment affecting itself (not the equipped creature)
                                 // Skip - not relevant for this creature's P/T
                             }
+                            AffectedSelector::LandAttachedBy => {
+                                // This Aura grants abilities to the land it's attached to
+                                // Not relevant for creature P/T calculation - skip
+                            }
+                            AffectedSelector::CreatureTypesOtherYouControl { types: _ } => {
+                                // TODO: Check if creature_id matches one of the types and is controlled by equipment's owner
+                                // Also need to exclude the source card itself (Other qualifier)
+                                // For now, skip these (multi-type anthems not yet supported)
+                            }
                         }
                     }
                 }

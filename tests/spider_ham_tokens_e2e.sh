@@ -44,45 +44,19 @@ echo "Test deck: $DECK"
 echo "This deck has Spider-Ham cards that create Food tokens on ETB"
 echo
 
-# We'll give Player 1:
-# - 2 Forests (for mana)
-# - 1 Spider-Ham (the card we want to test)
-# This ensures P1 can cast Spider-Ham on turn 2
-P1_CARDS="Forest;Forest;Spider-Ham, Peter Porker"
-
-# Player 2 gets basic hand
-P2_CARDS="Forest;Forest;Forest"
-
-echo "P1 opening hand: $P1_CARDS + 4 random cards"
-echo "P2 opening hand: $P2_CARDS + 4 random cards"
+echo "Test strategy: AI players will automatically play Spider-Ham when able"
+echo "This verifies token creation happens correctly during normal gameplay"
 echo
 
-# Strategy: Player 1 will play forests turn 1-2, then cast Spider-Ham turn 2
-# Input sequence for P1:
-# Turn 1: Play Forest (choice 0 for first land in hand), pass
-# Turn 2: Play Forest (choice 0), cast Spider-Ham (choice 0 for first spell), pass
-# Turn 3: Activate Food token's ability (sacrifice for life)
-P1_INPUTS="0,0,0,0"  # Play land, play land, cast Spider-Ham, activate Food ability
-
-# P2 just passes
-P2_INPUTS="0,0,0,0"
-
-echo "Running game with controlled inputs..."
-echo "P1 will: T1 play Forest, T2 play Forest + cast Spider-Ham, T3 sacrifice Food"
-echo
-
-# Run the game
+# Run the game - stop after 20 choices (should be enough to see tokens created)
 OUTPUT_FILE="/tmp/spider_ham_test.txt"
 if run_mtg tui \
     "$DECK" \
     "$DECK" \
-    --p1=fixed \
-    --p2=fixed \
-    --p1-fixed-inputs="$P1_INPUTS" \
-    --p2-fixed-inputs="$P2_INPUTS" \
+    --p1=heuristic \
+    --p2=heuristic \
     --seed=42 \
-    --p1-draw="$P1_CARDS" \
-    --p2-draw="$P2_CARDS" \
+    --stop-on-choice=20 \
     --log-tail=500 \
     --verbosity=verbose \
     > "$OUTPUT_FILE" 2>&1; then

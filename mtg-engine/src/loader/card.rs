@@ -1413,16 +1413,45 @@ impl CardDefinition {
 
                     match key {
                         "Affected" => {
-                            affected = match value {
-                                "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
-                                "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
-                                "Creature" => AffectedSelector::AllCreatures,
-                                "Card.Self" => AffectedSelector::Self_,
-                                _ => {
-                                    eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
-                                    AffectedSelector::Self_
+                            // Check for comma-separated selectors (e.g., "Spider.Other+YouCtrl,Boar.Other+YouCtrl,...")
+                            if value.contains(',') {
+                                // Parse comma-separated list of creature types with ".Other+YouCtrl" pattern
+                                let types: Vec<Subtype> = value
+                                    .split(',')
+                                    .filter_map(|part| {
+                                        let part = part.trim();
+                                        // Extract type from "TYPE.Other+YouCtrl" pattern
+                                        if part.contains(".Other+YouCtrl") {
+                                            part.split('.').next().map(|t| Subtype::new(t.trim()))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+
+                                if !types.is_empty() {
+                                    affected = AffectedSelector::CreatureTypesOtherYouControl { types };
+                                } else {
+                                    eprintln!(
+                                        "Warning: Failed to parse comma-separated Affected$ selector '{}' in '{}'",
+                                        value, ability
+                                    );
+                                    affected = AffectedSelector::Self_;
                                 }
-                            };
+                            } else {
+                                // Single selector (existing logic)
+                                affected = match value {
+                                    "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
+                                    "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
+                                    "Creature" => AffectedSelector::AllCreatures,
+                                    "Card.Self" => AffectedSelector::Self_,
+                                    "Land.AttachedBy" => AffectedSelector::LandAttachedBy,
+                                    _ => {
+                                        eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
+                                        AffectedSelector::Self_
+                                    }
+                                };
+                            }
                         }
                         "AddPower" => {
                             // Remove leading + if present, then parse
