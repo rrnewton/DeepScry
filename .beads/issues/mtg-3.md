@@ -15,9 +15,6 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Active Issues
 
-**Critical Bugs:**
-- mtg-148: "Entity not found: 0" when creatures enter battlefield (13-15% game failure rate)
-
 **Card Parsing & Selectors:**
 - mtg-147: Unhandled Affected$ selectors (EnchantedBy, EquippedBy, tribal types, compound selectors)
 - Many static abilities silently fail due to unknown selectors
@@ -43,9 +40,12 @@ Track implementation of MTG game features including keywords, abilities, card ef
 **Deck Loading:**
 - ✅ Foil card parsing (ee5d90b) - Strip '+' suffix from card names
 
+**Bug Fixes (2025-11):**
+- ✅ Entity not found: 0 bug (2eabce7) - Fixed activated abilities being parsed as spell effects
+
 ## Related Issues
 
 See individual mtg-* issues for specific features and bugs.
 
 ---
-Updated 2025-11-23_#894(ee5d90b)
+Updated 2025-11-23_#895(2eabce7)
