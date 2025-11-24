@@ -18,6 +18,7 @@ use tokio::time::Instant;
 /// "Juzám Djinn" -> "cardsfolder/j/juzam_djinn.txt" (Unicode normalized to ASCII)
 /// "Spiked Corridor // Torture Pit" -> "cardsfolder/s/spiked_corridor_torture_pit.txt" (split cards)
 /// "Minsc & Boo, Timeless Heroes" -> "cardsfolder/m/minsc_boo_timeless_heroes.txt" (ampersand removed)
+/// "Summon: Choco/Mog" -> "cardsfolder/s/summon_choco_mog.txt" (forward slash becomes underscore)
 /// Removes apostrophes, ampersands, and other special characters to match Java Forge convention
 fn card_name_to_path(cardsfolder: &Path, card_name: &str) -> PathBuf {
     // First normalize Unicode characters to ASCII (e.g., "á" -> "a", "ñ" -> "n")
@@ -33,7 +34,7 @@ fn card_name_to_path(cardsfolder: &Path, card_name: &str) -> PathBuf {
         .to_lowercase()
         .chars()
         .map(|c| match c {
-            ' ' | '-' => '_',                           // Spaces and hyphens become underscores
+            ' ' | '-' | '/' => '_',                     // Spaces, hyphens, and slashes become underscores
             '\'' | ',' | ':' | '!' | '?' | '&' => '\0', // Remove these characters
             _ => c,
         })
@@ -329,6 +330,10 @@ mod tests {
         // Test ampersand removal
         let path = card_name_to_path(&cardsfolder, "Minsc & Boo, Timeless Heroes");
         assert_eq!(path, PathBuf::from("cardsfolder/m/minsc_boo_timeless_heroes.txt"));
+
+        // Test forward slash
+        let path = card_name_to_path(&cardsfolder, "Summon: Choco/Mog");
+        assert_eq!(path, PathBuf::from("cardsfolder/s/summon_choco_mog.txt"));
     }
 
     #[tokio::test]
