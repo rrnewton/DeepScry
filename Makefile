@@ -395,4 +395,4 @@ dhatprofile:
 
 deck_list: full_deck_list.txt
 full_deck_list.txt:
-	find decks/ forge-java/ -name "*.dck" | sort > $@
+	find decks/ forge-java/ -name "*.dck" -type f | sort > $@
