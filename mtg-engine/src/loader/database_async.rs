@@ -17,7 +17,8 @@ use tokio::time::Instant;
 /// "All Hallow's Eve" -> "cardsfolder/a/all_hallows_eve.txt"
 /// "Juzám Djinn" -> "cardsfolder/j/juzam_djinn.txt" (Unicode normalized to ASCII)
 /// "Spiked Corridor // Torture Pit" -> "cardsfolder/s/spiked_corridor_torture_pit.txt" (split cards)
-/// Removes apostrophes and other special characters to match Java Forge convention
+/// "Minsc & Boo, Timeless Heroes" -> "cardsfolder/m/minsc_boo_timeless_heroes.txt" (ampersand removed)
+/// Removes apostrophes, ampersands, and other special characters to match Java Forge convention
 fn card_name_to_path(cardsfolder: &Path, card_name: &str) -> PathBuf {
     // First normalize Unicode characters to ASCII (e.g., "á" -> "a", "ñ" -> "n")
     // This is necessary because cardsfolder uses ASCII-only filenames
@@ -25,32 +26,19 @@ fn card_name_to_path(cardsfolder: &Path, card_name: &str) -> PathBuf {
 
     // Then normalize for filesystem: lowercase, replace/remove special chars
     // Using iterator-based approach for efficiency
-    // Special handling for split cards: " // " becomes "_"
-    let normalized: String = if ascii.contains(" // ") {
-        // Split card: "Spiked Corridor // Torture Pit" -> "spiked_corridor_torture_pit"
-        ascii
-            .replace(" // ", "_")
-            .to_lowercase()
-            .chars()
-            .map(|c| match c {
-                ' ' | '-' => '_',                     // Spaces and hyphens become underscores
-                '\'' | ',' | ':' | '!' | '?' => '\0', // Remove these characters
-                _ => c,
-            })
-            .filter(|&c| c != '\0') // Remove marked characters
-            .collect()
-    } else {
-        ascii
-            .to_lowercase()
-            .chars()
-            .map(|c| match c {
-                ' ' | '-' => '_',                     // Spaces and hyphens become underscores
-                '\'' | ',' | ':' | '!' | '?' => '\0', // Remove these characters
-                _ => c,
-            })
-            .filter(|&c| c != '\0') // Remove marked characters
-            .collect()
-    };
+    // Special handling for multi-character patterns
+    let normalized: String = ascii
+        .replace(" // ", "_") // Split cards: "Spiked Corridor // Torture Pit" -> "Spiked Corridor_Torture Pit"
+        .replace(" & ", "_") // Ampersand: "Minsc & Boo, Timeless Heroes" -> "Minsc_Boo, Timeless Heroes"
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            ' ' | '-' => '_',                           // Spaces and hyphens become underscores
+            '\'' | ',' | ':' | '!' | '?' | '&' => '\0', // Remove these characters
+            _ => c,
+        })
+        .filter(|&c| c != '\0') // Remove marked characters
+        .collect();
 
     let first_char = normalized.chars().next().unwrap_or('_');
 
@@ -337,6 +325,10 @@ mod tests {
         // Test split cards
         let path = card_name_to_path(&cardsfolder, "Spiked Corridor // Torture Pit");
         assert_eq!(path, PathBuf::from("cardsfolder/s/spiked_corridor_torture_pit.txt"));
+
+        // Test ampersand removal
+        let path = card_name_to_path(&cardsfolder, "Minsc & Boo, Timeless Heroes");
+        assert_eq!(path, PathBuf::from("cardsfolder/m/minsc_boo_timeless_heroes.txt"));
     }
 
     #[tokio::test]
