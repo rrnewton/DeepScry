@@ -1277,6 +1277,51 @@ impl GameState {
                 // Call the attach_equipment method from Phase 1
                 self.attach_equipment(*source_equipment, *target_creature)?;
             }
+            Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+            } => {
+                // Create token(s) on the battlefield
+                // MTG Rules 111.2: The player who creates a token is its owner and controller
+
+                // Look up token definition from cache (loaded during game initialization)
+                let token_def = self.token_definitions.get(token_script).cloned();
+
+                if let Some(token_def) = token_def {
+                    // Use actual token definition from tokenscripts/
+                    for _ in 0..*amount {
+                        let token_id = self.next_card_id();
+
+                        // Instantiate token from definition
+                        let mut token = token_def.instantiate(token_id, *controller);
+
+                        // Ensure controller is set correctly (owner and controller are the same for tokens)
+                        token.controller = *controller;
+
+                        // Add token to game
+                        let token_name = token.name.to_string();
+                        self.cards.insert(token_id, token);
+
+                        // Put token onto the battlefield
+                        self.battlefield.add(token_id);
+
+                        // Log token creation
+                        self.logger.normal(&format!(
+                            "Created {} under {}'s control",
+                            token_name,
+                            self.get_player(*controller)?.name
+                        ));
+                    }
+                } else {
+                    // Token definition not found - this is an error
+                    // The token should have been preloaded during game initialization
+                    return Err(crate::MtgError::InvalidAction(format!(
+                        "Token definition not found: '{}' (should have been preloaded)",
+                        token_script
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -1423,6 +1468,19 @@ impl GameState {
                                 toughness_bonus: *toughness_bonus,
                             };
                         }
+                    }
+                    Effect::CreateToken {
+                        controller,
+                        token_script,
+                        amount,
+                    } if controller.as_u32() == 0 => {
+                        // Placeholder player ID 0 means the controller of the trigger source
+                        let source_controller = self.cards.get(source_card_id)?.controller;
+                        effect = Effect::CreateToken {
+                            controller: source_controller,
+                            token_script: token_script.clone(),
+                            amount: *amount,
+                        };
                     }
                     _ => {}
                 }

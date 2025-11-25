@@ -158,6 +158,39 @@ pub struct CardDefinition {
 }
 
 impl CardDefinition {
+    /// Extract all TokenScript references from this card's abilities
+    ///
+    /// Scans all raw_abilities for SVar lines containing "DB$ Token" and extracts
+    /// the TokenScript$ parameter value. Returns unique token script names.
+    ///
+    /// Example:
+    /// - Input: `SVar:TrigToken:DB$ Token | TokenScript$ c_a_food_sac | TokenAmount$ 1`
+    /// - Output: `["c_a_food_sac"]`
+    pub fn extract_token_scripts(&self) -> Vec<String> {
+        let mut token_scripts = std::collections::HashSet::new();
+
+        for ability in &self.raw_abilities {
+            // Look for SVar lines with DB$ Token
+            if ability.starts_with("SVar:") && ability.contains("DB$ Token") {
+                // Parse the SVar body for TokenScript$ parameter
+                // Format: "SVar:NAME:DB$ Token | TokenScript$ script_name | ..."
+                if let Some((_prefix, body)) = ability.split_once(':').and_then(|(_, rest)| rest.split_once(':')) {
+                    // Split by | and look for TokenScript$
+                    for param in body.split('|') {
+                        let param = param.trim();
+                        if let Some((key, value)) = param.split_once('$') {
+                            if key.trim() == "TokenScript" {
+                                token_scripts.insert(value.trim().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        token_scripts.into_iter().collect()
+    }
+
     /// Create a Card instance from this definition
     pub fn instantiate(&self, id: crate::core::CardId, owner: crate::core::PlayerId) -> Card {
         let mut card = Card::new(id, self.name.clone(), owner);
@@ -1174,6 +1207,57 @@ impl CardDefinition {
                     });
                 }
 
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
+                    // Look up the SVar that Execute$ references
+                    // Example: Execute$ TrigToken looks for "SVar:TrigToken:..."
+                    for ab in &self.raw_abilities {
+                        if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
+                            // Parse the SVar body
+                            if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                            {
+                                // Parse DB$ Token effects
+                                // Example: "DB$ Token | TokenAmount$ 1 | TokenScript$ c_a_food_sac | TokenOwner$ You"
+                                if body.contains("DB$ Token") {
+                                    // Parse token parameters
+                                    let mut token_script = String::new();
+                                    let mut token_amount = 1u8;
+
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+
+                                            match key {
+                                                "TokenScript" => {
+                                                    token_script = value.to_string();
+                                                }
+                                                "TokenAmount" => {
+                                                    if let Ok(amt) = value.parse::<u8>() {
+                                                        token_amount = amt;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    // Only add the token effect if we found a token script
+                                    if !token_script.is_empty() {
+                                        effects.push(Effect::CreateToken {
+                                            controller: PlayerId::new(0), // Placeholder - filled at trigger time
+                                            token_script,
+                                            amount: token_amount,
+                                        });
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 // Extract description from TriggerDescription$ if available
                 let description = params
                     .get("TriggerDescription")
@@ -1182,7 +1266,6 @@ impl CardDefinition {
 
                 // Note: This implements basic SVar resolution by searching across all raw_abilities
                 // for effect parameters. Proper SVar resolution would parse SVar: lines separately.
-                // TODO: Implement proper SVar parsing and Execute$ sub-ability resolution
 
                 triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
             }
@@ -1332,16 +1415,45 @@ impl CardDefinition {
 
                     match key {
                         "Affected" => {
-                            affected = match value {
-                                "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
-                                "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
-                                "Creature" => AffectedSelector::AllCreatures,
-                                "Card.Self" => AffectedSelector::Self_,
-                                _ => {
-                                    eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
-                                    AffectedSelector::Self_
+                            // Check for comma-separated selectors (e.g., "Spider.Other+YouCtrl,Boar.Other+YouCtrl,...")
+                            if value.contains(',') {
+                                // Parse comma-separated list of creature types with ".Other+YouCtrl" pattern
+                                let types: Vec<Subtype> = value
+                                    .split(',')
+                                    .filter_map(|part| {
+                                        let part = part.trim();
+                                        // Extract type from "TYPE.Other+YouCtrl" pattern
+                                        if part.contains(".Other+YouCtrl") {
+                                            part.split('.').next().map(|t| Subtype::new(t.trim()))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+
+                                if !types.is_empty() {
+                                    affected = AffectedSelector::CreatureTypesOtherYouControl { types };
+                                } else {
+                                    eprintln!(
+                                        "Warning: Failed to parse comma-separated Affected$ selector '{}' in '{}'",
+                                        value, ability
+                                    );
+                                    affected = AffectedSelector::Self_;
                                 }
-                            };
+                            } else {
+                                // Single selector (existing logic)
+                                affected = match value {
+                                    "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
+                                    "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
+                                    "Creature" => AffectedSelector::AllCreatures,
+                                    "Card.Self" => AffectedSelector::Self_,
+                                    "Land.AttachedBy" => AffectedSelector::LandAttachedBy,
+                                    _ => {
+                                        eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
+                                        AffectedSelector::Self_
+                                    }
+                                };
+                            }
                         }
                         "AddPower" => {
                             // Remove leading + if present, then parse

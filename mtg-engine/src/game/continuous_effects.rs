@@ -242,9 +242,9 @@ impl GameState {
     ///
     /// ## Current Implementation
     ///
-    /// - Finds all Equipment attached to the creature
-    /// - Reads parsed static abilities (StaticAbility::ModifyPT) from Equipment
-    /// - Applies bonuses from abilities that affect Creature.EquippedBy
+    /// - Checks all permanents on the battlefield for static ModifyPT abilities
+    /// - Applies Equipment bonuses (Creature.EquippedBy)
+    /// - Applies anthem effects (CreaturesYouControl, AllCreatures, CreatureTypesOtherYouControl)
     ///
     /// ## Returns
     ///
@@ -255,14 +255,13 @@ impl GameState {
         let mut power_bonus = 0;
         let mut toughness_bonus = 0;
 
-        // Get all Equipment attached to this creature
-        let equipment_list = self.get_attached_equipment(creature_id);
+        // Check all permanents on the battlefield for static abilities
+        // This includes Equipment, enchantments, creatures (like Spider-Ham), etc.
+        for &source_id in &self.battlefield.cards {
+            let source = self.cards.get(source_id)?;
 
-        for equip_id in equipment_list {
-            let equipment = self.cards.get(equip_id)?;
-
-            // Process all static abilities on this Equipment
-            for ability in &equipment.static_abilities {
+            // Process all static abilities on this permanent
+            for ability in &source.static_abilities {
                 match ability {
                     StaticAbility::ModifyPT {
                         affected,
@@ -270,12 +269,16 @@ impl GameState {
                         toughness,
                         description: _,
                     } => {
-                        // Check if this ability affects the equipped creature
+                        // Check if this ability affects the target creature
                         match affected {
                             AffectedSelector::CreatureEquippedBy => {
                                 // This Equipment grants bonuses to the creature it's attached to
-                                power_bonus += power;
-                                toughness_bonus += toughness;
+                                // Check if this Equipment is attached to creature_id
+                                let attached_equipment = self.get_attached_equipment(creature_id);
+                                if attached_equipment.contains(&source_id) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                             AffectedSelector::CreaturesYouControl => {
                                 // TODO: Check if creature_id is controlled by equipment's owner
@@ -288,6 +291,36 @@ impl GameState {
                             AffectedSelector::Self_ => {
                                 // Equipment affecting itself (not the equipped creature)
                                 // Skip - not relevant for this creature's P/T
+                            }
+                            AffectedSelector::LandAttachedBy => {
+                                // This Aura grants abilities to the land it's attached to
+                                // Not relevant for creature P/T calculation - skip
+                            }
+                            AffectedSelector::CreatureTypesOtherYouControl { types } => {
+                                // Check if this affects the creature:
+                                // 1. Creature must match one of the listed types
+                                // 2. Creature must be controlled by the source's controller
+                                // 3. Creature must NOT be the source itself (Other qualifier)
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "Other" - exclude the source card itself
+                                if creature_id == source_id {
+                                    continue;
+                                }
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if creature has one of the listed types
+                                let has_matching_type = types.iter().any(|subtype| creature.subtypes.contains(subtype));
+
+                                if has_matching_type {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                         }
                     }

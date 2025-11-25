@@ -1328,6 +1328,17 @@ impl<'a> GameLoop<'a> {
                     format!("{equipment_name} ({source_equipment}) attaches to {creature_name} ({target_creature})");
                 self.game.logger.normal(&message);
             }
+            Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let message = format!(
+                    "{source_name} ({source_id}) creates {amount} {token_script} token(s) under {controller_name}'s control"
+                );
+                self.game.logger.normal(&message);
+            }
         }
     }
 
@@ -2164,12 +2175,18 @@ impl<'a> GameLoop<'a> {
             // Check if it's a permanent entering battlefield
             if let Ok(card) = self.game.cards.get(spell_id) {
                 if card.is_creature() {
+                    // Get effective P/T applying all continuous effects (CR 613)
+                    let power = self
+                        .game
+                        .get_effective_power(spell_id)
+                        .unwrap_or(card.current_power() as i32);
+                    let toughness = self
+                        .game
+                        .get_effective_toughness(spell_id)
+                        .unwrap_or(card.current_toughness() as i32);
                     let message = format!(
                         "{} ({}) enters the battlefield as a {}/{} creature",
-                        card_name,
-                        spell_id,
-                        card.current_power(),
-                        card.current_toughness()
+                        card_name, spell_id, power, toughness
                     );
                     self.game.logger.normal(&message);
                 }

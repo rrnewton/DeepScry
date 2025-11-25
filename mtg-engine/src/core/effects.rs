@@ -111,6 +111,18 @@ pub enum Effect {
         /// Target creature to attach to
         target_creature: CardId,
     },
+
+    /// Create token(s) under a player's control
+    /// Example: Spider-Ham creates a Food token
+    /// Corresponds to: DB$ Token | TokenAmount$ 1 | TokenScript$ c_a_food_sac | TokenOwner$ You
+    CreateToken {
+        /// Player who will control the tokens
+        controller: PlayerId,
+        /// Token script name (e.g., "c_a_food_sac" for Food token)
+        token_script: String,
+        /// Number of tokens to create
+        amount: u8,
+    },
 }
 
 /// Events that can trigger abilities
@@ -230,6 +242,20 @@ pub enum AffectedSelector {
     /// This card itself
     /// Corresponds to: `Affected$ Card.Self`
     Self_,
+
+    /// The land this Aura is attached to
+    /// Corresponds to: `Affected$ Land.AttachedBy`
+    /// Used by Auras that grant abilities to enchanted lands (e.g., Friendly Neighborhood)
+    LandAttachedBy,
+
+    /// Multiple creature types you control, excluding self
+    /// Corresponds to: `Affected$ Spider.Other+YouCtrl,Boar.Other+YouCtrl,...`
+    /// Used by cards like Spider-Ham that grant bonuses to multiple creature types
+    /// The `Other` qualifier excludes the source card itself
+    CreatureTypesOtherYouControl {
+        /// List of creature subtypes (e.g., ["Spider", "Boar", "Goat", ...])
+        types: Vec<crate::core::Subtype>,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility
