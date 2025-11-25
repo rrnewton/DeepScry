@@ -16,7 +16,10 @@ use tokio::time::Instant;
 /// "Lightning Bolt" -> "cardsfolder/l/lightning_bolt.txt"
 /// "All Hallow's Eve" -> "cardsfolder/a/all_hallows_eve.txt"
 /// "Juzám Djinn" -> "cardsfolder/j/juzam_djinn.txt" (Unicode normalized to ASCII)
-/// Removes apostrophes and other special characters to match Java Forge convention
+/// "Spiked Corridor // Torture Pit" -> "cardsfolder/s/spiked_corridor_torture_pit.txt" (split cards)
+/// "Minsc & Boo, Timeless Heroes" -> "cardsfolder/m/minsc_boo_timeless_heroes.txt" (ampersand removed)
+/// "Summon: Choco/Mog" -> "cardsfolder/s/summon_choco_mog.txt" (forward slash becomes underscore)
+/// Removes apostrophes, ampersands, and other special characters to match Java Forge convention
 fn card_name_to_path(cardsfolder: &Path, card_name: &str) -> PathBuf {
     // First normalize Unicode characters to ASCII (e.g., "á" -> "a", "ñ" -> "n")
     // This is necessary because cardsfolder uses ASCII-only filenames
@@ -24,12 +27,15 @@ fn card_name_to_path(cardsfolder: &Path, card_name: &str) -> PathBuf {
 
     // Then normalize for filesystem: lowercase, replace/remove special chars
     // Using iterator-based approach for efficiency
+    // Special handling for multi-character patterns
     let normalized: String = ascii
+        .replace(" // ", "_") // Split cards: "Spiked Corridor // Torture Pit" -> "Spiked Corridor_Torture Pit"
+        .replace(" & ", "_") // Ampersand: "Minsc & Boo, Timeless Heroes" -> "Minsc_Boo, Timeless Heroes"
         .to_lowercase()
         .chars()
         .map(|c| match c {
-            ' ' | '-' => '_',                     // Spaces and hyphens become underscores
-            '\'' | ',' | ':' | '!' | '?' => '\0', // Remove these characters
+            ' ' | '-' | '/' => '_',                     // Spaces, hyphens, and slashes become underscores
+            '\'' | ',' | ':' | '!' | '?' | '&' => '\0', // Remove these characters
             _ => c,
         })
         .filter(|&c| c != '\0') // Remove marked characters
@@ -356,6 +362,18 @@ mod tests {
 
         let path = card_name_to_path(&cardsfolder, "Dandan");
         assert_eq!(path, PathBuf::from("cardsfolder/d/dandan.txt"));
+
+        // Test split cards
+        let path = card_name_to_path(&cardsfolder, "Spiked Corridor // Torture Pit");
+        assert_eq!(path, PathBuf::from("cardsfolder/s/spiked_corridor_torture_pit.txt"));
+
+        // Test ampersand removal
+        let path = card_name_to_path(&cardsfolder, "Minsc & Boo, Timeless Heroes");
+        assert_eq!(path, PathBuf::from("cardsfolder/m/minsc_boo_timeless_heroes.txt"));
+
+        // Test forward slash
+        let path = card_name_to_path(&cardsfolder, "Summon: Choco/Mog");
+        assert_eq!(path, PathBuf::from("cardsfolder/s/summon_choco_mog.txt"));
     }
 
     #[tokio::test]

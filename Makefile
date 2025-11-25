@@ -347,8 +347,11 @@ heapprofile:
 	fi
 	HEAPTRACK_OUTPUT=experiment_results cargo heaptrack --bin mtg --release -- profile --games 100 --seed 42
 	@# Move heaptrack files to experiment_results if they were created in root
-	@if ls heaptrack.profile.* 2>/dev/null; then \
-		mv heaptrack.profile.* experiment_results/ 2>/dev/null || true; \
+	@if ls heaptrack.mtg.*.gz 2>/dev/null; then \
+		for file in heaptrack.mtg.*.gz; do \
+			newname=$$(echo "$$file" | sed 's/heaptrack\.mtg\./heaptrack.profile./'); \
+			mv "$$file" "experiment_results/$$newname"; \
+		done; \
 	fi
 	@echo ""
 	@echo "=== Profiling complete! Now analyzing results ==="
@@ -395,4 +398,4 @@ dhatprofile:
 
 deck_list: full_deck_list.txt
 full_deck_list.txt:
-	find decks/ forge-java/ -name "*.dck" | sort > $@
+	find decks/ forge-java/ -name "*.dck" -type f | sort > $@
