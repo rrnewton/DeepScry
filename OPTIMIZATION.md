@@ -4,32 +4,17 @@ This document provides guidance on high-performance Rust patterns for the MTG Fo
 
 ## Current Performance Metrics
 
-Our key performance metrics (as of 2025-10-26_#333(dc90c78b)):
+### KEY TRACKING METRIC: robots_mirror/mem_logging_rewind_play_again
 
-**Fresh Mode (seed 42):**
-- **Games/sec**: ~3,842
-- **Actions/sec**: ~464,585
-- **Turns/sec**: ~28,066
-- **Actions/turn**: 16.56
-- **Avg bytes/game**: ~233,426
-- **Avg bytes/turn**: ~12,968
-- **Avg duration/game**: 260.36µs
+This is our primary optimization target metric (as of 2025-11-25_#901(efd29a7)):
 
-**Snapshot Mode (seed 42):**
-- **Games/sec**: ~9,177
-- **Actions/sec**: ~2,734,713
-- **Avg bytes/game**: ~122,884
-- **Avg duration/game**: 108.97µs
+- **Actions/sec**: 2,684,892 (2.68M/sec)
+- **Bytes/action**: 228.59 bytes
+- **Games/sec**: 325.71
+- **Time/game**: 3.09 ms
+- **Avg bytes/game**: 1.88 MB
 
-**Rewind Mode (seed 42):**
-- **Rewinds/sec**: ~332,103
-- **Actions/sec (rewind)**: ~107,686,651
-- **Avg bytes allocated**: 0 (zero-copy)
-
-**Note:** These metrics reflect a much richer game implementation compared to earlier versions.
-The lower games/sec in fresh mode is offset by dramatically increased actions/turn (0.82 → 16.56),
-showing that each game now involves substantially more gameplay. Actions/sec remains a good
-normalized metric for raw engine performance.
+**Note:** This benchmark uses the rewind+replay pattern with memory logging enabled, which isolates forward gameplay performance from initialization overhead. It's the standard metric for tracking optimization progress.
 
 ## Zero-Copy Patterns and Best Practices
 
@@ -225,80 +210,157 @@ fn process_name(name: Cow<str>) -> Cow<str> {
 # Run all benchmarks (slow)
 make full-benchmark
 
-# Run specific benchmarks (fast)
-make bench-snapshot      # Snapshot benchmark only
-make bench-logging       # Stdout logging benchmark only
+# Track performance over time (automated)
+./scripts/periodically_run_benchmarks.sh
 
-# Or use cargo bench directly:
-cargo bench --bench game_benchmark -- fresh
-cargo bench --bench game_benchmark -- snapshot
-cargo bench --bench game_benchmark -- fresh_stdout_logging
+# Or use cargo bench directly for specific tests:
+cargo bench --bench game_benchmark -- robots_mirror/mem_logging_rewind_play_again
 ```
 
-Key metrics to track:
-- `Games/sec` and `Turns/sec` (absolute performance)
-- `Actions/sec` (normalized metric that should stay stable)
-- `Bytes/turn` (allocation pressure)
+**Key metrics to track:**
+- **Actions/sec** and **Bytes/action** from `robots_mirror/mem_logging_rewind_play_again` (primary metric)
+- **Games/sec** and **Turns/sec** (throughput)
+- **Bytes/turn** and **Bytes/game** (allocation pressure)
 
-### Heap Profiling
+### Profiling Tools Available
 
-We have two heap profiling tools available:
+All CPU profiling methods use **release/optimized builds** for accurate results.
 
-#### Option 1: dhat-rs (Recommended) - Full Rust symbols
+#### CPU Profiling
+
+##### 1. Callgrind Profiling (RECOMMENDED for CPU in containers)
 
 ```bash
-# Generate heap profile with full function names and source locations
-make dhatprofile
-
-# View results interactively at:
-# https://nnethercote.github.io/dh_view/dh_view.html
-# Load: experiment_results/dhat-heap.json
-
-# Or analyze in terminal:
-python3 scripts/analyze_dhat.py
+make callgrindprofile
 ```
+
+**Best for**: Detailed CPU instruction counting and call graph analysis
+- **Uses**: `--release` build via `build-release` target
+- **Works in**: Containers (no special permissions needed)
+- **Output**: `experiment_results/callgrind.out`
+- **Performance**: 250 games (~88s due to ~50x slowdown from instrumentation)
+- **View with**:
+  - `callgrind_annotate experiment_results/callgrind.out | less`
+  - `kcachegrind experiment_results/callgrind.out` (GUI, requires X11)
+
+**Advantages:**
+- Works in containerized environments
+- Shows CPU instruction counts (not wall-clock time affected by system load)
+- Detailed call graph and cache simulation
+- Source-level annotation
+
+##### 2. Perf Profiling (Requires host/privileges)
+
+```bash
+make perfprofile
+```
+
+**Best for**: CPU hotspots and cache behavior on host systems
+- **Uses**: `--release` build via `build-release` target
+- **Works in**: Host systems with kernel permissions (NOT containers/WSL)
+- **Output**: `experiment_results/perf.data`
+- **Performance**: 5000 games for statistical significance
+- **View with**: `cd experiment_results && sudo perf report`
+
+**Note**: Will fail with "Operation not permitted" in containers - use `callgrindprofile` instead.
+
+##### 3. Flamegraph Profiling (Requires host/privileges)
+
+```bash
+make profile
+```
+
+**Best for**: Visual flame graph of CPU time distribution
+- **Uses**: `release` profile (confirmed in build output)
+- **Works in**: Host systems with kernel permissions (NOT containers/WSL)
+- **Output**: `experiment_results/flamegraph.svg`
+- **Performance**: 1000 games
+- **View with**: Open SVG in browser
+- **Requires**: `cargo install flamegraph`
+
+**Note**: Same permission requirements as perf - use `callgrindprofile` in containers.
+
+#### Allocation Profiling
+
+##### 1. DHAT Profiling (RECOMMENDED for allocations)
+
+```bash
+make dhatprofile
+```
+
+**Best for**: Rust-native allocation profiling with full symbol information
+- **Uses**: `bench` profile (optimized + debuginfo)
+- **Works in**: Any environment
+- **Output**: `experiment_results/dhat-heap.json`
+- **Performance**: 100 rewind iterations to isolate forward gameplay allocations
+- **View with**:
+  - Interactive: https://nnethercote.github.io/dh_view/dh_view.html (load JSON)
+  - Terminal: `python3 scripts/analyze_dhat.py`
 
 **Advantages:**
 - Full Rust function names and source locations
-- Per-call-site allocation breakdowns
-- Interactive visualization
-- Rust-native (no external dependencies)
+- Per-call-site allocation breakdowns with exact file:line references
+- Shows allocation hotspots, not just total memory
+- Interactive visualization with flame graphs
 
 **Output example:**
 ```
-#1: 397.27 KB (21.9%) in 565 blocks
-  Location: mtg_forge_rs::game::mana_engine::ManaEngine::update (src/game/mana_engine.rs:264:27)
-    ↳ GameLoop::priority_round (src/game/game_loop.rs:2379:49)
+#1: 90.82 KB (8.4%) in 3,100 blocks (avg 30.0 bytes/block)
+  Location: mtg_forge_rs::game::game_loop::GameLoop::get_available_spell_abilities
+  (src/game/game_loop.rs:3041:18)
+    ↳ GameLoop::priority_round (src/game/game_loop.rs:2150:38)
 ```
 
-#### Option 2: heaptrack - System-level profiling
+##### 2. Heaptrack Profiling (Alternative)
 
 ```bash
-# Generate heap profile (requires heaptrack package)
 make heapprofile
-
-# Process and view results
-./scripts/analyze_heapprofile.sh
 ```
 
-**Advantages:**
-- No code changes required
-- Can profile any binary
-- System-level view
+**Best for**: System-level allocation tracking
+- **Uses**: `--release` build
+- **Works in**: Systems with heaptrack installed
+- **Output**: `experiment_results/heaptrack.profile.*.gz`
+- **Performance**: 100 games
+- **Requires**: `apt-get install heaptrack` and `cargo install cargo-heaptrack`
+- **Analyze with**: `./scripts/analyze_heapprofile.sh`
 
-**Disadvantages:**
-- Lacks Rust symbol resolution (shows only addresses)
-- Requires external heaptrack package
+**Note**: Less detailed than DHAT for Rust code. Use DHAT unless you need system-level view.
 
-### CPU Profiling
+### Performance Tracking Over Time
 
 ```bash
-# Generate flamegraph
-make profile
+# Automatically run benchmarks when git depth advances by 5+ commits
+./scripts/periodically_run_benchmarks.sh
 
-# View the output
-firefox flamegraph.svg
+# View performance trends
+./scripts/plot_performance.py
 ```
+
+**Output**: `experiment_results/<CPU>/perf_history.csv` with historical data for all key metrics.
+
+### Current Profiling Results
+
+**Top CPU Hotspots** (from Callgrind profiling of 250 games, 10.9B instructions):
+
+1. **ManaEngine::update** (30.2%) - Mana source calculation and tracking
+2. **cast_spell_8_step** (23.6%) - Full spell casting pipeline
+3. **tap_for_mana_for_cost** (12.6%) - Mana payment execution
+4. **GreedyManaResolver::check_payment** (12.3%) - Payment validation
+5. **core::fmt::write** (11.8%) - String formatting for logging
+6. **alloc::fmt::format_inner** (11.8%) - String allocation for logging
+
+**Key insight**: Logging/formatting accounts for ~23% of CPU time even in "silent" mode due to string construction.
+
+**Top Allocation Hotspots** (from DHAT profiling of 100 iterations, 1.05 MB total):
+
+1. **get_available_spell_abilities** (8.3%) - Vec allocations per priority round
+2. **UndoLog::log** (4.4%) - Undo log growth during gameplay
+3. **ManaEngine::update** (1.7%) - Mana source tracking
+4. **get_castable_spells** (1.7%) - Spell filtering operations
+5. **resolve_spell operations** (3.2% combined) - Stack resolution
+
+**Key insight**: Spell ability enumeration allocates heavily on every priority round. Consider caching when board state is unchanged.
 
 ## Common Anti-Patterns to Avoid
 
@@ -434,13 +496,6 @@ Consider feature flags for different optimization profiles:
 - [Arenas in Rust](https://manishearth.github.io/blog/2021/03/15/arenas-in-rust/)
 - [Zero-Copy in Rust (CoinsBench)](https://coinsbench.com/zero-copy-in-rust-challenges-and-solutions-c0d38a6468e9)
 
-## Profiling Tools
-
-- **cargo bench**: Built-in benchmark harness (benches/game_benchmark.rs)
-- **dhat-rs**: Rust-native heap profiling with full symbols (`make dhatprofile`) - **Recommended**
-- **heaptrack**: System-level heap profiling (`make heapprofile`)
-- **flamegraph**: CPU profiling for hotspot identification (`make profile`)
-- **valgrind/cachegrind**: Cache behavior analysis (manual setup)
 
 ---
 
