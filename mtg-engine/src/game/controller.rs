@@ -75,11 +75,13 @@ pub fn format_attackers_prompt(view: &GameStateView, available_creatures: &[Card
             let name = view.card_name(card_id).unwrap_or_else(|| format!("Card {card_id:?}"));
             let tapped = if view.is_tapped(card_id) { " (tapped)" } else { "" };
 
-            // Try to get power/toughness info
+            // Try to get power/toughness info (using effective P/T with anthem effects)
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = card.current_power();
-                    let toughness = card.current_toughness();
+                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let toughness = view
+                        .get_effective_toughness(card_id)
+                        .unwrap_or(card.current_toughness() as i32);
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -108,8 +110,10 @@ pub fn format_blockers_prompt(view: &GameStateView, available_blockers: &[CardId
         let name = view.card_name(card_id).unwrap_or_else(|| format!("Card {card_id:?}"));
         if let Some(card) = view.get_card(card_id) {
             if card.is_creature() {
-                let power = card.current_power();
-                let toughness = card.current_toughness();
+                let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                let toughness = view
+                    .get_effective_toughness(card_id)
+                    .unwrap_or(card.current_toughness() as i32);
                 output.push_str(&format!("  [{}] {} {}/{}\n", idx, name, power, toughness));
             } else {
                 output.push_str(&format!("  [{}] {}\n", idx, name));
@@ -129,8 +133,10 @@ pub fn format_blockers_prompt(view: &GameStateView, available_blockers: &[CardId
 
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = card.current_power();
-                    let toughness = card.current_toughness();
+                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let toughness = view
+                        .get_effective_toughness(card_id)
+                        .unwrap_or(card.current_toughness() as i32);
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -182,11 +188,13 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
             let name = view.card_name(card_id).unwrap_or_else(|| format!("Card {card_id:?}"));
             let tapped = if view.is_tapped(card_id) { " (tapped)" } else { "" };
 
-            // Try to get additional info
+            // Try to get additional info (using effective P/T with anthem effects)
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = card.current_power();
-                    let toughness = card.current_toughness();
+                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let toughness = view
+                        .get_effective_toughness(card_id)
+                        .unwrap_or(card.current_toughness() as i32);
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -482,6 +490,30 @@ impl<'a> GameStateView<'a> {
     /// Used by the fancy TUI to display choice count status alongside action count.
     pub fn choice_count(&self) -> usize {
         self.game.logger.choice_count()
+    }
+
+    /// Get a creature's effective power using CR 613 layer system
+    ///
+    /// Returns the final power after applying all continuous effects (Equipment,
+    /// anthems, counters, etc.) in the correct layer order.
+    ///
+    /// ## Returns
+    ///
+    /// The effective power, or None if the card is not found or is not a creature.
+    pub fn get_effective_power(&self, creature_id: CardId) -> Option<i32> {
+        self.game.get_effective_power(creature_id).ok()
+    }
+
+    /// Get a creature's effective toughness using CR 613 layer system
+    ///
+    /// Returns the final toughness after applying all continuous effects (Equipment,
+    /// anthems, counters, etc.) in the correct layer order.
+    ///
+    /// ## Returns
+    ///
+    /// The effective toughness, or None if the card is not found or is not a creature.
+    pub fn get_effective_toughness(&self, creature_id: CardId) -> Option<i32> {
+        self.game.get_effective_toughness(creature_id).ok()
     }
 }
 

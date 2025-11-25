@@ -6,13 +6,22 @@
 //! Reference: forge-java/forge-ai/src/main/java/forge/ai/CreatureEvaluator.java
 
 use mtg_forge_rs::core::{Card, CardId, CardType, Keyword, PlayerId};
-use mtg_forge_rs::game::HeuristicController;
+use mtg_forge_rs::game::{controller::GameStateView, state::GameState, HeuristicController};
 
-/// Helper to create a basic creature card for testing
-fn create_creature(name: &str, power: i8, toughness: i8, cmc: u8) -> Card {
-    let card_id = CardId::new(1);
-    let owner = PlayerId::new(1);
-    let mut card = Card::new(card_id, name, owner);
+/// Helper to create a basic creature card for testing with optional keywords
+fn create_test_setup_with_keywords(
+    name: &str,
+    power: i8,
+    toughness: i8,
+    cmc: u8,
+    keywords: Vec<Keyword>,
+) -> (GameState, CardId, PlayerId) {
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+
+    // Create the creature card
+    let card_id = CardId::new(100); // Use a consistent ID for testing
+    let mut card = Card::new(card_id, name, player_id);
     card.types.push(CardType::Creature);
     card.set_power(Some(power));
     card.set_toughness(Some(toughness));
@@ -20,7 +29,21 @@ fn create_creature(name: &str, power: i8, toughness: i8, cmc: u8) -> Card {
     let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
     mana_cost.generic = cmc;
     card.mana_cost = mana_cost;
-    card
+
+    // Add keywords
+    for keyword in keywords {
+        card.keywords.insert(keyword);
+    }
+
+    // Add the card to the game
+    game.cards.insert(card_id, card);
+
+    (game, card_id, player_id)
+}
+
+/// Helper to create a basic creature card for testing without keywords
+fn create_test_setup(name: &str, power: i8, toughness: i8, cmc: u8) -> (GameState, CardId, PlayerId) {
+    create_test_setup_with_keywords(name, power, toughness, cmc, vec![])
 }
 
 #[test]
@@ -35,9 +58,10 @@ fn test_grizzly_bears_evaluation() {
     // - CMC (2): +10 (2 * 5)
     // Total: 80 + 20 + 30 + 20 + 10 = 160
 
-    let card = create_creature("Grizzly Bears", 2, 2, 2);
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup("Grizzly Bears", 2, 2, 2);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 160, "Grizzly Bears should score 160");
 }
@@ -56,12 +80,11 @@ fn test_serra_angel_evaluation() {
     // - Vigilance: +60 ((power * 5) + (toughness * 5) = (4*5) + (4*5) = 20 + 20 = 40)
     // Total: 80 + 20 + 60 + 40 + 25 + 40 + 40 = 305
 
-    let mut card = create_creature("Serra Angel", 4, 4, 5);
-    card.keywords.insert(Keyword::Flying);
-    card.keywords.insert(Keyword::Vigilance);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Serra Angel", 4, 4, 5, vec![Keyword::Flying, Keyword::Vigilance]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     // Expected: 80 + 20 + 60 + 40 + 25 + 40 + 60 = 325
     // Flying: power * 10 = 4 * 10 = 40
@@ -82,11 +105,10 @@ fn test_shivan_dragon_evaluation() {
     // - Flying: +50 (power * 10 = 5 * 10)
     // Total: 80 + 20 + 75 + 50 + 30 + 50 = 305
 
-    let mut card = create_creature("Shivan Dragon", 5, 5, 6);
-    card.keywords.insert(Keyword::Flying);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Shivan Dragon", 5, 5, 6, vec![Keyword::Flying]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 305, "Shivan Dragon should score 305");
 }
@@ -105,10 +127,11 @@ fn test_llanowar_elves_evaluation() {
     // - Mana ability: +10
     // Total: 80 + 20 + 15 + 10 + 5 + 10 = 140
 
-    let card = create_creature("Llanowar Elves", 1, 1, 1);
+    let (game, card_id, player_id) = create_test_setup("Llanowar Elves", 1, 1, 1);
     // TODO: Add mana ability support
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     // For now, without mana ability tracking: 130
     // With mana ability: 140
@@ -129,10 +152,11 @@ fn test_prodigal_sorcerer_evaluation() {
     // - Activated ability: +10
     // Total: 80 + 20 + 15 + 10 + 15 + 10 = 150
 
-    let card = create_creature("Prodigal Sorcerer", 1, 1, 3);
+    let (game, card_id, player_id) = create_test_setup("Prodigal Sorcerer", 1, 1, 3);
     // TODO: Add activated ability support to evaluation
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     // For now, without activated ability tracking: 140
     // With activated ability: 150
@@ -156,9 +180,10 @@ fn test_royal_assassin_evaluation() {
     // - Activated ability: +10
     // Total: 80 + 20 + 15 + 10 + 15 + 10 = 150
 
-    let card = create_creature("Royal Assassin", 1, 1, 3);
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup("Royal Assassin", 1, 1, 3);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(
         score, 140,
@@ -180,11 +205,10 @@ fn test_wall_of_omens_evaluation() {
     // - Defender: -(0 * 9 + 40) = -40
     // Total: 80 + 20 + 0 + 40 + 10 - 40 = 110
 
-    let mut card = create_creature("Wall of Omens", 0, 4, 2);
-    card.keywords.insert(Keyword::Defender);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Wall of Omens", 0, 4, 2, vec![Keyword::Defender]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 110, "Wall of Omens should score 110");
 }
@@ -202,11 +226,11 @@ fn test_double_strike_creature() {
     // - Double Strike: +25 (10 + (power * 15) = 10 + (1 * 15) = 10 + 15)
     // Total: 80 + 20 + 15 + 20 + 10 + 25 = 170
 
-    let mut card = create_creature("Boros Swiftblade", 1, 2, 2);
-    card.keywords.insert(Keyword::DoubleStrike);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Boros Swiftblade", 1, 2, 2, vec![Keyword::DoubleStrike]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 170, "Boros Swiftblade should score 170");
 }
@@ -224,11 +248,11 @@ fn test_first_strike_creature() {
     // - First Strike: +20 (10 + (power * 5) = 10 + (2 * 5) = 10 + 10)
     // Total: 80 + 20 + 30 + 10 + 5 + 20 = 165
 
-    let mut card = create_creature("Elite Vanguard", 2, 1, 1);
-    card.keywords.insert(Keyword::FirstStrike);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Elite Vanguard", 2, 1, 1, vec![Keyword::FirstStrike]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 165, "Elite Vanguard with First Strike should score 165");
 }
@@ -246,11 +270,11 @@ fn test_deathtouch_creature() {
     // - Deathtouch: +25
     // Total: 80 + 20 + 15 + 10 + 5 + 25 = 155
 
-    let mut card = create_creature("Typhoid Rats", 1, 1, 1);
-    card.keywords.insert(Keyword::Deathtouch);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Typhoid Rats", 1, 1, 1, vec![Keyword::Deathtouch]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 155, "Typhoid Rats should score 155");
 }
@@ -268,11 +292,11 @@ fn test_lifelink_creature() {
     // - Lifelink: +20 (power * 10 = 2 * 10)
     // Total: 80 + 20 + 30 + 20 + 10 + 20 = 180
 
-    let mut card = create_creature("Ajani's Pridemate", 2, 2, 2);
-    card.keywords.insert(Keyword::Lifelink);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Ajani's Pridemate", 2, 2, 2, vec![Keyword::Lifelink]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 180, "Ajani's Pridemate should score 180");
 }
@@ -290,11 +314,11 @@ fn test_trample_creature() {
     // - Trample: +10 ((power - 1) * 5 = (3 - 1) * 5 = 2 * 5)
     // Total: 80 + 20 + 45 + 30 + 10 + 10 = 195
 
-    let mut card = create_creature("Kalonian Tusker", 3, 3, 2);
-    card.keywords.insert(Keyword::Trample);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Kalonian Tusker", 3, 3, 2, vec![Keyword::Trample]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 195, "Kalonian Tusker should score 195");
 }
@@ -312,11 +336,11 @@ fn test_menace_creature() {
     // - Menace: +8 (power * 4 = 2 * 4)
     // Total: 80 + 20 + 30 + 20 + 10 + 8 = 168
 
-    let mut card = create_creature("Bloodcrazed Goblin", 2, 2, 2);
-    card.keywords.insert(Keyword::Menace);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Bloodcrazed Goblin", 2, 2, 2, vec![Keyword::Menace]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 168, "Bloodcrazed Goblin should score 168");
 }
@@ -334,11 +358,10 @@ fn test_reach_creature() {
     // - Reach: +5 (doesn't have flying)
     // Total: 80 + 20 + 30 + 40 + 20 + 5 = 195
 
-    let mut card = create_creature("Giant Spider", 2, 4, 4);
-    card.keywords.insert(Keyword::Reach);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Giant Spider", 2, 4, 4, vec![Keyword::Reach]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 195, "Giant Spider should score 195");
 }
@@ -356,11 +379,11 @@ fn test_hexproof_creature() {
     // - Hexproof: +35
     // Total: 80 + 20 + 15 + 10 + 5 + 35 = 165
 
-    let mut card = create_creature("Slippery Bogle", 1, 1, 1);
-    card.keywords.insert(Keyword::Hexproof);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Slippery Bogle", 1, 1, 1, vec![Keyword::Hexproof]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 165, "Slippery Bogle should score 165");
 }
@@ -379,12 +402,16 @@ fn test_indestructible_creature() {
     // - Indestructible: +70
     // Total: 80 + 20 + 165 + 110 + 55 + 50 + 70 = 550
 
-    let mut card = create_creature("Darksteel Colossus", 11, 11, 11);
-    card.keywords.insert(Keyword::Indestructible);
-    card.keywords.insert(Keyword::Trample);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup_with_keywords(
+        "Darksteel Colossus",
+        11,
+        11,
+        11,
+        vec![Keyword::Indestructible, Keyword::Trample],
+    );
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 550, "Darksteel Colossus should score 550");
 }
@@ -403,11 +430,10 @@ fn test_shroud_creature() {
     // - Shroud: +30
     // Total: 80 + 20 + 45 + 20 + 15 + 30 = 210
 
-    let mut card = create_creature("Troll Ascetic", 3, 2, 3);
-    card.keywords.insert(Keyword::Shroud);
-
-    let controller = HeuristicController::new(PlayerId::new(1));
-    let score = controller.evaluate_creature(&card);
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Troll Ascetic", 3, 2, 3, vec![Keyword::Shroud]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
 
     assert_eq!(score, 210, "Troll Ascetic should score 210");
 }

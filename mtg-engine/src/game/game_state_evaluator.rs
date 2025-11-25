@@ -6,7 +6,7 @@
 //!
 //! Reference: forge-java/forge-ai/src/main/java/forge/ai/simulation/GameStateEvaluator.java
 
-use crate::core::{Card, PlayerId};
+use crate::core::{Card, CardId, PlayerId};
 use crate::game::controller::GameStateView;
 use crate::game::heuristic_controller::HeuristicController;
 
@@ -131,7 +131,7 @@ impl GameStateEvaluator {
 
         for &card_id in view.battlefield() {
             if let Some(card) = view.get_card(card_id) {
-                let value = self.evaluate_card(card);
+                let value = self.evaluate_card(view, card_id);
 
                 // Track summon sickness (vc-3)
                 // Reference: GameStateEvaluator.java:153-155
@@ -241,9 +241,15 @@ impl GameStateEvaluator {
     /// Evaluate a single card on the battlefield
     ///
     /// Reference: GameStateEvaluator.evalCard() (lines 218-238)
-    fn evaluate_card(&self, card: &Card) -> i32 {
+    ///
+    /// Uses effective P/T for creatures to properly account for anthem effects.
+    fn evaluate_card(&self, view: &GameStateView, card_id: CardId) -> i32 {
+        let Some(card) = view.get_card(card_id) else {
+            return 0;
+        };
+
         if card.is_creature() {
-            self.creature_eval.evaluate_creature(card)
+            self.creature_eval.evaluate_creature(view, card_id)
         } else if card.is_land() {
             Self::evaluate_land(card)
         } else if card.is_enchantment() {
