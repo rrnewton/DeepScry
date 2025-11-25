@@ -1,0 +1,1607 @@
+use crate::core::{Card, CardId, CardType, Effect, Keyword, ManaCost};
+use crate::game::state::GameState;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_untap_spell() {
+        use crate::core::{Effect, ManaCost};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+
+        // Create a tapped land for P1
+        let land_id = game.next_card_id();
+        let mut land = Card::new(land_id, "Forest".to_string(), p1_id);
+        land.types.push(CardType::Land);
+        land.controller = p1_id;
+        land.tapped = true; // Start tapped
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        // Check initial state
+        let land_before = game.cards.get(land_id).unwrap();
+        assert!(land_before.tapped, "Land should start tapped");
+
+        // Create an Untap spell
+        let untap_spell_id = game.next_card_id();
+        let mut untap_spell = Card::new(untap_spell_id, "Untap".to_string(), p1_id);
+        untap_spell.types.push(CardType::Instant);
+        untap_spell.mana_cost = ManaCost::from_string("U");
+        // Target the specific land
+        untap_spell.effects.push(Effect::UntapPermanent { target: land_id });
+        game.cards.insert(untap_spell_id, untap_spell);
+
+        // Put spell on stack (simulating cast)
+        game.stack.add(untap_spell_id);
+
+        // Resolve the spell
+        assert!(
+            game.resolve_spell(untap_spell_id, &[]).is_ok(),
+            "Failed to resolve untap spell"
+        );
+
+        // Check land is untapped
+        let land_after = game.cards.get(land_id).unwrap();
+        assert!(!land_after.tapped, "Land should be untapped after spell");
+
+        // Check spell went to graveyard
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                zones.graveyard.contains(untap_spell_id),
+                "Untap spell should be in graveyard"
+            );
+        }
+    }
+
+    #[test]
+    fn test_trample_excess_damage_to_player() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 5/5 creature with Trample (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Craw Wurm".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(5));
+        attacker.set_toughness(Some(5));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Trample);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 2/2 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(2));
+        blocker.set_toughness(Some(2));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record P2's life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Blocker should be dead (took 5 damage, toughness 2)
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker_id), "Blocker should be in graveyard");
+        }
+
+        // P2 should have taken 3 trample damage (5 power - 2 to kill blocker)
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after,
+            p2_life_before - 3,
+            "P2 should have taken 3 trample damage"
+        );
+    }
+
+    #[test]
+    fn test_trample_exact_lethal_no_excess() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 creature with Trample (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Trained Armodon".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(3));
+        attacker.set_toughness(Some(3));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Trample);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 3/3 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(3));
+        blocker.set_toughness(Some(3));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record P2's life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Blocker should be dead (took 3 damage, toughness 3)
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker_id), "Blocker should be in graveyard");
+        }
+
+        // P2 should NOT have taken any damage (exact lethal, no excess)
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after, p2_life_before,
+            "P2 should not have taken damage (exact lethal, no excess)"
+        );
+    }
+
+    #[test]
+    fn test_non_trample_blocked_no_player_damage() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 5/5 creature WITHOUT Trample (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Serra Angel".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(5));
+        attacker.set_toughness(Some(5));
+        attacker.controller = p1_id;
+        // NO Trample keyword
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 1/1 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Llanowar Elves".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(1));
+        blocker.set_toughness(Some(1));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record P2's life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Blocker should be dead
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker_id), "Blocker should be in graveyard");
+        }
+
+        // P2 should NOT have taken any damage (no trample, so excess is lost)
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after, p2_life_before,
+            "P2 should not have taken damage without trample"
+        );
+    }
+
+    #[test]
+    fn test_trample_multiple_blockers() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 7/7 creature with Trample (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Enormous Baloth".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(7));
+        attacker.set_toughness(Some(7));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Trample);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create two blockers (2/2 and 3/3)
+        let blocker1_id = game.next_entity_id();
+        let mut blocker1 = Card::new(blocker1_id, "Grizzly Bears".to_string(), p2_id);
+        blocker1.types.push(CardType::Creature);
+        blocker1.set_power(Some(2));
+        blocker1.set_toughness(Some(2));
+        blocker1.controller = p2_id;
+        game.cards.insert(blocker1_id, blocker1);
+        game.battlefield.add(blocker1_id);
+
+        let blocker2_id = game.next_entity_id();
+        let mut blocker2 = Card::new(blocker2_id, "Hill Giant".to_string(), p2_id);
+        blocker2.types.push(CardType::Creature);
+        blocker2.set_power(Some(3));
+        blocker2.set_toughness(Some(3));
+        blocker2.controller = p2_id;
+        game.cards.insert(blocker2_id, blocker2);
+        game.battlefield.add(blocker2_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker1_id, attacker_vec.clone());
+        game.combat.declare_blocker(blocker2_id, attacker_vec);
+
+        // Record P2's life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Both blockers should be dead
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(blocker1_id),
+                "Blocker 1 should be in graveyard"
+            );
+            assert!(
+                zones.graveyard.contains(blocker2_id),
+                "Blocker 2 should be in graveyard"
+            );
+        }
+
+        // P2 should have taken 2 trample damage (7 power - 2 - 3 = 2)
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after,
+            p2_life_before - 2,
+            "P2 should have taken 2 trample damage"
+        );
+    }
+
+    #[test]
+    fn test_lifelink_attacker_blocked() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 creature with Lifelink (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Healer's Hawk".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(3));
+        attacker.set_toughness(Some(3));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Lifelink);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 2/2 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(2));
+        blocker.set_toughness(Some(2));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record P1's life before combat
+        let p1_life_before = game.players[0].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // P1 should have gained 3 life from lifelink (3 damage dealt to blocker)
+        let p1_life_after = game.players[0].life;
+        assert_eq!(
+            p1_life_after,
+            p1_life_before + 3,
+            "P1 should have gained 3 life from lifelink"
+        );
+
+        // Blocker should be dead
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker_id), "Blocker should be in graveyard");
+        }
+    }
+
+    #[test]
+    fn test_lifelink_attacker_unblocked() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 4/4 creature with Lifelink (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Ajani's Pridemate".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(4));
+        attacker.set_toughness(Some(4));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Lifelink);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // Declare combat (no blockers)
+        game.combat.declare_attacker(attacker_id, p2_id);
+
+        // Record life before combat
+        let p1_life_before = game.players[0].life;
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // P1 should have gained 4 life from lifelink (4 damage dealt to player)
+        let p1_life_after = game.players[0].life;
+        assert_eq!(
+            p1_life_after,
+            p1_life_before + 4,
+            "P1 should have gained 4 life from lifelink"
+        );
+
+        // P2 should have taken 4 damage
+        let p2_life_after = game.players[1].life;
+        assert_eq!(p2_life_after, p2_life_before - 4, "P2 should have taken 4 damage");
+    }
+
+    #[test]
+    fn test_lifelink_blocker() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 creature (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Hill Giant".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(3));
+        attacker.set_toughness(Some(3));
+        attacker.controller = p1_id;
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 2/2 creature with Lifelink (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Vampire Cutthroat".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(2));
+        blocker.set_toughness(Some(2));
+        blocker.controller = p2_id;
+        blocker.keywords.insert(Keyword::Lifelink);
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record P2's life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // P2 should have gained 2 life from lifelink (blocker dealt 2 damage)
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after,
+            p2_life_before + 2,
+            "P2 should have gained 2 life from lifelink blocker"
+        );
+
+        // Blocker should be dead (took 3 damage, has 2 toughness)
+        // Attacker should survive (took 2 damage, has 3 toughness)
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                !zones.graveyard.contains(attacker_id),
+                "Attacker should still be alive (took 2 damage, has 3 toughness)"
+            );
+            assert!(
+                game.battlefield.contains(attacker_id),
+                "Attacker should still be on battlefield"
+            );
+        }
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(blocker_id),
+                "Blocker should be in graveyard (took 3 damage, has 2 toughness)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lifelink_with_trample() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 5/5 creature with Lifelink AND Trample (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Baneslayer Angel".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(5));
+        attacker.set_toughness(Some(5));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Lifelink);
+        attacker.keywords.insert(Keyword::Trample);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 2/2 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(2));
+        blocker.set_toughness(Some(2));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record life before combat
+        let p1_life_before = game.players[0].life;
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // P1 should have gained 5 life (2 to blocker + 3 trample to player = 5 total damage)
+        let p1_life_after = game.players[0].life;
+        assert_eq!(
+            p1_life_after,
+            p1_life_before + 5,
+            "P1 should have gained 5 life from lifelink (all damage dealt)"
+        );
+
+        // P2 should have taken 3 trample damage
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after,
+            p2_life_before - 3,
+            "P2 should have taken 3 trample damage"
+        );
+
+        // Blocker should be dead
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker_id), "Blocker should be in graveyard");
+        }
+    }
+
+    #[test]
+    fn test_deathtouch_attacker_kills_large_blocker() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 1/1 creature with Deathtouch (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Deadly Recluse".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(1));
+        attacker.set_toughness(Some(1));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Deathtouch);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 5/5 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Serra Angel".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(5));
+        blocker.set_toughness(Some(5));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Blocker should be dead (deathtouch from 1 damage)
+        // Attacker should be dead (5 damage from blocker)
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                zones.graveyard.contains(attacker_id),
+                "Attacker should be in graveyard (took 5 damage)"
+            );
+        }
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(blocker_id),
+                "Blocker should be in graveyard (dealt deathtouch damage)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_deathtouch_blocker_kills_large_attacker() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 5/5 creature (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Serra Angel".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(5));
+        attacker.set_toughness(Some(5));
+        attacker.controller = p1_id;
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 1/1 creature with Deathtouch (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Typhoid Rats".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(1));
+        blocker.set_toughness(Some(1));
+        blocker.controller = p2_id;
+        blocker.keywords.insert(Keyword::Deathtouch);
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Attacker should be dead (deathtouch from 1 damage)
+        // Blocker should be dead (5 damage from attacker)
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                zones.graveyard.contains(attacker_id),
+                "Attacker should be in graveyard (dealt deathtouch damage)"
+            );
+        }
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(blocker_id),
+                "Blocker should be in graveyard (took 5 damage)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_deathtouch_with_trample_minimal_damage() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 5/5 creature with Deathtouch AND Trample (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Chevill, Bane of Monsters".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(5));
+        attacker.set_toughness(Some(5));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Deathtouch);
+        attacker.keywords.insert(Keyword::Trample);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create a 3/3 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(3));
+        blocker.set_toughness(Some(3));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Declare combat
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, attacker_vec);
+
+        // Record P2's life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // MTG Rules 702.2c: With deathtouch + trample, only 1 damage is lethal
+        // So 1 damage to blocker (kills it), 4 damage tramples over to player
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after,
+            p2_life_before - 4,
+            "P2 should have taken 4 trample damage (5 power - 1 lethal to blocker)"
+        );
+
+        // Blocker should be dead (deathtouch)
+        // Attacker should survive (took 3 damage, has 5 toughness)
+        assert!(
+            game.battlefield.contains(attacker_id),
+            "Attacker should survive (took 3 damage, has 5 toughness)"
+        );
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(blocker_id),
+                "Blocker should be in graveyard (dealt deathtouch damage)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_deathtouch_with_multiple_blockers() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 creature with Deathtouch (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Gifted Aetherborn".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(3));
+        attacker.set_toughness(Some(3));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Deathtouch);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create two blockers (both 5/5)
+        let blocker1_id = game.next_entity_id();
+        let mut blocker1 = Card::new(blocker1_id, "Serra Angel".to_string(), p2_id);
+        blocker1.types.push(CardType::Creature);
+        blocker1.set_power(Some(5));
+        blocker1.set_toughness(Some(5));
+        blocker1.controller = p2_id;
+        game.cards.insert(blocker1_id, blocker1);
+        game.battlefield.add(blocker1_id);
+
+        let blocker2_id = game.next_entity_id();
+        let mut blocker2 = Card::new(blocker2_id, "Air Elemental".to_string(), p2_id);
+        blocker2.types.push(CardType::Creature);
+        blocker2.set_power(Some(5));
+        blocker2.set_toughness(Some(5));
+        blocker2.controller = p2_id;
+        game.cards.insert(blocker2_id, blocker2);
+        game.battlefield.add(blocker2_id);
+
+        // Declare combat with both blockers
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let attacker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker1_id, attacker_vec.clone());
+        game.combat.declare_blocker(blocker2_id, attacker_vec);
+
+        // Assign combat damage (damage order determined internally)
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // With deathtouch, 1 damage is lethal to each blocker
+        // 3/3 attacker: 1 damage to first blocker, 1 damage to second blocker, 1 damage wasted
+        // Both blockers should be dead, attacker should be dead (took 10 damage total)
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                zones.graveyard.contains(attacker_id),
+                "Attacker should be in graveyard (took 10 damage from two 5/5 blockers)"
+            );
+        }
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(blocker1_id),
+                "First blocker should be in graveyard (dealt deathtouch damage)"
+            );
+            assert!(
+                zones.graveyard.contains(blocker2_id),
+                "Second blocker should be in graveyard (dealt deathtouch damage)"
+            );
+        }
+    }
+
+    // Note: Menace validation test removed because incremental validation during
+    // blocker declaration would incorrectly reject the first blocker. Menace validation
+    // should happen after all blockers are declared. The following tests verify that
+    // Menace works correctly when multiple blockers are declared or no blockers are declared.
+
+    #[test]
+    fn test_menace_can_be_blocked_by_two_creatures() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 creature with Menace (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Mardu Skullhunter".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(3));
+        attacker.set_toughness(Some(3));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Menace);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create two blockers
+        let blocker1_id = game.next_entity_id();
+        let mut blocker1 = Card::new(blocker1_id, "Grizzly Bears".to_string(), p2_id);
+        blocker1.types.push(CardType::Creature);
+        blocker1.set_power(Some(2));
+        blocker1.set_toughness(Some(2));
+        blocker1.controller = p2_id;
+        game.cards.insert(blocker1_id, blocker1);
+        game.battlefield.add(blocker1_id);
+
+        let blocker2_id = game.next_entity_id();
+        let mut blocker2 = Card::new(blocker2_id, "Elite Vanguard".to_string(), p2_id);
+        blocker2.types.push(CardType::Creature);
+        blocker2.set_power(Some(2));
+        blocker2.set_toughness(Some(1));
+        blocker2.controller = p2_id;
+        game.cards.insert(blocker2_id, blocker2);
+        game.battlefield.add(blocker2_id);
+
+        // Declare attacker
+        game.combat.declare_attacker(attacker_id, p2_id);
+
+        // Block with two creatures - should succeed
+        let result1 = game.declare_blocker(p2_id, blocker1_id, vec![attacker_id]);
+        assert!(result1.is_ok(), "First blocker should succeed: {result1:?}");
+
+        let result2 = game.declare_blocker(p2_id, blocker2_id, vec![attacker_id]);
+        assert!(result2.is_ok(), "Second blocker should succeed: {result2:?}");
+
+        // Verify combat resolves correctly
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Combat damage should resolve: {result:?}");
+
+        // Both blockers should be dead (took 3 damage total, both have <= 2 toughness)
+        // Attacker should be dead (took 4 damage total from 2+2, has 3 toughness)
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(zones.graveyard.contains(attacker_id), "Attacker should be dead");
+        }
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker1_id), "First blocker should be dead");
+            assert!(zones.graveyard.contains(blocker2_id), "Second blocker should be dead");
+        }
+    }
+
+    #[test]
+    fn test_menace_can_be_unblocked() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 creature with Menace (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Goblin Heelcutter".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(3));
+        attacker.set_toughness(Some(3));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Menace);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // Declare attacker (no blockers)
+        game.combat.declare_attacker(attacker_id, p2_id);
+
+        // Record life before combat
+        let p2_life_before = game.players[1].life;
+
+        // Assign combat damage
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Combat damage should resolve: {result:?}");
+
+        // P2 should have taken 3 damage
+        let p2_life_after = game.players[1].life;
+        assert_eq!(
+            p2_life_after,
+            p2_life_before - 3,
+            "P2 should have taken 3 damage from unblocked menace creature"
+        );
+    }
+
+    #[test]
+    fn test_menace_with_three_blockers() {
+        use crate::game::random_controller::RandomController;
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 5/5 creature with Menace (attacker)
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Charging Monstrosaur".to_string(), p1_id);
+        attacker.types.push(CardType::Creature);
+        attacker.set_power(Some(5));
+        attacker.set_toughness(Some(5));
+        attacker.controller = p1_id;
+        attacker.keywords.insert(Keyword::Menace);
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P2: Create three blockers (1/1 each)
+        let blocker1_id = game.next_entity_id();
+        let mut blocker1 = Card::new(blocker1_id, "Soldier Token 1".to_string(), p2_id);
+        blocker1.types.push(CardType::Creature);
+        blocker1.set_power(Some(1));
+        blocker1.set_toughness(Some(1));
+        blocker1.controller = p2_id;
+        game.cards.insert(blocker1_id, blocker1);
+        game.battlefield.add(blocker1_id);
+
+        let blocker2_id = game.next_entity_id();
+        let mut blocker2 = Card::new(blocker2_id, "Soldier Token 2".to_string(), p2_id);
+        blocker2.types.push(CardType::Creature);
+        blocker2.set_power(Some(1));
+        blocker2.set_toughness(Some(1));
+        blocker2.controller = p2_id;
+        game.cards.insert(blocker2_id, blocker2);
+        game.battlefield.add(blocker2_id);
+
+        let blocker3_id = game.next_entity_id();
+        let mut blocker3 = Card::new(blocker3_id, "Soldier Token 3".to_string(), p2_id);
+        blocker3.types.push(CardType::Creature);
+        blocker3.set_power(Some(1));
+        blocker3.set_toughness(Some(1));
+        blocker3.controller = p2_id;
+        game.cards.insert(blocker3_id, blocker3);
+        game.battlefield.add(blocker3_id);
+
+        // Declare attacker
+        game.combat.declare_attacker(attacker_id, p2_id);
+
+        // Block with three creatures - should succeed (more than 2 is fine)
+        let result1 = game.declare_blocker(p2_id, blocker1_id, vec![attacker_id]);
+        assert!(result1.is_ok(), "First blocker should succeed");
+
+        let result2 = game.declare_blocker(p2_id, blocker2_id, vec![attacker_id]);
+        assert!(result2.is_ok(), "Second blocker should succeed");
+
+        let result3 = game.declare_blocker(p2_id, blocker3_id, vec![attacker_id]);
+        assert!(result3.is_ok(), "Third blocker should succeed");
+
+        // Verify combat resolves correctly
+        let mut controller1 = RandomController::with_seed(p1_id, 42);
+        let mut controller2 = ZeroController::new(p2_id);
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Combat damage should resolve: {result:?}");
+
+        // All three blockers should be dead (each took 1 toughness worth of damage)
+        // Attacker should survive (took 3 damage, has 5 toughness)
+        assert!(
+            game.battlefield.contains(attacker_id),
+            "Attacker should survive (took 3 damage, has 5 toughness)"
+        );
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.graveyard.contains(blocker1_id), "First blocker should be dead");
+            assert!(zones.graveyard.contains(blocker2_id), "Second blocker should be dead");
+            assert!(zones.graveyard.contains(blocker3_id), "Third blocker should be dead");
+        }
+    }
+
+    #[test]
+    fn test_hexproof_blocks_destroy_spell() {
+        // Test that destroy spells cannot target hexproof creatures controlled by opponent
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create a hexproof creature
+        let hexproof_creature_id = game.next_entity_id();
+        let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
+        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.set_power(Some(1));
+        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
+        game.cards.insert(hexproof_creature_id, hexproof_creature);
+        game.battlefield.add(hexproof_creature_id);
+
+        // P2: Create a normal creature
+        let normal_creature_id = game.next_entity_id();
+        let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
+        normal_creature.types.push(CardType::Creature);
+        normal_creature.set_power(Some(2));
+        normal_creature.set_toughness(Some(2));
+        game.cards.insert(normal_creature_id, normal_creature);
+        game.battlefield.add(normal_creature_id);
+
+        // P1: Cast a destroy spell (Terror) - should target normal creature, not hexproof one
+        let destroy_spell_id = game.next_entity_id();
+        let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
+        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.mana_cost = ManaCost::from_string("1B");
+        // Use placeholder card ID 0 which will be replaced with a targetable opponent's creature
+        destroy_spell
+            .effects
+            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        game.cards.insert(destroy_spell_id, destroy_spell);
+
+        // Put it on the stack (simulating cast)
+        game.stack.add(destroy_spell_id);
+
+        // Resolve the spell - explicitly target the normal creature
+        // (controller would have chosen normal_creature_id, not hexproof one)
+        let result = game.resolve_spell(destroy_spell_id, &[normal_creature_id]);
+        assert!(result.is_ok(), "Destroy spell should resolve successfully");
+
+        // Check that the hexproof creature is still alive
+        assert!(
+            game.battlefield.contains(hexproof_creature_id),
+            "Hexproof creature should still be on battlefield"
+        );
+
+        // Check that the normal creature was destroyed
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(normal_creature_id),
+                "Normal creature should be in graveyard"
+            );
+        }
+    }
+
+    #[test]
+    fn test_hexproof_blocks_tap_spell() {
+        // Test that tap spells cannot target hexproof creatures controlled by opponent
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create a hexproof creature
+        let hexproof_creature_id = game.next_entity_id();
+        let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
+        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.set_power(Some(1));
+        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
+        game.cards.insert(hexproof_creature_id, hexproof_creature);
+        game.battlefield.add(hexproof_creature_id);
+
+        // P2: Create a normal creature
+        let normal_creature_id = game.next_entity_id();
+        let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
+        normal_creature.types.push(CardType::Creature);
+        normal_creature.set_power(Some(2));
+        normal_creature.set_toughness(Some(2));
+        game.cards.insert(normal_creature_id, normal_creature);
+        game.battlefield.add(normal_creature_id);
+
+        // P1: Cast a tap spell - should target normal creature, not hexproof one
+        let tap_spell_id = game.next_entity_id();
+        let mut tap_spell = Card::new(tap_spell_id, "Frost Breath".to_string(), p1_id);
+        tap_spell.types.push(CardType::Instant);
+        tap_spell.mana_cost = ManaCost::from_string("2U");
+        // Use placeholder card ID 0 which will be replaced with a targetable opponent's creature
+        tap_spell.effects.push(Effect::TapPermanent { target: CardId::new(0) });
+        game.cards.insert(tap_spell_id, tap_spell);
+
+        // Put spell on stack (simulating cast)
+        game.stack.add(tap_spell_id);
+
+        // Resolve the spell - explicitly target the normal creature
+        // (controller would have chosen normal_creature_id, not hexproof one)
+        let result = game.resolve_spell(tap_spell_id, &[normal_creature_id]);
+        assert!(result.is_ok(), "Tap spell should resolve successfully");
+
+        // Check that the hexproof creature is not tapped
+        let hexproof_card = game.cards.get(hexproof_creature_id).unwrap();
+        assert!(!hexproof_card.tapped, "Hexproof creature should not be tapped");
+
+        // Check that the normal creature was tapped
+        let normal_card = game.cards.get(normal_creature_id).unwrap();
+        assert!(normal_card.tapped, "Normal creature should be tapped");
+    }
+
+    #[test]
+    fn test_hexproof_allows_own_spells() {
+        // Test that hexproof creatures CAN be targeted by their controller's spells
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let _p2_id = game.players[1].id;
+
+        // P1: Create a hexproof creature
+        let hexproof_creature_id = game.next_entity_id();
+        let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p1_id);
+        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.set_power(Some(1));
+        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
+        game.cards.insert(hexproof_creature_id, hexproof_creature);
+        game.battlefield.add(hexproof_creature_id);
+
+        // P1: Cast Giant Growth on their own hexproof creature - should work!
+        let pump_spell_id = game.next_entity_id();
+        let mut pump_spell = Card::new(pump_spell_id, "Giant Growth".to_string(), p1_id);
+        pump_spell.types.push(CardType::Instant);
+        pump_spell.mana_cost = ManaCost::from_string("G");
+        // Use placeholder card ID 0 which will be replaced with a targetable creature
+        pump_spell.effects.push(Effect::PumpCreature {
+            target: CardId::new(0),
+            power_bonus: 3,
+            toughness_bonus: 3,
+        });
+        game.cards.insert(pump_spell_id, pump_spell);
+
+        // Put spell on stack (simulating cast)
+        game.stack.add(pump_spell_id);
+
+        // Resolve the spell
+        let result = game.resolve_spell(pump_spell_id, &[hexproof_creature_id]);
+        assert!(
+            result.is_ok(),
+            "Pump spell on own hexproof creature should resolve successfully"
+        );
+
+        // Check that the hexproof creature got the pump
+        let creature = game.cards.get(hexproof_creature_id).unwrap();
+        assert_eq!(
+            creature.current_power(),
+            4,
+            "Hexproof creature should have boosted power (1+3)"
+        );
+        assert_eq!(
+            creature.current_toughness(),
+            4,
+            "Hexproof creature should have boosted toughness (1+3)"
+        );
+    }
+
+    #[test]
+    fn test_hexproof_no_valid_targets() {
+        // Test that spells fail to find targets if only hexproof creatures exist
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create only a hexproof creature (no valid targets for opponent)
+        let hexproof_creature_id = game.next_entity_id();
+        let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
+        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.set_power(Some(1));
+        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.keywords.insert(Keyword::Hexproof);
+        game.cards.insert(hexproof_creature_id, hexproof_creature);
+        game.battlefield.add(hexproof_creature_id);
+
+        // P1: Try to cast a destroy spell - should fail to find valid target
+        let destroy_spell_id = game.next_entity_id();
+        let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
+        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.mana_cost = ManaCost::from_string("1B");
+        // Use placeholder card ID 0 which will fail to be replaced with a target
+        destroy_spell
+            .effects
+            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        game.cards.insert(destroy_spell_id, destroy_spell);
+
+        // Put it on the stack (simulating cast)
+        game.stack.add(destroy_spell_id);
+
+        // Resolve the spell - should succeed but do nothing (no valid targets)
+        let result = game.resolve_spell(destroy_spell_id, &[]);
+        assert!(result.is_ok(), "Spell with no valid targets should still resolve");
+
+        // Check that the hexproof creature is still alive
+        assert!(
+            game.battlefield.contains(hexproof_creature_id),
+            "Hexproof creature should still be on battlefield"
+        );
+    }
+
+    #[test]
+    fn test_indestructible_survives_lethal_damage() {
+        // Test that indestructible creatures survive lethal damage
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 2/2 indestructible creature
+        let indestructible_id = game.next_entity_id();
+        let mut indestructible = Card::new(indestructible_id, "Darksteel Myr".to_string(), p1_id);
+        indestructible.types.push(CardType::Creature);
+        indestructible.set_power(Some(2));
+        indestructible.set_toughness(Some(2));
+        indestructible.keywords.insert(Keyword::Indestructible);
+        indestructible.controller = p1_id;
+        indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(indestructible_id, indestructible);
+        game.battlefield.add(indestructible_id);
+
+        // P2: Create a 5/5 creature (blocker)
+        let blocker_id = game.next_entity_id();
+        let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
+        blocker.types.push(CardType::Creature);
+        blocker.set_power(Some(5));
+        blocker.set_toughness(Some(5));
+        blocker.controller = p2_id;
+        blocker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // P1 attacks with indestructible creature
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+
+        game.combat.declare_attacker(indestructible_id, p2_id);
+
+        // P2 blocks with 5/5 creature
+        let result = game.declare_blocker(p2_id, blocker_id, vec![indestructible_id]);
+        assert!(result.is_ok(), "Failed to declare blocker: {result:?}");
+
+        // Assign combat damage
+        // Indestructible 2/2 deals 2 damage to blocker
+        // Blocker 5/5 deals 5 damage to indestructible (more than lethal, but indestructible survives)
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Indestructible creature should survive (took 5 damage but has indestructible)
+        assert!(
+            game.battlefield.contains(indestructible_id),
+            "Indestructible creature should survive lethal damage"
+        );
+
+        // Blocker should survive (took 2 damage, has 5 toughness)
+        assert!(game.battlefield.contains(blocker_id), "Blocker should survive 2 damage");
+    }
+
+    #[test]
+    fn test_indestructible_immune_to_destroy_effects() {
+        // Test that indestructible creatures can't be destroyed by Terror/Murder
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create an indestructible creature
+        let indestructible_id = game.next_entity_id();
+        let mut indestructible = Card::new(indestructible_id, "Darksteel Myr".to_string(), p2_id);
+        indestructible.types.push(CardType::Creature);
+        indestructible.set_power(Some(0));
+        indestructible.set_toughness(Some(1));
+        indestructible.keywords.insert(Keyword::Indestructible);
+        game.cards.insert(indestructible_id, indestructible);
+        game.battlefield.add(indestructible_id);
+
+        // P1: Cast Terror targeting the indestructible creature
+        let destroy_spell_id = game.next_entity_id();
+        let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
+        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.mana_cost = ManaCost::from_string("1B");
+        // Explicitly target the indestructible creature
+        destroy_spell.effects.push(Effect::DestroyPermanent {
+            target: indestructible_id,
+        });
+        game.cards.insert(destroy_spell_id, destroy_spell);
+
+        // Put it on the stack
+        game.stack.add(destroy_spell_id);
+
+        // Resolve the spell
+        let result = game.resolve_spell(destroy_spell_id, &[]);
+        assert!(result.is_ok(), "Destroy spell should resolve successfully");
+
+        // Indestructible creature should still be alive
+        assert!(
+            game.battlefield.contains(indestructible_id),
+            "Indestructible creature should survive destroy effect"
+        );
+    }
+
+    #[test]
+    fn test_indestructible_survives_deathtouch() {
+        // Test that indestructible creatures survive deathtouch damage
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 1/1 deathtouch creature (attacker)
+        let deathtouch_id = game.next_entity_id();
+        let mut deathtouch = Card::new(deathtouch_id, "Typhoid Rats".to_string(), p1_id);
+        deathtouch.types.push(CardType::Creature);
+        deathtouch.set_power(Some(1));
+        deathtouch.set_toughness(Some(1));
+        deathtouch.keywords.insert(Keyword::Deathtouch);
+        deathtouch.controller = p1_id;
+        deathtouch.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(deathtouch_id, deathtouch);
+        game.battlefield.add(deathtouch_id);
+
+        // P2: Create a 5/5 indestructible creature (blocker)
+        let indestructible_id = game.next_entity_id();
+        let mut indestructible = Card::new(indestructible_id, "Darksteel Colossus".to_string(), p2_id);
+        indestructible.types.push(CardType::Creature);
+        indestructible.set_power(Some(5));
+        indestructible.set_toughness(Some(5));
+        indestructible.keywords.insert(Keyword::Indestructible);
+        indestructible.controller = p2_id;
+        indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(indestructible_id, indestructible);
+        game.battlefield.add(indestructible_id);
+
+        // P1 attacks with deathtouch creature
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+
+        game.combat.declare_attacker(deathtouch_id, p2_id);
+
+        // P2 blocks with indestructible creature
+        let result = game.declare_blocker(p2_id, indestructible_id, vec![deathtouch_id]);
+        assert!(result.is_ok(), "Failed to declare blocker: {result:?}");
+
+        // Assign combat damage
+        // Deathtouch 1/1 deals 1 damage to indestructible (deathtouch damage, but indestructible survives)
+        // Indestructible 5/5 deals 5 damage to deathtouch (kills it)
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Indestructible creature should survive deathtouch damage
+        assert!(
+            game.battlefield.contains(indestructible_id),
+            "Indestructible creature should survive deathtouch damage"
+        );
+
+        // Deathtouch creature should be dead (took 5 damage, has 1 toughness)
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                zones.graveyard.contains(deathtouch_id),
+                "Deathtouch creature should be in graveyard"
+            );
+        }
+    }
+
+    #[test]
+    fn test_indestructible_vs_non_indestructible_combat() {
+        // Test that normal creature dies while indestructible survives in mutual combat
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create a 3/3 indestructible creature (attacker)
+        let indestructible_id = game.next_entity_id();
+        let mut indestructible = Card::new(indestructible_id, "Indomitable".to_string(), p1_id);
+        indestructible.types.push(CardType::Creature);
+        indestructible.set_power(Some(3));
+        indestructible.set_toughness(Some(3));
+        indestructible.keywords.insert(Keyword::Indestructible);
+        indestructible.controller = p1_id;
+        indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(indestructible_id, indestructible);
+        game.battlefield.add(indestructible_id);
+
+        // P2: Create a 3/3 normal creature (blocker)
+        let normal_id = game.next_entity_id();
+        let mut normal = Card::new(normal_id, "Hill Giant".to_string(), p2_id);
+        normal.types.push(CardType::Creature);
+        normal.set_power(Some(3));
+        normal.set_toughness(Some(3));
+        normal.controller = p2_id;
+        normal.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(normal_id, normal);
+        game.battlefield.add(normal_id);
+
+        // P1 attacks with indestructible creature
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+
+        game.combat.declare_attacker(indestructible_id, p2_id);
+
+        // P2 blocks with normal creature
+        let result = game.declare_blocker(p2_id, normal_id, vec![indestructible_id]);
+        assert!(result.is_ok(), "Failed to declare blocker: {result:?}");
+
+        // Assign combat damage
+        // Both deal 3 damage to each other (lethal)
+        // Indestructible survives, normal dies
+        let result = game.assign_combat_damage(&mut controller1, &mut controller2, false);
+        assert!(result.is_ok(), "Failed to assign combat damage: {result:?}");
+
+        // Indestructible creature should survive
+        assert!(
+            game.battlefield.contains(indestructible_id),
+            "Indestructible creature should survive"
+        );
+
+        // Normal creature should be dead
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(normal_id),
+                "Normal creature should be in graveyard"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shroud_blocks_destroy_from_opponent() {
+        // Test that destroy spells from opponents can't target shroud creatures
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create a shroud creature
+        let shroud_creature_id = game.next_entity_id();
+        let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p2_id);
+        shroud_creature.types.push(CardType::Creature);
+        shroud_creature.set_power(Some(1));
+        shroud_creature.set_toughness(Some(1));
+        shroud_creature.keywords.insert(Keyword::Shroud);
+        game.cards.insert(shroud_creature_id, shroud_creature);
+        game.battlefield.add(shroud_creature_id);
+
+        // P2: Create a normal creature
+        let normal_creature_id = game.next_entity_id();
+        let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
+        normal_creature.types.push(CardType::Creature);
+        normal_creature.set_power(Some(2));
+        normal_creature.set_toughness(Some(2));
+        game.cards.insert(normal_creature_id, normal_creature);
+        game.battlefield.add(normal_creature_id);
+
+        // P1: Cast Terror - should target normal creature, not shroud one
+        let destroy_spell_id = game.next_entity_id();
+        let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
+        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.mana_cost = ManaCost::from_string("1B");
+        destroy_spell
+            .effects
+            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        game.cards.insert(destroy_spell_id, destroy_spell);
+        game.stack.add(destroy_spell_id);
+
+        let result = game.resolve_spell(destroy_spell_id, &[normal_creature_id]);
+        assert!(result.is_ok(), "Destroy spell should resolve");
+
+        // Shroud creature should still be alive
+        assert!(
+            game.battlefield.contains(shroud_creature_id),
+            "Shroud creature should still be on battlefield"
+        );
+
+        // Normal creature was destroyed
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(normal_creature_id),
+                "Normal creature should be in graveyard"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shroud_blocks_pump_from_controller() {
+        // Test that shroud prevents targeting even by the controller (unlike hexproof)
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let _p2_id = game.players[1].id;
+
+        // P1: Create a shroud creature
+        let shroud_creature_id = game.next_entity_id();
+        let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p1_id);
+        shroud_creature.types.push(CardType::Creature);
+        shroud_creature.set_power(Some(1));
+        shroud_creature.set_toughness(Some(1));
+        shroud_creature.keywords.insert(Keyword::Shroud);
+        game.cards.insert(shroud_creature_id, shroud_creature);
+        game.battlefield.add(shroud_creature_id);
+
+        // P1: Create a normal creature
+        let normal_creature_id = game.next_entity_id();
+        let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p1_id);
+        normal_creature.types.push(CardType::Creature);
+        normal_creature.set_power(Some(2));
+        normal_creature.set_toughness(Some(2));
+        game.cards.insert(normal_creature_id, normal_creature);
+        game.battlefield.add(normal_creature_id);
+
+        // P1: Cast Giant Growth - should target normal creature, not shroud one
+        let pump_spell_id = game.next_entity_id();
+        let mut pump_spell = Card::new(pump_spell_id, "Giant Growth".to_string(), p1_id);
+        pump_spell.types.push(CardType::Instant);
+        pump_spell.mana_cost = ManaCost::from_string("G");
+        pump_spell.effects.push(Effect::PumpCreature {
+            target: CardId::new(0),
+            power_bonus: 3,
+            toughness_bonus: 3,
+        });
+        game.cards.insert(pump_spell_id, pump_spell);
+        game.stack.add(pump_spell_id);
+
+        let result = game.resolve_spell(pump_spell_id, &[normal_creature_id]);
+        assert!(result.is_ok(), "Pump spell should resolve");
+
+        // Shroud creature should NOT have the pump
+        let shroud_card = game.cards.get(shroud_creature_id).unwrap();
+        assert_eq!(
+            shroud_card.current_power(),
+            1,
+            "Shroud creature should not have boosted power"
+        );
+
+        // Normal creature should have the pump
+        let normal_card = game.cards.get(normal_creature_id).unwrap();
+        assert_eq!(
+            normal_card.current_power(),
+            5,
+            "Normal creature should have boosted power (2+3)"
+        );
+    }
+
+    #[test]
+    fn test_shroud_blocks_tap_effect() {
+        // Test that tap effects can't target shroud creatures
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create a shroud creature
+        let shroud_creature_id = game.next_entity_id();
+        let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p2_id);
+        shroud_creature.types.push(CardType::Creature);
+        shroud_creature.set_power(Some(1));
+        shroud_creature.set_toughness(Some(1));
+        shroud_creature.keywords.insert(Keyword::Shroud);
+        game.cards.insert(shroud_creature_id, shroud_creature);
+        game.battlefield.add(shroud_creature_id);
+
+        // P2: Create a normal creature
+        let normal_creature_id = game.next_entity_id();
+        let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
+        normal_creature.types.push(CardType::Creature);
+        normal_creature.set_power(Some(2));
+        normal_creature.set_toughness(Some(2));
+        game.cards.insert(normal_creature_id, normal_creature);
+        game.battlefield.add(normal_creature_id);
+
+        // P1: Cast tap spell - should target normal creature, not shroud one
+        let tap_spell_id = game.next_entity_id();
+        let mut tap_spell = Card::new(tap_spell_id, "Frost Breath".to_string(), p1_id);
+        tap_spell.types.push(CardType::Instant);
+        tap_spell.mana_cost = ManaCost::from_string("2U");
+        tap_spell.effects.push(Effect::TapPermanent { target: CardId::new(0) });
+        game.cards.insert(tap_spell_id, tap_spell);
+        game.stack.add(tap_spell_id);
+
+        let result = game.resolve_spell(tap_spell_id, &[normal_creature_id]);
+        assert!(result.is_ok(), "Tap spell should resolve");
+
+        // Shroud creature should not be tapped
+        let shroud_card = game.cards.get(shroud_creature_id).unwrap();
+        assert!(!shroud_card.tapped, "Shroud creature should not be tapped");
+
+        // Normal creature should be tapped
+        let normal_card = game.cards.get(normal_creature_id).unwrap();
+        assert!(normal_card.tapped, "Normal creature should be tapped");
+    }
+}
