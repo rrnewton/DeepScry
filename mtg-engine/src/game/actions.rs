@@ -498,6 +498,32 @@ impl GameState {
     ///
     /// Returns a vector of valid target CardIds that can be chosen by the controller.
     /// For effects that target players, use TargetRef::Player instead.
+    /// Check if a card can be legally targeted by a spell or ability
+    ///
+    /// Validates targeting legality based on shroud and hexproof abilities (CR 702.18, 702.19).
+    /// - Shroud: Card cannot be targeted by any spells or abilities
+    /// - Hexproof: Card cannot be targeted by spells or abilities controlled by opponents
+    ///
+    /// # Arguments
+    /// * `card` - The potential target card
+    /// * `source_controller` - The player controlling the spell/ability doing the targeting
+    ///
+    /// # Returns
+    /// `true` if the card can be legally targeted, `false` otherwise
+    fn is_legal_target(card: &crate::core::card::Card, source_controller: PlayerId) -> bool {
+        // Shroud prevents targeting by anyone (CR 702.18a)
+        if card.has_shroud() {
+            return false;
+        }
+
+        // Hexproof only protects from opponent's spells/abilities (CR 702.19a)
+        if card.has_hexproof() && card.owner != source_controller {
+            return false;
+        }
+
+        true
+    }
+
     pub fn get_valid_targets_for_spell(&self, spell_card_id: CardId) -> Result<SmallVec<[CardId; 8]>> {
         let mut valid_targets = SmallVec::new();
 
@@ -517,11 +543,8 @@ impl GameState {
                     // Add all creatures that can be legally targeted
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if card.is_creature() && !card.has_shroud() {
-                                // Hexproof only protects from opponent's spells
-                                if card.owner == spell_owner || !card.has_hexproof() {
-                                    valid_targets.push(card_id);
-                                }
+                            if card.is_creature() && Self::is_legal_target(card, spell_owner) {
+                                valid_targets.push(card_id);
                             }
                         }
                     }
@@ -532,11 +555,8 @@ impl GameState {
                     // Destroy can target any permanent (typically creatures)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if !card.has_shroud() {
-                                // Hexproof only protects from opponent's spells
-                                if card.owner == spell_owner || !card.has_hexproof() {
-                                    valid_targets.push(card_id);
-                                }
+                            if Self::is_legal_target(card, spell_owner) {
+                                valid_targets.push(card_id);
                             }
                         }
                     }
@@ -545,11 +565,8 @@ impl GameState {
                     // Pump can target any creature
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if card.is_creature() && !card.has_shroud() {
-                                // Hexproof only protects from opponent's spells
-                                if card.owner == spell_owner || !card.has_hexproof() {
-                                    valid_targets.push(card_id);
-                                }
+                            if card.is_creature() && Self::is_legal_target(card, spell_owner) {
+                                valid_targets.push(card_id);
                             }
                         }
                     }
@@ -558,11 +575,8 @@ impl GameState {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if !card.tapped && !card.has_shroud() {
-                                // Hexproof only protects from opponent's spells
-                                if card.owner == spell_owner || !card.has_hexproof() {
-                                    valid_targets.push(card_id);
-                                }
+                            if !card.tapped && Self::is_legal_target(card, spell_owner) {
+                                valid_targets.push(card_id);
                             }
                         }
                     }
@@ -571,11 +585,8 @@ impl GameState {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if card.tapped && !card.has_shroud() {
-                                // Hexproof only protects from opponent's spells
-                                if card.owner == spell_owner || !card.has_hexproof() {
-                                    valid_targets.push(card_id);
-                                }
+                            if card.tapped && Self::is_legal_target(card, spell_owner) {
+                                valid_targets.push(card_id);
                             }
                         }
                     }
@@ -595,11 +606,8 @@ impl GameState {
                         if let Ok(card) = self.cards.get(card_id) {
                             // For now, target any permanent that doesn't have shroud
                             // Swords to Plowshares specifically targets creatures
-                            if card.is_creature() && !card.has_shroud() {
-                                // Hexproof only protects from opponent's spells
-                                if card.owner == spell_owner || !card.has_hexproof() {
-                                    valid_targets.push(card_id);
-                                }
+                            if card.is_creature() && Self::is_legal_target(card, spell_owner) {
+                                valid_targets.push(card_id);
                             }
                         }
                     }
@@ -706,13 +714,8 @@ impl GameState {
                                 is_valid = false;
                             }
 
-                            // Check shroud/hexproof
-                            if card.has_shroud() {
-                                is_valid = false;
-                            }
-
-                            // Hexproof only protects from opponent's abilities
-                            if card.has_hexproof() && card.owner != ability_controller {
+                            // Check shroud/hexproof (CR 702.18, 702.19)
+                            if !Self::is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
 
@@ -726,12 +729,7 @@ impl GameState {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            let mut is_valid = !card.tapped && !card.has_shroud();
-
-                            // Check hexproof
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
+                            let is_valid = !card.tapped && Self::is_legal_target(card, ability_controller);
 
                             if is_valid {
                                 valid_targets.push(card_id);
@@ -743,12 +741,7 @@ impl GameState {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            let mut is_valid = card.tapped && !card.has_shroud();
-
-                            // Check hexproof
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
+                            let is_valid = card.tapped && Self::is_legal_target(card, ability_controller);
 
                             if is_valid {
                                 valid_targets.push(card_id);
@@ -763,12 +756,7 @@ impl GameState {
                     // Damage can target creatures
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            let mut is_valid = card.is_creature() && !card.has_shroud();
-
-                            // Check hexproof
-                            if card.has_hexproof() && card.owner != ability_controller {
-                                is_valid = false;
-                            }
+                            let is_valid = card.is_creature() && Self::is_legal_target(card, ability_controller);
 
                             if is_valid {
                                 valid_targets.push(card_id);
@@ -788,14 +776,10 @@ impl GameState {
                                 is_valid = false;
                             }
 
-                            // Cannot target creatures with shroud
-                            if card.has_shroud() {
-                                is_valid = false;
-                            }
-
-                            // Hexproof doesn't apply (we control both the Equipment and the target)
-                            // but let's keep the check for consistency
-                            if card.has_hexproof() && card.owner != ability_controller {
+                            // Check shroud/hexproof (CR 702.18, 702.19)
+                            // Note: Hexproof doesn't typically apply when we control both the Equipment
+                            // and the target, but we check owner-based targeting for consistency
+                            if !Self::is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
 
@@ -1333,7 +1317,7 @@ impl GameState {
     ///
     /// TODO: In full MTG rules, triggers should go on the stack and wait for priority,
     /// but for simplicity we're executing them immediately.
-    pub fn check_triggers(&mut self, event: TriggerEvent, _source_card_id: CardId) -> Result<()> {
+    pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
         // Collect all triggered effects to execute (without holding a borrow on self.cards)
         let triggered_effects: Vec<(CardId, Vec<Effect>)> = self
             .battlefield
