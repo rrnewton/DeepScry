@@ -703,11 +703,11 @@ fn verify_state_equivalence(
     iteration: usize,
 ) -> Result<()> {
     use mtg_forge_rs::MtgError;
-    use mtg_forge_rs::game::{compute_state_hash, format_hash};
+    use mtg_forge_rs::game::{compute_undo_test_hash, format_hash};
 
-    // Compute state hashes for full comparison
-    let current_hash = compute_state_hash(current);
-    let snapshot_hash = compute_state_hash(snapshot);
+    // Compute state hashes for full comparison (using stricter undo test hash)
+    let current_hash = compute_undo_test_hash(current);
+    let snapshot_hash = compute_undo_test_hash(snapshot);
 
     if current_hash != snapshot_hash {
         // Hashes differ - serialize both to JSON to show what diverged

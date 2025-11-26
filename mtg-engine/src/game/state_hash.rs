@@ -8,14 +8,14 @@ use crate::game::GameState;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-/// Fields to exclude when computing deterministic state hash
+/// Fields to exclude when computing deterministic state hash FOR SNAPSHOT/REPLAY
 ///
 /// These fields are metadata or ephemeral state that doesn't affect gameplay:
 /// - choice_id: Global counter
 /// - undo_log: Not gameplay state
 /// - logger: Presentation layer
 /// - show_choice_menu, output_mode, etc: Display settings
-/// - lands_played_this_turn: Turn-scoped counter (resets on rewind)
+/// - lands_played_this_turn: Turn-scoped counter (resets on rewind in replay)
 const EXCLUDED_FIELDS: &[&str] = &[
     "choice_id",
     "undo_log",
@@ -25,6 +25,22 @@ const EXCLUDED_FIELDS: &[&str] = &[
     "output_format",
     "numeric_choices",
     "step_header_printed",
+];
+
+/// Fields to exclude for UNDO TESTING (stricter - only metadata)
+///
+/// For undo testing, we want to verify that ALL gameplay state is correctly restored,
+/// including fields like lands_played_this_turn that may differ in replay scenarios.
+const EXCLUDED_FIELDS_UNDO_TEST: &[&str] = &[
+    "choice_id",     // Global counter, not gameplay state
+    "undo_log",      // The undo log itself shouldn't be compared
+    "logger",        // Presentation layer
+    "token_definitions", // Loaded definitions cache, not gameplay state
+    "show_choice_menu",  // Display setting
+    "output_mode",       // Display setting
+    "output_format",     // Display setting
+    "numeric_choices",   // Display setting
+    "step_header_printed", // Display state
 ];
 
 /// Compute a deterministic hash of game state
@@ -60,7 +76,41 @@ pub fn compute_state_hash(game: &GameState) -> u64 {
     hasher.finish()
 }
 
-/// Recursively strip metadata fields from JSON value
+/// Compute a deterministic hash of game state FOR UNDO TESTING
+///
+/// This is stricter than compute_state_hash() - it only excludes true metadata,
+/// not gameplay state that should be identical after undo/redo.
+///
+/// Use this in undo tests to verify that ALL gameplay state is correctly restored.
+pub fn compute_undo_test_hash(game: &GameState) -> u64 {
+    // Serialize to JSON
+    let json_value = match serde_json::to_value(game) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Warning: Failed to serialize game state for undo test hashing: {}", e);
+            return 0;
+        }
+    };
+
+    // Strip only true metadata (not gameplay state like lands_played_this_turn)
+    let cleaned = strip_metadata_for_undo_test(json_value);
+
+    // Convert to canonical string representation
+    let canonical = match serde_json::to_string(&cleaned) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Warning: Failed to canonicalize cleaned state for undo test: {}", e);
+            return 0;
+        }
+    };
+
+    // Hash the canonical string
+    let mut hasher = DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Recursively strip metadata fields from JSON value (for snapshot/replay)
 fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
@@ -69,7 +119,7 @@ fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
                 map.remove(*field);
             }
 
-            // Also remove lands_played_this_turn which can differ after rewind
+            // Also remove lands_played_this_turn which can differ after rewind in replay
             map.remove("lands_played_this_turn");
 
             // Recursively clean nested objects
@@ -80,6 +130,29 @@ fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         serde_json::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(strip_metadata).collect()),
+        other => other,
+    }
+}
+
+/// Recursively strip metadata fields from JSON value (for undo testing - stricter)
+fn strip_metadata_for_undo_test(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(mut map) => {
+            // Remove ONLY true metadata (not gameplay state)
+            for field in EXCLUDED_FIELDS_UNDO_TEST {
+                map.remove(*field);
+            }
+
+            // Do NOT remove lands_played_this_turn - it's gameplay state that should be restored
+
+            // Recursively clean nested objects
+            for (_, v) in map.iter_mut() {
+                *v = strip_metadata_for_undo_test(v.clone());
+            }
+
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(strip_metadata_for_undo_test).collect()),
         other => other,
     }
 }
