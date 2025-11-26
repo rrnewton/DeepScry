@@ -32,7 +32,6 @@ mod counter_tests;
 #[cfg(test)]
 mod test_spider_suit;
 
-pub use actions::GameAction;
 pub use combat::CombatState;
 pub use continuous_effects::PTBreakdown;
 pub use controller::{format_choice_menu, GameStateView, PlayerController};

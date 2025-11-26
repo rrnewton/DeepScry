@@ -5,39 +5,6 @@ use crate::game::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
 
-/// Types of game actions
-#[derive(Debug, Clone)]
-pub enum GameAction {
-    /// Play a land from hand
-    PlayLand { player_id: PlayerId, card_id: CardId },
-
-    /// Cast a spell from hand
-    CastSpell {
-        player_id: PlayerId,
-        card_id: CardId,
-        targets: Vec<CardId>,
-    },
-
-    /// Deal damage to a target
-    DealDamage {
-        source: CardId,
-        target: CardId,
-        amount: i32,
-    },
-
-    /// Tap a permanent for mana
-    TapForMana { player_id: PlayerId, card_id: CardId },
-
-    /// Declare attackers
-    DeclareAttackers {
-        player_id: PlayerId,
-        attackers: Vec<CardId>,
-    },
-
-    /// Pass priority
-    PassPriority { player_id: PlayerId },
-}
-
 impl GameState {
     /// Play a land from hand to battlefield
     pub fn play_land(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
