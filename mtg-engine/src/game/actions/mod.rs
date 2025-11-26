@@ -32,12 +32,42 @@ impl GameState {
 
         // Record the turn number when this land entered the battlefield
         if let Ok(card) = self.cards.get_mut(card_id) {
-            card.turn_entered_battlefield = Some(self.turn.turn_number);
+            // Capture old value and log size before mutation
+            let old_value = card.turn_entered_battlefield;
+            let prior_log_size = self.logger.log_count();
+
+            let new_value = Some(self.turn.turn_number);
+            card.turn_entered_battlefield = new_value;
+
+            // Log the mutation for undo
+            self.undo_log.log(
+                crate::undo::GameAction::SetTurnEnteredBattlefield {
+                    card_id,
+                    old_value,
+                    new_value,
+                },
+                prior_log_size,
+            );
         }
 
         // Increment lands played
+        // Capture old value and log size before mutation (before get_player_mut to avoid borrow issues)
+        let old_value = self.get_player(player_id)?.lands_played_this_turn;
+        let prior_log_size = self.logger.log_count();
+
         let player = self.get_player_mut(player_id)?;
         player.play_land();
+        let new_value = player.lands_played_this_turn;
+
+        // Log the mutation for undo
+        self.undo_log.log(
+            crate::undo::GameAction::SetLandsPlayedThisTurn {
+                player_id,
+                old_value,
+                new_value,
+            },
+            prior_log_size,
+        );
 
         Ok(())
     }
@@ -271,7 +301,22 @@ impl GameState {
         // If it entered the battlefield, record the turn number (for summoning sickness)
         if destination == Zone::Battlefield {
             if let Ok(card) = self.cards.get_mut(card_id) {
-                card.turn_entered_battlefield = Some(self.turn.turn_number);
+                // Capture old value and log size before mutation
+                let old_value = card.turn_entered_battlefield;
+                let prior_log_size = self.logger.log_count();
+
+                let new_value = Some(self.turn.turn_number);
+                card.turn_entered_battlefield = new_value;
+
+                // Log the mutation for undo
+                self.undo_log.log(
+                    crate::undo::GameAction::SetTurnEnteredBattlefield {
+                        card_id,
+                        old_value,
+                        new_value,
+                    },
+                    prior_log_size,
+                );
             }
 
             // Check for ETB triggers on all permanents (including the one that just entered)
@@ -345,8 +390,23 @@ impl GameState {
         }
 
         // Attach to new target
+        // Capture old value and log size before mutation
+        let old_target = self.cards.get(equipment_id)?.attached_to;
+        let prior_log_size = self.logger.log_count();
+
         let equipment = self.cards.get_mut(equipment_id)?;
-        equipment.attached_to = Some(target_id);
+        let new_target = Some(target_id);
+        equipment.attached_to = new_target;
+
+        // Log the mutation for undo
+        self.undo_log.log(
+            crate::undo::GameAction::SetAttachedTo {
+                equipment_id,
+                old_target,
+                new_target,
+            },
+            prior_log_size,
+        );
 
         // Log attachment
         let target_name = self
@@ -387,8 +447,23 @@ impl GameState {
                 .verbose(&format!("{} detaches from {}", equipment_name, target_name));
 
             // Now do the actual detachment
+            // Capture old value and log size before mutation
+            let old_target = target_id_opt; // We already have this from above
+            let prior_log_size = self.logger.log_count();
+
             let equipment = self.cards.get_mut(equipment_id)?;
-            equipment.attached_to = None;
+            let new_target = None;
+            equipment.attached_to = new_target;
+
+            // Log the mutation for undo
+            self.undo_log.log(
+                crate::undo::GameAction::SetAttachedTo {
+                    equipment_id,
+                    old_target,
+                    new_target,
+                },
+                prior_log_size,
+            );
         }
 
         Ok(())
@@ -1168,32 +1243,27 @@ impl GameState {
     }
 
     /// Deal damage to a creature
+    ///
+    /// MTG Rules 120.3: Damage dealt to a creature or planeswalker remains until the cleanup step
+    /// MTG Rules 704.5g: State-based actions check if creature has lethal damage and destroys it
     pub fn deal_damage_to_creature(&mut self, target_id: CardId, amount: i32) -> Result<()> {
         // Get info about the creature first (without holding the borrow)
-        let (is_creature, toughness, owner, has_indestructible, creature_name) = {
+        let (is_creature, creature_name) = {
             let card = self.cards.get(target_id)?;
-            (
-                card.is_creature(),
-                card.current_toughness(),
-                card.owner,
-                card.has_indestructible(),
-                card.name.clone(),
-            )
+            (card.is_creature(), card.name.clone())
         };
 
         if is_creature {
-            // Mark damage (simplified - real MTG has damage tracking)
-            // MTG Rules 702.12b: Permanents with indestructible aren't destroyed by lethal damage
-            // For now, if damage >= toughness and creature doesn't have indestructible, creature dies
-            let dies = amount >= toughness as i32 && !has_indestructible;
-            if dies {
-                let message = format!("{} ({}) takes {} damage and dies", creature_name, target_id, amount);
-                self.logger.normal(&message);
-                self.move_card(target_id, Zone::Battlefield, Zone::Graveyard, owner)?;
-            } else {
-                let message = format!("{} ({}) takes {} damage", creature_name, target_id, amount);
-                self.logger.normal(&message);
-            }
+            // Mark damage on the creature (MTG CR 120.3)
+            // Damage persists until cleanup step (CR 704.5f)
+            let card = self.cards.get_mut(target_id)?;
+            card.damage += amount;
+
+            let message = format!("{} ({}) takes {} damage (total: {})", creature_name, target_id, amount, card.damage);
+            self.logger.normal(&message);
+
+            // Note: We don't destroy the creature here - that happens in state-based actions
+            // This allows multiple damage sources to accumulate before checking lethal damage
             return Ok(());
         }
 

@@ -233,6 +233,10 @@ pub struct Card {
     /// Temporary toughness bonus (until end of turn)
     pub toughness_bonus: i32,
 
+    /// Damage marked on this permanent (cleared at end of turn per CR 704.5g)
+    /// Only meaningful for creatures on the battlefield
+    pub damage: i32,
+
     /// Oracle text
     pub text: String,
 
@@ -304,6 +308,7 @@ impl Card {
             toughness: None,
             power_bonus: 0,
             toughness_bonus: 0,
+            damage: 0,
             text,
             owner,
             controller: owner,

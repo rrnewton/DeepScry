@@ -478,14 +478,19 @@ async fn test_action_undo() -> Result<()> {
     let hand_size_before = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
 
     // Play the card (moves from hand to battlefield)
+    // This logs multiple actions: MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
+    let undo_size_before_play = game.undo_log.len();
     game.play_land(p1_id, card_id)?;
+    let actions_logged = game.undo_log.len() - undo_size_before_play;
 
     let hand_size_after = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
     assert_eq!(hand_size_after, hand_size_before - 1, "Card should leave hand");
     assert!(game.battlefield.contains(card_id), "Card should be on battlefield");
 
-    // Undo the play
-    game.undo()?;
+    // Undo all actions logged by play_land()
+    for _ in 0..actions_logged {
+        game.undo()?;
+    }
 
     let hand_size_restored = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
     assert_eq!(hand_size_restored, hand_size_before, "Card should be back in hand");

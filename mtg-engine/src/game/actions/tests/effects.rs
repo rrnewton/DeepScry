@@ -531,6 +531,9 @@ mod tests {
         // Verify the kavu is on the battlefield
         assert!(game.battlefield.contains(kavu_id));
 
+        // Check state-based actions for lethal damage
+        game.check_lethal_damage().unwrap();
+
         // Verify the target creature took lethal damage (2 toughness, 4 damage dealt)
         // The creature should have been destroyed and moved to graveyard
         assert!(

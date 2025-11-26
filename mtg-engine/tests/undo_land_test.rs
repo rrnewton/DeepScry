@@ -43,8 +43,14 @@ fn test_undo_play_land_restores_turn_entered_battlefield() -> Result<()> {
     println!("  turn_entered_battlefield: {:?}", game.cards.get(card_id)?.turn_entered_battlefield);
     println!("  undo_log size: {}", game.undo_log.len());
 
-    // Undo the play
-    game.undo()?;
+    // Undo the play (need to undo all actions logged by play_land)
+    // play_land logs: MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
+    let actions_to_undo = game.undo_log.len();
+    for _ in 0..actions_to_undo {
+        if game.undo()?.is_none() {
+            break; // No more actions to undo
+        }
+    }
 
     println!("\nState after undo:");
     println!("  turn_entered_battlefield: {:?}", game.cards.get(card_id)?.turn_entered_battlefield);

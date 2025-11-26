@@ -112,9 +112,12 @@ mod tests {
         game.cards.insert(card_id, card);
         game.battlefield.add(card_id);
 
-        // Deal 2 damage (should kill it)
+        // Deal 2 damage (marks damage, doesn't kill immediately)
         let result = game.deal_damage_to_creature(card_id, 2);
         assert!(result.is_ok(), "deal_damage_to_creature failed: {result:?}");
+
+        // Check state-based actions for lethal damage
+        game.check_lethal_damage().unwrap();
 
         // Check it's in graveyard
         assert!(!game.battlefield.contains(card_id), "Card still on battlefield");

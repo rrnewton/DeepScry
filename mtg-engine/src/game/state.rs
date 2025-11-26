@@ -504,14 +504,61 @@ impl GameState {
         }
     }
 
+    /// Check state-based actions for lethal damage (MTG CR 704.5g)
+    ///
+    /// If a creature has damage marked on it greater than or equal to its toughness,
+    /// and it doesn't have indestructible, that creature's controller puts it into the graveyard.
+    ///
+    /// This should be called after damage is dealt or whenever state-based actions are checked.
+    pub fn check_lethal_damage(&mut self) -> Result<()> {
+        // Collect creatures that need to die (to avoid borrow checker issues)
+        let creatures_to_destroy: Vec<(CardId, PlayerId)> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+                if !card.is_creature() {
+                    return None;
+                }
+
+                // MTG CR 704.5g: Creature has lethal damage if damage >= toughness
+                let toughness = card.current_toughness();
+                let has_lethal = card.damage >= toughness as i32;
+
+                // MTG CR 702.12b: Indestructible permanents aren't destroyed by lethal damage
+                if has_lethal && !card.has_indestructible() {
+                    Some((card_id, card.owner))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Destroy all creatures with lethal damage
+        for (card_id, owner) in creatures_to_destroy {
+            let card_name = self.cards.get(card_id).map(|c| c.name.clone()).ok();
+            self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            if let Some(name) = card_name {
+                self.logger
+                    .normal(&format!("{} ({}) dies from lethal damage", name, card_id));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Clear temporary effects at end of turn (Cleanup step)
-    /// This resets power/toughness bonuses from pump spells
+    /// This resets power/toughness bonuses from pump spells and clears damage
+    /// MTG CR 514.2: Damage marked on permanents is removed (CR 704.5f)
     pub fn cleanup_temporary_effects(&mut self) {
         for card_id in self.battlefield.cards.iter() {
             if let Ok(card) = self.cards.get_mut(*card_id) {
                 // Reset temporary bonuses (pump effects last until end of turn)
                 card.power_bonus = 0;
                 card.toughness_bonus = 0;
+                // Clear damage marked on permanents (MTG CR 514.2, CR 704.5f)
+                card.damage = 0;
             }
         }
     }
@@ -864,6 +911,33 @@ impl GameState {
                                 card.toughness_bonus -= toughness_delta;
                             }
                         }
+                        crate::undo::GameAction::SetTurnEnteredBattlefield {
+                            card_id,
+                            old_value,
+                            new_value: _,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.turn_entered_battlefield = old_value;
+                            }
+                        }
+                        crate::undo::GameAction::SetLandsPlayedThisTurn {
+                            player_id,
+                            old_value,
+                            new_value: _,
+                        } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                player.lands_played_this_turn = old_value;
+                            }
+                        }
+                        crate::undo::GameAction::SetAttachedTo {
+                            equipment_id,
+                            old_target,
+                            new_target: _,
+                        } => {
+                            if let Ok(equipment) = self.cards.get_mut(equipment_id) {
+                                equipment.attached_to = old_target;
+                            }
+                        }
                         _ => {}
                     }
 
@@ -1101,6 +1175,36 @@ impl GameState {
                         card.toughness_bonus -= toughness_delta;
                     }
                 }
+                crate::undo::GameAction::SetTurnEnteredBattlefield {
+                    card_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    // Restore the previous turn_entered_battlefield value
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.turn_entered_battlefield = old_value;
+                    }
+                }
+                crate::undo::GameAction::SetLandsPlayedThisTurn {
+                    player_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    // Restore the previous lands_played_this_turn count
+                    if let Ok(player) = self.get_player_mut(player_id) {
+                        player.lands_played_this_turn = old_value;
+                    }
+                }
+                crate::undo::GameAction::SetAttachedTo {
+                    equipment_id,
+                    old_target,
+                    new_target: _,
+                } => {
+                    // Restore the previous attached_to value
+                    if let Ok(equipment) = self.cards.get_mut(equipment_id) {
+                        equipment.attached_to = old_target;
+                    }
+                }
                 crate::undo::GameAction::ChoicePoint { .. } => {
                     // Choice points don't need to be undone
                 }
@@ -1190,29 +1294,31 @@ mod tests {
             zones.hand.add(card_id);
         }
 
-        // Play the land - should log MoveCard
+        // Play the land - should log MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
         game.play_land(p1_id, card_id).unwrap();
-        assert_eq!(game.undo_log.len(), 1);
-        matches!(game.undo_log.peek().unwrap(), crate::undo::GameAction::MoveCard { .. });
+        assert_eq!(game.undo_log.len(), 3);
+        matches!(game.undo_log.peek().unwrap(), crate::undo::GameAction::SetLandsPlayedThisTurn { .. });
 
         // Tap for mana - should log TapCard and AddMana
         game.tap_for_mana(p1_id, card_id).unwrap();
-        assert_eq!(game.undo_log.len(), 3); // MoveCard, TapCard, AddMana
+        assert_eq!(game.undo_log.len(), 5); // MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn, TapCard, AddMana
 
         // Untap all - should log TapCard for untap
         game.untap_all(p1_id).unwrap();
-        assert_eq!(game.undo_log.len(), 4); // + TapCard (untapped)
+        assert_eq!(game.undo_log.len(), 6); // + TapCard (untapped)
 
         // Verify all actions are logged
         let actions = game.undo_log.actions();
         assert!(matches!(actions[0], crate::undo::GameAction::MoveCard { .. }));
-        assert!(matches!(
-            actions[1],
-            crate::undo::GameAction::TapCard { tapped: true, .. }
-        ));
-        assert!(matches!(actions[2], crate::undo::GameAction::AddMana { .. }));
+        assert!(matches!(actions[1], crate::undo::GameAction::SetTurnEnteredBattlefield { .. }));
+        assert!(matches!(actions[2], crate::undo::GameAction::SetLandsPlayedThisTurn { .. }));
         assert!(matches!(
             actions[3],
+            crate::undo::GameAction::TapCard { tapped: true, .. }
+        ));
+        assert!(matches!(actions[4], crate::undo::GameAction::AddMana { .. }));
+        assert!(matches!(
+            actions[5],
             crate::undo::GameAction::TapCard { tapped: false, .. }
         ));
     }
