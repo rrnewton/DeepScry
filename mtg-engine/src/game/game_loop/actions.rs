@@ -1,0 +1,346 @@
+//! Action query module for GameLoop
+//!
+//! Provides read-only queries for available player actions (attackers, blockers, spells, abilities).
+//! These functions support controller decision-making without modifying game state.
+
+use super::GameLoop;
+use crate::core::{CardId, Keyword, PlayerId};
+use crate::game::phase::Step;
+use smallvec::SmallVec;
+
+impl<'a> GameLoop<'a> {
+    /// Get creatures that can attack for a player (v2 interface)
+    ///
+    /// Results are sorted by card ID to ensure deterministic ordering for snapshot/resume.
+    pub(super) fn get_available_attacker_creatures(&self, player_id: PlayerId) -> Vec<CardId> {
+        let mut creatures = Vec::new();
+
+        for &card_id in &self.game.battlefield.cards {
+            if let Ok(card) = self.game.cards.get(card_id) {
+                if card.controller == player_id
+                    && card.is_creature()
+                    && !card.tapped
+                    && !self.game.combat.is_attacking(card_id)
+                {
+                    // Check for summoning sickness
+                    // Creatures can't attack the turn they entered unless they have haste
+                    let has_summoning_sickness = if let Some(entered_turn) = card.turn_entered_battlefield {
+                        entered_turn == self.game.turn.turn_number && !card.has_keyword(Keyword::Haste)
+                    } else {
+                        false
+                    };
+
+                    // Check for defender keyword
+                    let has_defender = card.has_defender();
+
+                    if !has_summoning_sickness && !has_defender {
+                        creatures.push(card_id);
+                    }
+                }
+            }
+        }
+
+        // Sort for deterministic ordering
+        creatures.sort();
+        creatures
+    }
+
+    /// Get creatures that can block for a player (v2 interface)
+    ///
+    /// Results are sorted by card ID to ensure deterministic ordering for snapshot/resume.
+    pub(super) fn get_available_blocker_creatures(&self, player_id: PlayerId) -> Vec<CardId> {
+        let mut creatures = Vec::new();
+
+        for &card_id in &self.game.battlefield.cards {
+            if let Ok(card) = self.game.cards.get(card_id) {
+                if card.controller == player_id
+                    && card.is_creature()
+                    && !card.tapped
+                    && !self.game.combat.is_blocking(card_id)
+                {
+                    creatures.push(card_id);
+                }
+            }
+        }
+
+        // Sort for deterministic ordering
+        creatures.sort();
+        creatures
+    }
+
+    /// Get currently attacking creatures (v2 interface)
+    pub(super) fn get_current_attackers(&self) -> Vec<CardId> {
+        self.game.combat.get_attackers()
+    }
+
+    /// Get lands in player's hand (v2 interface)
+    pub(super) fn get_lands_in_hand(&self, player_id: PlayerId) -> Vec<CardId> {
+        let mut lands = Vec::new();
+
+        if let Some(zones) = self.game.get_player_zones(player_id) {
+            for &card_id in &zones.hand.cards {
+                if let Ok(card) = self.game.cards.get(card_id) {
+                    if card.is_land() {
+                        lands.push(card_id);
+                    }
+                }
+            }
+        }
+
+        lands
+    }
+
+    /// Get castable spells in player's hand (v2 interface)
+    pub(super) fn get_castable_spells(&mut self, player_id: PlayerId) -> Vec<CardId> {
+        let mut spells = Vec::new();
+
+        // Update the mana engine for this player
+        self.mana_engine.update(self.game, player_id);
+
+        // Check if this is the active player (only active player can cast sorceries)
+        let is_active_player = self.game.turn.active_player == player_id;
+
+        // Check if it's sorcery speed (Main1 or Main2)
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+
+        // Check if stack is empty (required for sorcery-speed spells)
+        // MTG Rules 307.5: Sorceries and creatures can only be cast when stack is empty
+        let stack_is_empty = self.game.stack.is_empty();
+
+        if let Some(zones) = self.game.get_player_zones(player_id) {
+            for &card_id in &zones.hand.cards {
+                if let Ok(card) = self.game.cards.get(card_id) {
+                    // Check if card is castable (not a land)
+                    if !card.is_land() {
+                        // Check timing restrictions
+                        let can_cast_now = if card.is_instant() {
+                            // Instants can be cast anytime with priority
+                            true
+                        } else {
+                            // Creatures and sorceries require:
+                            // - Sorcery speed (Main1 or Main2)
+                            // - Active player
+                            // - Stack is empty
+                            is_sorcery_speed && is_active_player && stack_is_empty
+                        };
+
+                        if can_cast_now {
+                            // Check if we can pay for this spell's mana cost
+                            if self.mana_engine.can_pay(&card.mana_cost) {
+                                // For Aura spells, check if there are valid targets
+                                // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
+                                if card.is_aura() {
+                                    // Check if there are valid enchantment targets on the battlefield
+                                    let has_valid_targets = self.game.battlefield.cards.iter().any(|&target_id| {
+                                        if let Ok(target_card) = self.game.cards.get(target_id) {
+                                            // Paralyze enchants creatures, so check for creatures
+                                            // TODO: Parse enchant restrictions from card data (e.g., "Enchant creature")
+                                            // For now, assume Auras enchant creatures
+                                            target_card.is_creature()
+                                        } else {
+                                            false
+                                        }
+                                    });
+
+                                    if has_valid_targets {
+                                        spells.push(card_id);
+                                    }
+                                } else if Self::spell_requires_stack_target(card) {
+                                    // For counterspells and similar effects, check if stack has valid targets
+                                    // MTG Rule 608.2b: If a spell/ability targets, it's countered if all targets are illegal
+                                    if !self.game.stack.is_empty() {
+                                        spells.push(card_id);
+                                    }
+                                } else {
+                                    spells.push(card_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        spells
+    }
+
+    /// Get activatable abilities on player's permanents (v2 interface)
+    pub(super) fn get_activatable_abilities(&mut self, player_id: PlayerId) -> Vec<(CardId, usize)> {
+        let mut abilities = Vec::new();
+
+        // Update the mana engine for this player
+        self.mana_engine.update(self.game, player_id);
+
+        // Check all permanents controlled by this player
+        for &card_id in &self.game.battlefield.cards {
+            if let Ok(card) = self.game.cards.get(card_id) {
+                // Only check permanents controlled by this player
+                if card.controller != player_id {
+                    continue;
+                }
+
+                // Check each activated ability on this card
+                for (ability_index, ability) in card.activated_abilities.iter().enumerate() {
+                    // Skip mana abilities for now (they'll be handled specially)
+                    if ability.is_mana_ability {
+                        continue;
+                    }
+
+                    // Check if cost can be paid
+                    let mut can_activate = true;
+
+                    // Check tap cost
+                    if ability.cost.includes_tap() && card.tapped {
+                        can_activate = false;
+                    }
+
+                    // Check mana cost
+                    if let Some(mana_cost) = ability.cost.get_mana_cost() {
+                        if !self.mana_engine.can_pay(mana_cost) {
+                            can_activate = false;
+                        }
+                    }
+
+                    // Check life cost
+                    if let Some(life_cost) = ability.cost.get_life_cost() {
+                        if let Ok(player) = self.game.get_player(player_id) {
+                            if player.life <= life_cost {
+                                // Can't pay life cost (would go to 0 or below)
+                                can_activate = false;
+                            }
+                        } else {
+                            can_activate = false;
+                        }
+                    }
+
+                    // TODO: Check other cost types (sacrifice, discard, etc.)
+                    // TODO: Check activation limits
+
+                    // Check sorcery-speed timing restrictions (CR 602.5d, CR 307.5)
+                    // Sorcery-speed abilities require: main phase, your turn, stack empty
+                    if ability.sorcery_speed {
+                        let is_main_phase = self.game.turn.current_step.is_sorcery_speed();
+                        let is_your_turn = card.controller == self.game.turn.active_player;
+                        let stack_empty = self.game.stack.is_empty();
+
+                        if !is_main_phase || !is_your_turn || !stack_empty {
+                            can_activate = false;
+                        }
+                    }
+
+                    // TODO(mtg-70): Check if ability has valid targets
+                    // For targeting abilities, check that there's at least one valid target
+                    if can_activate {
+                        // Check if this ability requires targets
+                        let valid_targets = self
+                            .game
+                            .get_valid_targets_for_ability(card_id, ability_index)
+                            .unwrap_or_else(|_| SmallVec::new());
+
+                        // If get_valid_targets_for_ability returned an empty list,
+                        // it might mean either:
+                        // 1. The ability doesn't require targets (non-targeting ability)
+                        // 2. The ability requires targets but none are available
+                        //
+                        // We need to distinguish between these cases.
+                        // For now, check if the ability description contains "target"
+                        // Use cached value to avoid allocation
+                        let requires_targets = ability.cache.requires_target;
+
+                        if requires_targets && valid_targets.is_empty() {
+                            // Ability requires targets but none are available
+                            can_activate = false;
+                        }
+                    }
+
+                    if can_activate {
+                        abilities.push((card_id, ability_index));
+                    }
+                }
+            }
+        }
+
+        abilities
+    }
+
+    /// Get all available spell abilities for a player
+    ///
+    /// This matches Java Forge's approach where lands, spells, and activated
+    /// abilities are all represented as SpellAbility objects that can be
+    /// chosen from a unified list.
+    ///
+    /// Returns a list of all abilities the player can currently play:
+    /// - Land plays (if player can play lands and it's a main phase)
+    /// - Castable spells (if player has mana and targeting is valid)
+    /// - Activated abilities (TODO: not yet implemented)
+    ///
+    /// IMPORTANT: Results are sorted by card ID to ensure deterministic ordering.
+    /// This is critical for snapshot/resume determinism where choice indices
+    /// must map to the same logical cards across runs.
+    pub(super) fn get_available_spell_abilities(&mut self, player_id: PlayerId) -> Vec<crate::core::SpellAbility> {
+        use crate::core::SpellAbility;
+
+        // Clear and reuse the buffer (takes ownership, leaving empty Vec in place)
+        self.abilities_buffer.clear();
+
+        // Check if stack is empty (required for sorcery-speed actions)
+        let stack_is_empty = self.game.stack.is_empty();
+
+        // Add playable lands (only in main phases when player can play lands AND stack is empty)
+        // MTG Rules 307.4: Can only play land when stack is empty and you have priority during your main phase
+        if stack_is_empty
+            && matches!(self.game.turn.current_step, Step::Main1 | Step::Main2)
+            && self.game.turn.active_player == player_id
+        {
+            if let Ok(player) = self.game.get_player(player_id) {
+                if player.can_play_land() {
+                    let lands = self.get_lands_in_hand(player_id);
+                    for land_id in lands {
+                        self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
+                    }
+                }
+            }
+        }
+
+        // Add castable spells
+        let spells = self.get_castable_spells(player_id);
+        for spell_id in spells {
+            self.abilities_buffer
+                .push(SpellAbility::CastSpell { card_id: spell_id });
+        }
+
+        // Add activated abilities
+        let activatable = self.get_activatable_abilities(player_id);
+        for (card_id, ability_index) in activatable {
+            self.abilities_buffer
+                .push(SpellAbility::ActivateAbility { card_id, ability_index });
+        }
+
+        // Sort by card ID to ensure deterministic ordering
+        // This is critical for snapshot/resume: if two runs have the same cards available
+        // but in different hand order, we need to present them in the same order so that
+        // index-based choice replay (FixedScriptController) selects the same logical card
+        self.abilities_buffer.sort_by_key(|ability| match ability {
+            SpellAbility::PlayLand { card_id } => *card_id,
+            SpellAbility::CastSpell { card_id } => *card_id,
+            SpellAbility::ActivateAbility { card_id, .. } => *card_id,
+        });
+
+        // Take ownership of the buffer, leaving an empty Vec with retained capacity
+        std::mem::take(&mut self.abilities_buffer)
+    }
+
+    /// Check if a spell requires a target on the stack (e.g., Counterspell)
+    ///
+    /// Returns true if the spell has effects that target spells on the stack,
+    /// meaning it can only be cast when there's a spell to target.
+    fn spell_requires_stack_target(card: &crate::core::Card) -> bool {
+        use crate::core::Effect;
+
+        // Check if any effect is CounterSpell with a placeholder target
+        // Placeholder target (CardId(0)) means the spell needs to choose a target when cast
+        card.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.as_u32() == 0))
+    }
+}
