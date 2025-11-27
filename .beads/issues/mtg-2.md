@@ -166,6 +166,7 @@ Top hotspots:
 - ✅ mtg-a60157: Parallel benchmark implementation (exposed allocator contention bottleneck)
 - ✅ mtg-c66412: String allocation cache (CardCache + AbilityCache) - **94.2% allocation reduction (1.48 GB → 86.4 MB), 3.5x speedup (31.20 → 109.29 games/sec)**
 - ✅ **Vec<ManaColor> bitfield optimization (b33ddea0)** - **30.9% allocation reduction (963 KB → 665 KB per 10 games), ManaProductionKind now Copy**
+- ✅ **ManaEngine::update Vec pre-allocation (03afd440)** - Eliminated Vec reallocation hotspot from DHAT top 20 (was #17 at 18.75 KB)
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -198,9 +199,10 @@ The string allocation cache (CardCache + AbilityCache) had a massive impact by e
 
 **Next high-priority optimizations:**
 1. ~~Pre-size Vec at mana_engine.rs:550~~ **✅ DONE (b33ddea0)** - Replaced Vec with ManaColors bitfield: 30.9% allocation reduction
-2. Investigate random_controller.rs:103 - Random choice generation (~5% of remaining allocations)
-3. Investigate mana_payment.rs:580 - Mana source selection (~3% of remaining)
-4. Investigate game_loop.rs:1413 - Game state updates (~2.5% of remaining)
+2. ~~ManaEngine::update Vec reallocations~~ **✅ DONE (03afd440)** - Pre-allocated Vec capacity, eliminated from DHAT top 20
+3. Investigate random_controller.rs:103 - Random choice generation (~5% of remaining allocations)
+4. Investigate mana_payment.rs:580 - Mana source selection (~3% of remaining)
+5. Investigate game_loop.rs:1413 - Game state updates (~2.5% of remaining)
 
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
