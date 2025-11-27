@@ -478,14 +478,19 @@ async fn test_action_undo() -> Result<()> {
     let hand_size_before = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
 
     // Play the card (moves from hand to battlefield)
+    // This logs multiple actions: MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
+    let undo_size_before_play = game.undo_log.len();
     game.play_land(p1_id, card_id)?;
+    let actions_logged = game.undo_log.len() - undo_size_before_play;
 
     let hand_size_after = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
     assert_eq!(hand_size_after, hand_size_before - 1, "Card should leave hand");
     assert!(game.battlefield.contains(card_id), "Card should be on battlefield");
 
-    // Undo the play
-    game.undo()?;
+    // Undo all actions logged by play_land()
+    for _ in 0..actions_logged {
+        game.undo()?;
+    }
 
     let hand_size_restored = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
     assert_eq!(hand_size_restored, hand_size_before, "Card should be back in hand");
@@ -693,6 +698,8 @@ async fn test_aggressive_undo_snapshots() -> Result<()> {
 }
 
 /// Helper function to verify complete state equivalence between two game states
+///
+/// This uses state hashing to detect ANY divergence in game state, not just zone sizes.
 fn verify_state_equivalence(
     current: &mtg_forge_rs::game::GameState,
     snapshot: &mtg_forge_rs::game::GameState,
@@ -701,6 +708,50 @@ fn verify_state_equivalence(
     iteration: usize,
 ) -> Result<()> {
     use mtg_forge_rs::MtgError;
+    use mtg_forge_rs::game::{compute_undo_test_hash, format_hash};
+
+    // Compute state hashes for full comparison (using stricter undo test hash)
+    let current_hash = compute_undo_test_hash(current);
+    let snapshot_hash = compute_undo_test_hash(snapshot);
+
+    if current_hash != snapshot_hash {
+        // Hashes differ - serialize both to JSON to show what diverged
+        let current_json = serde_json::to_value(current)
+            .map_err(|e| MtgError::InvalidAction(format!("Failed to serialize current state: {}", e)))?;
+        let snapshot_json = serde_json::to_value(snapshot)
+            .map_err(|e| MtgError::InvalidAction(format!("Failed to serialize snapshot state: {}", e)))?;
+
+        // Print hash mismatch
+        eprintln!("\n[Iter {}] STATE HASH MISMATCH!", iteration);
+        eprintln!("  Current:  {}", format_hash(current_hash));
+        eprintln!("  Snapshot: {}", format_hash(snapshot_hash));
+        eprintln!();
+
+        // Compare top-level fields to identify divergence
+        if let (serde_json::Value::Object(curr_map), serde_json::Value::Object(snap_map)) = (&current_json, &snapshot_json) {
+            for key in curr_map.keys() {
+                if curr_map.get(key) != snap_map.get(key) {
+                    eprintln!("  Field '{}' differs:", key);
+                    if key == "cards" || key == "players" || key == "player_zones" {
+                        // For complex nested structures, just note they differ
+                        eprintln!("    (complex nested structure - values differ)");
+                    } else {
+                        eprintln!("    Current:  {:?}", curr_map.get(key));
+                        eprintln!("    Snapshot: {:?}", snap_map.get(key));
+                    }
+                }
+            }
+        }
+
+        panic!(
+            "[Iter {}] Game state diverged after undo! See details above.\n\
+             This indicates missing undo log entries or incorrect undo logic.",
+            iteration
+        );
+    }
+
+    // Also keep the old assertions as additional sanity checks
+    // These provide clearer error messages for common issues
 
     // Verify turn state
     assert_eq!(

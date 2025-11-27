@@ -1,0 +1,299 @@
+Game Loop Module Dependency Graph
+================================================================================
+
+Legend:
+  [Module]       - Module name
+  --> depends on
+  <-- provides to
+  ⚠️  High complexity / critical path
+  ✅  Low complexity / safe to extract
+
+
+Module Dependency Tree (Top-Down)
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            mod.rs (Core)                                │
+│  - GameLoop struct (17 fields)                                         │
+│  - Builder methods (with_* chain)                                      │
+│  - Core loop: run_game(), run_turn(), run_turn_once()                 │
+│  - Setup: setup_game(), reset()                                        │
+│  - Win conditions: check_win_condition()                               │
+│  - Dispatcher: execute_step()                                          │
+│  (~800 lines, medium complexity)                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+        │
+        ├──> [snapshot.rs] ✅
+        │      - save_snapshot_and_exit()
+        │      - notify_game_end()
+        │
+        ├──> [steps.rs]
+        │      - untap_step()
+        │      - upkeep_step()
+        │      - draw_step()
+        │      - main_phase()
+        │      - end_step()
+        │      - cleanup_step()
+        │
+        └──> [combat.rs]
+               - begin_combat_step()
+               - declare_attackers_step()
+               - declare_blockers_step()
+               - combat_damage_step()
+               - end_combat_step()
+
+
+Module Interaction Detail
+================================================================================
+
+┌─────────────────┐
+│   steps.rs      │  Non-Combat Turn Steps
+│  (~400 lines)   │
+└─────────────────┘
+        │
+        │  All steps delegate to:
+        ├──> [priority.rs]::priority_round()
+        │
+        └──> [logging.rs]::log_* (optional)
+
+
+┌─────────────────┐
+│   combat.rs     │  Combat Phase
+│  (~450 lines)   │
+└─────────────────┘
+        │
+        ├──> [priority.rs]::priority_round()
+        │
+        ├──> [snapshot.rs]::check_stop_conditions()  (before attacker/blocker choice)
+        │
+        ├──> [logging.rs]::log_combat_damage()
+        │
+        └──> [actions.rs]::get_available_attacker_creatures()
+                        ::get_available_blocker_creatures()
+
+
+┌──────────────────┐
+│  priority.rs  ⚠️ │  Priority System (THE CORE)
+│  (~600 lines)    │
+└──────────────────┘
+        │
+        │  Priority round depends on:
+        ├──> [actions.rs]::get_available_spell_abilities()
+        │      - Collect castable spells, lands, abilities
+        │
+        ├──> [snapshot.rs]::check_stop_conditions()
+        │      - Check if should snapshot before choice
+        │      - log_choice_point() after choice
+        │
+        └──> [logging.rs]::log_effect_execution()
+               - Log spell/ability effects
+
+        Internal methods:
+        - priority_round() - 544 lines! Main loop
+        - resolve_top_spell_from_stack() - 120 lines
+        - check_phase_triggers() - 47 lines
+        - spell_requires_stack_target() - 16 lines
+
+
+┌─────────────────┐
+│   actions.rs ✅ │  Available Actions (Read-Only Queries)
+│  (~350 lines)   │
+└─────────────────┘
+        │
+        │  No dependencies! Pure queries.
+        │
+        Methods:
+        - get_available_attacker_creatures()
+        - get_available_blocker_creatures()
+        - get_current_attackers()
+        - get_lands_in_hand()
+        - get_castable_spells() - Uses self.mana_engine
+        - get_activatable_abilities()
+        - get_available_spell_abilities() - Combines all
+
+
+┌─────────────────┐
+│  snapshot.rs ✅ │  Snapshot & Replay
+│  (~300 lines)   │
+└─────────────────┘
+        │
+        │  Minimal dependencies
+        │
+        Methods:
+        - log_choice_point() - Log to undo_log
+        - check_stop_conditions() - Check before choice
+        - count_filtered_choices()
+        - assert_valid_stopping_point()
+        - save_snapshot_and_exit() - Serialize to disk
+
+
+┌─────────────────┐
+│  logging.rs ✅  │  Display & Formatting (Leaf Module)
+│  (~450 lines)   │
+└─────────────────┘
+        │
+        │  No dependencies! Pure formatting.
+        │
+        Methods:
+        - print_battlefield_state() - 104 lines
+        - log_effect_execution() - 214 lines (biggest logging method)
+        - print_step_header_if_needed()
+        - should_print_to_stdout()
+        - log_normal(), log_verbose(), log_minimal()
+
+
+┌─────────────────┐
+│   legacy.rs     │  Deprecated v1 Interface
+│  (~250 lines)   │
+│  #[deprecated]  │
+└─────────────────┘
+        │
+        │  Isolated - Remove later
+        │
+        Contents:
+        - PlayerAction enum
+        - get_available_attackers() (v1)
+        - get_available_blockers() (v1)
+        - get_available_actions() (v1)
+        - execute_action() (v1)
+        - describe_action() (v1)
+
+
+Extraction Order (Dependency-Safe)
+================================================================================
+
+Phase 1: Leaf Modules (No Dependencies)
+----------------------------------------
+1. logging.rs ✅
+   - Pure formatting functions
+   - No imports from other game_loop modules
+   - Test: Verify output unchanged
+
+2. actions.rs ✅
+   - Read-only queries
+   - Uses GameLoop.mana_engine field (already exists)
+   - Test: Controller can get available actions
+
+
+Phase 2: Independent Modules (Minimal Dependencies)
+---------------------------------------------------
+3. snapshot.rs ✅
+   - Uses GameLoop.undo_log (already exists)
+   - Uses GameLoop fields for stop conditions
+   - Test: Snapshot/resume cycle
+
+4. legacy.rs ✅
+   - Deprecated, isolated code
+   - Mark entire module #[deprecated]
+   - Test: Legacy v1 tests (if any)
+
+
+Phase 3: Mid-Level Modules (Use Leaf Modules)
+---------------------------------------------
+5. steps.rs
+   - Imports: priority::priority_round()
+   - Must extract AFTER priority.rs OR
+     Keep priority_round() in mod.rs temporarily
+   - Test: Full turn progression
+
+6. combat.rs
+   - Imports: priority::priority_round()
+   - Imports: snapshot::check_stop_conditions()
+   - Imports: actions::get_available_*()
+   - Test: Combat-focused games
+
+
+Phase 4: Core Module (Most Complex)
+------------------------------------
+7. priority.rs ⚠️ CRITICAL
+   - Imports: actions::get_available_spell_abilities()
+   - Imports: snapshot::check_stop_conditions()
+   - Imports: logging::log_effect_execution()
+   - Test: **FULL VALIDATION SUITE**
+
+8. mod.rs (Final Consolidation)
+   - Re-export: pub use steps::*; etc.
+   - Keep: GameLoop struct, builders, core loop
+   - Test: Full regression
+
+
+Circular Dependency Prevention
+================================================================================
+
+Potential Problem: steps.rs and combat.rs both need priority_round()
+
+Solutions:
+1. Extract priority.rs FIRST (before steps/combat)
+   - ✅ Cleanest approach
+   - steps.rs and combat.rs import from priority.rs
+
+2. Keep priority_round() in mod.rs initially
+   - Extract steps/combat first
+   - Move priority_round() later
+   - ❌ More complex migration
+
+Recommendation: Extract in this exact order:
+  logging.rs → actions.rs → snapshot.rs → legacy.rs →
+  priority.rs → steps.rs → combat.rs → mod.rs
+
+
+Critical Path Analysis
+================================================================================
+
+priority.rs is the CRITICAL PATH:
+  - Largest complex function (priority_round: 544 lines)
+  - Used by: steps.rs, combat.rs
+  - Uses: actions.rs, snapshot.rs, logging.rs
+  - Risk: Highest
+
+Success depends on:
+  1. Extracting leaf modules first (logging, actions, snapshot)
+  2. Thorough testing of priority.rs after extraction
+  3. Integration tests for steps/combat using priority
+
+
+Module Size Budget
+================================================================================
+
+Target: All modules < 1,500 lines (project guideline)
+
+Actual (proposed):
+  mod.rs       ~800 ✅
+  priority.rs  ~600 ✅
+  combat.rs    ~450 ✅
+  logging.rs   ~450 ✅
+  steps.rs     ~400 ✅
+  actions.rs   ~350 ✅
+  snapshot.rs  ~300 ✅
+  legacy.rs    ~250 ✅
+
+All modules well under budget! 🎉
+
+
+Comparison to actions.rs Refactoring
+================================================================================
+
+actions.rs refactoring (commit e4797e44):
+  Before: 6,000 lines
+  After:
+    mod.rs       ~70KB (kept most in mod.rs)
+    combat.rs    ~23KB
+    targeting.rs ~15KB
+
+game_loop.rs refactoring (proposed):
+  Before: 3,455 lines
+  After: 8 modules, largest ~600 lines
+
+Key difference: More aggressive module splitting for game_loop
+Reason: Clearer architectural boundaries (steps, combat, priority)
+
+
+Next Steps
+================================================================================
+
+1. Review this dependency analysis
+2. Create beads issue: "Refactor game_loop.rs into modular structure"
+3. Start with Phase 1 (logging.rs + actions.rs)
+4. Test rigorously at each step
+5. Commit frequently with descriptive messages
+6. Document any deviations from plan

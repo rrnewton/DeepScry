@@ -32,7 +32,6 @@ mod counter_tests;
 #[cfg(test)]
 mod test_spider_suit;
 
-pub use actions::GameAction;
 pub use combat::CombatState;
 pub use continuous_effects::PTBreakdown;
 pub use controller::{format_choice_menu, GameStateView, PlayerController};
@@ -56,6 +55,6 @@ pub use replay_controller::{ReplayChoice, ReplayController};
 pub use rich_input_controller::RichInputController;
 pub use snapshot::{ControllerState, ControllerType, GameSnapshot, SnapshotError};
 pub use state::GameState;
-pub use state_hash::{compute_state_hash, format_hash};
+pub use state_hash::{compute_state_hash, compute_undo_test_hash, format_hash};
 pub use stop_condition::{StopCondition, StopPlayer};
 pub use zero_controller::ZeroController;

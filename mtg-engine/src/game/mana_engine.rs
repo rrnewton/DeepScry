@@ -253,12 +253,18 @@ impl ManaEngine {
     /// The player_id parameter specifies which player's mana sources to scan.
     pub fn update(&mut self, game: &GameState, player_id: PlayerId) {
         // Clear previous state (but retain capacity for reuse)
-        // Note: We don't call reserve() here - the Vecs will grow naturally on first use
-        // and subsequent clears will retain that capacity, avoiding allocations
         self.simple_sources.clear();
         self.complex_sources.clear();
         self.simple_capacity = ManaCapacity::new();
         self.mana_sources.clear();
+
+        // Pre-allocate capacity based on battlefield size to avoid Vec reallocations.
+        // Most cards on battlefield are mana sources (lands), so this is a good upper bound.
+        // Reserve is a no-op if capacity is already sufficient, so this is cheap after first call.
+        let battlefield_size = game.battlefield.cards.len();
+        self.simple_sources.reserve(battlefield_size);
+        self.complex_sources.reserve(battlefield_size);
+        self.mana_sources.reserve(battlefield_size);
 
         // Scan battlefield for mana-producing permanents owned by this player
         // This includes lands and creatures with mana abilities (e.g., Llanowar Elves)

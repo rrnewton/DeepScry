@@ -83,6 +83,33 @@ pub enum GameAction {
         toughness_delta: i32,
     },
 
+    /// Set turn_entered_battlefield field (for summoning sickness tracking)
+    SetTurnEnteredBattlefield {
+        card_id: CardId,
+        /// Previous value (None if wasn't on battlefield)
+        old_value: Option<u32>,
+        /// New value (Some(turn) when entering battlefield, None when leaving)
+        new_value: Option<u32>,
+    },
+
+    /// Set lands_played_this_turn counter (for land play limit tracking)
+    SetLandsPlayedThisTurn {
+        player_id: PlayerId,
+        /// Previous count
+        old_value: u8,
+        /// New count
+        new_value: u8,
+    },
+
+    /// Set attached_to field (for Equipment/Aura attachment tracking)
+    SetAttachedTo {
+        equipment_id: CardId,
+        /// Previous attachment target (None if not attached)
+        old_target: Option<CardId>,
+        /// New attachment target (None when detaching, Some(card) when attaching)
+        new_target: Option<CardId>,
+    },
+
     /// Mark a choice point (for tree search and replay)
     ///
     /// Stores both the fact that a choice occurred and what that choice was,
@@ -234,6 +261,54 @@ impl GameAction {
                     card.set_toughness(card.base_toughness().map(|t| t.saturating_sub(*toughness_delta as i8)));
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetTurnEnteredBattlefield {
+                card_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous turn_entered_battlefield value
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.turn_entered_battlefield = *old_value;
+                } else {
+                    return Err(format!(
+                        "Card {} not found for SetTurnEnteredBattlefield undo",
+                        card_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetLandsPlayedThisTurn {
+                player_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous lands_played_this_turn count
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.lands_played_this_turn = *old_value;
+                } else {
+                    return Err(format!(
+                        "Player {} not found for SetLandsPlayedThisTurn undo",
+                        player_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetAttachedTo {
+                equipment_id,
+                old_target,
+                new_target: _,
+            } => {
+                // Restore the previous attached_to value
+                if let Ok(equipment) = game.cards.get_mut(*equipment_id) {
+                    equipment.attached_to = *old_target;
+                } else {
+                    return Err(format!(
+                        "Equipment {} not found for SetAttachedTo undo",
+                        equipment_id.as_u32()
+                    ));
                 }
             }
 
