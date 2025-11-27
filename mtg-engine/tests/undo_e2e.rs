@@ -707,8 +707,8 @@ fn verify_state_equivalence(
     p2_id: mtg_forge_rs::core::PlayerId,
     iteration: usize,
 ) -> Result<()> {
-    use mtg_forge_rs::MtgError;
     use mtg_forge_rs::game::{compute_undo_test_hash, format_hash};
+    use mtg_forge_rs::MtgError;
 
     // Compute state hashes for full comparison (using stricter undo test hash)
     let current_hash = compute_undo_test_hash(current);
@@ -728,7 +728,9 @@ fn verify_state_equivalence(
         eprintln!();
 
         // Compare top-level fields to identify divergence
-        if let (serde_json::Value::Object(curr_map), serde_json::Value::Object(snap_map)) = (&current_json, &snapshot_json) {
+        if let (serde_json::Value::Object(curr_map), serde_json::Value::Object(snap_map)) =
+            (&current_json, &snapshot_json)
+        {
             for key in curr_map.keys() {
                 if curr_map.get(key) != snap_map.get(key) {
                     eprintln!("  Field '{}' differs:", key);

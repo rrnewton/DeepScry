@@ -33,14 +33,20 @@ fn test_undo_play_land_restores_turn_entered_battlefield() -> Result<()> {
     let hash_before = compute_undo_test_hash(&snapshot_before);
 
     println!("State before playing land:");
-    println!("  turn_entered_battlefield: {:?}", game.cards.get(card_id)?.turn_entered_battlefield);
+    println!(
+        "  turn_entered_battlefield: {:?}",
+        game.cards.get(card_id)?.turn_entered_battlefield
+    );
     println!("  hash: {:08x}", hash_before);
 
     // Play the land (this sets turn_entered_battlefield = Some(turn_number))
     game.play_land(p1_id, card_id)?;
 
     println!("\nState after playing land:");
-    println!("  turn_entered_battlefield: {:?}", game.cards.get(card_id)?.turn_entered_battlefield);
+    println!(
+        "  turn_entered_battlefield: {:?}",
+        game.cards.get(card_id)?.turn_entered_battlefield
+    );
     println!("  undo_log size: {}", game.undo_log.len());
 
     // Undo the play (need to undo all actions logged by play_land)
@@ -53,7 +59,10 @@ fn test_undo_play_land_restores_turn_entered_battlefield() -> Result<()> {
     }
 
     println!("\nState after undo:");
-    println!("  turn_entered_battlefield: {:?}", game.cards.get(card_id)?.turn_entered_battlefield);
+    println!(
+        "  turn_entered_battlefield: {:?}",
+        game.cards.get(card_id)?.turn_entered_battlefield
+    );
 
     // Compute hash after undo
     let hash_after = compute_undo_test_hash(&game);
@@ -61,7 +70,8 @@ fn test_undo_play_land_restores_turn_entered_battlefield() -> Result<()> {
 
     // Hashes should match!
     assert_eq!(
-        hash_before, hash_after,
+        hash_before,
+        hash_after,
         "State hash mismatch! turn_entered_battlefield was not restored by undo.\n\
          Before: {:?}, After: {:?}",
         snapshot_before.cards.get(card_id)?.turn_entered_battlefield,

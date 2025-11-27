@@ -32,14 +32,14 @@ const EXCLUDED_FIELDS: &[&str] = &[
 /// For undo testing, we want to verify that ALL gameplay state is correctly restored,
 /// including fields like lands_played_this_turn that may differ in replay scenarios.
 const EXCLUDED_FIELDS_UNDO_TEST: &[&str] = &[
-    "choice_id",     // Global counter, not gameplay state
-    "undo_log",      // The undo log itself shouldn't be compared
-    "logger",        // Presentation layer
-    "token_definitions", // Loaded definitions cache, not gameplay state
-    "show_choice_menu",  // Display setting
-    "output_mode",       // Display setting
-    "output_format",     // Display setting
-    "numeric_choices",   // Display setting
+    "choice_id",           // Global counter, not gameplay state
+    "undo_log",            // The undo log itself shouldn't be compared
+    "logger",              // Presentation layer
+    "token_definitions",   // Loaded definitions cache, not gameplay state
+    "show_choice_menu",    // Display setting
+    "output_mode",         // Display setting
+    "output_format",       // Display setting
+    "numeric_choices",     // Display setting
     "step_header_printed", // Display state
 ];
 
@@ -152,7 +152,9 @@ fn strip_metadata_for_undo_test(value: serde_json::Value) -> serde_json::Value {
 
             serde_json::Value::Object(map)
         }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(strip_metadata_for_undo_test).collect()),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(strip_metadata_for_undo_test).collect())
+        }
         other => other,
     }
 }

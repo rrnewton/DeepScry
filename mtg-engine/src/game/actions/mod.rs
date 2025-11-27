@@ -1259,7 +1259,10 @@ impl GameState {
             let card = self.cards.get_mut(target_id)?;
             card.damage += amount;
 
-            let message = format!("{} ({}) takes {} damage (total: {})", creature_name, target_id, amount, card.damage);
+            let message = format!(
+                "{} ({}) takes {} damage (total: {})",
+                creature_name, target_id, amount, card.damage
+            );
             self.logger.normal(&message);
 
             // Note: We don't destroy the creature here - that happens in state-based actions
