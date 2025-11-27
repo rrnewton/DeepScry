@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: feature
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-11T01:07:33.980742161+00:00
+updated_at: 2025-11-27T16:19:48.551719271+00:00
 ---
 
 # Description
@@ -13,7 +13,7 @@ Implement Equipment artifacts with equip abilities.
 
 ## Current Status (2025-11-11 #906)
 
-**✅ BASIC EQUIPMENT COMPLETE** - See mtg-98df7d for full implementation details.
+**✅ BASIC EQUIPMENT COMPLETE** - See mtg-169 for full implementation details.
 
 **What Works**:
 - ✅ Equip keyword and cost parsing (K:Equip:X)

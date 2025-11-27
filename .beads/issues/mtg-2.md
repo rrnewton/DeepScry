@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-05T16:41:34.685598643+00:00
+updated_at: 2025-11-27T16:19:48.577248922+00:00
 ---
 
 # Description
@@ -15,16 +15,16 @@ Track performance optimization work for MTG Forge Rust.
 
 ## ⚠️ CRITICAL: Parallel Bottleneck Discovered
 
-**See mtg-a6ca26 for parallel MCTS optimization plan.**
+**See mtg-162 for parallel MCTS optimization plan.**
 
-The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator contention**:
+The new parallel benchmark (mtg-161) exposed **catastrophic allocator contention**:
 - Parallel aggregate: 0.23x speedup (actually SLOWER than sequential!)
 - Per-thread: 68.8x slowdown (1.5% of sequential throughput)
 - Parallel efficiency: 1.5% (should be >60%)
 
 **Root cause:** System allocator (glibc malloc) global lock serializes all 16 threads.
 
-**Plan:** Two-phase approach in mtg-a6ca26:
+**Plan:** Two-phase approach in mtg-162:
 1. Maximize zero-copy patterns (target <2KB/game)
 2. Quick win: Try mimalloc/jemalloc (expect 10-30x improvement)
 3. Per-thread bump allocators (target 80-90% efficiency)
@@ -85,7 +85,7 @@ The new parallel benchmark (mtg-a60157) exposed **catastrophic allocator content
 - Analysis script tested in dry-run mode
 - Ready to run full benchmark sweep (very long-running)
 - Alternative: Run limited sweep (fewer thread counts) to validate workflow
-- Update mtg-a6ca26 with allocator comparison results
+- Update mtg-162 with allocator comparison results
 
 ---
 
@@ -161,10 +161,10 @@ Top hotspots:
 - ✅ mtg-payment-vecs: Mana payment Vec elimination (85% faster, 1.4M allocations eliminated)
 - ✅ mtg-mana-engine-dynamic: ManaEngine dynamic allocation elimination (600KB → 70KB, 3-24% faster)
 - ✅ mtg-buffer-reuse: GameLoop + ManaEngine buffer optimization (108KB eliminated, -5% total allocations)
-- ✅ mtg-437f88: RNG bincode serialization (96 bytes/turn saved, ~8% of advance_step allocations)
-- ✅ mtg-02f1df: RNG SmallVec inline storage (heap allocation eliminated, +52% Rewind mode performance!)
-- ✅ mtg-a60157: Parallel benchmark implementation (exposed allocator contention bottleneck)
-- ✅ mtg-c66412: String allocation cache (CardCache + AbilityCache) - **94.2% allocation reduction (1.48 GB → 86.4 MB), 3.5x speedup (31.20 → 109.29 games/sec)**
+- ✅ mtg-156: RNG bincode serialization (96 bytes/turn saved, ~8% of advance_step allocations)
+- ✅ mtg-160: RNG SmallVec inline storage (heap allocation eliminated, +52% Rewind mode performance!)
+- ✅ mtg-161: Parallel benchmark implementation (exposed allocator contention bottleneck)
+- ✅ mtg-165: String allocation cache (CardCache + AbilityCache) - **94.2% allocation reduction (1.48 GB → 86.4 MB), 3.5x speedup (31.20 → 109.29 games/sec)**
 - ✅ **Vec<ManaColor> bitfield optimization (b33ddea0)** - **30.9% allocation reduction (963 KB → 665 KB per 10 games), ManaProductionKind now Copy**
 - ✅ **ManaEngine::update Vec pre-allocation (03afd440)** - Eliminated Vec reallocation hotspot from DHAT top 20 (was #17 at 18.75 KB)
 
@@ -172,7 +172,7 @@ Top hotspots:
 - ✅ Pinned thread pool for precise parallel timing
 - ✅ Jemalloc allocator support
 - ✅ Parallel speedup analysis script
-- 🚧 mtg-a6ca26: Epic tracking parallel MCTS optimization (allocator contention fixes)
+- 🚧 mtg-162: Epic tracking parallel MCTS optimization (allocator contention fixes)
 
 **Infrastructure:**
 - ✅ Workspace refactoring (split into mtg-engine + mtg-benchmarks packages)
