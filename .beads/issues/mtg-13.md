@@ -1,13 +1,213 @@
 ---
 title: Arena allocation for per-turn temporaries
 status: open
-priority: 4
+priority: 1
 issue_type: feature
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2025-11-28T08:34:17.249313023+00:00
 ---
 
 # Description
 
-Use arena allocators (bumpalo or typed-arena) for per-turn allocations.
-Benefits: faster allocation (pointer increment), bulk deallocation, better cache locality.
+## Arena Allocation for Per-Turn, Per-Phase, and Per-Rollout Temporaries
+
+**Priority**: 1 (Performance-critical for MCTS optimization)
+
+## Overview
+
+Use arena allocators (bumpalo or typed-arena) to eliminate heap allocations in hot paths. This issue tracks all allocation sites that are candidates for bump allocation at different scopes.
+
+## Key Insight: Current Architecture is Already Highly Optimized
+
+The undo log uses action-based mutations (IDs, not pointers), making it safe to use bump allocators for temporary vectors without breaking rewind functionality. Only allocate temporary vectors via bump—never persistent game state.
+
+## Scope-Based Arena Strategy
+
+| Scope | Arena Size | Reset Point | Expected Savings |
+|-------|-----------|-------------|------------------|
+| Per-rollout | ~100 KB | After MCTS simulation | 99% |
+| Per-turn | ~10 KB | Turn boundary | 75-85% |
+| Per-phase | ~5 KB | Phase boundary | 80-90% |
+| Per-priority-round | ~2 KB | After both players pass | 60-70% |
+
+---
+
+## ALLOCATION SITE CHECKLIST
+
+### 🔴 HIGH PRIORITY - Per-Priority-Round (Hot Path)
+
+These allocate every time a player has priority:
+
+- [ ] **game_loop/actions.rs:15-46** - `get_available_attacker_creatures()` creates `Vec<CardId>`
+  - Called: Every declare attackers step
+  - Fix: Pass arena-allocated buffer or use SmallVec
+  
+- [ ] **game_loop/actions.rs:51-69** - `get_available_blocker_creatures()` creates `Vec<CardId>`
+  - Called: Every declare blockers step
+  - Fix: Pass arena-allocated buffer or use SmallVec
+
+- [ ] **game_loop/actions.rs:72-74** - `get_current_attackers()` returns `Vec<CardId>`
+  - Delegates to combat.rs:85 which does `.collect()`
+  - Fix: Return iterator or SmallVec
+
+- [ ] **game_loop/actions.rs:77-91** - `get_lands_in_hand()` creates `Vec<CardId>`
+  - Called: Every priority round during main phases
+  - Fix: Arena buffer or SmallVec (typically 0-3 lands)
+
+- [ ] **game_loop/actions.rs:94-165** - `get_castable_spells()` creates `Vec<CardId>`
+  - Called: Every priority round
+  - Fix: Arena buffer or SmallVec
+
+- [ ] **game_loop/actions.rs:168-264** - `get_activatable_abilities()` creates `Vec<(CardId, usize)>`
+  - Called: Every priority round
+  - Fix: Arena buffer or SmallVec
+
+- [ ] **game_loop/actions.rs:280-331** - `get_available_spell_abilities()` returns `Vec<SpellAbility>`
+  - Uses `std::mem::take()` pattern (good!) but still creates new Vec each time
+  - Fix: Consider arena allocation or persistent buffer
+
+### 🟠 MEDIUM PRIORITY - Per-Turn/Per-Choice
+
+These allocate during controller decisions:
+
+- [ ] **random_controller.rs:152** - `available_sources.to_vec()` for shuffling mana sources
+  - Called: Every mana payment choice
+  - Fix: SmallVec<[CardId; 8]> inline storage
+
+- [ ] **random_controller.rs:260** - `blockers.to_vec()` for damage assignment
+  - Called: Every combat with multi-blocker
+  - Fix: SmallVec<[CardId; 4]>
+
+- [ ] **random_controller.rs:281** - `hand.to_vec()` for discard choice
+  - Called: Cleanup step if hand > 7
+  - Fix: SmallVec<[CardId; 7]>
+
+- [ ] **mana_payment.rs:474** - `temp_buffer` Vec in `try_greedy_payment()`
+  - Called: Every complex mana payment
+  - Fix: Pass buffer from caller or arena
+
+- [ ] **mana_payment.rs:485-495** - `candidates` Vec in greedy algorithm
+  - Called: Each color being paid
+  - Fix: SmallVec<[(usize, u8); 16]>
+
+### 🟡 MEDIUM PRIORITY - Heuristic Controller
+
+These allocate during AI decision-making:
+
+- [ ] **heuristic_controller.rs:413-418** - `our_creatures: Vec<&Card>` for pump evaluation
+  - Called: Every priority check with pump spells
+  - Fix: Arena buffer or return iterator
+
+- [ ] **heuristic_controller.rs:489-505** - `land_plays`, `land_ids` Vecs
+  - Called: During land play decisions
+  - Fix: SmallVec (typically 1-3 lands)
+
+- [ ] **heuristic_controller.rs:579-584** - `potential_blockers: Vec<&Card>`
+  - Called: Every combat factor calculation
+  - Fix: Arena buffer or iterator
+
+- [ ] **heuristic_controller.rs:1021, 1475-1521** - Multiple `collect()` calls in blocking logic
+  - Called: During blocker assignment
+  - Fix: Arena buffers or SmallVecs
+
+- [ ] **heuristic_controller.rs:2048-2228** - Many `Vec<&Card>` for combat simulation
+  - Called: Each attack/block evaluation
+  - Fix: Arena-allocated buffers (these are heavy!)
+
+### 🟢 LOWER PRIORITY - Per-Phase/Periodic
+
+- [ ] **combat.rs:85** - `get_attackers()` returns `Vec<CardId>` via `.collect()`
+  - Fix: Already has `attackers_iter()` - migrate callers
+
+- [ ] **combat.rs:100** - `get_blockers_list()` returns `Vec<CardId>` via `.collect()`
+  - Fix: Already has `blockers_iter()` - migrate callers
+
+- [ ] **game_loop/priority.rs:25-30** - `targets.clone()`, `card_effects.clone()`
+  - Called: Each spell resolution
+  - Fix: Avoid clone where possible, use references
+
+- [ ] **mana_engine.rs:229-232** - Vec fields in ManaEngine
+  - These are reused via `clear()` - already optimized
+  - Note: Capacity retained across calls
+
+### ⚪ LOWEST PRIORITY - Rare/One-Time
+
+- [ ] **state.rs:370** - `milled_cards` Vec in mill operations
+  - Rare game action
+  
+- [ ] **snapshot.rs:237, 266** - `.collect()` in snapshot operations
+  - Only during snapshot/resume
+
+---
+
+## Implementation Pattern
+
+```rust
+pub struct GameArenas {
+    pub turn_arena: Bump,      // 10 KB, reset at turn end
+    pub phase_arena: Bump,     // 5 KB, reset at phase end
+    pub rollout_arena: Bump,   // 100 KB, reset after MCTS sim
+}
+
+// Example refactoring:
+fn get_available_attackers<'a>(
+    &self, 
+    arena: &'a Bump,
+    player_id: PlayerId
+) -> &'a [CardId] {
+    let creatures = arena.alloc_slice_fill_default(expected_count);
+    // ... fill creatures ...
+    creatures
+}
+```
+
+---
+
+## Progress Tracking
+
+### Phase 1: SmallVec Quick Wins (No API Changes)
+- [ ] random_controller.rs: Replace Vec with SmallVec in 3 methods
+- [ ] mana_payment.rs: SmallVec for candidates
+- [ ] combat.rs: Migrate callers to use iterator methods
+
+### Phase 2: Arena Infrastructure
+- [ ] Add bumpalo dependency
+- [ ] Create GameArenas struct
+- [ ] Add arena parameters to GameLoop
+
+### Phase 3: Hot Path Refactoring
+- [ ] Refactor get_available_* methods to use arena
+- [ ] Refactor heuristic_controller combat evaluation
+- [ ] Benchmark and verify allocation reduction
+
+---
+
+## Expected Impact
+
+For MCTS with 1000 rollouts:
+
+| Metric | Without Bump | With Bump | Reduction |
+|--------|--------------|-----------|-----------|
+| Per rollout | ~50-100 KB | Reused 100KB arena | N/A |
+| Total allocations | ~50 MB | ~100 KB | 99.8% |
+| Allocator contention | High | None (per-thread) | ~10x parallel speedup |
+
+---
+
+## Safety Constraint
+
+**CRITICAL**: Only allocate temporary vectors via bump allocators—never persistent game state. The undo log operates on IDs (safe), not pointers to bump memory (would be unsafe after arena reset).
+
+Safe for bump:
+- Temporary query results (attackers, blockers, spells)
+- Intermediate calculation buffers
+- Controller choice candidates
+
+NOT safe for bump:
+- GameState fields
+- Undo log entries
+- Combat state (persists across phases)
+
+---
+
+Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck)
