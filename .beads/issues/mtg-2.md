@@ -172,6 +172,11 @@ Top hotspots:
   - lands_in_hand_iter: returns iterator instead of Vec
   - push_castable_spells: writes directly to abilities_buffer
   - push_activatable_abilities: writes directly to abilities_buffer
+- ✅ **EntityStore::try_get() optimization (7f53776c, 2025-11-28_#957)** - **10-13% CPU speedup**
+  - Added try_get() returning Option<&T> instead of Result<&T, MtgError>
+  - Eliminates Result/MtgError drop overhead in hot paths
+  - Callgrind showed drop_in_place<Result<&Card, MtgError>> was 14% of CPU
+  - Updated: ManaEngine::update, GameStateView, game_loop/actions.rs
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -213,4 +218,4 @@ See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
 
 ---
-**Updated 2025-11-07_#823(b33ddea0)** - Vec<ManaColor> eliminated with ManaColors bitfield: 30.9% allocation reduction, ManaProductionKind now Copy
+**Updated 2025-11-28_#957(7f53776c)** - EntityStore::try_get() optimization: 10-13% CPU speedup by eliminating Result<_, MtgError> drop overhead in hot paths
