@@ -167,6 +167,11 @@ Top hotspots:
 - ✅ mtg-165: String allocation cache (CardCache + AbilityCache) - **94.2% allocation reduction (1.48 GB → 86.4 MB), 3.5x speedup (31.20 → 109.29 games/sec)**
 - ✅ **Vec<ManaColor> bitfield optimization (b33ddea0)** - **30.9% allocation reduction (963 KB → 665 KB per 10 games), ManaProductionKind now Copy**
 - ✅ **ManaEngine::update Vec pre-allocation (03afd440)** - Eliminated Vec reallocation hotspot from DHAT top 20 (was #17 at 18.75 KB)
+- ✅ **Bump allocator infrastructure (881f9a06, 7af8fc68)** - Added nightly allocator_api feature + Bump in GameState for future arena allocation
+- ✅ **get_available_spell_abilities zero-allocation refactor (cc155429, 7af8fc68)** - Eliminated 3 intermediate Vecs:
+  - lands_in_hand_iter: returns iterator instead of Vec
+  - push_castable_spells: writes directly to abilities_buffer
+  - push_activatable_abilities: writes directly to abilities_buffer
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -180,9 +185,9 @@ Top hotspots:
 - ✅ Parallel benchmark refactoring (win rate tracking, cleaner code)
 
 **Low priority (remaining allocations):**
-- GameLoop::get_available_spell_abilities helper allocations - 51KB (4.6%)
-  - get_lands_in_hand, get_castable_spells return Vecs
-  - Would require more API refactoring for modest gains
+- ~~GameLoop::get_available_spell_abilities helper allocations - 51KB (4.6%)~~ **✅ ELIMINATED**
+  - ~~get_lands_in_hand, get_castable_spells return Vecs~~
+  - Refactored to push directly to abilities_buffer (zero intermediate allocations)
 - Card loading string clones (acceptable one-time cost)
 - UndoLog growth (~43KB, necessary for rewind functionality)
 - Allocator overhead (expected, unavoidable)
