@@ -1,7 +1,6 @@
 //! Main game state structure
 
 use crate::core::{Card, CardId, EntityId, EntityStore, Player, PlayerId};
-use crate::game::arena::{ArenaMode, GameArena};
 use crate::game::{CombatState, GameLogger, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
@@ -60,14 +59,6 @@ pub struct GameState {
     /// Not serialized - will be empty when loading from snapshot
     #[serde(skip)]
     pub token_definitions: std::collections::HashMap<String, std::sync::Arc<crate::loader::CardDefinition>>,
-
-    /// Per-game arena allocator for temporary allocations
-    ///
-    /// This arena can be configured to use either the global allocator (default)
-    /// or a bump allocator for parallel MCTS simulations.
-    /// Not serialized - will be recreated fresh when loading from snapshot.
-    #[serde(skip)]
-    pub arena: GameArena,
 }
 
 impl GameState {
@@ -86,26 +77,6 @@ impl GameState {
         player2_name: String,
         starting_life: i32,
         deck_capacity: usize,
-    ) -> Self {
-        Self::new_two_player_with_arena(
-            player1_name,
-            player2_name,
-            starting_life,
-            deck_capacity,
-            ArenaMode::Global,
-        )
-    }
-
-    /// Create a new game with two players, pre-allocated storage, and specified arena mode
-    ///
-    /// Use `ArenaMode::Bump` for parallel MCTS simulations to reduce allocator contention.
-    /// Use `ArenaMode::Global` (default) for normal single-threaded gameplay.
-    pub fn new_two_player_with_arena(
-        player1_name: String,
-        player2_name: String,
-        starting_life: i32,
-        deck_capacity: usize,
-        arena_mode: ArenaMode,
     ) -> Self {
         let mut next_id = 0;
 
@@ -147,7 +118,6 @@ impl GameState {
             undo_log: UndoLog::new(),
             logger: GameLogger::new(),
             token_definitions: std::collections::HashMap::new(),
-            arena: GameArena::with_mode(arena_mode),
         }
     }
 

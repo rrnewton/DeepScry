@@ -1,7 +1,6 @@
 //! Core game state and turn structure
 
 pub mod actions;
-pub mod arena;
 pub mod combat;
 pub mod continuous_effects;
 pub mod controller;
@@ -33,7 +32,6 @@ mod counter_tests;
 #[cfg(test)]
 mod test_spider_suit;
 
-pub use arena::{ArenaMode, GameArena};
 pub use combat::CombatState;
 pub use continuous_effects::PTBreakdown;
 pub use controller::{format_choice_menu, GameStateView, PlayerController};
