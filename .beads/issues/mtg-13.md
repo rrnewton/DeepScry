@@ -324,3 +324,18 @@ The entire "Per-Priority-Round (Hot Path)" section is resolved:
 - Castable spells: Direct buffer push (zero intermediate allocation)
 - Activatable abilities: Direct buffer push (zero intermediate allocation)
 - Spell abilities: Vec with retained capacity via std::mem::take()
+
+## Progress (2025-11-28, commit 951)
+
+**Additional SmallVec optimizations:**
+- ✅ `mill_cards()`: Returns SmallVec<[CardId; 8]> for milled card IDs
+- ✅ `mana_engine.rs` Vec fields: Marked as already optimized (clear() pattern)
+
+**Checklist Status:**
+- ✅ All HIGH PRIORITY items complete
+- ✅ All MEDIUM PRIORITY items complete
+- ✅ All LOWER PRIORITY items complete
+- ✅ LOWEST PRIORITY: mill_cards complete
+- ⏳ LOWEST PRIORITY: snapshot.rs collect() - deferred (very low priority)
+- ⏳ Phase 2: Arena Infrastructure - future work
+- ⏳ Phase 3: Hot Path Refactoring - future work
