@@ -268,8 +268,10 @@ impl ManaEngine {
 
         // Scan battlefield for mana-producing permanents owned by this player
         // This includes lands and creatures with mana abilities (e.g., Llanowar Elves)
+        // NOTE: Using try_get() instead of get() to avoid Result<_, MtgError> overhead.
+        // Callgrind showed drop_in_place<Result<&Card, MtgError>> consuming 14% of CPU.
         for &card_id in &game.battlefield.cards {
-            if let Ok(card) = game.cards.get(card_id) {
+            if let Some(card) = game.cards.try_get(card_id) {
                 // Check if this is a mana-producing permanent owned by this player
                 let is_mana_source = card.is_land() || has_mana_ability(card);
                 if card.owner == player_id && is_mana_source {

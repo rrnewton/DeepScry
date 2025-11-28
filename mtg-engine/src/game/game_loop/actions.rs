@@ -17,7 +17,8 @@ impl<'a> GameLoop<'a> {
         let mut creatures: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            // Using try_get() to avoid Result drop overhead in hot path
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == player_id
                     && card.is_creature()
                     && !card.tapped
@@ -54,7 +55,8 @@ impl<'a> GameLoop<'a> {
         let mut creatures: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            // Using try_get() to avoid Result drop overhead in hot path
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == player_id
                     && card.is_creature()
                     && !card.tapped
@@ -91,7 +93,7 @@ impl<'a> GameLoop<'a> {
         game.get_player_zones(player_id)
             .into_iter()
             .flat_map(|zones| zones.hand.cards.iter().copied())
-            .filter(move |&card_id| cards.get(card_id).map(|card| card.is_land()).unwrap_or(false))
+            .filter(move |&card_id| cards.try_get(card_id).is_some_and(|card| card.is_land()))
     }
 
     /// Push castable spells directly to abilities_buffer
@@ -116,7 +118,8 @@ impl<'a> GameLoop<'a> {
 
         if let Some(zones) = self.game.get_player_zones(player_id) {
             for &card_id in &zones.hand.cards {
-                if let Ok(card) = self.game.cards.get(card_id) {
+                // Using try_get() to avoid Result drop overhead in hot path
+                if let Some(card) = self.game.cards.try_get(card_id) {
                     // Check if card is castable (not a land)
                     if !card.is_land() {
                         // Check timing restrictions
@@ -139,14 +142,13 @@ impl<'a> GameLoop<'a> {
                                 if card.is_aura() {
                                     // Check if there are valid enchantment targets on the battlefield
                                     let has_valid_targets = self.game.battlefield.cards.iter().any(|&target_id| {
-                                        if let Ok(target_card) = self.game.cards.get(target_id) {
+                                        // Using try_get() to avoid Result drop overhead in hot path
+                                        self.game.cards.try_get(target_id).is_some_and(|target_card| {
                                             // Paralyze enchants creatures, so check for creatures
                                             // TODO: Parse enchant restrictions from card data (e.g., "Enchant creature")
                                             // For now, assume Auras enchant creatures
                                             target_card.is_creature()
-                                        } else {
-                                            false
-                                        }
+                                        })
                                     });
 
                                     if has_valid_targets {
@@ -181,7 +183,8 @@ impl<'a> GameLoop<'a> {
 
         // Check all permanents controlled by this player
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            // Using try_get() to avoid Result drop overhead in hot path
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 // Only check permanents controlled by this player
                 if card.controller != player_id {
                     continue;

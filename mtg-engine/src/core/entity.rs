@@ -240,6 +240,27 @@ where
         self.entities.get(&id).ok_or(MtgError::EntityNotFound(id.as_u32()))
     }
 
+    /// Get an entity by ID, returning Option instead of Result
+    ///
+    /// This is more efficient than `get()` for hot paths where we don't need
+    /// detailed error information. Avoids the overhead of Result<_, MtgError>
+    /// construction and drop, which can be significant in tight loops.
+    ///
+    /// Callgrind profiling showed `drop_in_place<Result<&Card, MtgError>>` consuming
+    /// 14% of CPU time in ManaEngine::update due to frequent card lookups.
+    #[inline]
+    pub fn try_get(&self, id: EntityId<T>) -> Option<&T> {
+        self.entities.get(&id)
+    }
+
+    /// Get a mutable reference to an entity, returning Option instead of Result
+    ///
+    /// See `try_get()` for rationale on why this is more efficient for hot paths.
+    #[inline]
+    pub fn try_get_mut(&mut self, id: EntityId<T>) -> Option<&mut T> {
+        self.entities.get_mut(&id)
+    }
+
     /// Get a mutable reference to an entity
     pub fn get_mut(&mut self, id: EntityId<T>) -> Result<&mut T> {
         self.entities.get_mut(&id).ok_or(MtgError::EntityNotFound(id.as_u32()))

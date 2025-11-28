@@ -304,12 +304,12 @@ impl<'a> GameStateView<'a> {
 
     /// Get a card's name
     pub fn card_name(&self, card_id: CardId) -> Option<String> {
-        self.game.cards.get(card_id).ok().map(|c| c.name.to_string())
+        self.game.cards.try_get(card_id).map(|c| c.name.to_string())
     }
 
     /// Check if a card is a land
     pub fn is_land(&self, card_id: CardId) -> bool {
-        self.game.cards.get(card_id).map(|c| c.is_land()).unwrap_or(false)
+        self.game.cards.try_get(card_id).is_some_and(|c| c.is_land())
     }
 
     /// Get the current step
@@ -334,14 +334,15 @@ impl<'a> GameStateView<'a> {
 
     /// Get a reference to a card
     ///
-    /// This allows controllers to inspect card properties for decision-making
+    /// This allows controllers to inspect card properties for decision-making.
+    /// Uses try_get() for efficiency in hot paths.
     pub fn get_card(&self, card_id: CardId) -> Option<&crate::core::Card> {
-        self.game.cards.get(card_id).ok()
+        self.game.cards.try_get(card_id)
     }
 
     /// Check if a card is tapped
     pub fn is_tapped(&self, card_id: CardId) -> bool {
-        self.game.cards.get(card_id).map(|c| c.tapped).unwrap_or(false)
+        self.game.cards.try_get(card_id).is_some_and(|c| c.tapped)
     }
 
     /// Get access to the game logger
