@@ -110,9 +110,9 @@ These allocate during AI decision-making:
   - Called: During blocker assignment
   - Fix: SmallVec + chained filters to eliminate intermediate allocations
 
-- [ ] **heuristic_controller.rs:2048-2228** - Many `Vec<&Card>` for combat simulation
+- [x] **heuristic_controller.rs:2048-2228** - Many `Vec<&Card>` for combat simulation ✅ (commit 945)
   - Called: Each attack/block evaluation
-  - Fix: Arena-allocated buffers (these are heavy!)
+  - Fix: SmallVec<[&Card; 8]>, SmallVec<[CardId; 8]> for blockers/attackers
 
 ### 🟢 LOWER PRIORITY - Per-Phase/Periodic
 
@@ -270,3 +270,18 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 **Benchmark results (2025-11-28_#944):**
 - Key metric `mem_logging_rewind_play_again`: 193.56 bytes/action (down from 196.31, cumulative **7.6% reduction** from 209.45)
 - Multiple benchmarks showing "Performance has improved"
+
+## Progress (2025-11-28, commit 945)
+
+**SmallVec in heuristic_controller.rs combat simulation (assign_blocks_phase1/2/3):**
+- ✅ `remaining_blockers`: SmallVec<[CardId; 8]> - tracks available blockers
+- ✅ `attacker_cards`, `attackers_left`: SmallVec<[&Card; 8]> - sorted attacker list
+- ✅ `blocker_cards`, various: SmallVec<[&Card; 8]> - available blockers
+- ✅ `gang_blocked_attacker_ids`: SmallVec<[CardId; 4]> - gang block tracking
+- ✅ `trample_attackers`: SmallVec<[CardId; 4]> - trample detection
+- ✅ `current_blockers`: SmallVec<[&Card; 4]> - per-attacker blockers
+
+**Benchmark results (2025-11-28_#945):**
+- Key metric `mem_logging_rewind_play_again`: 195.31 bytes/action (within noise of 193.56)
+- snapshot_games improved
+- All heuristic controller Vec allocations now use SmallVec

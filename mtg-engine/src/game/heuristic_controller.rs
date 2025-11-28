@@ -2012,37 +2012,38 @@ impl HeuristicController {
             return blocks;
         }
 
-        // Track which blockers are still available
-        let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
+        // Track which blockers are still available (typically 2-8 creatures)
+        let mut remaining_blockers: SmallVec<[CardId; 8]> = available_blockers.iter().copied().collect();
 
-        // Get card references
-        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
+        // Get card references (typically 2-8 attackers)
+        let mut attacker_cards: SmallVec<[&Card; 8]> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         // Sort attackers by threat level (highest value first)
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(view, c.id)));
 
-        let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+        let blocker_cards: SmallVec<[&Card; 8]> =
+            remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         // Phase 1a: Make good blocks (safe kills, safe blocks, favorable trades)
         let good_blocks = self.make_good_blocks(view, &attacker_cards, &blocker_cards);
         for (blocker, attacker) in good_blocks {
             blocks.push((blocker.id, attacker.id));
-            remaining_blockers.retain(|&id| id != blocker.id);
+            remaining_blockers.retain(|id| *id != blocker.id);
         }
 
         // Update available blockers and attackers
-        let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        let mut attackers_left: SmallVec<[&Card; 8]> = attacker_cards.iter().copied().collect();
         attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
 
         // Phase 1b: Try gang blocks for remaining high-value attackers
-        let mut gang_blocked_attacker_ids = Vec::new();
+        let mut gang_blocked_attacker_ids: SmallVec<[CardId; 4]> = SmallVec::new();
 
         for &attacker in &attackers_left {
             if remaining_blockers.is_empty() {
                 break;
             }
 
-            let available_blocker_cards: Vec<&Card> =
+            let available_blocker_cards: SmallVec<[&Card; 8]> =
                 remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             if let Some(gang) = self.find_gang_block(attacker, &available_blocker_cards, view) {
@@ -2050,7 +2051,7 @@ impl HeuristicController {
                 for blocker in gang {
                     blocks.push((blocker.id, attacker.id));
                     // Remove blocker from available pool
-                    remaining_blockers.retain(|&id| id != blocker.id);
+                    remaining_blockers.retain(|id| *id != blocker.id);
                 }
                 gang_blocked_attacker_ids.push(attacker.id);
             }
@@ -2063,13 +2064,13 @@ impl HeuristicController {
         // Check if life is in danger to determine trade willingness
         let life_in_danger = self.life_in_danger(view, attackers, &blocks);
 
-        let remaining_blocker_cards: Vec<&Card> =
+        let remaining_blocker_cards: SmallVec<[&Card; 8]> =
             remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         let trade_blocks = self.make_trade_blocks(view, &attackers_left, &remaining_blocker_cards, life_in_danger);
         for (blocker, attacker) in trade_blocks {
             blocks.push((blocker.id, attacker.id));
-            remaining_blockers.retain(|&id| id != blocker.id);
+            remaining_blockers.retain(|id| *id != blocker.id);
         }
 
         // Update attackers list
@@ -2083,13 +2084,14 @@ impl HeuristicController {
                     break;
                 }
 
-                let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+                let blocker_cards: SmallVec<[&Card; 8]> =
+                    remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
                 // Find any blocker willing to chump
                 for &blocker in &blocker_cards {
                     if self.should_block(blocker, attacker, view, attackers, &blocks) {
                         blocks.push((blocker.id, attacker.id));
-                        remaining_blockers.retain(|&id| id != blocker.id);
+                        remaining_blockers.retain(|id| *id != blocker.id);
                         break;
                     }
                 }
@@ -2110,31 +2112,32 @@ impl HeuristicController {
         attackers: &[CardId],
     ) -> SmallVec<[(CardId, CardId); 8]> {
         let mut blocks = SmallVec::new();
-        let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
+        let mut remaining_blockers: SmallVec<[CardId; 8]> = available_blockers.iter().copied().collect();
 
-        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
+        let mut attacker_cards: SmallVec<[&Card; 8]> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(view, c.id)));
 
         // Phase 2a: Trade blocks first (more willing to trade when in danger)
-        let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+        let blocker_cards: SmallVec<[&Card; 8]> =
+            remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         let trade_blocks = self.make_trade_blocks(view, &attacker_cards, &blocker_cards, true);
         for (blocker, attacker) in trade_blocks {
             blocks.push((blocker.id, attacker.id));
-            remaining_blockers.retain(|&id| id != blocker.id);
+            remaining_blockers.retain(|id| *id != blocker.id);
         }
 
-        let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        let mut attackers_left: SmallVec<[&Card; 8]> = attacker_cards.iter().copied().collect();
         attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
 
         // Phase 2b: Good blocks
-        let remaining_blocker_cards: Vec<&Card> =
+        let remaining_blocker_cards: SmallVec<[&Card; 8]> =
             remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
         let good_blocks = self.make_good_blocks(view, &attackers_left, &remaining_blocker_cards);
         for (blocker, attacker) in good_blocks {
             blocks.push((blocker.id, attacker.id));
-            remaining_blockers.retain(|&id| id != blocker.id);
+            remaining_blockers.retain(|id| *id != blocker.id);
         }
 
         attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
@@ -2145,12 +2148,13 @@ impl HeuristicController {
                 break;
             }
 
-            let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+            let blocker_cards: SmallVec<[&Card; 8]> =
+                remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             for &blocker in &blocker_cards {
                 if self.should_block(blocker, attacker, view, attackers, &blocks) {
                     blocks.push((blocker.id, attacker.id));
-                    remaining_blockers.retain(|&id| id != blocker.id);
+                    remaining_blockers.retain(|id| *id != blocker.id);
                     break;
                 }
             }
@@ -2170,9 +2174,9 @@ impl HeuristicController {
         attackers: &[CardId],
     ) -> SmallVec<[(CardId, CardId); 8]> {
         let mut blocks = SmallVec::new();
-        let mut remaining_blockers: Vec<CardId> = available_blockers.to_vec();
+        let mut remaining_blockers: SmallVec<[CardId; 8]> = available_blockers.iter().copied().collect();
 
-        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
+        let mut attacker_cards: SmallVec<[&Card; 8]> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
         attacker_cards.sort_by_key(|c| -(self.evaluate_creature(view, c.id)));
 
         // Phase 3a: Chump blocks first - block everything we can
@@ -2181,27 +2185,28 @@ impl HeuristicController {
                 break;
             }
 
-            let blocker_cards: Vec<&Card> = remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
+            let blocker_cards: SmallVec<[&Card; 8]> =
+                remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             // In serious danger, block with anything
             if let Some(&blocker) = blocker_cards.first() {
                 blocks.push((blocker.id, attacker.id));
-                remaining_blockers.retain(|&id| id != blocker.id);
+                remaining_blockers.retain(|id| *id != blocker.id);
             }
         }
 
         // Phase 3b: If we blocked everything and still have blockers, try trade blocks
-        let mut attackers_left: Vec<&Card> = attacker_cards.clone();
+        let mut attackers_left: SmallVec<[&Card; 8]> = attacker_cards.iter().copied().collect();
         attackers_left.retain(|a| !blocks.iter().any(|(_, aid)| *aid == a.id));
 
         if !attackers_left.is_empty() && !remaining_blockers.is_empty() {
-            let remaining_blocker_cards: Vec<&Card> =
+            let remaining_blocker_cards: SmallVec<[&Card; 8]> =
                 remaining_blockers.iter().filter_map(|&id| view.get_card(id)).collect();
 
             let trade_blocks = self.make_trade_blocks(view, &attackers_left, &remaining_blocker_cards, true);
             for (blocker, attacker) in trade_blocks {
                 blocks.push((blocker.id, attacker.id));
-                remaining_blockers.retain(|&id| id != blocker.id);
+                remaining_blockers.retain(|id| *id != blocker.id);
             }
         }
 
@@ -2225,8 +2230,8 @@ impl HeuristicController {
             return;
         }
 
-        // Find trample attackers that are already blocked
-        let trample_attackers: Vec<CardId> = attackers
+        // Find trample attackers that are already blocked (typically 0-4)
+        let trample_attackers: SmallVec<[CardId; 4]> = attackers
             .iter()
             .filter_map(|&id| {
                 let card = view.get_card(id)?;
@@ -2248,8 +2253,8 @@ impl HeuristicController {
 
             let attacker_power = attacker.current_power() as i32;
 
-            // Calculate current blocking damage absorption
-            let current_blockers: Vec<&Card> = current_blocks
+            // Calculate current blocking damage absorption (typically 1-3 blockers per attacker)
+            let current_blockers: SmallVec<[&Card; 4]> = current_blocks
                 .iter()
                 .filter_map(|(bid, aid)| if *aid == attacker_id { view.get_card(*bid) } else { None })
                 .collect();
