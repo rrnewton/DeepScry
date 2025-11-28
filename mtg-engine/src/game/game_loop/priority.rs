@@ -180,15 +180,25 @@ impl<'a> GameLoop<'a> {
 
                 // Loop to allow undo/retry for spell ability choices
                 let choice = loop {
-                    // Get all available spell abilities for this player
-                    let available = self.get_available_spell_abilities(current_priority);
+                    // Get all available spell abilities for this player.
+                    //
+                    // OPTIMIZATION: get_available_spell_abilities now returns &[SpellAbility] from a
+                    // reused internal buffer, eliminating repeated Vec allocations. We check emptiness
+                    // first (no copy needed), then copy into SmallVec only when there are abilities
+                    // (avoiding heap allocation for typical hand sizes up to 16 cards).
+                    let available_count = self.get_available_spell_abilities(current_priority).len();
 
                     // If no actions available, automatically pass priority without asking controller
                     // Only invoke controller when there's an actual choice to make
-                    if available.is_empty() {
+                    if available_count == 0 {
                         // No available actions - automatically pass priority
                         break None;
                     }
+
+                    // Copy abilities into SmallVec now that we know there are some.
+                    // SmallVec<[_; 16]> covers typical hand sizes without heap allocation.
+                    // We need a copy because self.game is accessed later in the loop.
+                    let available: smallvec::SmallVec<[_; 16]> = self.abilities_buffer.iter().cloned().collect();
 
                     // Clear replay mode if all choices have been replayed
                     // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT
