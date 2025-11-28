@@ -12,8 +12,9 @@ impl<'a> GameLoop<'a> {
     /// Get creatures that can attack for a player (v2 interface)
     ///
     /// Results are sorted by card ID to ensure deterministic ordering for snapshot/resume.
-    pub(super) fn get_available_attacker_creatures(&self, player_id: PlayerId) -> Vec<CardId> {
-        let mut creatures = Vec::new();
+    /// Returns SmallVec to avoid heap allocation for typical creature counts (up to 8).
+    pub(super) fn get_available_attacker_creatures(&self, player_id: PlayerId) -> SmallVec<[CardId; 8]> {
+        let mut creatures: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for &card_id in &self.game.battlefield.cards {
             if let Ok(card) = self.game.cards.get(card_id) {
@@ -48,8 +49,9 @@ impl<'a> GameLoop<'a> {
     /// Get creatures that can block for a player (v2 interface)
     ///
     /// Results are sorted by card ID to ensure deterministic ordering for snapshot/resume.
-    pub(super) fn get_available_blocker_creatures(&self, player_id: PlayerId) -> Vec<CardId> {
-        let mut creatures = Vec::new();
+    /// Returns SmallVec to avoid heap allocation for typical creature counts (up to 8).
+    pub(super) fn get_available_blocker_creatures(&self, player_id: PlayerId) -> SmallVec<[CardId; 8]> {
+        let mut creatures: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for &card_id in &self.game.battlefield.cards {
             if let Ok(card) = self.game.cards.get(card_id) {

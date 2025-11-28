@@ -38,33 +38,29 @@ The undo log uses action-based mutations (IDs, not pointers), making it safe to 
 
 These allocate every time a player has priority:
 
-- [ ] **game_loop/actions.rs:15-46** - `get_available_attacker_creatures()` creates `Vec<CardId>`
+- [x] **game_loop/actions.rs:15-46** - `get_available_attacker_creatures()` creates `Vec<CardId>` ✅ (commit 949)
   - Called: Every declare attackers step
-  - Fix: Pass arena-allocated buffer or use SmallVec
-  
-- [ ] **game_loop/actions.rs:51-69** - `get_available_blocker_creatures()` creates `Vec<CardId>`
+  - Fix: Return SmallVec<[CardId; 8]>
+
+- [x] **game_loop/actions.rs:51-69** - `get_available_blocker_creatures()` creates `Vec<CardId>` ✅ (commit 949)
   - Called: Every declare blockers step
-  - Fix: Pass arena-allocated buffer or use SmallVec
+  - Fix: Return SmallVec<[CardId; 8]>
 
-- [ ] **game_loop/actions.rs:72-74** - `get_current_attackers()` returns `Vec<CardId>`
+- [x] **game_loop/actions.rs:72-74** - `get_current_attackers()` returns `Vec<CardId>` ✅ (commit 946)
   - Delegates to combat.rs:85 which does `.collect()`
-  - Fix: Return iterator or SmallVec
+  - Fix: Return SmallVec<[CardId; 8]>
 
-- [ ] **game_loop/actions.rs:77-91** - `get_lands_in_hand()` creates `Vec<CardId>`
-  - Called: Every priority round during main phases
-  - Fix: Arena buffer or SmallVec (typically 0-3 lands)
+- [x] **game_loop/actions.rs:77-91** - `get_lands_in_hand()` creates `Vec<CardId>` ✅ (already refactored)
+  - Refactored to `lands_in_hand_iter()` which returns an iterator (zero allocation)
 
-- [ ] **game_loop/actions.rs:94-165** - `get_castable_spells()` creates `Vec<CardId>`
-  - Called: Every priority round
-  - Fix: Arena buffer or SmallVec
+- [x] **game_loop/actions.rs:94-165** - `get_castable_spells()` creates `Vec<CardId>` ✅ (already refactored)
+  - Refactored to `push_castable_spells()` which pushes directly to abilities_buffer (zero intermediate allocation)
 
-- [ ] **game_loop/actions.rs:168-264** - `get_activatable_abilities()` creates `Vec<(CardId, usize)>`
-  - Called: Every priority round
-  - Fix: Arena buffer or SmallVec
+- [x] **game_loop/actions.rs:168-264** - `get_activatable_abilities()` creates `Vec<(CardId, usize)>` ✅ (already refactored)
+  - Refactored to `push_activatable_abilities()` which pushes directly to abilities_buffer (zero intermediate allocation)
 
-- [ ] **game_loop/actions.rs:280-331** - `get_available_spell_abilities()` returns `Vec<SpellAbility>`
-  - Uses `std::mem::take()` pattern (good!) but still creates new Vec each time
-  - Fix: Consider arena allocation or persistent buffer
+- [x] **game_loop/actions.rs:280-331** - `get_available_spell_abilities()` returns `Vec<SpellAbility>` ✅ (already refactored)
+  - Uses `std::mem::take()` pattern with `abilities_buffer` - Vec capacity retained across calls
 
 ### 🟠 MEDIUM PRIORITY - Per-Turn/Per-Choice
 
@@ -312,3 +308,18 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 - Silent mode (benchmarks): effects.clone() skipped entirely
 - Replaying mode: effects.clone() skipped entirely
 - Mana payment checks: SmallVec avoids heap allocation for temp tracking
+
+## Progress (2025-11-28, commit 949)
+
+**SmallVec for attacker/blocker creature lists:**
+- ✅ `get_available_attacker_creatures()`: Returns SmallVec<[CardId; 8]> instead of Vec<CardId>
+- ✅ `get_available_blocker_creatures()`: Returns SmallVec<[CardId; 8]> instead of Vec<CardId>
+
+**All HIGH PRIORITY items from checklist are now complete!**
+
+The entire "Per-Priority-Round (Hot Path)" section is resolved:
+- Attacker/blocker queries: SmallVec return types
+- Land plays: Iterator pattern (zero allocation)
+- Castable spells: Direct buffer push (zero intermediate allocation)
+- Activatable abilities: Direct buffer push (zero intermediate allocation)
+- Spell abilities: Vec with retained capacity via std::mem::take()
