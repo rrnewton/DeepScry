@@ -94,21 +94,21 @@ These allocate during controller decisions:
 
 These allocate during AI decision-making:
 
-- [ ] **heuristic_controller.rs:413-418** - `our_creatures: Vec<&Card>` for pump evaluation
+- [x] **heuristic_controller.rs:413-418** - `our_creatures: Vec<&Card>` for pump evaluation ✅ (commit 944)
   - Called: Every priority check with pump spells
-  - Fix: Arena buffer or return iterator
+  - Fix: SmallVec<[&Card; 8]>
 
-- [ ] **heuristic_controller.rs:489-505** - `land_plays`, `land_ids` Vecs
+- [x] **heuristic_controller.rs:489-505** - `land_plays`, `land_ids` Vecs ✅ (commit 944)
   - Called: During land play decisions
-  - Fix: SmallVec (typically 1-3 lands)
+  - Fix: SmallVec<[&SpellAbility; 4]> and SmallVec<[CardId; 4]>
 
-- [ ] **heuristic_controller.rs:579-584** - `potential_blockers: Vec<&Card>`
+- [x] **heuristic_controller.rs:579-584** - `potential_blockers: Vec<&Card>` ✅ (commit 944)
   - Called: Every combat factor calculation
-  - Fix: Arena buffer or iterator
+  - Fix: SmallVec<[&Card; 8]>
 
-- [ ] **heuristic_controller.rs:1021, 1475-1521** - Multiple `collect()` calls in blocking logic
+- [x] **heuristic_controller.rs:1021, 1475-1521** - Multiple `collect()` calls in blocking logic ✅ (commit 944)
   - Called: During blocker assignment
-  - Fix: Arena buffers or SmallVecs
+  - Fix: SmallVec + chained filters to eliminate intermediate allocations
 
 - [ ] **heuristic_controller.rs:2048-2228** - Many `Vec<&Card>` for combat simulation
   - Called: Each attack/block evaluation
@@ -256,3 +256,17 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 - Key metric `mem_logging_rewind_play_again`: 196.31 bytes/action (down from 209.45, **6.3% reduction**)
 - Parallel benchmarks: -6% to -11% improvement
 - Sequential benchmarks: within noise
+
+## Progress (2025-11-28, commit 944)
+
+**SmallVec in heuristic_controller.rs:**
+- ✅ `our_creatures`: SmallVec<[&Card; 8]> for pump spell evaluation
+- ✅ `land_plays`: SmallVec<[&SpellAbility; 4]> for land play decisions
+- ✅ `land_ids`: SmallVec<[CardId; 4]> for land card IDs
+- ✅ `potential_blockers`: SmallVec<[&Card; 8]> for combat factor calculation
+- ✅ `opponent_creatures`: SmallVec<[&Card; 8]> for blocking checks
+- ✅ `choose_best_removal_target`: Consolidated 4 chained collects into single SmallVec collect
+
+**Benchmark results (2025-11-28_#944):**
+- Key metric `mem_logging_rewind_play_again`: 193.56 bytes/action (down from 196.31, cumulative **7.6% reduction** from 209.45)
+- Multiple benchmarks showing "Performance has improved"

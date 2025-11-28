@@ -409,8 +409,8 @@ impl HeuristicController {
                             // For pump spells, we need to determine the target
                             // For now, evaluate if pumping our best creature would be good
 
-                            // Get our creatures
-                            let our_creatures: Vec<&Card> = view
+                            // Get our creatures (typically 2-8)
+                            let our_creatures: SmallVec<[&Card; 8]> = view
                                 .battlefield()
                                 .iter()
                                 .filter_map(|&id| view.get_card(id))
@@ -485,15 +485,15 @@ impl HeuristicController {
 
         // Phase 3: Land play logic (only if we can't cast creatures)
         if self.should_play_land(view) {
-            // Collect land play abilities
-            let land_plays: Vec<&SpellAbility> = available
+            // Collect land play abilities (typically 1-3 lands in hand)
+            let land_plays: SmallVec<[&SpellAbility; 4]> = available
                 .iter()
                 .filter(|sa| matches!(sa, SpellAbility::PlayLand { .. }))
                 .collect();
 
             if !land_plays.is_empty() {
                 // Extract land card IDs
-                let land_ids: Vec<CardId> = land_plays
+                let land_ids: SmallVec<[CardId; 4]> = land_plays
                     .iter()
                     .filter_map(|sa| {
                         if let SpellAbility::PlayLand { card_id, .. } = sa {
@@ -575,8 +575,8 @@ impl HeuristicController {
         // Note: Afflict is not yet in the Keyword enum, so we skip it for now
         let has_combat_effect = attacker.has_lifelink() || attacker.has_keyword(Keyword::Wither);
 
-        // Collect all potential blockers from opponents
-        let potential_blockers: Vec<&Card> = view
+        // Collect all potential blockers from opponents (typically 2-8 creatures)
+        let potential_blockers: SmallVec<[&Card; 8]> = view
             .battlefield()
             .iter()
             .filter_map(|&id| view.get_card(id))
@@ -1012,8 +1012,8 @@ impl HeuristicController {
         // Get opponent info
         let opponent_life = view.opponent_life();
 
-        // Collect opponent creatures (potential blockers)
-        let opponent_creatures: Vec<&Card> = view
+        // Collect opponent creatures (potential blockers, typically 2-8)
+        let opponent_creatures: SmallVec<[&Card; 8]> = view
             .battlefield()
             .iter()
             .filter_map(|&id| view.get_card(id))
@@ -1460,68 +1460,39 @@ impl HeuristicController {
     /// - Filter out indestructible
     /// - Filter out creatures already dying (toughness <= 0)
     fn choose_best_removal_target(&self, spell: &Card, view: &GameStateView) -> Option<CardId> {
-        // Get all opponent creatures on the battlefield
-        let opponent_creature_ids: Vec<CardId> = view
+        // For damage-based removal, find the damage amount
+        let damage_amount = spell.effects.iter().find_map(|e| {
+            if let crate::core::Effect::DealDamage { amount, .. } = e {
+                Some(*amount)
+            } else {
+                None
+            }
+        });
+
+        // Get all valid opponent creatures using chained filters (zero intermediate allocations)
+        // Filters:
+        // 1. Opponent's creatures
+        // 2. Not indestructible
+        // 3. Not already dying (toughness > 0)
+        // 4. For damage spells: toughness <= damage amount
+        let opponent_creature_ids: SmallVec<[CardId; 8]> = view
             .battlefield()
             .iter()
             .copied()
             .filter(|&id| {
                 if let Some(c) = view.get_card(id) {
-                    c.owner != self.player_id && c.is_creature()
+                    c.owner != self.player_id
+                        && c.is_creature()
+                        && !c.has_indestructible()
+                        && c.current_toughness() > 0
+                        && damage_amount
+                            .map(|dmg| c.current_toughness() as i32 <= dmg)
+                            .unwrap_or(true)
                 } else {
                     false
                 }
             })
             .collect();
-
-        if opponent_creature_ids.is_empty() {
-            return None;
-        }
-
-        // Filter out indestructible creatures (line 157)
-        let opponent_creature_ids: Vec<CardId> = opponent_creature_ids
-            .into_iter()
-            .filter(|&id| view.get_card(id).map(|c| !c.has_indestructible()).unwrap_or(false))
-            .collect();
-
-        // Filter out creatures that are already dying (toughness <= 0)
-        // This is part of "filterCreaturesThatWillDieThisTurn" (line 197)
-        let opponent_creature_ids: Vec<CardId> = opponent_creature_ids
-            .into_iter()
-            .filter(|&id| view.get_card(id).map(|c| c.current_toughness() > 0).unwrap_or(false))
-            .collect();
-
-        // For damage-based removal, filter out creatures with too much toughness
-        let has_damage = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
-        let opponent_creature_ids = if has_damage {
-            // Find the damage amount
-            let damage_amount = spell
-                .effects
-                .iter()
-                .find_map(|e| {
-                    if let crate::core::Effect::DealDamage { amount, .. } = e {
-                        Some(*amount)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0);
-
-            // Only target creatures with toughness <= damage amount
-            opponent_creature_ids
-                .into_iter()
-                .filter(|&id| {
-                    view.get_card(id)
-                        .map(|c| c.current_toughness() as i32 <= damage_amount)
-                        .unwrap_or(false)
-                })
-                .collect()
-        } else {
-            opponent_creature_ids
-        };
 
         if opponent_creature_ids.is_empty() {
             return None;
