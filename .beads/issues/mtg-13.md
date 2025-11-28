@@ -82,9 +82,9 @@ These allocate during controller decisions:
   - Called: Cleanup step if hand > 7
   - Fix: SmallVec<[CardId; 7]>
 
-- [ ] **mana_payment.rs:474** - `temp_buffer` Vec in `try_greedy_payment()`
+- [x] **mana_payment.rs:474** - `temp_buffer` Vec in `try_greedy_payment()` ✅ (commit 947)
   - Called: Every complex mana payment
-  - Fix: Pass buffer from caller or arena
+  - Fix: Use SmallVec<[CardId; 8]> internally, copy to output buffer only when needed
 
 - [x] **mana_payment.rs:485-495** - `candidates` Vec in greedy algorithm ✅ (commit 943)
   - Called: Each color being paid
@@ -122,9 +122,9 @@ These allocate during AI decision-making:
 - [x] **combat.rs:100** - `get_blockers_list()` returns `Vec<CardId>` via `.collect()` ✅ (commit 946)
   - Fix: Changed to return SmallVec<[CardId; 8]>
 
-- [ ] **game_loop/priority.rs:25-30** - `targets.clone()`, `card_effects.clone()`
+- [x] **game_loop/priority.rs:25-30** - `targets.clone()`, `card_effects.clone()` ✅ (commit 947)
   - Called: Each spell resolution
-  - Fix: Avoid clone where possible, use references
+  - Fix: SmallVec<[CardId; 2]> for targets, defer effects.clone() until logging enabled
 
 - [ ] **mana_engine.rs:229-232** - Vec fields in ManaEngine
   - These are reused via `clear()` - already optimized
@@ -297,3 +297,18 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 - Key metric `mem_logging_rewind_play_again`: 195.37 bytes/action (within noise)
 - `whiteweenie_mirror/rewind_play_again`: improved
 - Phase 1 SmallVec Quick Wins complete!
+
+## Progress (2025-11-28, commit 947)
+
+**Additional SmallVec optimizations:**
+- ✅ `mana_payment.rs:try_greedy_payment()`: Use SmallVec<[CardId; 8]> for internal tracking
+  - Avoids heap allocation for typical mana payments (up to 8 sources)
+  - Only copies to output Vec when caller requests tap order
+- ✅ `priority.rs:resolve_top_spell_from_stack()`: SmallVec<[CardId; 2]> for targets
+  - Most spells have 0-2 targets, avoids heap allocation
+  - Defer `card.effects.clone()` until logging is enabled (skipped during silent mode/replaying)
+
+**Note:** These optimizations reduce allocations in:
+- Silent mode (benchmarks): effects.clone() skipped entirely
+- Replaying mode: effects.clone() skipped entirely
+- Mana payment checks: SmallVec avoids heap allocation for temp tracking

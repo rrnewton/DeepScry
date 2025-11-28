@@ -18,21 +18,27 @@ impl<'a> GameLoop<'a> {
     /// Implements MTG Comprehensive Rules 608 (Resolving Spells and Abilities).
     pub(super) fn resolve_top_spell_from_stack(&mut self, spell_id: CardId) -> Result<()> {
         // Look up the targets for this spell
-        let targets = self
+        // Use SmallVec for targets - most spells have 0-2 targets
+        let targets: SmallVec<[CardId; 2]> = self
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)
-            .map(|(_, t)| t.clone())
-            .unwrap_or_else(Vec::new);
+            .map(|(_, t)| t.iter().copied().collect())
+            .unwrap_or_default();
 
-        // Get card name and effects for logging (before resolution)
+        // Check if verbose logging is enabled (avoids allocations when not logging)
+        let should_log = self.verbosity >= VerbosityLevel::Normal && !self.replaying;
+
+        // Get card info for logging (only clone effects if we'll actually log them)
         let (card_name, card_effects, card_owner) = if let Ok(card) = self.game.cards.get(spell_id) {
-            (card.name.to_string(), card.effects.clone(), card.owner)
+            // Only clone effects when logging is enabled - this is expensive otherwise
+            let effects = if should_log { card.effects.clone() } else { Vec::new() };
+            (card.name.to_string(), effects, card.owner)
         } else {
             return Err(crate::MtgError::EntityNotFound(spell_id.as_u32()));
         };
 
-        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+        if should_log {
             let message = format!("{} ({}) resolves", card_name, spell_id);
             self.game.logger.normal(&message);
         }
@@ -40,9 +46,9 @@ impl<'a> GameLoop<'a> {
         // Resolve the spell (this modifies effects with target replacement)
         self.game.resolve_spell(spell_id, &targets)?;
 
-        // Log effects for instants/sorceries
+        // Log effects for instants/sorceries (only when verbose logging is enabled)
         // Note: We need to manually replace placeholder targets for logging
-        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+        if should_log {
             use crate::core::Effect;
             let mut target_index = 0;
             for effect in &card_effects {

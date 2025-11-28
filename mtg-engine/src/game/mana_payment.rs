@@ -464,22 +464,23 @@ impl GreedyManaResolver {
     ///
     /// Returns `true` if payment is possible (tap order written to buffer if provided),
     /// or `false` if greedy algorithm couldn't find a solution.
+    ///
+    /// Internal tracking uses SmallVec to avoid heap allocation. When tap_order_out
+    /// is provided, results are copied to it at the end.
     fn try_greedy_payment(
         &self,
         cost: &ManaCost,
         sources: &[ManaSource],
         tap_order_out: Option<&mut Vec<CardId>>,
     ) -> bool {
-        // If no output buffer provided, we need a temporary one for the algorithm
-        // (greedy algorithm needs to track tapped sources even if we don't return the order)
-        let mut temp_buffer = Vec::new();
-        let tap_order = tap_order_out.unwrap_or(&mut temp_buffer);
-        tap_order.clear();
+        // Always use SmallVec for tracking - avoids heap allocation for typical mana costs
+        // (up to 8 sources covers most spells: 2-3 colored + 4-5 generic)
+        let mut tap_order: SmallVec<[CardId; 8]> = SmallVec::new();
 
         let mut remaining_cost = *cost;
 
         // Helper to tap sources for a specific color
-        let mut tap_for_color = |color: ManaColor, amount: u8| {
+        let tap_for_color = |tap_order: &mut SmallVec<[CardId; 8]>, color: ManaColor, amount: u8| {
             let mut tapped = 0u8;
 
             // Create list of available sources that can produce this color
@@ -513,27 +514,27 @@ impl GreedyManaResolver {
         };
 
         // Pay specific color requirements first
-        if remaining_cost.white > 0 && !tap_for_color(ManaColor::White, remaining_cost.white) {
+        if remaining_cost.white > 0 && !tap_for_color(&mut tap_order, ManaColor::White, remaining_cost.white) {
             return false;
         }
         remaining_cost.white = 0;
 
-        if remaining_cost.blue > 0 && !tap_for_color(ManaColor::Blue, remaining_cost.blue) {
+        if remaining_cost.blue > 0 && !tap_for_color(&mut tap_order, ManaColor::Blue, remaining_cost.blue) {
             return false;
         }
         remaining_cost.blue = 0;
 
-        if remaining_cost.black > 0 && !tap_for_color(ManaColor::Black, remaining_cost.black) {
+        if remaining_cost.black > 0 && !tap_for_color(&mut tap_order, ManaColor::Black, remaining_cost.black) {
             return false;
         }
         remaining_cost.black = 0;
 
-        if remaining_cost.red > 0 && !tap_for_color(ManaColor::Red, remaining_cost.red) {
+        if remaining_cost.red > 0 && !tap_for_color(&mut tap_order, ManaColor::Red, remaining_cost.red) {
             return false;
         }
         remaining_cost.red = 0;
 
-        if remaining_cost.green > 0 && !tap_for_color(ManaColor::Green, remaining_cost.green) {
+        if remaining_cost.green > 0 && !tap_for_color(&mut tap_order, ManaColor::Green, remaining_cost.green) {
             return false;
         }
         remaining_cost.green = 0;
@@ -575,6 +576,12 @@ impl GreedyManaResolver {
             if tapped < remaining_cost.generic {
                 return false;
             }
+        }
+
+        // If caller wants the tap order, copy it to their buffer
+        if let Some(output) = tap_order_out {
+            output.clear();
+            output.extend(tap_order.iter().copied());
         }
 
         true
