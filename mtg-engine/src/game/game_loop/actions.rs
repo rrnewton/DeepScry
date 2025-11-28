@@ -91,9 +91,12 @@ impl<'a> GameLoop<'a> {
             .filter(move |&card_id| cards.get(card_id).map(|card| card.is_land()).unwrap_or(false))
     }
 
-    /// Get castable spells in player's hand (v2 interface)
-    pub(super) fn get_castable_spells(&mut self, player_id: PlayerId) -> Vec<CardId> {
-        let mut spells = Vec::new();
+    /// Push castable spells directly to abilities_buffer
+    ///
+    /// Zero allocation - pushes SpellAbility::CastSpell directly to the buffer
+    /// instead of building an intermediate Vec.
+    fn push_castable_spells(&mut self, player_id: PlayerId) {
+        use crate::core::SpellAbility;
 
         // Update the mana engine for this player
         self.mana_engine.update(self.game, player_id);
@@ -144,16 +147,16 @@ impl<'a> GameLoop<'a> {
                                     });
 
                                     if has_valid_targets {
-                                        spells.push(card_id);
+                                        self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                     }
                                 } else if Self::spell_requires_stack_target(card) {
                                     // For counterspells and similar effects, check if stack has valid targets
                                     // MTG Rule 608.2b: If a spell/ability targets, it's countered if all targets are illegal
                                     if !self.game.stack.is_empty() {
-                                        spells.push(card_id);
+                                        self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                     }
                                 } else {
-                                    spells.push(card_id);
+                                    self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                 }
                             }
                         }
@@ -161,13 +164,14 @@ impl<'a> GameLoop<'a> {
                 }
             }
         }
-
-        spells
     }
 
-    /// Get activatable abilities on player's permanents (v2 interface)
-    pub(super) fn get_activatable_abilities(&mut self, player_id: PlayerId) -> Vec<(CardId, usize)> {
-        let mut abilities = Vec::new();
+    /// Push activatable abilities directly to abilities_buffer
+    ///
+    /// Zero allocation - pushes SpellAbility::ActivateAbility directly to the buffer
+    /// instead of building an intermediate Vec.
+    fn push_activatable_abilities(&mut self, player_id: PlayerId) {
+        use crate::core::SpellAbility;
 
         // Update the mana engine for this player
         self.mana_engine.update(self.game, player_id);
@@ -255,13 +259,12 @@ impl<'a> GameLoop<'a> {
                     }
 
                     if can_activate {
-                        abilities.push((card_id, ability_index));
+                        self.abilities_buffer
+                            .push(SpellAbility::ActivateAbility { card_id, ability_index });
                     }
                 }
             }
         }
-
-        abilities
     }
 
     /// Get all available spell abilities for a player
@@ -302,19 +305,11 @@ impl<'a> GameLoop<'a> {
             }
         }
 
-        // Add castable spells
-        let spells = self.get_castable_spells(player_id);
-        for spell_id in spells {
-            self.abilities_buffer
-                .push(SpellAbility::CastSpell { card_id: spell_id });
-        }
+        // Add castable spells (pushes directly to abilities_buffer)
+        self.push_castable_spells(player_id);
 
-        // Add activated abilities
-        let activatable = self.get_activatable_abilities(player_id);
-        for (card_id, ability_index) in activatable {
-            self.abilities_buffer
-                .push(SpellAbility::ActivateAbility { card_id, ability_index });
-        }
+        // Add activated abilities (pushes directly to abilities_buffer)
+        self.push_activatable_abilities(player_id);
 
         // Sort by card ID to ensure deterministic ordering
         // This is critical for snapshot/resume: if two runs have the same cards available
