@@ -469,6 +469,14 @@ impl<'a> GameStateView<'a> {
         &self.game.stack.cards
     }
 
+    /// Check if the stack is empty
+    ///
+    /// Convenience method for checking if there are no spells or abilities on the stack.
+    /// Used by AI controllers to determine timing for activated abilities.
+    pub fn is_stack_empty(&self) -> bool {
+        self.game.stack.is_empty()
+    }
+
     /// Get the current combat state
     ///
     /// Returns information about attackers, blockers, and combat phase status.

@@ -1524,10 +1524,8 @@ impl HeuristicController {
 
     /// Check if the stack is empty
     /// Reference: DamageDealAi.java:196 (stack.isEmpty())
-    fn is_stack_empty(&self, _view: &GameStateView) -> bool {
-        // TODO: Fix this - need to check game.stack through GameStateView
-        // For now, return true as a placeholder until we expose stack in GameStateView
-        true
+    fn is_stack_empty(&self, view: &GameStateView) -> bool {
+        view.is_stack_empty()
     }
 
     /// Check if there's a valuable target we can ping

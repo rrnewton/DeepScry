@@ -57,7 +57,10 @@ Track completion of heuristic AI port from Java Forge to Rust.
    - Reference: GameStateEvaluator.java:40-67, 91-100
 
 2. **Activated ability improvements**
-   - Expose game.stack through GameStateView for proper stack-empty checks
+   - ✅ Expose game.stack through GameStateView for proper stack-empty checks (2025-11-28_#956)
+     - Added `is_stack_empty()` convenience method to GameStateView
+     - Fixed HeuristicController.is_stack_empty() to use actual stack state
+     - Previously always returned `true` (placeholder)
    - Better ping targeting (choose "best" killable creature, not just any)
    - Enhanced pump evaluation with combat simulation
 
