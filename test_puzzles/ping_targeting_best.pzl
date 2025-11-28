@@ -1,0 +1,18 @@
+[metadata]
+Name:Ping Targeting Best Creature
+Goal:Win
+Difficulty:Easy
+Description:Test that Prodigal Sorcerer targets the best (highest value) killable creature
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN2
+p0life=20
+p0hand=
+p0library=Island;Island;Island;Island;Island;Island;Island;Island;Island;Island
+p0battlefield=Island;Island;Prodigal Sorcerer
+p1life=20
+p1hand=
+p1library=Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest
+p1battlefield=Birds of Paradise;Llanowar Elves

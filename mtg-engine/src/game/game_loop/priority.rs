@@ -647,6 +647,15 @@ impl<'a> GameLoop<'a> {
                                                     target_creature: chosen_targets_vec[0],
                                                 }
                                             }
+                                            // Replace placeholder targets in DealDamage effects
+                                            // This is needed for ping abilities like Prodigal Sorcerer
+                                            crate::core::Effect::DealDamage {
+                                                target: crate::core::TargetRef::None,
+                                                amount,
+                                            } if !chosen_targets_vec.is_empty() => crate::core::Effect::DealDamage {
+                                                target: crate::core::TargetRef::Permanent(chosen_targets_vec[0]),
+                                                amount: *amount,
+                                            },
                                             _ => effect.clone(),
                                         };
 
@@ -654,6 +663,14 @@ impl<'a> GameLoop<'a> {
                                             if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                                 eprintln!("    Failed to execute effect: {e}");
                                             }
+                                        }
+                                    }
+
+                                    // Check state-based actions after effects resolve (MTG Rules 704.3)
+                                    // This handles lethal damage from damage-dealing abilities
+                                    if let Err(e) = self.game.check_lethal_damage() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to check lethal damage: {e}");
                                         }
                                     }
                                 } else if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
