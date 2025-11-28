@@ -116,11 +116,11 @@ These allocate during AI decision-making:
 
 ### 🟢 LOWER PRIORITY - Per-Phase/Periodic
 
-- [ ] **combat.rs:85** - `get_attackers()` returns `Vec<CardId>` via `.collect()`
-  - Fix: Already has `attackers_iter()` - migrate callers
+- [x] **combat.rs:85** - `get_attackers()` returns `Vec<CardId>` via `.collect()` ✅ (commit 946)
+  - Fix: Changed to return SmallVec<[CardId; 8]>
 
-- [ ] **combat.rs:100** - `get_blockers_list()` returns `Vec<CardId>` via `.collect()`
-  - Fix: Already has `blockers_iter()` - migrate callers
+- [x] **combat.rs:100** - `get_blockers_list()` returns `Vec<CardId>` via `.collect()` ✅ (commit 946)
+  - Fix: Changed to return SmallVec<[CardId; 8]>
 
 - [ ] **game_loop/priority.rs:25-30** - `targets.clone()`, `card_effects.clone()`
   - Called: Each spell resolution
@@ -168,7 +168,7 @@ fn get_available_attackers<'a>(
 ### Phase 1: SmallVec Quick Wins (No API Changes)
 - [x] random_controller.rs: Replace Vec with SmallVec in 3 methods ✅ (commit 942)
 - [x] mana_payment.rs: SmallVec for candidates ✅ (commit 943)
-- [ ] combat.rs: Migrate callers to use iterator methods
+- [x] combat.rs: Return SmallVec instead of Vec ✅ (commit 946)
 
 ### Phase 2: Arena Infrastructure
 - [ ] Add bumpalo dependency
@@ -285,3 +285,15 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 - Key metric `mem_logging_rewind_play_again`: 195.31 bytes/action (within noise of 193.56)
 - snapshot_games improved
 - All heuristic controller Vec allocations now use SmallVec
+
+## Progress (2025-11-28, commit 946)
+
+**SmallVec return types in combat.rs:**
+- ✅ `get_attackers()`: Returns SmallVec<[CardId; 8]> instead of Vec<CardId>
+- ✅ `get_blockers_list()`: Returns SmallVec<[CardId; 8]> instead of Vec<CardId>
+- ✅ `get_current_attackers()` in actions.rs: Updated to return SmallVec<[CardId; 8]>
+
+**Benchmark results (2025-11-28_#946):**
+- Key metric `mem_logging_rewind_play_again`: 195.37 bytes/action (within noise)
+- `whiteweenie_mirror/rewind_play_again`: improved
+- Phase 1 SmallVec Quick Wins complete!

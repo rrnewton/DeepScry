@@ -69,7 +69,8 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Get currently attacking creatures (v2 interface)
-    pub(super) fn get_current_attackers(&self) -> Vec<CardId> {
+    /// Returns SmallVec to avoid heap allocation for typical attacker counts (up to 8)
+    pub(super) fn get_current_attackers(&self) -> SmallVec<[CardId; 8]> {
         self.game.combat.get_attackers()
     }
 

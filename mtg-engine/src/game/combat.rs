@@ -80,8 +80,8 @@ impl CombatState {
         self.attackers.get(&attacker).copied()
     }
 
-    /// Get all attacking creatures (returns Vec for compatibility)
-    pub fn get_attackers(&self) -> Vec<CardId> {
+    /// Get all attacking creatures as SmallVec (stack-allocated for typical counts)
+    pub fn get_attackers(&self) -> SmallVec<[CardId; 8]> {
         self.attackers.keys().copied().collect()
     }
 
@@ -95,8 +95,8 @@ impl CombatState {
         !self.attackers.is_empty()
     }
 
-    /// Get all blocking creatures (returns Vec for compatibility)
-    pub fn get_blockers_list(&self) -> Vec<CardId> {
+    /// Get all blocking creatures as SmallVec (stack-allocated for typical counts)
+    pub fn get_blockers_list(&self) -> SmallVec<[CardId; 8]> {
         self.blockers.keys().copied().collect()
     }
 
