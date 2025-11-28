@@ -74,20 +74,21 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Get lands in player's hand (v2 interface)
-    pub(super) fn get_lands_in_hand(&self, player_id: PlayerId) -> Vec<CardId> {
-        let mut lands = Vec::new();
-
-        if let Some(zones) = self.game.get_player_zones(player_id) {
-            for &card_id in &zones.hand.cards {
-                if let Ok(card) = self.game.cards.get(card_id) {
-                    if card.is_land() {
-                        lands.push(card_id);
-                    }
-                }
-            }
-        }
-
-        lands
+    ///
+    /// Returns an iterator over land CardIds in the player's hand.
+    /// Zero allocation - filters the hand directly.
+    ///
+    /// Note: This is a static method taking `&GameState` to allow separate
+    /// borrows when the caller needs to mutate other fields (like abilities_buffer).
+    fn lands_in_hand_iter<'g>(
+        game: &'g crate::game::GameState,
+        player_id: PlayerId,
+    ) -> impl Iterator<Item = CardId> + 'g {
+        let cards = &game.cards;
+        game.get_player_zones(player_id)
+            .into_iter()
+            .flat_map(|zones| zones.hand.cards.iter().copied())
+            .filter(move |&card_id| cards.get(card_id).map(|card| card.is_land()).unwrap_or(false))
     }
 
     /// Get castable spells in player's hand (v2 interface)
@@ -294,8 +295,7 @@ impl<'a> GameLoop<'a> {
         {
             if let Ok(player) = self.game.get_player(player_id) {
                 if player.can_play_land() {
-                    let lands = self.get_lands_in_hand(player_id);
-                    for land_id in lands {
+                    for land_id in Self::lands_in_hand_iter(self.game, player_id) {
                         self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
                     }
                 }

@@ -1,11 +1,11 @@
 //! Main game state structure
 
-use bumpalo::Bump;
 use crate::core::{Card, CardId, EntityId, EntityStore, Player, PlayerId};
 use crate::game::{CombatState, GameLogger, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
 use crate::Result;
+use bumpalo::Bump;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
