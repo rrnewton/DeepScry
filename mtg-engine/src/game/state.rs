@@ -602,18 +602,23 @@ impl GameState {
             // which will be the START of the next turn after next_turn() is called
             // Using bincode for compact serialization (56 bytes vs 152 bytes for JSON)
             // SmallVec<[u8; 64]> fits ChaCha12Rng serialization (56 bytes, no heap allocation)
+            //
+            // OPTIMIZATION: Use serialize_into with a fixed buffer to avoid Vec allocation.
+            // ChaCha12Rng bincode serialization is exactly 56 bytes, so we use a [u8; 64] buffer.
             let rng_state = {
                 let rng = self.rng.borrow();
-                if let Ok(bytes) = bincode::serialize(&*rng) {
+                let mut buffer = [0u8; 64];
+                let mut cursor = std::io::Cursor::new(&mut buffer[..]);
+                if bincode::serialize_into(&mut cursor, &*rng).is_ok() {
+                    let len = cursor.position() as usize;
                     // INVARIANT: ChaCha12Rng bincode serialization is exactly 56 bytes
-                    // This assertion will catch any future changes to RNG serialization
-                    assert_eq!(
-                        bytes.len(),
-                        56,
-                        "ChaCha12Rng bincode serialization changed from 56 bytes to {} bytes - update SmallVec<[u8; 64]> size!",
-                        bytes.len()
+                    debug_assert_eq!(
+                        len, 56,
+                        "ChaCha12Rng bincode serialization changed from 56 bytes to {} bytes - update buffer size!",
+                        len
                     );
-                    Some(smallvec::SmallVec::from_vec(bytes))
+                    // Create SmallVec from the fixed buffer slice (no heap allocation)
+                    Some(smallvec::SmallVec::from_slice(&buffer[..len]))
                 } else {
                     None
                 }
