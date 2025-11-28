@@ -70,15 +70,15 @@ These allocate every time a player has priority:
 
 These allocate during controller decisions:
 
-- [ ] **random_controller.rs:152** - `available_sources.to_vec()` for shuffling mana sources
+- [x] **random_controller.rs:152** - `available_sources.to_vec()` for shuffling mana sources ✅ (commit 942)
   - Called: Every mana payment choice
   - Fix: SmallVec<[CardId; 8]> inline storage
 
-- [ ] **random_controller.rs:260** - `blockers.to_vec()` for damage assignment
+- [x] **random_controller.rs:260** - `blockers.to_vec()` for damage assignment ✅ (commit 942)
   - Called: Every combat with multi-blocker
   - Fix: SmallVec<[CardId; 4]>
 
-- [ ] **random_controller.rs:281** - `hand.to_vec()` for discard choice
+- [x] **random_controller.rs:281** - `hand.to_vec()` for discard choice ✅ (commit 942)
   - Called: Cleanup step if hand > 7
   - Fix: SmallVec<[CardId; 7]>
 
@@ -166,7 +166,7 @@ fn get_available_attackers<'a>(
 ## Progress Tracking
 
 ### Phase 1: SmallVec Quick Wins (No API Changes)
-- [ ] random_controller.rs: Replace Vec with SmallVec in 3 methods
+- [x] random_controller.rs: Replace Vec with SmallVec in 3 methods ✅ (commit 942)
 - [ ] mana_payment.rs: SmallVec for candidates
 - [ ] combat.rs: Migrate callers to use iterator methods
 
@@ -232,3 +232,17 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 - 881f9a06: feat(alloc): Add bump allocator to GameState with allocator_api
 - cc155429: perf(alloc): Eliminate Vec allocation in get_lands_in_hand
 - 7af8fc68: perf(alloc): Eliminate Vec allocations in spell/ability queries
+- (commit 942): perf(alloc): Use SmallVec instead of Vec for random_controller shuffles
+
+## Progress (2025-11-28, commit 942)
+
+**SmallVec in random_controller.rs:**
+- ✅ `choose_mana_sources_to_pay()`: SmallVec<[CardId; 8]> for shuffling mana sources
+- ✅ `choose_damage_assignment_order()`: SmallVec<[CardId; 4]> for blocker ordering
+- ✅ `choose_cards_to_discard()`: SmallVec<[CardId; 7]> for discard shuffling
+
+**Benchmark results (2025-11-28_#941):**
+- `fresh_games`: -5.3% to -1.3% improvement
+- `whiteweenie_mirror/rewind_play_again`: -4.9% to -4.1% improvement
+- `jeskai_trolldisk/rewind_play_again`: -4.2% to -1.5% improvement
+- Key metric `mem_logging_rewind_play_again`: 2.54M actions/sec, 209.45 bytes/action

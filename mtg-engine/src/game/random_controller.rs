@@ -149,7 +149,8 @@ impl PlayerController for RandomController {
         let needed = cost.cmc() as usize;
 
         // Shuffle to randomize which sources we choose
-        let mut shuffled: Vec<CardId> = available_sources.to_vec();
+        // Use SmallVec to avoid heap allocation for typical mana source counts (1-8)
+        let mut shuffled: SmallVec<[CardId; 8]> = available_sources.iter().copied().collect();
         shuffled.shuffle(&mut self.rng);
 
         // Only log if there's a real choice (more sources than needed)
@@ -257,7 +258,8 @@ impl PlayerController for RandomController {
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Randomly shuffle the blockers to create a damage assignment order
-        let mut ordered_blockers: Vec<CardId> = blockers.to_vec();
+        // Use SmallVec to avoid heap allocation for typical blocker counts (1-4)
+        let mut ordered_blockers: SmallVec<[CardId; 4]> = blockers.iter().copied().collect();
         ordered_blockers.shuffle(&mut self.rng);
 
         // Only log if there's a real choice (2+ blockers to order)
@@ -268,7 +270,7 @@ impl PlayerController for RandomController {
             );
         }
 
-        ChoiceResult::Ok(ordered_blockers.into_iter().collect())
+        ChoiceResult::Ok(ordered_blockers)
     }
 
     fn choose_cards_to_discard(
@@ -278,7 +280,8 @@ impl PlayerController for RandomController {
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Randomly choose cards to discard from hand
-        let mut hand_vec: Vec<CardId> = hand.to_vec();
+        // Use SmallVec to avoid heap allocation for typical hand sizes (up to 7)
+        let mut hand_vec: SmallVec<[CardId; 7]> = hand.iter().copied().collect();
         hand_vec.shuffle(&mut self.rng);
 
         let num_discarding = count.min(hand.len());
