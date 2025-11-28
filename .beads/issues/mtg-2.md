@@ -177,6 +177,11 @@ Top hotspots:
   - Eliminates Result/MtgError drop overhead in hot paths
   - Callgrind showed drop_in_place<Result<&Card, MtgError>> was 14% of CPU
   - Updated: ManaEngine::update, GameStateView, game_loop/actions.rs
+- ✅ **abilities_buffer reuse optimization (576e6a95, 2025-11-28_#959)** - **8% total allocation reduction**
+  - Changed get_available_spell_abilities() to return &[SpellAbility] instead of Vec
+  - Buffer is cleared and reused (retains capacity) instead of moved out via mem::take
+  - Eliminated push_castable_spells hotspot (~5.3% of allocations)
+  - Bytes/action: 48.01 → 40.29 (-16.1%)
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -218,4 +223,4 @@ See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
 
 ---
-**Updated 2025-11-28_#957(7f53776c)** - EntityStore::try_get() optimization: 10-13% CPU speedup by eliminating Result<_, MtgError> drop overhead in hot paths
+**Updated 2025-11-28_#959(576e6a95)** - abilities_buffer reuse: 8% total allocation reduction, 16% bytes/action reduction
