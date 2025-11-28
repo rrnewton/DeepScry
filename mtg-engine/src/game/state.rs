@@ -1,5 +1,6 @@
 //! Main game state structure
 
+use bumpalo::Bump;
 use crate::core::{Card, CardId, EntityId, EntityStore, Player, PlayerId};
 use crate::game::{CombatState, GameLogger, TurnStructure};
 use crate::undo::UndoLog;
@@ -14,7 +15,10 @@ use std::cell::RefCell;
 ///
 /// This is the central structure that holds all game information.
 /// It's designed to be efficiently clonable for tree search.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Note: Clone is manually implemented because Bump doesn't implement Clone.
+/// Each clone gets a fresh empty Bump allocator.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GameState {
     /// All cards in the game
     pub cards: EntityStore<Card>,
@@ -59,6 +63,16 @@ pub struct GameState {
     /// Not serialized - will be empty when loading from snapshot
     #[serde(skip)]
     pub token_definitions: std::collections::HashMap<String, std::sync::Arc<crate::loader::CardDefinition>>,
+
+    /// Per-game bump allocator for temporary allocations
+    ///
+    /// This arena is used for short-lived allocations during gameplay (e.g.,
+    /// temporary Vecs for creature queries). Using a per-game allocator
+    /// eliminates allocator contention in parallel simulations.
+    ///
+    /// Not serialized - recreated fresh when loading from snapshot.
+    #[serde(skip)]
+    pub bump: Bump,
 }
 
 impl GameState {
@@ -118,6 +132,7 @@ impl GameState {
             undo_log: UndoLog::new(),
             logger: GameLogger::new(),
             token_definitions: std::collections::HashMap::new(),
+            bump: Bump::new(),
         }
     }
 
@@ -1216,6 +1231,27 @@ impl GameState {
     }
 }
 
+impl Clone for GameState {
+    fn clone(&self) -> Self {
+        GameState {
+            cards: self.cards.clone(),
+            players: self.players.clone(),
+            player_zones: self.player_zones.clone(),
+            battlefield: self.battlefield.clone(),
+            stack: self.stack.clone(),
+            turn: self.turn.clone(),
+            combat: self.combat.clone(),
+            rng: self.rng.clone(),
+            next_entity_id: self.next_entity_id,
+            undo_log: self.undo_log.clone(),
+            logger: self.logger.clone(),
+            token_definitions: self.token_definitions.clone(),
+            // Each clone gets a fresh empty bump allocator
+            bump: Bump::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1229,6 +1265,29 @@ mod tests {
         assert_eq!(game.player_zones.len(), 2);
         assert_eq!(game.turn.turn_number, 1);
         assert_eq!(game.turn.current_step, Step::Untap);
+    }
+
+    #[test]
+    fn test_bump_allocator_vec() {
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+
+        // Test that we can allocate a Vec from the game's bump allocator
+        let mut v: Vec<i32, &Bump> = Vec::new_in(&game.bump);
+        v.push(1);
+        v.push(2);
+        v.push(3);
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[0], 1);
+        assert_eq!(v[2], 3);
+
+        // Test with_capacity_in
+        let mut v2: Vec<u64, &Bump> = Vec::with_capacity_in(10, &game.bump);
+        v2.push(42);
+        assert_eq!(v2.capacity(), 10);
+        assert_eq!(v2[0], 42);
+
+        // Verify bump allocated bytes increased
+        assert!(game.bump.allocated_bytes() > 0);
     }
 
     #[test]

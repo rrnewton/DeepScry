@@ -21,7 +21,7 @@ rkyv = { version = "0.7", features = ["validation"] }
 # Collections
 smallvec = { version = "1.11", features = ["serde", "union"] }
 smallmap = { version = "1.4", features = ["serde"] }
-bumpalo = { version = "3.16", features = ["collections"] }
+bumpalo = { version = "3.16", features = ["collections", "allocator_api"] }
 typed-arena = "2.0"
 enumset = { version = "1.1", features = ["serde"] }
 

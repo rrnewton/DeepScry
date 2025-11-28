@@ -3,6 +3,8 @@
 //! This is a port of the MTG Forge game engine from Java to Rust,
 //! optimized for efficient tree search and AI gameplay.
 
+#![feature(allocator_api)]
+
 pub mod core;
 pub mod error;
 pub mod game;
