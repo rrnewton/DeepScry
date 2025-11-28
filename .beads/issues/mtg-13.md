@@ -122,17 +122,18 @@ These allocate during AI decision-making:
   - Called: Each spell resolution
   - Fix: SmallVec<[CardId; 2]> for targets, defer effects.clone() until logging enabled
 
-- [ ] **mana_engine.rs:229-232** - Vec fields in ManaEngine
-  - These are reused via `clear()` - already optimized
-  - Note: Capacity retained across calls
+- [x] **mana_engine.rs:229-232** - Vec fields in ManaEngine ✅ (already optimized)
+  - These are reused via `clear()` - capacity retained across calls
+  - No changes needed
 
 ### ⚪ LOWEST PRIORITY - Rare/One-Time
 
-- [ ] **state.rs:370** - `milled_cards` Vec in mill operations
-  - Rare game action
-  
+- [x] **state.rs:384** - `milled_cards` Vec in mill operations ✅ (commit 951)
+  - Changed to SmallVec<[CardId; 8]> for typical mill counts (1-7 cards)
+  - Rare game action but now allocation-free
+
 - [ ] **snapshot.rs:237, 266** - `.collect()` in snapshot operations
-  - Only during snapshot/resume
+  - Only during snapshot/resume (very low priority)
 
 ---
 

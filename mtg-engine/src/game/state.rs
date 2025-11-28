@@ -9,6 +9,7 @@ use bumpalo::Bump;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::cell::RefCell;
 
 /// Complete game state
@@ -381,8 +382,11 @@ impl GameState {
     }
 
     /// Mill cards from library to graveyard (used by mill effects)
-    pub fn mill_cards(&mut self, player_id: PlayerId, count: u8) -> Result<Vec<CardId>> {
-        let mut milled_cards = Vec::new();
+    ///
+    /// Returns SmallVec to avoid heap allocation for typical mill counts (up to 8 cards).
+    /// Mill effects typically mill 1-7 cards (e.g., "mill 3 cards").
+    pub fn mill_cards(&mut self, player_id: PlayerId, count: u8) -> Result<SmallVec<[CardId; 8]>> {
+        let mut milled_cards: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for _ in 0..count {
             // Try to draw from library
