@@ -48,9 +48,12 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ### High Priority (Core AI Strength):
 
-1. **Combat outcome prediction (NEXT PRIORITY)**
-   - Simulate combat before making decisions
-   - Critical for knowing if attacks will be lethal
+1. ~~**Combat outcome prediction (NEXT PRIORITY)**~~ ✅ **COMPLETED 2025-11-28_#955**
+   - ✅ Implemented `predict_combat_outcome()` - predicts damage through blockers
+   - ✅ Improved `is_lethal_opportunity()` to use prediction instead of naive sum
+   - ✅ Heuristic-based (not full simulation) - accounts for optimal opponent blocking
+   - ✅ Considers: safe blockers, trading blockers, chump blocks, trample damage
+   - ✅ Added test: `test_lethal_through_blockers` with 4ED cards
    - Reference: GameStateEvaluator.java:40-67, 91-100
 
 2. **Activated ability improvements**

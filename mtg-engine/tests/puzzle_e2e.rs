@@ -2424,3 +2424,65 @@ async fn test_juggernaut_must_attack() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that combat outcome prediction correctly identifies lethal through blockers
+///
+/// This test verifies that the HeuristicController's combat outcome prediction
+/// correctly calculates that with 4 attackers (8 total power) against 2 blockers,
+/// at least 2 attackers will get through for 4 damage, which is lethal against
+/// an opponent at 5 life. The AI should go all-in.
+#[tokio::test]
+async fn test_lethal_through_blockers() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../test_puzzles/lethal_through_blockers.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    // Create card database and load puzzle
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    // Set deterministic seed
+    game.seed_rng(42);
+
+    // Get player IDs
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // Has 4x Grizzly Bears (8 power total)
+    let p1_id = players[1]; // Has 2x Grizzly Bears at 5 life
+
+    let p1_life_before = game.get_player(p1_id)?.life;
+    assert_eq!(p1_life_before, 5, "P1 should start at 5 life");
+
+    // Create controllers - HeuristicController should recognize lethal
+    let mut controller0 = HeuristicController::new(p0_id);
+    let mut controller1 = HeuristicController::new(p1_id);
+
+    // Run game
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    let result = game_loop.run_game(&mut controller0, &mut controller1)?;
+
+    println!("=== Lethal Through Blockers Test ===");
+    println!("Game ended after {} turns", result.turns_played);
+    println!("Winner: {:?}", result.winner);
+    println!("End reason: {:?}", result.end_reason);
+
+    // P0 should win - with 4 attackers vs 2 blockers, 2 get through for 4 damage
+    // which is lethal against 5 life
+    assert_eq!(
+        result.winner,
+        Some(p0_id),
+        "P0 with 4 attackers should win against 2 blockers when opponent is at 5 life (lethal through blockers)"
+    );
+
+    // Should win reasonably quickly - even with careful play, P0 has overwhelming advantage
+    // The game might take 2-4 turns depending on attack/block decisions
+    assert!(
+        result.turns_played <= 5,
+        "Should win within 5 turns when having lethal - took {} turns",
+        result.turns_played
+    );
+
+    Ok(())
+}

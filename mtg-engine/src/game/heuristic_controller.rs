@@ -13,6 +13,25 @@ use crate::core::{Card, CardId, Keyword, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
+/// Predicted outcome of combat for attack decision making
+///
+/// Reference: GameStateEvaluator.java:40-67 - simulateUpcomingCombatThisTurn
+/// This struct captures the predicted results of an attack without full simulation.
+#[derive(Debug, Clone, Default)]
+struct CombatOutcome {
+    /// Total damage predicted to get through to opponent
+    predicted_damage: i32,
+    /// Number of attackers that will likely be blocked (for future logging/debugging)
+    #[allow(dead_code)]
+    blocked_attackers: usize,
+    /// Number of attackers that will likely get through (for future logging/debugging)
+    #[allow(dead_code)]
+    unblocked_attackers: usize,
+    /// Whether the attack is predicted to be lethal (for future use in advanced decisions)
+    #[allow(dead_code)]
+    is_lethal: bool,
+}
+
 /// Combat factors for attack decisions
 ///
 /// Reference: AiAttackController.SpellAbilityFactors (lines 1350-1455)
@@ -757,9 +776,11 @@ impl HeuristicController {
             .count()
     }
 
-    /// Calculate potential lethal damage from attacking
+    /// Calculate potential lethal damage from attacking (raw, not considering blockers)
     ///
-    /// Returns the total damage we could deal if all our creatures attack and are unblocked
+    /// Returns the total damage we could deal if all our creatures attack and are unblocked.
+    /// This is a simpler metric than predict_combat_outcome for quick checks.
+    #[allow(dead_code)] // Kept for potential future use in simple checks
     fn calculate_lethal_potential(&self, view: &GameStateView, available_creatures: &[CardId]) -> i32 {
         available_creatures
             .iter()
@@ -773,10 +794,182 @@ impl HeuristicController {
     /// Be very aggressive if we can potentially kill opponent
     fn is_lethal_opportunity(&self, view: &GameStateView, available_creatures: &[CardId]) -> bool {
         let opp_life = view.opponent_life();
-        let lethal_damage = self.calculate_lethal_potential(view, available_creatures);
-        // Consider lethal if we can deal damage >= opponent's life
-        // Even with some blocks, we might still kill them
-        lethal_damage >= opp_life
+        // Use smart combat outcome prediction
+        let outcome = self.predict_combat_outcome(view, available_creatures);
+        // Consider lethal if predicted damage >= opponent's life
+        outcome.predicted_damage >= opp_life
+    }
+
+    /// Predict combat outcome: how much damage will likely get through after blocking
+    ///
+    /// Reference: GameStateEvaluator.java:40-67 - simulateUpcomingCombatThisTurn
+    /// Instead of full simulation, we use heuristics to predict:
+    /// - Which attackers will likely be blocked
+    /// - How much damage will get through
+    /// - Whether the attack is lethal
+    ///
+    /// This is a key improvement over the naive "sum all power" approach.
+    fn predict_combat_outcome(&self, view: &GameStateView, attackers: &[CardId]) -> CombatOutcome {
+        if attackers.is_empty() {
+            return CombatOutcome::default();
+        }
+
+        // Get opponent's blockers
+        let blockers: SmallVec<[&Card; 8]> = view
+            .battlefield()
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .filter(|c| c.owner != self.player_id && c.is_creature() && !c.tapped && !c.has_defender())
+            .collect();
+
+        // Get attacker cards sorted by value (highest first - opponent blocks these first)
+        let mut attacker_cards: Vec<&Card> = attackers.iter().filter_map(|&id| view.get_card(id)).collect();
+        attacker_cards.sort_by_key(|c| std::cmp::Reverse(self.evaluate_creature(view, c.id)));
+
+        let mut predicted_damage = 0i32;
+        let mut blocked_attackers = 0usize;
+        let mut unblocked_attackers = 0usize;
+        let mut remaining_blockers: Vec<&Card> = blockers.iter().copied().collect();
+
+        // Simulate optimal blocking by opponent
+        for attacker in &attacker_cards {
+            let attacker_power = view
+                .get_effective_power(attacker.id)
+                .unwrap_or(attacker.current_power() as i32);
+
+            // Check if attacker can be blocked
+            if !self.can_attacker_be_blocked(attacker, &remaining_blockers) {
+                // Unblockable - damage gets through
+                predicted_damage += attacker_power;
+                unblocked_attackers += 1;
+                continue;
+            }
+
+            // Find a suitable blocker for this attacker
+            // Opponent will try to: (1) trade favorably, (2) chump if necessary
+            let best_blocker = self.find_best_blocker_for_attacker(attacker, &remaining_blockers, view);
+
+            match best_blocker {
+                Some(blocker_idx) => {
+                    // This attacker will be blocked
+                    blocked_attackers += 1;
+
+                    // Handle trample - excess damage gets through
+                    if attacker.has_trample() {
+                        let blocker = remaining_blockers[blocker_idx];
+                        let blocker_toughness = view
+                            .get_effective_toughness(blocker.id)
+                            .unwrap_or(blocker.current_toughness() as i32);
+                        let excess = (attacker_power - blocker_toughness).max(0);
+                        predicted_damage += excess;
+                    }
+
+                    // Remove this blocker from availability
+                    remaining_blockers.remove(blocker_idx);
+                }
+                None => {
+                    // No blocker available - damage gets through
+                    predicted_damage += attacker_power;
+                    unblocked_attackers += 1;
+                }
+            }
+        }
+
+        let opp_life = view.opponent_life();
+        let is_lethal = predicted_damage >= opp_life;
+
+        CombatOutcome {
+            predicted_damage,
+            blocked_attackers,
+            unblocked_attackers,
+            is_lethal,
+        }
+    }
+
+    /// Check if an attacker can be blocked by any of the available blockers
+    fn can_attacker_be_blocked(&self, attacker: &Card, blockers: &[&Card]) -> bool {
+        for blocker in blockers {
+            if self.can_block(attacker, blocker) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Find the best blocker for an attacker from opponent's perspective
+    ///
+    /// Returns the index of the best blocker, or None if no blocking is worthwhile.
+    /// Opponent's priorities:
+    /// 1. Block with something that kills the attacker and survives
+    /// 2. Block with something that trades favorably (kills attacker, dies, but lower value)
+    /// 3. Chump block with lowest-value creature if attacker is very dangerous
+    fn find_best_blocker_for_attacker(
+        &self,
+        attacker: &Card,
+        blockers: &[&Card],
+        view: &GameStateView,
+    ) -> Option<usize> {
+        if blockers.is_empty() {
+            return None;
+        }
+
+        let attacker_value = self.evaluate_creature(view, attacker.id);
+        let attacker_power = attacker.current_power() as i32;
+
+        // Categorize blockers
+        let mut best_safe_killer: Option<(usize, i32)> = None; // (index, value)
+        let mut best_trading_killer: Option<(usize, i32)> = None;
+        let mut best_chump: Option<(usize, i32)> = None;
+
+        for (idx, &blocker) in blockers.iter().enumerate() {
+            if !self.can_block(attacker, blocker) {
+                continue;
+            }
+
+            let blocker_value = self.evaluate_creature(view, blocker.id);
+            let can_kill_attacker = self.can_destroy_blocker(blocker, attacker);
+            let will_survive = !self.can_destroy_attacker(attacker, blocker);
+
+            if can_kill_attacker && will_survive {
+                // Category 1: Safe killer - best outcome for opponent
+                if best_safe_killer.is_none() || blocker_value < best_safe_killer.unwrap().1 {
+                    best_safe_killer = Some((idx, blocker_value));
+                }
+            } else if can_kill_attacker && !will_survive {
+                // Category 2: Trading kill - only if favorable trade
+                if blocker_value < attacker_value
+                    && (best_trading_killer.is_none() || blocker_value < best_trading_killer.unwrap().1)
+                {
+                    best_trading_killer = Some((idx, blocker_value));
+                }
+            } else if !will_survive {
+                // Category 3: Chump block - use lowest value
+                if best_chump.is_none() || blocker_value < best_chump.unwrap().1 {
+                    best_chump = Some((idx, blocker_value));
+                }
+            }
+        }
+
+        // Return in priority order
+        if let Some((idx, _)) = best_safe_killer {
+            return Some(idx);
+        }
+        if let Some((idx, _)) = best_trading_killer {
+            return Some(idx);
+        }
+
+        // Only chump block if attacker is very dangerous (high power or evasion)
+        if attacker_power >= 4 || attacker.has_lifelink() || attacker.has_trample() {
+            if let Some((idx, blocker_value)) = best_chump {
+                // Only chump with low-value creatures
+                if blocker_value < 150 {
+                    return Some(idx);
+                }
+            }
+        }
+
+        // No good block available - attacker gets through
+        None
     }
 
     /// Wrapper around should_attack that adds context about numerical advantage

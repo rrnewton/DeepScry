@@ -1,0 +1,21 @@
+[metadata]
+Name=Lethal Through Blockers Test
+Goal=Win
+Turns=1
+Difficulty=Medium
+Description=P0 has four 2/2 creatures (8 total power) vs P1's two 2/2 blockers. P1 is at 5 life. AI should recognize that at least 2 attackers will get through for lethal.
+
+[state]
+turn=5
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Forest;Forest;Forest;Forest;Grizzly Bears;Grizzly Bears;Grizzly Bears;Grizzly Bears
+p0library=Forest;Forest;Forest
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Forest;Forest;Grizzly Bears;Grizzly Bears
+p1library=Forest;Forest;Forest
+p1graveyard=
