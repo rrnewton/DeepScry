@@ -86,9 +86,9 @@ These allocate during controller decisions:
   - Called: Every complex mana payment
   - Fix: Pass buffer from caller or arena
 
-- [ ] **mana_payment.rs:485-495** - `candidates` Vec in greedy algorithm
+- [x] **mana_payment.rs:485-495** - `candidates` Vec in greedy algorithm ✅ (commit 943)
   - Called: Each color being paid
-  - Fix: SmallVec<[(usize, u8); 16]>
+  - Fix: SmallVec<[(usize, u8); 8]> (8 items = 128 bytes inline)
 
 ### 🟡 MEDIUM PRIORITY - Heuristic Controller
 
@@ -167,7 +167,7 @@ fn get_available_attackers<'a>(
 
 ### Phase 1: SmallVec Quick Wins (No API Changes)
 - [x] random_controller.rs: Replace Vec with SmallVec in 3 methods ✅ (commit 942)
-- [ ] mana_payment.rs: SmallVec for candidates
+- [x] mana_payment.rs: SmallVec for candidates ✅ (commit 943)
 - [ ] combat.rs: Migrate callers to use iterator methods
 
 ### Phase 2: Arena Infrastructure
@@ -246,3 +246,13 @@ Related issues: mtg-2 (optimization tracking), mtg-162 (parallel MCTS bottleneck
 - `whiteweenie_mirror/rewind_play_again`: -4.9% to -4.1% improvement
 - `jeskai_trolldisk/rewind_play_again`: -4.2% to -1.5% improvement
 - Key metric `mem_logging_rewind_play_again`: 2.54M actions/sec, 209.45 bytes/action
+
+## Progress (2025-11-28, commit 943)
+
+**SmallVec in mana_payment.rs:**
+- ✅ `try_greedy_payment()` candidates: SmallVec<[(usize, u8); 8]> for mana source candidates
+
+**Benchmark results (2025-11-28_#943):**
+- Key metric `mem_logging_rewind_play_again`: 196.31 bytes/action (down from 209.45, **6.3% reduction**)
+- Parallel benchmarks: -6% to -11% improvement
+- Sequential benchmarks: within noise

@@ -32,6 +32,7 @@
 //! ```
 
 use crate::core::{CardId, ManaColor, ManaCost, ManaProduction, ManaProductionKind};
+use smallvec::SmallVec;
 
 /// Result of checking whether a mana cost can be paid
 ///
@@ -482,7 +483,9 @@ impl GreedyManaResolver {
             let mut tapped = 0u8;
 
             // Create list of available sources that can produce this color
-            let mut candidates: Vec<(usize, u8)> = sources
+            // Use SmallVec to avoid heap allocation for typical mana source counts (up to 8)
+            // Note: (usize, u8) is 16 bytes due to alignment, so 8 items = 128 bytes inline
+            let mut candidates: SmallVec<[(usize, u8); 8]> = sources
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| {
