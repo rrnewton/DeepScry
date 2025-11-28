@@ -136,12 +136,14 @@ If you validate some changes with a new manual or temporary test, that test shou
 
 NEVER add binary files or large serialized artifact to version control without explicit permission. Always carefully review what you are adding with `git add`, and update `.gitignore` as needed.
 
-If the commit is about optimization, refresh the benchmark results as well with `./scripts/run_benchmarks.sh`
+If the commit is about optimization, refresh the benchmark results as well with `./scripts/run_benchmark.sh`
 
 Post-commit: refreshing benchmark results
 ----------------------------------------
 
-Run `./scripts/periodically_run_benchmarks.sh` and if it modifies the working copy (specifically, `experiment_results/perf_history.csv`), then make an extra git commit that describes the result.
+Run `./scripts/periodically_run_benchmarks.sh` (which calls `run_benchmark.sh` if 5+ commits since last recorded benchmark). If it modifies the working copy (specifically, `experiment_results/<CPU>/perf_history.csv`), make an extra git commit that describes the result.
+
+**Official benchmark entrypoint**: `./scripts/run_benchmark.sh` - this runs benchmarks AND records results to CSV. Never call `cargo bench` directly for tracked performance measurements.
 
 Branches and pushing
 ----------------------------------------

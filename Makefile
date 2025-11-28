@@ -177,20 +177,19 @@ info:
 plot:
 	./scripts/plot_performance.py
 
-# Run all performance benchmarks (takes a long time)
+# Run all performance benchmarks and record to CSV (takes a long time)
+# This is the OFFICIAL benchmark entrypoint - always use this for tracked results
 full-benchmark:
-	@echo "=== Running all benchmarks ==="
+	@echo "=== Running all benchmarks (results recorded to CSV) ==="
 	./scripts/run_benchmark.sh
-#	cargo bench --bench game_benchmark
 
-# Run snapshot benchmark only (fast)
+# Quick benchmark runs (NOT recorded to CSV - for quick testing only)
 bench-snapshot:
-	@echo "=== Running snapshot benchmark ==="
+	@echo "=== Running snapshot benchmark (not recorded to CSV) ==="
 	cargo bench --bench game_benchmark snapshot
 
-# Run stdout logging benchmark only (fast)
 bench-logging:
-	@echo "=== Running stdout logging benchmark ==="
+	@echo "=== Running stdout logging benchmark (not recorded to CSV) ==="
 	cargo bench --bench game_benchmark stdout_logging
 
 # Profiling

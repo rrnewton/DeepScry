@@ -2,7 +2,9 @@
 
 Utility scripts for the MTG Forge Rust project.
 
-## run_benchmark.sh
+## run_benchmark.sh (OFFICIAL BENCHMARK ENTRYPOINT)
+
+**Always use this script for tracked benchmark results.** Never call `cargo bench` directly for performance measurements that should be recorded.
 
 Runs benchmarks and records results to both CSV and full log files.
 
@@ -42,7 +44,7 @@ Creates:
 
 ## periodically_run_benchmarks.sh
 
-Automatically runs benchmarks when the git depth has advanced by 5 or more commits.
+Thin wrapper around `run_benchmark.sh` that only runs if 5+ commits since last recorded benchmark.
 
 ### Usage
 
@@ -54,9 +56,9 @@ Automatically runs benchmarks when the git depth has advanced by 5 or more commi
 
 The script:
 1. Gets the current git depth (commit count: `git rev-list --count HEAD`)
-2. Reads the last recorded git depth from `experiment_results/perf_history.csv`
+2. Reads the last recorded git depth from `experiment_results/<CPU>/perf_history.csv`
 3. Calculates the depth delta (difference)
-4. **If delta >= 5**: Runs `cargo bench` and appends results to the CSV
+4. **If delta >= 5**: Calls `run_benchmark.sh` to run benchmarks and record results
 5. **If delta < 5**: Skips benchmarks and reports how many more commits are needed
 
 ### Example Output
