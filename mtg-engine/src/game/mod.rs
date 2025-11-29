@@ -16,6 +16,7 @@ pub mod mana_colors;
 pub mod mana_engine;
 pub mod mana_index;
 pub mod mana_payment;
+pub mod mana_source_cache;
 pub mod phase;
 pub mod random_controller;
 pub mod replay_controller;
@@ -48,6 +49,7 @@ pub use mana_colors::ManaColors;
 pub use mana_engine::{ManaCapacity, ManaEngine};
 pub use mana_index::{ManaColorBucket, ManaProducerBucket, ManaProducerIndex};
 pub use mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource, PaymentResult, SimpleManaResolver};
+pub use mana_source_cache::ManaSourceCache;
 
 // Re-export mana production types from core for convenience
 pub use crate::core::{ManaColor, ManaProduction, ManaProductionKind};

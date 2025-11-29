@@ -113,7 +113,6 @@
 //! - **Cost reduction**: Handle effects like Goblin Electromancer that reduce spell costs
 
 use crate::core::{CardId, ManaColor, ManaCost, ManaProduction, ManaProductionKind, PlayerId};
-use crate::game::mana_colors::ManaColors;
 use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource, SimpleManaResolver};
 use crate::game::GameState;
 
@@ -255,13 +254,15 @@ impl ManaEngine {
         Self::default()
     }
 
-    /// Update the engine by scanning the battlefield for mana sources
+    /// Update the engine by reading from the ManaSourceCache (immutable version)
     ///
     /// This uses memoization: if the game's mana_state_version hasn't changed
-    /// since the last update for this player, the expensive battlefield scan
-    /// is skipped entirely.
+    /// since the last update for this player, the cache read is skipped entirely.
     ///
-    /// The player_id parameter specifies which player's mana sources to scan.
+    /// This version assumes the cache is already up-to-date and does not attempt
+    /// to rebuild it. Use `update_mut()` if you need to ensure cache consistency.
+    ///
+    /// The player_id parameter specifies which player's mana sources to query.
     pub fn update(&mut self, game: &GameState, player_id: PlayerId) {
         // Memoization: skip rebuild if nothing has changed
         if self.cached_player == Some(player_id) && self.cached_version == game.mana_state_version {
@@ -274,101 +275,185 @@ impl ManaEngine {
         self.simple_capacity = ManaCapacity::new();
         self.mana_sources.clear();
 
-        // Pre-allocate capacity based on battlefield size to avoid Vec reallocations.
-        // Most cards on battlefield are mana sources (lands), so this is a good upper bound.
-        // Reserve is a no-op if capacity is already sufficient, so this is cheap after first call.
-        let battlefield_size = game.battlefield.cards.len();
-        self.simple_sources.reserve(battlefield_size);
-        self.complex_sources.reserve(battlefield_size);
-        self.mana_sources.reserve(battlefield_size);
+        // Get the ManaSourceCache for this player (immutable version)
+        let cache = match game.get_mana_cache(player_id) {
+            Some(c) => c,
+            None => {
+                // No cache for this player - update memoization and return empty
+                self.cached_player = Some(player_id);
+                self.cached_version = game.mana_state_version;
+                return;
+            }
+        };
 
-        // Scan battlefield for mana-producing permanents owned by this player
-        // This includes lands and creatures with mana abilities (e.g., Llanowar Elves)
-        // NOTE: Using try_get() instead of get() to avoid Result<_, MtgError> overhead.
-        // Callgrind showed drop_in_place<Result<&Card, MtgError>> consuming 14% of CPU.
-        for &card_id in &game.battlefield.cards {
+        // Assert cache is valid (should not need rebuild from immutable context)
+        debug_assert!(
+            !cache.needs_rebuild(),
+            "ManaSourceCache needs rebuild but update() was called with immutable GameState. Use update_mut() instead."
+        );
+
+        self.read_from_cache(game, cache, player_id);
+    }
+
+    /// Update the engine by reading from the ManaSourceCache (mutable version)
+    ///
+    /// This uses memoization: if the game's mana_state_version hasn't changed
+    /// since the last update for this player, the cache read is skipped entirely.
+    ///
+    /// This version can rebuild the cache if needed (after undo/rewind).
+    ///
+    /// The player_id parameter specifies which player's mana sources to query.
+    pub fn update_mut(&mut self, game: &mut GameState, player_id: PlayerId) {
+        // Memoization: skip rebuild if nothing has changed
+        if self.cached_player == Some(player_id) && self.cached_version == game.mana_state_version {
+            return;
+        }
+
+        // Clear previous state (but retain capacity for reuse)
+        self.simple_sources.clear();
+        self.complex_sources.clear();
+        self.simple_capacity = ManaCapacity::new();
+        self.mana_sources.clear();
+
+        // Phase 1: Check if cache needs rebuild and rebuild if necessary
+        // Also rebuild if cache is empty (handles tests/examples that bypass events)
+        let cache_needs_init = game
+            .get_mana_cache(player_id)
+            .map(|c| {
+                c.white_sources().is_empty()
+                    && c.blue_sources().is_empty()
+                    && c.black_sources().is_empty()
+                    && c.red_sources().is_empty()
+                    && c.green_sources().is_empty()
+                    && c.colorless_sources().is_empty()
+                    && c.complex_sources().is_empty()
+                    && !game.battlefield.cards.is_empty()
+            })
+            .unwrap_or(false);
+
+        if cache_needs_init {
+            // Force rebuild if cache is empty but battlefield has cards
+            if let Some(cache) = game
+                .mana_caches
+                .iter_mut()
+                .find(|(id, _)| *id == player_id)
+                .map(|(_, c)| c)
+            {
+                cache.mark_dirty();
+            }
+        }
+
+        game.rebuild_mana_cache_if_needed(player_id);
+
+        // Phase 2: Read from cache (immutable borrow)
+        let cache = game.get_mana_cache(player_id).expect("Cache exists after rebuild");
+        self.read_from_cache(game, cache, player_id);
+    }
+
+    /// Read mana sources from the cache and populate internal vectors
+    ///
+    /// This is the core cache-reading logic shared by both update() and update_mut().
+    fn read_from_cache(&mut self, game: &GameState, cache: &crate::game::ManaSourceCache, player_id: PlayerId) {
+        // Pre-allocate capacity based on expected source count
+        let expected_sources = cache.white_sources().len()
+            + cache.blue_sources().len()
+            + cache.black_sources().len()
+            + cache.red_sources().len()
+            + cache.green_sources().len()
+            + cache.colorless_sources().len()
+            + cache.complex_sources().len();
+        self.simple_sources.reserve(expected_sources);
+        self.complex_sources.reserve(expected_sources);
+        self.mana_sources.reserve(expected_sources);
+
+        // Helper closure to process simple sources
+        let process_simple = |color: ManaColor, sources: &[CardId]| -> (Vec<CardId>, Vec<ManaSource>) {
+            let mut ids = Vec::new();
+            let mut sources_vec = Vec::new();
+            for &card_id in sources {
+                ids.push(card_id);
+                if let Some(card) = game.cards.try_get(card_id) {
+                    sources_vec.push(ManaSource {
+                        card_id,
+                        production: ManaProduction::free(ManaProductionKind::Fixed(color)),
+                        is_tapped: card.tapped,
+                        has_summoning_sickness: false, // Lands don't have summoning sickness
+                    });
+                }
+            }
+            (ids, sources_vec)
+        };
+
+        // Read simple sources from cache - White
+        let (white_ids, white_sources) = process_simple(ManaColor::White, cache.white_sources());
+        self.simple_sources.extend(white_ids);
+        self.mana_sources.extend(white_sources);
+
+        // Read simple sources from cache - Blue
+        let (blue_ids, blue_sources) = process_simple(ManaColor::Blue, cache.blue_sources());
+        self.simple_sources.extend(blue_ids);
+        self.mana_sources.extend(blue_sources);
+
+        // Read simple sources from cache - Black
+        let (black_ids, black_sources) = process_simple(ManaColor::Black, cache.black_sources());
+        self.simple_sources.extend(black_ids);
+        self.mana_sources.extend(black_sources);
+
+        // Read simple sources from cache - Red
+        let (red_ids, red_sources) = process_simple(ManaColor::Red, cache.red_sources());
+        self.simple_sources.extend(red_ids);
+        self.mana_sources.extend(red_sources);
+
+        // Read simple sources from cache - Green
+        let (green_ids, green_sources) = process_simple(ManaColor::Green, cache.green_sources());
+        self.simple_sources.extend(green_ids);
+        self.mana_sources.extend(green_sources);
+
+        // Read simple sources from cache - Colorless
+        for &card_id in cache.colorless_sources() {
+            self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
-                // Check if this is a mana-producing permanent owned by this player
-                let is_mana_source = card.is_land() || has_mana_ability(card);
-                if card.owner == player_id && is_mana_source {
-                    // Determine if this source has summoning sickness (for creatures with mana abilities)
-                    let has_summoning_sickness = if card.is_creature() {
-                        if let Some(entered_turn) = card.turn_entered_battlefield {
-                            entered_turn == game.turn.turn_number && !card.has_keyword(crate::core::Keyword::Haste)
-                        } else {
-                            false
-                        }
+                self.mana_sources.push(ManaSource {
+                    card_id,
+                    production: ManaProduction::free(ManaProductionKind::Colorless),
+                    is_tapped: card.tapped,
+                    has_summoning_sickness: false,
+                });
+            }
+        }
+
+        // Read pre-computed untapped counts from cache
+        self.simple_capacity.white = cache.untapped_white() as u8;
+        self.simple_capacity.blue = cache.untapped_blue() as u8;
+        self.simple_capacity.black = cache.untapped_black() as u8;
+        self.simple_capacity.red = cache.untapped_red() as u8;
+        self.simple_capacity.green = cache.untapped_green() as u8;
+        self.simple_capacity.colorless = cache.untapped_colorless() as u8;
+
+        // Read complex sources from cache
+        let current_turn = game.turn.turn_number;
+        for &card_id in cache.complex_sources() {
+            self.complex_sources.push(card_id);
+            if let Some(card) = game.cards.try_get(card_id) {
+                // Determine if this source has summoning sickness (for creatures with mana abilities)
+                let has_summoning_sickness = if card.is_creature() {
+                    if let Some(entered_turn) = card.turn_entered_battlefield {
+                        entered_turn == current_turn && !card.has_keyword(crate::core::Keyword::Haste)
                     } else {
                         false
-                    };
-
-                    // Determine the mana production type
-                    if let Some(color_char) = get_simple_mana_color(card.name.as_str()) {
-                        // Simple source - produces exactly one color
-                        let color = match color_char {
-                            'W' => ManaColor::White,
-                            'U' => ManaColor::Blue,
-                            'B' => ManaColor::Black,
-                            'R' => ManaColor::Red,
-                            'G' => ManaColor::Green,
-                            'C' => {
-                                // Colorless is handled separately in ManaProduction
-                                self.simple_sources.push(card_id);
-                                if !card.tapped {
-                                    self.simple_capacity.colorless += 1;
-                                }
-                                self.mana_sources.push(ManaSource {
-                                    card_id,
-                                    production: ManaProduction::free(ManaProductionKind::Colorless),
-                                    is_tapped: card.tapped,
-                                    has_summoning_sickness,
-                                });
-                                continue;
-                            }
-                            _ => continue, // Unknown color
-                        };
-
-                        self.simple_sources.push(card_id);
-                        if !card.tapped {
-                            match color {
-                                ManaColor::White => self.simple_capacity.white += 1,
-                                ManaColor::Blue => self.simple_capacity.blue += 1,
-                                ManaColor::Black => self.simple_capacity.black += 1,
-                                ManaColor::Red => self.simple_capacity.red += 1,
-                                ManaColor::Green => self.simple_capacity.green += 1,
-                            }
-                        }
-
-                        self.mana_sources.push(ManaSource {
-                            card_id,
-                            production: ManaProduction::free(ManaProductionKind::Fixed(color)),
-                            is_tapped: card.tapped,
-                            has_summoning_sickness,
-                        });
-                    } else if card.is_creature() {
-                        // Check for creature mana abilities (Llanowar Elves, Birds of Paradise)
-                        if let Some(production) = get_creature_mana_production(card) {
-                            // Creatures with mana abilities are complex sources
-                            self.complex_sources.push(card_id);
-                            self.mana_sources.push(ManaSource {
-                                card_id,
-                                production,
-                                is_tapped: card.tapped,
-                                has_summoning_sickness,
-                            });
-                        }
-                    } else if let Some(production) = get_complex_mana_production(card) {
-                        // Complex source - dual land or any-color land
-                        self.complex_sources.push(card_id);
-                        self.mana_sources.push(ManaSource {
-                            card_id,
-                            production,
-                            is_tapped: card.tapped,
-                            has_summoning_sickness,
-                        });
                     }
-                    // If we can't parse it, just ignore it for now
-                }
+                } else {
+                    false
+                };
+
+                // Get production from card's cached mana_production
+                let production = card.cache.mana_production;
+                self.mana_sources.push(ManaSource {
+                    card_id,
+                    production,
+                    is_tapped: card.tapped,
+                    has_summoning_sickness,
+                });
             }
         }
 
@@ -484,112 +569,6 @@ impl ManaEngine {
     }
 }
 
-/// Determine if a land is a simple mana source (produces exactly one color)
-///
-/// Returns the color character if it's a simple source: W, U, B, R, G, C
-/// Returns None if it's a complex source or not a basic land.
-fn get_simple_mana_color(land_name: &str) -> Option<char> {
-    match land_name {
-        "Plains" => Some('W'),
-        "Island" => Some('U'),
-        "Swamp" => Some('B'),
-        "Mountain" => Some('R'),
-        "Forest" => Some('G'),
-        // Wastes produces colorless
-        "Wastes" => Some('C'),
-        // Any other land is considered complex for now
-        _ => None,
-    }
-}
-
-/// Check if a creature has a mana-producing activated ability
-///
-/// Detects patterns like "{T}: Add {G}" or "Add one mana of any color" in oracle text.
-/// This is used to identify creatures like Llanowar Elves and Birds of Paradise.
-///
-/// This function is trivial - it just checks the precomputed mana_production field.
-#[inline(always)]
-fn has_mana_ability(card: &crate::core::Card) -> bool {
-    use crate::core::CardType;
-
-    // Only creatures can have mana abilities (for Phase 4)
-    if !card.types.contains(&CardType::Creature) {
-        return false;
-    }
-
-    // Check if the card produces any mana (reads precomputed cache field)
-    card.cache.mana_production.produces_mana()
-}
-
-/// Determine mana production for a creature with mana abilities
-///
-/// Simply returns the precomputed mana_production from CardCache.
-/// This function is trivial - just reads a cached field.
-///
-/// Examples:
-/// - Llanowar Elves "{T}: Add {G}" → Fixed(Green)
-/// - Birds of Paradise "{T}: Add one mana of any color" → AnyColor
-/// - Bloom Tender (can produce multiple colors) → Choice(ManaColors with all available colors)
-#[inline(always)]
-fn get_creature_mana_production(card: &crate::core::Card) -> Option<ManaProduction> {
-    // Read precomputed mana production from cache (no allocations, no string operations)
-    if card.cache.mana_production.produces_mana() {
-        Some(card.cache.mana_production)
-    } else {
-        None
-    }
-}
-
-/// Determine mana production for complex lands
-///
-/// For lands, checks both the cached mana_production (from oracle text) and subtypes (for dual lands).
-/// Returns None if this isn't a mana-producing land or should be handled by simple check.
-///
-/// Examples:
-/// - Taiga (dual land with Plains and Mountain subtypes) → Choice([W, R])
-/// - City of Brass (cached from "any color" text) → AnyColor
-#[inline(always)]
-fn get_complex_mana_production(card: &crate::core::Card) -> Option<ManaProduction> {
-    use crate::core::CardType;
-
-    // Must be a land
-    if !card.types.contains(&CardType::Land) {
-        return None;
-    }
-
-    // First check cached mana production (from oracle text)
-    // This handles lands like "City of Brass" with "Add one mana of any color"
-    if card.cache.mana_production.produces_mana() {
-        return Some(card.cache.mana_production);
-    }
-
-    // Check for dual lands by looking at basic land subtypes
-    // (This can't be precomputed because subtypes come from card definitions, not oracle text)
-    let mut colors = ManaColors::new();
-
-    for subtype in &card.subtypes {
-        let color = match subtype.as_str() {
-            "Plains" => Some(ManaColor::White),
-            "Island" => Some(ManaColor::Blue),
-            "Swamp" => Some(ManaColor::Black),
-            "Mountain" => Some(ManaColor::Red),
-            "Forest" => Some(ManaColor::Green),
-            _ => None,
-        };
-        if let Some(c) = color {
-            colors.insert(c);
-        }
-    }
-
-    // If we have exactly 2 basic land subtypes, it's a dual land
-    if colors.len() == 2 {
-        return Some(ManaProduction::free(ManaProductionKind::Choice(colors)));
-    }
-
-    // Not a complex source we can handle yet
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -686,18 +665,6 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_mana_color_recognition() {
-        assert_eq!(get_simple_mana_color("Plains"), Some('W'));
-        assert_eq!(get_simple_mana_color("Island"), Some('U'));
-        assert_eq!(get_simple_mana_color("Swamp"), Some('B'));
-        assert_eq!(get_simple_mana_color("Mountain"), Some('R'));
-        assert_eq!(get_simple_mana_color("Forest"), Some('G'));
-        assert_eq!(get_simple_mana_color("Wastes"), Some('C'));
-        assert_eq!(get_simple_mana_color("City of Brass"), None);
-        assert_eq!(get_simple_mana_color("Taiga"), None);
-    }
-
-    #[test]
     fn test_mana_engine_update_simple_sources() {
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
         let p1_id = game.players[0].id;
@@ -719,7 +686,7 @@ mod tests {
 
         // Create engine and update
         let mut engine = ManaEngine::new();
-        engine.update(&game, p1_id);
+        engine.update_mut(&mut game, p1_id);
 
         // Should have detected 2 simple sources
         assert_eq!(engine.simple_sources().len(), 2);
@@ -747,7 +714,7 @@ mod tests {
         }
 
         let mut engine = ManaEngine::new();
-        engine.update(&game, p1_id);
+        engine.update_mut(&mut game, p1_id);
 
         // Should be able to pay for 2R (Lightning Bolt)
         let bolt_cost = ManaCost::from_string("2R");
@@ -760,39 +727,6 @@ mod tests {
         // Should not be able to pay for 1U (requires blue)
         let blue_cost = ManaCost::from_string("1U");
         assert!(!engine.can_pay(&blue_cost));
-    }
-
-    #[test]
-    fn test_creature_mana_ability_detection() {
-        use crate::core::EntityId;
-
-        let p1_id = EntityId::new(0);
-
-        // Test Llanowar Elves pattern: "{T}: Add {G}"
-        let mut llanowar = Card::new(EntityId::new(1), "Llanowar Elves".to_string(), p1_id);
-        llanowar.types.push(CardType::Creature);
-        llanowar.set_text("{T}: Add {G}.".to_string());
-        assert!(has_mana_ability(&llanowar));
-        assert_eq!(
-            get_creature_mana_production(&llanowar),
-            Some(ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)))
-        );
-
-        // Test Birds of Paradise pattern: "Add one mana of any color"
-        let mut birds = Card::new(EntityId::new(2), "Birds of Paradise".to_string(), p1_id);
-        birds.types.push(CardType::Creature);
-        birds.set_text("{T}: Add one mana of any color.".to_string());
-        assert!(has_mana_ability(&birds));
-        assert_eq!(
-            get_creature_mana_production(&birds),
-            Some(ManaProduction::free(ManaProductionKind::AnyColor))
-        );
-
-        // Test non-mana creature
-        let mut bear = Card::new(EntityId::new(3), "Grizzly Bears".to_string(), p1_id);
-        bear.types.push(CardType::Creature);
-        bear.set_text("".to_string());
-        assert!(!has_mana_ability(&bear));
     }
 
     #[test]
@@ -818,7 +752,7 @@ mod tests {
         game.battlefield.add(elf_id);
 
         let mut engine = ManaEngine::new();
-        engine.update(&game, p1_id);
+        engine.update_mut(&mut game, p1_id);
 
         // Should have 1 simple source (Forest) and 1 complex source (Llanowar Elves)
         assert_eq!(engine.simple_sources().len(), 1);
@@ -857,7 +791,7 @@ mod tests {
         game.battlefield.add(elf_id);
 
         let mut engine = ManaEngine::new();
-        engine.update(&game, p1_id);
+        engine.update_mut(&mut game, p1_id);
 
         // Should detect the creature as complex source
         assert_eq!(engine.complex_sources().len(), 1);

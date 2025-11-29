@@ -91,6 +91,10 @@ pub struct CardCache {
     /// 11 bytes total (2 bytes for ManaProductionKind + 9 bytes for Option<ManaCost>).
     pub mana_production: ManaProduction,
 
+    /// Precomputed: Is this card a mana source? (produces any mana)
+    /// Derived from mana_production.produces_mana() for O(1) checks in event handlers
+    pub is_mana_source: bool,
+
     /// Precomputed: Does this spell require a target when cast?
     /// (from spell_requires_stack_target function in game_loop.rs)
     pub requires_stack_target: bool,
@@ -109,6 +113,7 @@ impl CardCache {
 
         // Compute mana production from card text
         let mana_production = Self::compute_mana_production(&text_lower);
+        let is_mana_source = mana_production.produces_mana();
 
         CardCache {
             // Store lowercase versions
@@ -138,6 +143,7 @@ impl CardCache {
 
             // Precomputed function results
             mana_production,
+            is_mana_source,
             requires_stack_target: false, // TODO: implement during card loading
             land_evaluation_value: 0,     // TODO: implement during card loading
         }
