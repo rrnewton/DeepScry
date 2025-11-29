@@ -623,19 +623,8 @@ impl GameState {
 
                 // Untap all sources that were successfully tapped so far
                 for &tapped_id in &tapped_sources {
-                    if let Ok(card) = self.cards.get_mut(tapped_id) {
-                        // Capture log size before untap
-                        let prior_log_size = self.logger.log_count();
-                        card.untap();
-                        // Log the untap for undo functionality
-                        self.undo_log.log(
-                            crate::undo::GameAction::TapCard {
-                                card_id: tapped_id,
-                                tapped: false,
-                            },
-                            prior_log_size,
-                        );
-                    }
+                    // Use helper that handles untap + undo log + mana version
+                    let _ = self.untap_permanent(tapped_id);
                 }
 
                 // Clear the mana pool (remove any mana that was added)
@@ -660,19 +649,8 @@ impl GameState {
 
             // Untap all sources that were tapped
             for &source_id in &tapped_sources {
-                if let Ok(card) = self.cards.get_mut(source_id) {
-                    // Capture log size before untap
-                    let prior_log_size = self.logger.log_count();
-                    card.untap();
-                    // Log the untap for undo functionality
-                    self.undo_log.log(
-                        crate::undo::GameAction::TapCard {
-                            card_id: source_id,
-                            tapped: false,
-                        },
-                        prior_log_size,
-                    );
-                }
+                // Use helper that handles untap + undo log + mana version
+                let _ = self.untap_permanent(source_id);
             }
 
             // Clear the mana pool (remove any mana that was added)
@@ -747,36 +725,12 @@ impl GameState {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
-                // Capture log size before tap
-                let prior_log_size = self.logger.log_count();
-
-                let card = self.cards.get_mut(*target)?;
-                card.tap();
-
-                // Log the tap
-                self.undo_log.log(
-                    crate::undo::GameAction::TapCard {
-                        card_id: *target,
-                        tapped: true,
-                    },
-                    prior_log_size,
-                );
+                // Use helper that handles tap + undo log + mana version
+                self.tap_permanent(*target)?;
             }
             Effect::UntapPermanent { target } => {
-                // Capture log size before untap
-                let prior_log_size = self.logger.log_count();
-
-                let card = self.cards.get_mut(*target)?;
-                card.untap();
-
-                // Log the untap
-                self.undo_log.log(
-                    crate::undo::GameAction::TapCard {
-                        card_id: *target,
-                        tapped: false,
-                    },
-                    prior_log_size,
-                );
+                // Use helper that handles untap + undo log + mana version
+                self.untap_permanent(*target)?;
             }
             Effect::PumpCreature {
                 target,
@@ -961,17 +915,8 @@ impl GameState {
 
                     // If destination is battlefield and enters_tapped is true, tap the card
                     if *destination == Zone::Battlefield && *enters_tapped {
-                        // Capture log size before tap
-                        let prior_log_size = self.logger.log_count();
-
-                        let card = self.cards.get_mut(card_id)?;
-                        card.tap();
-
-                        // Log the tap
-                        self.undo_log.log(
-                            crate::undo::GameAction::TapCard { card_id, tapped: true },
-                            prior_log_size,
-                        );
+                        // Use helper that handles tap + undo log + mana version
+                        let _ = self.tap_permanent(card_id);
                     }
                 }
 
@@ -1338,6 +1283,9 @@ impl GameState {
             crate::undo::GameAction::TapCard { card_id, tapped: true },
             prior_log_size,
         );
+
+        // Increment mana state version to invalidate ManaEngine cache
+        self.increment_mana_version();
 
         // Handle non-land mana sources with explicit mana abilities
         if let Some(mana_to_add) = explicit_mana {

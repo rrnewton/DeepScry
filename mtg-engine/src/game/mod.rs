@@ -14,6 +14,7 @@ pub mod interactive_controller;
 pub mod logger;
 pub mod mana_colors;
 pub mod mana_engine;
+pub mod mana_index;
 pub mod mana_payment;
 pub mod phase;
 pub mod random_controller;
@@ -45,6 +46,7 @@ pub use interactive_controller::InteractiveController;
 pub use logger::{GameLogger, LogEntry, OutputFormat, OutputMode};
 pub use mana_colors::ManaColors;
 pub use mana_engine::{ManaCapacity, ManaEngine};
+pub use mana_index::{ManaColorBucket, ManaProducerBucket, ManaProducerIndex};
 pub use mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource, PaymentResult, SimpleManaResolver};
 
 // Re-export mana production types from core for convenience

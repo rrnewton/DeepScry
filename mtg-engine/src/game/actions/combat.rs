@@ -89,17 +89,8 @@ impl GameState {
         // Tap the creature (unless it has vigilance)
         let has_vigilance = self.cards.get(card_id)?.has_keyword(Keyword::Vigilance);
         if !has_vigilance {
-            // Capture log size before tap
-            let prior_log_size = self.logger.log_count();
-
-            let card = self.cards.get_mut(card_id)?;
-            card.tap();
-
-            // Log the action
-            self.undo_log.log(
-                crate::undo::GameAction::TapCard { card_id, tapped: true },
-                prior_log_size,
-            );
+            // Use helper that handles tap + undo log + mana version
+            self.tap_permanent(card_id)?;
         }
 
         Ok(())

@@ -206,6 +206,12 @@ impl ManaCapacity {
 /// engine.update(&game, player_id); // Scan battlefield and cache mana sources
 /// let can_cast = engine.can_pay(&mana_cost);
 /// ```
+///
+/// ## Memoization
+///
+/// The engine caches its results and uses `mana_state_version` from GameState
+/// to detect when a rebuild is necessary. If the version hasn't changed since
+/// the last update() for the same player, the rebuild is skipped.
 pub struct ManaEngine {
     /// Simple mana sources (lands producing a single color)
     simple_sources: Vec<CardId>,
@@ -221,6 +227,10 @@ pub struct ManaEngine {
     greedy_resolver: GreedyManaResolver,
     /// Flag indicating which resolver to use (true = use greedy, false = use simple)
     use_greedy_resolver: bool,
+    /// Cached player ID for memoization
+    cached_player: Option<PlayerId>,
+    /// Cached mana state version for memoization
+    cached_version: u32,
 }
 
 impl Default for ManaEngine {
@@ -233,6 +243,8 @@ impl Default for ManaEngine {
             simple_resolver: SimpleManaResolver::new(),
             greedy_resolver: GreedyManaResolver::new(),
             use_greedy_resolver: false,
+            cached_player: None,
+            cached_version: u32::MAX, // Start with invalid version to force first update
         }
     }
 }
@@ -245,13 +257,17 @@ impl ManaEngine {
 
     /// Update the engine by scanning the battlefield for mana sources
     ///
-    /// This should be called whenever:
-    /// - A new permanent enters the battlefield
-    /// - A permanent leaves the battlefield
-    /// - A permanent becomes tapped/untapped
+    /// This uses memoization: if the game's mana_state_version hasn't changed
+    /// since the last update for this player, the expensive battlefield scan
+    /// is skipped entirely.
     ///
     /// The player_id parameter specifies which player's mana sources to scan.
     pub fn update(&mut self, game: &GameState, player_id: PlayerId) {
+        // Memoization: skip rebuild if nothing has changed
+        if self.cached_player == Some(player_id) && self.cached_version == game.mana_state_version {
+            return;
+        }
+
         // Clear previous state (but retain capacity for reuse)
         self.simple_sources.clear();
         self.complex_sources.clear();
@@ -358,6 +374,19 @@ impl ManaEngine {
 
         // Switch resolver flag based on whether we have complex sources
         self.use_greedy_resolver = !self.complex_sources.is_empty();
+
+        // Update memoization cache
+        self.cached_player = Some(player_id);
+        self.cached_version = game.mana_state_version;
+    }
+
+    /// Invalidate the memoization cache
+    ///
+    /// Call this when the mana state may have changed but the version wasn't
+    /// incremented (e.g., tap events that bypass the normal tracking).
+    #[inline]
+    pub fn invalidate_cache(&mut self) {
+        self.cached_version = u32::MAX;
     }
 
     /// Check if the player can pay for a mana cost

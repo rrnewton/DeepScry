@@ -143,6 +143,8 @@ impl GameAction {
                 // Reverse tap state
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.tapped = !tapped;
+                    // Increment mana version since tap state changed
+                    game.increment_mana_version();
                 } else {
                     return Err(format!("Card {} not found for TapCard undo", card_id.as_u32()));
                 }

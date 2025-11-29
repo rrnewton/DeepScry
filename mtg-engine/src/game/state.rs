@@ -74,6 +74,17 @@ pub struct GameState {
     /// Not serialized - recreated fresh when loading from snapshot.
     #[serde(skip)]
     pub bump: Bump,
+
+    /// Mana state version counter for ManaEngine memoization
+    ///
+    /// Incremented when cards enter/leave battlefield or tap/untap.
+    /// ManaEngine can compare against its cached version to skip
+    /// redundant battlefield scans when nothing has changed.
+    ///
+    /// Separate versions per player would be more precise but this
+    /// global version is simpler and still effective - if nothing
+    /// changed for either player, the version stays the same.
+    pub mana_state_version: u32,
 }
 
 impl GameState {
@@ -134,6 +145,7 @@ impl GameState {
             logger: GameLogger::new(),
             token_definitions: std::collections::HashMap::new(),
             bump: Bump::new(),
+            mana_state_version: 0,
         }
     }
 
@@ -144,6 +156,64 @@ impl GameState {
     /// controllers and game logic.
     pub fn seed_rng(&mut self, seed: u64) {
         *self.rng.borrow_mut() = ChaCha12Rng::seed_from_u64(seed);
+    }
+
+    /// Increment the mana state version to invalidate ManaEngine cache
+    ///
+    /// Call this whenever cards enter/leave the battlefield or tap/untap.
+    /// This is called automatically by move_card() for battlefield changes
+    /// and by tap_permanent()/untap_permanent() for tap state changes.
+    #[inline]
+    pub fn increment_mana_version(&mut self) {
+        self.mana_state_version = self.mana_state_version.wrapping_add(1);
+    }
+
+    /// Tap a permanent and log the action for undo
+    ///
+    /// This is the preferred way to tap permanents - it handles:
+    /// - Setting the tapped state
+    /// - Logging the undo action
+    /// - Incrementing the mana state version for cache invalidation
+    ///
+    /// Returns Ok(()) if successful, Err if the card doesn't exist.
+    pub fn tap_permanent(&mut self, card_id: CardId) -> Result<()> {
+        let card = self.cards.get_mut(card_id)?;
+        if card.tapped {
+            return Ok(()); // Already tapped, no-op
+        }
+        card.tap();
+
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::TapCard { card_id, tapped: true },
+            prior_log_size,
+        );
+        self.increment_mana_version();
+        Ok(())
+    }
+
+    /// Untap a permanent and log the action for undo
+    ///
+    /// This is the preferred way to untap permanents - it handles:
+    /// - Setting the untapped state
+    /// - Logging the undo action
+    /// - Incrementing the mana state version for cache invalidation
+    ///
+    /// Returns Ok(()) if successful, Err if the card doesn't exist.
+    pub fn untap_permanent(&mut self, card_id: CardId) -> Result<()> {
+        let card = self.cards.get_mut(card_id)?;
+        if !card.tapped {
+            return Ok(()); // Already untapped, no-op
+        }
+        card.untap();
+
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::TapCard { card_id, tapped: false },
+            prior_log_size,
+        );
+        self.increment_mana_version();
+        Ok(())
     }
 
     /// Shuffle a player's library using the game's RNG
@@ -337,6 +407,12 @@ impl GameState {
             },
             prior_log_size,
         );
+
+        // Increment mana state version if battlefield changed
+        // This invalidates ManaEngine cache so next query rebuilds
+        if from == Zone::Battlefield || to == Zone::Battlefield {
+            self.mana_state_version = self.mana_state_version.wrapping_add(1);
+        }
 
         Ok(())
     }
@@ -1257,6 +1333,7 @@ impl Clone for GameState {
             token_definitions: self.token_definitions.clone(),
             // Each clone gets a fresh empty bump allocator
             bump: Bump::new(),
+            mana_state_version: self.mana_state_version,
         }
     }
 }

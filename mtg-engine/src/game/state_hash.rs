@@ -41,6 +41,7 @@ const EXCLUDED_FIELDS_UNDO_TEST: &[&str] = &[
     "output_format",       // Display setting
     "numeric_choices",     // Display setting
     "step_header_printed", // Display state
+    "mana_state_version",  // Cache invalidation counter for ManaEngine memoization
 ];
 
 /// Compute a deterministic hash of game state
