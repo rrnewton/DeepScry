@@ -1430,8 +1430,10 @@ impl GameState {
             has_forest_subtype,
             has_plains_subtype,
             is_any_color_land,
+            produces_colorless,
         ) = {
             let card = self.cards.get(card_id)?;
+            let text_lower = card.text.to_lowercase();
             (
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("swamp")),
                 card.subtypes
@@ -1440,7 +1442,9 @@ impl GameState {
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("island")),
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("forest")),
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("plains")),
-                card.text.to_lowercase().contains("any color"),
+                text_lower.contains("any color"),
+                // Detect colorless mana production (e.g., Mishra's Factory "{T}: Add {C}")
+                text_lower.contains("add {c}") || card_name.eq_ignore_ascii_case("wastes"),
             )
         };
 
@@ -1492,6 +1496,9 @@ impl GameState {
         } else if available_colors.len() == 1 {
             // Single-color land
             available_colors.first().copied()
+        } else if produces_colorless {
+            // Colorless mana land (e.g., Mishra's Factory, Wastes)
+            Some(crate::core::Color::Colorless)
         } else {
             // Unknown land type
             None

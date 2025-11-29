@@ -253,3 +253,48 @@ fn test_instantiate_with_enchant() -> Result<()> {
 
     Ok(())
 }
+
+/// Test loading and instantiating Mishra's Factory (colorless mana land)
+/// This verifies that non-basic lands with "{T}: Add {C}" are correctly
+/// detected as producing colorless mana.
+#[test]
+fn test_load_mishras_factory_colorless_mana() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, ManaProductionKind, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/m/mishras_factory.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Mishra's Factory");
+    assert!(def.types.contains(&CardType::Land));
+
+    // Verify oracle text contains colorless mana production
+    assert!(
+        def.oracle.contains("{T}: Add {C}") || def.oracle.to_lowercase().contains("{t}: add {c}"),
+        "Oracle text should contain colorless mana production. Got: {}",
+        def.oracle
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify the cache detects colorless mana production
+    assert!(
+        card.cache.mana_production.produces_mana(),
+        "Mishra's Factory should be detected as producing mana. Card text: {}",
+        card.text
+    );
+    assert_eq!(
+        card.cache.mana_production.kind,
+        ManaProductionKind::Colorless,
+        "Mishra's Factory should produce Colorless mana, not {:?}. Card text: {}",
+        card.cache.mana_production.kind,
+        card.text
+    );
+
+    Ok(())
+}
