@@ -61,8 +61,11 @@ Track completion of heuristic AI port from Java Forge to Rust.
      - Added `is_stack_empty()` convenience method to GameStateView
      - Fixed HeuristicController.is_stack_empty() to use actual stack state
      - Previously always returned `true` (placeholder)
-   - Better ping targeting (choose "best" killable creature, not just any)
-   - Enhanced pump evaluation with combat simulation
+   - ✅ Better ping targeting (2025-11-29_#968) - choose "best" KILLABLE creature
+     - Filter targets to creatures with toughness <= damage
+     - Select best among killable, fallback to any opponent creature
+     - Reference: DamageDealAi.java getBestCreatureAI filtering
+   - Enhanced pump evaluation with combat simulation (pending)
 
 3. **Creature casting mana efficiency**
    - Currently casts highest-value creature, but should consider mana efficiency
