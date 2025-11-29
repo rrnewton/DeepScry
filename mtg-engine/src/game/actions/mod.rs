@@ -490,6 +490,27 @@ impl GameState {
             .collect()
     }
 
+    /// Get all Auras attached to a permanent
+    ///
+    /// Used for:
+    /// - Calculating creature's effective power/toughness with Aura buffs
+    /// - Determining which Auras to move to graveyard when enchanted permanent leaves
+    /// - AI evaluation of permanent strength
+    pub fn get_attached_auras(&self, permanent_id: CardId) -> Vec<CardId> {
+        self.battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+                if card.is_aura() && card.attached_to == Some(permanent_id) {
+                    Some(card_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Get a creature's effective power using CR 613 layer system.
     ///
     /// ## Comprehensive Rules 613.4 (Layer 7: Power and Toughness)
