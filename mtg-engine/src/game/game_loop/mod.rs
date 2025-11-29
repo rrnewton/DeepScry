@@ -143,7 +143,7 @@ impl<'a> GameLoop<'a> {
             spell_targets: Vec::new(),
             choice_counter: 0,
             mana_engine: crate::game::mana_engine::ManaEngine::new(),
-            abilities_buffer: Vec::new(), // Starts empty, capacity grows and is retained via mem::replace
+            abilities_buffer: Vec::with_capacity(16), // Pre-allocate for typical game (lands + spells + abilities)
             stop_when_fixed_exhausted: false,
             snapshot_path_for_fixed: None,
             snapshot_format: crate::game::snapshot::SnapshotFormat::default(),

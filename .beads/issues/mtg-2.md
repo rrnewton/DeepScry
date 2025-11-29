@@ -182,6 +182,11 @@ Top hotspots:
   - Buffer is cleared and reused (retains capacity) instead of moved out via mem::take
   - Eliminated push_castable_spells hotspot (~5.3% of allocations)
   - Bytes/action: 48.01 → 40.29 (-16.1%)
+- ✅ **GameLoop/ManaEngine pre-allocation (34caa0c, 2025-11-29_#965)** - **11.1% speedup**
+  - Pre-allocate abilities_buffer (capacity 16) in GameLoop::new()
+  - Pre-allocate ManaEngine vectors (capacity 8) in ManaEngine::default()
+  - Reuse self.mana_engine in priority.rs instead of creating new per ability
+  - Reduced allocation blocks: 24,425 → 24,027 (-398 blocks, -1.6%)
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -223,4 +228,4 @@ See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
 
 ---
-**Updated 2025-11-28_#959(576e6a95)** - abilities_buffer reuse: 8% total allocation reduction, 16% bytes/action reduction
+**Updated 2025-11-29_#965(34caa0c)** - GameLoop/ManaEngine pre-allocation: 11.1% speedup, 398 fewer allocation blocks

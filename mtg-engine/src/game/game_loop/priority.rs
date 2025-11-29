@@ -509,15 +509,13 @@ impl<'a> GameLoop<'a> {
                                     // Auto-tap lands for mana costs (if the ability has a mana cost)
                                     // This is the same logic as spell casting (step 6 of cast_spell_8_step)
                                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
-                                        // Use ManaEngine to compute proper color-aware tap order
-                                        use crate::game::mana_engine::ManaEngine;
+                                        // Reuse self.mana_engine to avoid allocation on each activated ability
                                         use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
 
-                                        let mut mana_engine = ManaEngine::new();
-                                        mana_engine.update(self.game, current_priority);
+                                        self.mana_engine.update(self.game, current_priority);
 
                                         // Get ManaSource list from engine (already built with proper production info)
-                                        let mana_sources = mana_engine.all_sources();
+                                        let mana_sources = self.mana_engine.all_sources();
 
                                         // Use GreedyManaResolver to compute proper tap order
                                         let resolver = GreedyManaResolver::new();

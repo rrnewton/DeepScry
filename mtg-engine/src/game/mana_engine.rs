@@ -233,13 +233,19 @@ pub struct ManaEngine {
     cached_version: u32,
 }
 
+/// Default capacity for mana source vectors.
+/// Most MTG games have 4-8 lands on battlefield, so 8 is a good starting point.
+const DEFAULT_MANA_SOURCE_CAPACITY: usize = 8;
+
 impl Default for ManaEngine {
     fn default() -> Self {
         Self {
-            simple_sources: Vec::new(),
-            complex_sources: Vec::new(),
+            // Pre-allocate vectors to avoid allocation on first update().
+            // Typical MTG games have 4-8 mana sources on battlefield.
+            simple_sources: Vec::with_capacity(DEFAULT_MANA_SOURCE_CAPACITY),
+            complex_sources: Vec::with_capacity(DEFAULT_MANA_SOURCE_CAPACITY),
             simple_capacity: ManaCapacity::new(),
-            mana_sources: Vec::new(),
+            mana_sources: Vec::with_capacity(DEFAULT_MANA_SOURCE_CAPACITY),
             simple_resolver: SimpleManaResolver::new(),
             greedy_resolver: GreedyManaResolver::new(),
             use_greedy_resolver: false,
