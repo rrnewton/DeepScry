@@ -305,6 +305,97 @@ impl HeuristicController {
             .copied()
     }
 
+    /// Evaluate a creature for casting with mana efficiency consideration
+    ///
+    /// This method balances raw creature value against mana efficiency, especially
+    /// in the early game where curving out and leaving mana open for interaction matters.
+    ///
+    /// Scoring formula:
+    /// - Base: creature_value (from evaluate_creature)
+    /// - Bonus: mana_efficiency_bonus (value / CMC ratio, scaled)
+    /// - Bonus: curve_bonus (if CMC matches available mana well)
+    /// - Penalty: if casting leaves awkward leftover mana
+    ///
+    /// Reference: ComputerUtil.java creature casting logic
+    fn evaluate_creature_for_casting(
+        &self,
+        view: &GameStateView,
+        card_id: CardId,
+        available_mana: u32,
+        turn_number: u32,
+    ) -> i32 {
+        let Some(card) = view.get_card(card_id) else {
+            return i32::MIN;
+        };
+
+        let base_value = self.evaluate_creature(view, card_id);
+        let cmc = card.mana_cost.cmc() as u32;
+
+        // Avoid division by zero - free creatures are always castable
+        if cmc == 0 {
+            return base_value + 50; // Bonus for free creatures
+        }
+
+        let mut score = base_value;
+
+        // Mana efficiency bonus: value per mana spent
+        // Scale by 10 to make it meaningful but not dominant
+        // A 2-mana 2/2 (value ~130) has efficiency 65, a 5-mana 4/4 (value ~200) has efficiency 40
+        let efficiency = (base_value * 10) / (cmc as i32);
+        score += efficiency / 5; // Add ~13 for the 2/2, ~8 for the 4/4
+
+        // Early game bonus for curving out (turns 1-4)
+        // Reward creatures whose CMC matches available mana closely
+        if turn_number <= 4 {
+            let mana_fit = if cmc == available_mana {
+                30 // Perfect curve
+            } else if cmc == available_mana.saturating_sub(1) {
+                20 // One under (leaves 1 mana open)
+            } else if cmc == available_mana.saturating_sub(2) {
+                10 // Two under (might want to double-spell)
+            } else {
+                0
+            };
+            score += mana_fit;
+        }
+
+        // Leftover mana consideration
+        // Penalize awkward amounts of leftover mana that can't be used
+        let leftover = available_mana.saturating_sub(cmc);
+        if leftover == 1 {
+            // 1 mana leftover is good - can activate abilities or hold up minor interaction
+            score += 5;
+        } else if (2..=3).contains(&leftover) {
+            // 2-3 mana leftover is great - can hold up removal or counterspells
+            score += 10;
+        }
+        // 0 leftover or large leftover: no bonus/penalty
+
+        score
+    }
+
+    /// Count available mana from untapped lands
+    ///
+    /// This is a simplified count that assumes each untapped land produces 1 mana.
+    /// It doesn't account for multi-mana lands or mana dorks, but is sufficient
+    /// for early game mana efficiency calculations.
+    ///
+    /// For accurate mana availability, use the ManaEngine - but for heuristic
+    /// purposes this simple count is fast and good enough.
+    fn count_available_mana(&self, view: &GameStateView) -> u32 {
+        view.battlefield()
+            .iter()
+            .filter(|&&card_id| {
+                if let Some(card) = view.get_card(card_id) {
+                    // Count untapped lands we control
+                    card.owner == self.player_id && card.is_land() && !view.is_tapped(card_id)
+                } else {
+                    false
+                }
+            })
+            .count() as u32
+    }
+
     /// Evaluate whether a land should be played
     ///
     /// Reference: AiController.java:1428-1446 (land play decision logic)
@@ -459,17 +550,27 @@ impl HeuristicController {
             }
         }
 
-        // 2b: Cast creatures (best evaluation first)
-        // Evaluate all castable creatures and choose the best one
-        // This prioritizes high-value threats over weak creatures
+        // 2b: Cast creatures (best evaluation first, with mana efficiency)
+        // Evaluate all castable creatures considering both raw value and mana efficiency
+        // This prioritizes curving out in early game while still preferring high-value threats
         let mut best_creature_ability: Option<SpellAbility> = None;
         let mut best_creature_value = i32::MIN;
+
+        // Get game state for mana efficiency calculation
+        let turn_number = view.turn_number();
+        let available_mana = self.count_available_mana(view);
 
         for ability in available {
             if let SpellAbility::CastSpell { card_id } = ability {
                 if let Some(card) = view.get_card(*card_id) {
                     if card.is_creature() {
-                        let value = self.evaluate_creature(view, *card_id);
+                        // Use mana-efficient evaluation in early game (turns 1-5)
+                        // In late game, just use raw creature value
+                        let value = if turn_number <= 5 {
+                            self.evaluate_creature_for_casting(view, *card_id, available_mana, turn_number)
+                        } else {
+                            self.evaluate_creature(view, *card_id)
+                        };
                         if value > best_creature_value {
                             best_creature_value = value;
                             best_creature_ability = Some(ability.clone());
