@@ -2652,13 +2652,24 @@ impl PlayerController for HeuristicController {
         let spell_card = view.get_card(spell);
 
         // Check if this is a damage-dealing activated ability (like Prodigal Sorcerer)
-        // For such abilities, we want to target opponent's creatures
-        let is_damage_ability = spell_card.is_some_and(|c| {
-            c.activated_abilities.iter().any(|a| {
-                a.effects
-                    .iter()
-                    .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }))
-            })
+        // For such abilities, we want to target opponent's creatures that can be killed
+        // Reference: DamageDealAi.java - getBestCreatureAI filters for killable creatures
+        let damage_amount = spell_card.and_then(|c| {
+            // First check activated abilities (Prodigal Sorcerer, Tim, etc.)
+            for ability in &c.activated_abilities {
+                for effect in &ability.effects {
+                    if let crate::core::Effect::DealDamage { amount, .. } = effect {
+                        return Some(*amount);
+                    }
+                }
+            }
+            // Then check spell effects (Lightning Bolt, Shock, etc.)
+            for effect in &c.effects {
+                if let crate::core::Effect::DealDamage { amount, .. } = effect {
+                    return Some(*amount);
+                }
+            }
+            None
         });
 
         // Check if the spell has pump effects (target self)
@@ -2674,13 +2685,41 @@ impl PlayerController for HeuristicController {
         });
 
         // Choose targeting strategy based on spell/ability type
-        let filtered_target_ids: Vec<CardId> = if is_damage_ability {
-            // Damage abilities: Target opponent's best killable creature
-            valid_targets
+        let filtered_target_ids: Vec<CardId> = if let Some(damage) = damage_amount {
+            // Damage abilities: Target opponent's best KILLABLE creature
+            // Reference: DamageDealAi.java - prioritize creatures we can actually kill
+            let killable_targets: Vec<CardId> = valid_targets
                 .iter()
-                .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                .filter(|&&id| {
+                    if let Some(card) = view.get_card(id) {
+                        if card.owner == self.player_id {
+                            return false; // Don't target our own creatures
+                        }
+                        if !card.is_creature() {
+                            return false;
+                        }
+                        // Check if this creature would die from the damage
+                        if let Some(toughness) = card.base_toughness() {
+                            let effective_toughness = i32::from(toughness) + card.toughness_bonus;
+                            return effective_toughness <= damage;
+                        }
+                    }
+                    false
+                })
                 .copied()
-                .collect()
+                .collect();
+
+            // If we have killable creatures, prioritize those
+            // Otherwise fall back to any opponent creature (damage still useful)
+            if !killable_targets.is_empty() {
+                killable_targets
+            } else {
+                valid_targets
+                    .iter()
+                    .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                    .copied()
+                    .collect()
+            }
         } else if has_pump_effect {
             // Pump effects: Target our best creature
             valid_targets
