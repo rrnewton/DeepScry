@@ -67,3 +67,4 @@ agentplay/*.game/
 full_deck_list.txt
 *.log
 experiment_results/callgrind.out
+*.data
