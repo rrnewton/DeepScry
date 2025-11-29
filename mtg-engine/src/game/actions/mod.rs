@@ -879,50 +879,17 @@ impl GameState {
                     .ok_or_else(|| MtgError::InvalidAction(format!("Player {:?} has no library", player)))?;
 
                 // Search for a card matching the filter
-                // For now, implement a simple filter matching algorithm
-                // Filter format examples: "Land.Basic", "Creature", "Artifact.Equipment"
+                // Filter format examples:
+                // - "Land.Basic" = Land type + Basic subtype
+                // - "Creature" = Any Creature
+                // - "Plains,Island" = Land with Plains OR Island subtype (fetch lands)
+                // - "Artifact.Equipment" = Artifact type + Equipment subtype
                 let mut found_card = None;
                 for &card_id in &library_cards {
                     if let Ok(card) = self.cards.get(card_id) {
-                        // Parse the filter (e.g., "Land.Basic" means Land type + Basic subtype)
-                        let parts: Vec<&str> = card_type_filter.split('.').collect();
-                        let main_type = parts.first().unwrap_or(&"Card");
-                        let subtype = parts.get(1);
+                        let card_matches = Self::card_matches_search_filter(card, card_type_filter);
 
-                        // Check if card matches the main type
-                        let type_matches = match *main_type {
-                            "Card" => true, // Any card
-                            "Land" => card.is_land(),
-                            "Creature" => card.is_creature(),
-                            "Artifact" => card.is_artifact(),
-                            "Enchantment" => card.is_enchantment(),
-                            "Instant" => card.is_instant(),
-                            "Sorcery" => card.types.contains(&CardType::Sorcery),
-                            "Planeswalker" => card.types.contains(&CardType::Planeswalker),
-                            _ => false,
-                        };
-
-                        // Check if card matches the subtype (if specified)
-                        let subtype_matches = if let Some(sub) = subtype {
-                            if *sub == "Basic" {
-                                // Check for basic land subtypes
-                                card.subtypes.iter().any(|st| {
-                                    let st_str = st.as_str();
-                                    st_str == "Plains"
-                                        || st_str == "Island"
-                                        || st_str == "Swamp"
-                                        || st_str == "Mountain"
-                                        || st_str == "Forest"
-                                })
-                            } else {
-                                // Check for specific subtype
-                                card.subtypes.iter().any(|st| st.as_str() == *sub)
-                            }
-                        } else {
-                            true // No subtype specified, so any subtype matches
-                        };
-
-                        if type_matches && subtype_matches {
+                        if card_matches {
                             found_card = Some(card_id);
                             break;
                         }
@@ -1007,6 +974,101 @@ impl GameState {
             }
         }
         Ok(())
+    }
+
+    /// Check if a card matches a library search filter
+    ///
+    /// Filter formats supported:
+    /// - "Land.Basic" = Land type + Basic subtype (matches any basic land)
+    /// - "Creature" = Any Creature type
+    /// - "Plains,Island" = Land with Plains OR Island subtype (fetch lands)
+    /// - "Artifact.Equipment" = Artifact type + Equipment subtype
+    /// - "Forest" = Land with Forest subtype (single subtype)
+    fn card_matches_search_filter(card: &crate::core::Card, filter: &str) -> bool {
+        // Check if filter is comma-separated subtypes (e.g., "Plains,Island")
+        // This is the format used by fetch lands
+        if filter.contains(',') {
+            // Parse as comma-separated subtypes
+            // These are land subtypes, so check if card is a land and has any of the subtypes
+            if !card.is_land() {
+                return false;
+            }
+
+            let subtypes: Vec<&str> = filter.split(',').collect();
+            return subtypes
+                .iter()
+                .any(|subtype| card.subtypes.iter().any(|st| st.as_str() == *subtype));
+        }
+
+        // Check if filter has type.subtype format (e.g., "Land.Basic")
+        if filter.contains('.') {
+            let parts: Vec<&str> = filter.split('.').collect();
+            let main_type = parts.first().unwrap_or(&"Card");
+            let subtype = parts.get(1);
+
+            // Check if card matches the main type
+            let type_matches = Self::card_matches_type(card, main_type);
+
+            // Check if card matches the subtype (if specified)
+            let subtype_matches = if let Some(sub) = subtype {
+                Self::card_matches_subtype(card, sub)
+            } else {
+                true
+            };
+
+            return type_matches && subtype_matches;
+        }
+
+        // Single word filter - could be a type OR a subtype
+        // First check if it's a known card type
+        if matches!(
+            filter,
+            "Card" | "Land" | "Creature" | "Artifact" | "Enchantment" | "Instant" | "Sorcery" | "Planeswalker"
+        ) {
+            return Self::card_matches_type(card, filter);
+        }
+
+        // Otherwise treat as a subtype (e.g., "Forest", "Plains", "Island")
+        // For land subtypes, also verify card is a land
+        if matches!(filter, "Plains" | "Island" | "Swamp" | "Mountain" | "Forest") {
+            return card.is_land() && Self::card_matches_subtype(card, filter);
+        }
+
+        // Generic subtype check
+        Self::card_matches_subtype(card, filter)
+    }
+
+    /// Check if a card matches a card type
+    fn card_matches_type(card: &crate::core::Card, type_name: &str) -> bool {
+        match type_name {
+            "Card" => true, // Any card
+            "Land" => card.is_land(),
+            "Creature" => card.is_creature(),
+            "Artifact" => card.is_artifact(),
+            "Enchantment" => card.is_enchantment(),
+            "Instant" => card.is_instant(),
+            "Sorcery" => card.types.contains(&CardType::Sorcery),
+            "Planeswalker" => card.types.contains(&CardType::Planeswalker),
+            _ => false,
+        }
+    }
+
+    /// Check if a card matches a subtype
+    fn card_matches_subtype(card: &crate::core::Card, subtype: &str) -> bool {
+        if subtype == "Basic" {
+            // "Basic" means any basic land subtype
+            card.subtypes.iter().any(|st| {
+                let st_str = st.as_str();
+                st_str == "Plains"
+                    || st_str == "Island"
+                    || st_str == "Swamp"
+                    || st_str == "Mountain"
+                    || st_str == "Forest"
+            })
+        } else {
+            // Check for specific subtype
+            card.subtypes.iter().any(|st| st.as_str() == subtype)
+        }
     }
 
     /// Check for triggered abilities and execute them
