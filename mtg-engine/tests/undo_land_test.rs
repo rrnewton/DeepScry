@@ -2,6 +2,10 @@
 //!
 //! This test demonstrates the bug where playing a land sets turn_entered_battlefield
 //! but this mutation is not logged to the undo system.
+//!
+//! This test requires the `undo` feature to be enabled.
+
+#![cfg(feature = "undo")]
 
 use mtg_forge_rs::{
     core::{Card, CardType},

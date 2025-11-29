@@ -711,6 +711,11 @@ impl GameState {
     /// - choice_log_size: the log size to truncate to (from the ChoicePoint)
     ///
     /// Returns Ok(None) if no ChoicePoint for the specified player is found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `undo` feature is disabled.
+    #[cfg(feature = "undo")]
     pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
         // Debug: Log initial state
         eprintln!(
@@ -1004,10 +1009,21 @@ impl GameState {
         }
     }
 
+    /// Undo back to the previous choice point (no-op when undo feature disabled)
+    #[cfg(not(feature = "undo"))]
+    pub fn undo_to_previous_choice_point(&mut self, _requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
+        Err(crate::MtgError::FeatureNotEnabled("undo".to_string()))
+    }
+
     /// Undo the most recent action
     ///
     /// Pops the last action from the undo log and reverts it.
     /// Returns Ok(Some(prior_log_size)) to truncate logs to, Ok(None) if log is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `undo` feature is disabled.
+    #[cfg(feature = "undo")]
     pub fn undo(&mut self) -> Result<Option<usize>> {
         if let Some((action, prior_log_size)) = self.undo_log.pop() {
             match action {
@@ -1233,6 +1249,12 @@ impl GameState {
             Ok(None)
         }
     }
+
+    /// Undo the most recent action (no-op when undo feature disabled)
+    #[cfg(not(feature = "undo"))]
+    pub fn undo(&mut self) -> Result<Option<usize>> {
+        Err(crate::MtgError::FeatureNotEnabled("undo".to_string()))
+    }
 }
 
 impl Clone for GameState {
@@ -1339,6 +1361,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "undo")]
     fn test_undo_log_integration() {
         use crate::core::CardType;
 

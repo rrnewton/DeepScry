@@ -2,6 +2,10 @@
 //!
 //! This test directly calls undo_to_previous_choice_point() to verify
 //! the undo mechanism works correctly.
+//!
+//! This test requires the `undo` feature to be enabled.
+
+#![cfg(feature = "undo")]
 
 use mtg_forge_rs::{
     core::{Card, CardType},

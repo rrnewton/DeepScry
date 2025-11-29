@@ -68,5 +68,14 @@ tempfile = "3.10.1"
 [features]
 # Enable verbose game event logging (format! allocations)
 # Disable this feature for maximum performance in benchmarks
-default = ["verbose-logging"]
+default = ["verbose-logging", "undo"]
 verbose-logging = []
+
+# Enable undo log for game tree search (rewind capability)
+# Disable this feature to eliminate undo log overhead when using snapshot-based replay
+# When disabled:
+# - UndoLog::log() becomes a no-op (zero overhead)
+# - game.undo() returns an error
+# - Rewind-based benchmarks are disabled
+# - Some tests are disabled (see undo.rs, counter_tests.rs, state.rs)
+undo = []

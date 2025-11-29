@@ -27,6 +27,9 @@ pub enum MtgError {
 
     #[error("Task join error: {0}")]
     JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Feature not enabled: {0}")]
+    FeatureNotEnabled(String),
 }
 
 pub type Result<T> = std::result::Result<T, MtgError>;

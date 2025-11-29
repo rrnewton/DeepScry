@@ -5,6 +5,10 @@
 //! 2. Game progresses to Turn 3
 //! 3. Player presses Z to undo
 //! 4. Should return to state before first choice with Forest back in hand
+//!
+//! This test requires the `undo` feature to be enabled.
+
+#![cfg(feature = "undo")]
 
 use mtg_forge_rs::{
     core::{Card, CardId, CardType, PlayerId, SpellAbility},

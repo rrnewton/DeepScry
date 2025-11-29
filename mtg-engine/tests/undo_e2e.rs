@@ -2,6 +2,10 @@
 //!
 //! These tests verify that we can rewind and replay game states correctly,
 //! which is critical for tree search and AI development.
+//!
+//! These tests require the `undo` feature to be enabled.
+
+#![cfg(feature = "undo")]
 
 use mtg_forge_rs::{
     game::{random_controller::RandomController, GameLoop, VerbosityLevel},

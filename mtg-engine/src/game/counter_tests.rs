@@ -64,6 +64,7 @@ fn test_remove_counter_effect() {
 }
 
 #[test]
+#[cfg(feature = "undo")]
 fn test_counter_undo() {
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
@@ -159,6 +160,7 @@ fn test_multiple_counter_types() {
 }
 
 #[test]
+#[cfg(feature = "undo")]
 fn test_remove_counter_undo() {
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
