@@ -284,8 +284,8 @@ perfprofile: build-release
 	@echo "Attempting to run perf record..."
 	@echo ""
 	@# Run with call-graph recording
-	@(cd experiment_results && sudo perf record -F 997 -g --call-graph dwarf \
-		-- ../target/release/rewind_bench -n 5000 --sequential 2>&1 | tee perf_record.log) || \
+	@(cd experiment_results && perf record -F 997 -g --call-graph dwarf -o perf.data \
+		-- ../target/release/rewind_bench -n 5000 -m sequential 2>&1 | tee perf_record.log) || \
 	(echo ""; \
 	 echo "=== perf profiling failed (likely permission/container issue) ==="; \
 	 echo ""; \
@@ -296,7 +296,7 @@ perfprofile: build-release
 	 echo "  2. Use 'make profile' for flamegraph profiling instead"; \
 	 echo "  3. Use 'make dhatprofile' for allocation profiling"; \
 	 echo "  4. Run manually with perf stat (no recording):"; \
-	 echo "     perf stat -d target/release/rewind_bench -n 1000 --sequential"; \
+	 echo "     perf stat -d target/release/rewind_bench -n 1000 -m sequential"; \
 	 echo ""; \
 	 echo "For reference, here's what a successful perf profile shows:"; \
 	 echo "  - Top CPU hotspots by function name"; \
@@ -310,18 +310,18 @@ perfprofile: build-release
 	@echo ""
 	@echo "=== Top 20 CPU Hotspots ==="
 	@echo ""
-	@(cd experiment_results && sudo perf report --stdio --no-children -n --sort symbol --percent-limit 0.5 | head -50)
+	@(cd experiment_results && perf report --stdio --no-children -n --sort symbol --percent-limit 0.5 | head -50)
 	@echo ""
 	@echo "=== Next Steps ==="
 	@echo ""
 	@echo "For interactive analysis:"
-	@echo "  cd experiment_results && sudo perf report"
+	@echo "  cd experiment_results && perf report"
 	@echo ""
 	@echo "For detailed call graph:"
-	@echo "  cd experiment_results && sudo perf report --stdio -g --no-children"
+	@echo "  cd experiment_results && perf report --stdio -g --no-children"
 	@echo ""
 	@echo "For cache miss details:"
-	@echo "  cd experiment_results && sudo perf annotate --stdio"
+	@echo "  cd experiment_results && perf annotate --stdio"
 	@echo ""
 	@echo "Data saved to: experiment_results/perf.data"
 
