@@ -1371,12 +1371,207 @@ impl HeuristicController {
         // PHASE 2: During combat evaluation (Declare Blockers)
         // Reference: ComputerUtilCard.java:1468-1600
         if current_step == crate::game::phase::Step::DeclareBlockers {
-            // TODO(mtg-77): Implement during-combat pump evaluation
-            // This requires combat state tracking to know:
-            // - Which creatures are attacking/blocking
-            // - Which creatures would die in combat
-            // - Whether pumping would save a creature or kill an opponent
-            // For now, return false (don't cast during combat until we have combat state)
+            let combat = view.combat();
+
+            // Check if target creature is in combat
+            let is_attacking = combat.is_attacking(target.id);
+            let is_blocking = combat.is_blocking(target.id);
+
+            if !is_attacking && !is_blocking {
+                // Target not in combat - don't pump during declare blockers
+                return false;
+            }
+
+            // Get effective stats for damage calculations
+            let target_power = view
+                .get_effective_power(target.id)
+                .unwrap_or(target.current_power() as i32);
+            let target_toughness = view
+                .get_effective_toughness(target.id)
+                .unwrap_or(target.current_toughness() as i32);
+            let pumped_effective_power = target_power + power_bonus;
+            let pumped_effective_toughness = target_toughness + toughness_bonus;
+
+            if is_attacking {
+                // Case: Our creature is attacking
+                let blockers = combat.get_blockers(target.id);
+
+                if blockers.is_empty() {
+                    // Unblocked attacker - pump to deal lethal damage
+                    if pumped_power >= opponent_life {
+                        return true;
+                    }
+
+                    // Calculate total damage from all attackers to check for lethal
+                    let mut total_damage = 0i32;
+                    for &attacker_id in combat.attackers.keys() {
+                        if attacker_id == target.id {
+                            total_damage += pumped_effective_power;
+                        } else if !combat.is_blocked(attacker_id) {
+                            if let Some(atk_card) = view.get_card(attacker_id) {
+                                let atk_power = view
+                                    .get_effective_power(attacker_id)
+                                    .unwrap_or(atk_card.current_power() as i32);
+                                total_damage += atk_power;
+                            }
+                        } else {
+                            // Blocked attacker - only counts trample damage
+                            if let Some(atk_card) = view.get_card(attacker_id) {
+                                if atk_card.has_trample() {
+                                    let atk_power = view
+                                        .get_effective_power(attacker_id)
+                                        .unwrap_or(atk_card.current_power() as i32);
+                                    let blocker_toughness: i32 = combat
+                                        .get_blockers(attacker_id)
+                                        .iter()
+                                        .filter_map(|&b| view.get_card(b))
+                                        .map(|b| {
+                                            view.get_effective_toughness(b.id)
+                                                .unwrap_or(b.current_toughness() as i32)
+                                        })
+                                        .sum();
+                                    let trample_damage = (atk_power - blocker_toughness).max(0);
+                                    total_damage += trample_damage;
+                                }
+                            }
+                        }
+                    }
+
+                    // Pump if it would be lethal
+                    if total_damage >= opponent_life {
+                        return true;
+                    }
+                } else {
+                    // Blocked attacker - evaluate combat outcome
+                    let total_blocker_power: i32 = blockers
+                        .iter()
+                        .filter_map(|&b| view.get_card(b))
+                        .map(|b| view.get_effective_power(b.id).unwrap_or(b.current_power() as i32))
+                        .sum();
+
+                    let total_blocker_toughness: i32 = blockers
+                        .iter()
+                        .filter_map(|&b| view.get_card(b))
+                        .map(|b| {
+                            view.get_effective_toughness(b.id)
+                                .unwrap_or(b.current_toughness() as i32)
+                        })
+                        .sum();
+
+                    // Check for first strike on either side (for future damage race logic)
+                    let _attacker_has_first_strike = target.has_first_strike() || target.has_double_strike();
+                    let _blocker_has_first_strike = blockers
+                        .iter()
+                        .filter_map(|&b| view.get_card(b))
+                        .any(|b| b.has_first_strike() || b.has_double_strike());
+
+                    // 1. Save our creature: Would we die without pump but survive with it?
+                    // Note: First strike matters for damage race timing, but simplify for now
+                    // as lethal damage is still lethal regardless of timing
+                    let would_die_without_pump = total_blocker_power >= target_toughness;
+
+                    let would_survive_with_pump =
+                        pumped_effective_toughness > total_blocker_power || target.has_indestructible();
+
+                    if would_die_without_pump && would_survive_with_pump {
+                        return true;
+                    }
+
+                    // 2. Kill blockers: Can pumping let us kill blockers that would survive?
+                    for &blocker_id in &blockers {
+                        if let Some(blocker) = view.get_card(blocker_id) {
+                            let blocker_toughness = view
+                                .get_effective_toughness(blocker_id)
+                                .unwrap_or(blocker.current_toughness() as i32);
+
+                            // Would this blocker die without pump?
+                            let blocker_dies_without_pump =
+                                target_power >= blocker_toughness || target.has_deathtouch();
+
+                            // Would this blocker die with pump?
+                            let blocker_dies_with_pump =
+                                pumped_effective_power >= blocker_toughness || target.has_deathtouch();
+
+                            // Pump if it would kill a blocker that wouldn't die otherwise
+                            if !blocker_dies_without_pump && blocker_dies_with_pump && !blocker.has_indestructible() {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 3. Trample damage: If we have trample, pump to deal more damage
+                    if target.has_trample() || keywords_granted.iter().any(|k| k == "Trample") {
+                        let damage_without_pump = (target_power - total_blocker_toughness).max(0);
+                        let damage_with_pump = (pumped_effective_power - total_blocker_toughness).max(0);
+
+                        if damage_with_pump > damage_without_pump && damage_with_pump >= opponent_life {
+                            return true;
+                        }
+                    }
+                }
+            } else if is_blocking {
+                // Case: Our creature is blocking
+                let attackers_blocked = combat.blockers.get(&target.id).cloned().unwrap_or_default();
+
+                if attackers_blocked.is_empty() {
+                    return false;
+                }
+
+                // Calculate total attacking power
+                let total_attacker_power: i32 = attackers_blocked
+                    .iter()
+                    .filter_map(|&a| view.get_card(a))
+                    .map(|a| view.get_effective_power(a.id).unwrap_or(a.current_power() as i32))
+                    .sum();
+
+                // Check for first strike (for future damage race logic)
+                let _attacker_has_first_strike = attackers_blocked
+                    .iter()
+                    .filter_map(|&a| view.get_card(a))
+                    .any(|a| a.has_first_strike() || a.has_double_strike());
+                let _blocker_has_first_strike = target.has_first_strike() || target.has_double_strike();
+
+                // 1. Save our blocker
+                // Note: First strike timing could matter but simplify for now
+                let would_die_without_pump = total_attacker_power >= target_toughness;
+
+                let would_survive_with_pump =
+                    pumped_effective_toughness > total_attacker_power || target.has_indestructible();
+
+                if would_die_without_pump && would_survive_with_pump {
+                    return true;
+                }
+
+                // 2. Kill attackers with pump
+                for &attacker_id in &attackers_blocked {
+                    if let Some(attacker) = view.get_card(attacker_id) {
+                        let attacker_toughness = view
+                            .get_effective_toughness(attacker_id)
+                            .unwrap_or(attacker.current_toughness() as i32);
+
+                        let attacker_dies_without_pump = target_power >= attacker_toughness || target.has_deathtouch();
+                        let attacker_dies_with_pump =
+                            pumped_effective_power >= attacker_toughness || target.has_deathtouch();
+
+                        if !attacker_dies_without_pump && attacker_dies_with_pump && !attacker.has_indestructible() {
+                            return true;
+                        }
+                    }
+                }
+
+                // 3. Reduce trample damage by pumping toughness
+                let any_trampler = attackers_blocked
+                    .iter()
+                    .filter_map(|&a| view.get_card(a))
+                    .any(|a| a.has_trample());
+
+                if any_trampler && toughness_bonus > 0 {
+                    // Pumping toughness reduces trample damage to us
+                    return true;
+                }
+            }
+
+            // No good combat reason to pump
             return false;
         }
 

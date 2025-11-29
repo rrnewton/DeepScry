@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-29T22:05:34.118637852+00:00
+updated_at: 2025-11-29T22:22:03.264796994+00:00
 ---
 
 # Description
@@ -29,10 +29,12 @@ Track completion of heuristic AI port from Java Forge to Rust.
 - ✅ **Activated ability evaluation and timing (2025-11-03 - mtg-119 COMPLETED)**
 - ✅ **Mana ability recognition from creatures** (ALREADY IMPLEMENTED)
 - ✅ **Creature casting mana efficiency (2025-11-29_#973)**
-  - Balances raw creature value against mana efficiency
-  - Curving out bonus in early game (turns 1-5)
-  - Leftover mana consideration for holding up interaction
-  - Falls back to pure value evaluation in late game
+- ✅ **During-combat pump evaluation (2025-11-29_#975)**
+  - Save our creature from dying in combat
+  - Kill opposing creatures that would survive
+  - Pump unblocked attackers for lethal damage
+  - Reduce trample damage by pumping blocker toughness
+  - Support both attacking and blocking creatures
 
 **What's Missing:**
 
@@ -43,15 +45,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
 2. **Activated ability improvements**
    - ✅ Expose game.stack through GameStateView (2025-11-28_#956)
    - ✅ Better ping targeting - choose best KILLABLE creature (2025-11-29_#968)
-   - Enhanced pump evaluation with combat simulation (pending)
+   - ✅ During-combat pump evaluation (2025-11-29_#975)
+   - Enhanced pump *activated abilities* during combat (pending)
 
 3. ~~**Creature casting mana efficiency**~~ ✅ **COMPLETED 2025-11-29_#973**
-   - Cast efficient creatures in early game, prioritize curving out
-   - Leave mana open for interaction when possible
 
 ### Medium Priority:
 
-4. **During-combat pump evaluation (BLOCKED: needs combat state tracking)**
+4. ~~**During-combat pump evaluation**~~ ✅ **COMPLETED 2025-11-29_#975**
 
 5. **GameStateEvaluator improvements:**
    - mtg-78: Port evalManaBase() - mana base quality scoring
@@ -76,6 +77,6 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ## Next Steps (Priority Order)
 
-1. During-combat pump evaluation (BLOCKED)
-2. GameStateEvaluator improvements
-3. Mana tapping order
+1. GameStateEvaluator improvements
+2. Mana tapping order
+3. Damage assignment order
