@@ -143,6 +143,10 @@ impl GameAction {
                 // Reverse tap state
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.tapped = !tapped;
+                    // Notify mana indices (mark as globally dirty on undo for simplicity)
+                    for (_, index) in &game.mana_indices {
+                        index.borrow_mut().mark_globally_dirty();
+                    }
                     // Increment mana version since tap state changed
                     game.increment_mana_version();
                 } else {

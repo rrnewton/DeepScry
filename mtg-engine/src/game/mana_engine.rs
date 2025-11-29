@@ -282,37 +282,77 @@ impl ManaEngine {
         self.complex_sources.reserve(battlefield_size);
         self.mana_sources.reserve(battlefield_size);
 
-        // Scan battlefield for mana-producing permanents owned by this player
-        // This includes lands and creatures with mana abilities (e.g., Llanowar Elves)
-        // NOTE: Using try_get() instead of get() to avoid Result<_, MtgError> overhead.
-        // Callgrind showed drop_in_place<Result<&Card, MtgError>> consuming 14% of CPU.
-        for &card_id in &game.battlefield.cards {
-            if let Some(card) = game.cards.try_get(card_id) {
-                // Check if this is a mana-producing permanent owned by this player
-                let is_mana_source = card.is_land() || has_mana_ability(card);
-                if card.owner == player_id && is_mana_source {
-                    // Determine if this source has summoning sickness (for creatures with mana abilities)
-                    let has_summoning_sickness = if card.is_creature() {
-                        if let Some(entered_turn) = card.turn_entered_battlefield {
-                            entered_turn == game.turn.turn_number && !card.has_keyword(crate::core::Keyword::Haste)
+        // Use GameState's ManaProducerIndex for incremental mana tracking
+        // This avoids O(n) battlefield scans by maintaining buckets incrementally
+        if let Some(index_cell) = game.get_mana_index(player_id) {
+            use crate::game::mana_index::ManaColorBucket;
+
+            // Borrow the index mutably through RefCell for rebuild/recalculate
+            let mut index = index_cell.borrow_mut();
+
+            // Rebuild index if globally dirty (e.g., after undo)
+            if index.is_globally_dirty() {
+                index.rebuild(game);
+            }
+
+            // Recalculate untapped counts for any dirty buckets
+            index.recalculate_dirty_buckets(game);
+
+            // Process each bucket to populate our mana sources
+            // Buckets: White, Blue, Black, Red, Green, Colorless, Multi
+            let buckets = [
+                (ManaColorBucket::White, Some(ManaColor::White)),
+                (ManaColorBucket::Blue, Some(ManaColor::Blue)),
+                (ManaColorBucket::Black, Some(ManaColor::Black)),
+                (ManaColorBucket::Red, Some(ManaColor::Red)),
+                (ManaColorBucket::Green, Some(ManaColor::Green)),
+                (ManaColorBucket::Colorless, None), // None = colorless
+                (ManaColorBucket::Multi, None),     // None = complex (handled differently)
+            ];
+
+            for (bucket_type, color_opt) in buckets {
+                let bucket = index.bucket(bucket_type);
+
+                // Iterate over cards in this bucket
+                for &card_id in &bucket.cards {
+                    if let Some(card) = game.cards.try_get(card_id) {
+                        // Determine summoning sickness for creatures
+                        let has_summoning_sickness = if card.is_creature() {
+                            if let Some(entered_turn) = card.turn_entered_battlefield {
+                                entered_turn == game.turn.turn_number && !card.has_keyword(crate::core::Keyword::Haste)
+                            } else {
+                                false
+                            }
                         } else {
                             false
-                        }
-                    } else {
-                        false
-                    };
+                        };
 
-                    // Determine the mana production type
-                    if let Some(color_char) = get_simple_mana_color(card.name.as_str()) {
-                        // Simple source - produces exactly one color
-                        let color = match color_char {
-                            'W' => ManaColor::White,
-                            'U' => ManaColor::Blue,
-                            'B' => ManaColor::Black,
-                            'R' => ManaColor::Red,
-                            'G' => ManaColor::Green,
-                            'C' => {
-                                // Colorless is handled separately in ManaProduction
+                        // Handle based on bucket type
+                        match bucket_type {
+                            ManaColorBucket::Multi => {
+                                // Complex source - dual land, any-color, or creature with mana ability
+                                if card.is_creature() {
+                                    if let Some(production) = get_creature_mana_production(card) {
+                                        self.complex_sources.push(card_id);
+                                        self.mana_sources.push(ManaSource {
+                                            card_id,
+                                            production,
+                                            is_tapped: card.tapped,
+                                            has_summoning_sickness,
+                                        });
+                                    }
+                                } else if let Some(production) = get_complex_mana_production(card) {
+                                    self.complex_sources.push(card_id);
+                                    self.mana_sources.push(ManaSource {
+                                        card_id,
+                                        production,
+                                        is_tapped: card.tapped,
+                                        has_summoning_sickness,
+                                    });
+                                }
+                            }
+                            ManaColorBucket::Colorless => {
+                                // Colorless source (Wastes)
                                 self.simple_sources.push(card_id);
                                 if !card.tapped {
                                     self.simple_capacity.colorless += 1;
@@ -323,32 +363,100 @@ impl ManaEngine {
                                     is_tapped: card.tapped,
                                     has_summoning_sickness,
                                 });
-                                continue;
                             }
-                            _ => continue, // Unknown color
-                        };
-
-                        self.simple_sources.push(card_id);
-                        if !card.tapped {
-                            match color {
-                                ManaColor::White => self.simple_capacity.white += 1,
-                                ManaColor::Blue => self.simple_capacity.blue += 1,
-                                ManaColor::Black => self.simple_capacity.black += 1,
-                                ManaColor::Red => self.simple_capacity.red += 1,
-                                ManaColor::Green => self.simple_capacity.green += 1,
+                            _ => {
+                                // Simple colored source
+                                if let Some(color) = color_opt {
+                                    self.simple_sources.push(card_id);
+                                    if !card.tapped {
+                                        match color {
+                                            ManaColor::White => self.simple_capacity.white += 1,
+                                            ManaColor::Blue => self.simple_capacity.blue += 1,
+                                            ManaColor::Black => self.simple_capacity.black += 1,
+                                            ManaColor::Red => self.simple_capacity.red += 1,
+                                            ManaColor::Green => self.simple_capacity.green += 1,
+                                        }
+                                    }
+                                    self.mana_sources.push(ManaSource {
+                                        card_id,
+                                        production: ManaProduction::free(ManaProductionKind::Fixed(color)),
+                                        is_tapped: card.tapped,
+                                        has_summoning_sickness,
+                                    });
+                                }
                             }
                         }
+                    }
+                }
+            }
+        } else {
+            // Fallback: Index not available, scan battlefield (should not happen in normal operation)
+            // This preserves correctness if index is somehow missing
+            for &card_id in &game.battlefield.cards {
+                if let Some(card) = game.cards.try_get(card_id) {
+                    let is_mana_source = card.is_land() || has_mana_ability(card);
+                    if card.owner == player_id && is_mana_source {
+                        let has_summoning_sickness = if card.is_creature() {
+                            if let Some(entered_turn) = card.turn_entered_battlefield {
+                                entered_turn == game.turn.turn_number && !card.has_keyword(crate::core::Keyword::Haste)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
 
-                        self.mana_sources.push(ManaSource {
-                            card_id,
-                            production: ManaProduction::free(ManaProductionKind::Fixed(color)),
-                            is_tapped: card.tapped,
-                            has_summoning_sickness,
-                        });
-                    } else if card.is_creature() {
-                        // Check for creature mana abilities (Llanowar Elves, Birds of Paradise)
-                        if let Some(production) = get_creature_mana_production(card) {
-                            // Creatures with mana abilities are complex sources
+                        if let Some(color_char) = get_simple_mana_color(card.name.as_str()) {
+                            let color = match color_char {
+                                'W' => ManaColor::White,
+                                'U' => ManaColor::Blue,
+                                'B' => ManaColor::Black,
+                                'R' => ManaColor::Red,
+                                'G' => ManaColor::Green,
+                                'C' => {
+                                    self.simple_sources.push(card_id);
+                                    if !card.tapped {
+                                        self.simple_capacity.colorless += 1;
+                                    }
+                                    self.mana_sources.push(ManaSource {
+                                        card_id,
+                                        production: ManaProduction::free(ManaProductionKind::Colorless),
+                                        is_tapped: card.tapped,
+                                        has_summoning_sickness,
+                                    });
+                                    continue;
+                                }
+                                _ => continue,
+                            };
+
+                            self.simple_sources.push(card_id);
+                            if !card.tapped {
+                                match color {
+                                    ManaColor::White => self.simple_capacity.white += 1,
+                                    ManaColor::Blue => self.simple_capacity.blue += 1,
+                                    ManaColor::Black => self.simple_capacity.black += 1,
+                                    ManaColor::Red => self.simple_capacity.red += 1,
+                                    ManaColor::Green => self.simple_capacity.green += 1,
+                                }
+                            }
+
+                            self.mana_sources.push(ManaSource {
+                                card_id,
+                                production: ManaProduction::free(ManaProductionKind::Fixed(color)),
+                                is_tapped: card.tapped,
+                                has_summoning_sickness,
+                            });
+                        } else if card.is_creature() {
+                            if let Some(production) = get_creature_mana_production(card) {
+                                self.complex_sources.push(card_id);
+                                self.mana_sources.push(ManaSource {
+                                    card_id,
+                                    production,
+                                    is_tapped: card.tapped,
+                                    has_summoning_sickness,
+                                });
+                            }
+                        } else if let Some(production) = get_complex_mana_production(card) {
                             self.complex_sources.push(card_id);
                             self.mana_sources.push(ManaSource {
                                 card_id,
@@ -357,17 +465,7 @@ impl ManaEngine {
                                 has_summoning_sickness,
                             });
                         }
-                    } else if let Some(production) = get_complex_mana_production(card) {
-                        // Complex source - dual land or any-color land
-                        self.complex_sources.push(card_id);
-                        self.mana_sources.push(ManaSource {
-                            card_id,
-                            production,
-                            is_tapped: card.tapped,
-                            has_summoning_sickness,
-                        });
                     }
-                    // If we can't parse it, just ignore it for now
                 }
             }
         }

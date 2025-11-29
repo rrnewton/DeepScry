@@ -1,6 +1,7 @@
 //! Main game state structure
 
 use crate::core::{Card, CardId, EntityId, EntityStore, Player, PlayerId};
+use crate::game::mana_index::ManaProducerIndex;
 use crate::game::{CombatState, GameLogger, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
@@ -29,6 +30,13 @@ pub struct GameState {
 
     /// Zones for each player
     pub player_zones: Vec<(PlayerId, PlayerZones)>,
+
+    /// Mana producer indices for incremental mana tracking
+    /// Maps each player to their mana producer index
+    /// Wrapped in RefCell for interior mutability (allows index updates during queries)
+    /// This is not serialized - rebuilt when loading from snapshot
+    #[serde(skip)]
+    pub mana_indices: Vec<(PlayerId, RefCell<ManaProducerIndex>)>,
 
     /// Shared battlefield (all players)
     pub battlefield: CardZone,
@@ -119,6 +127,12 @@ impl GameState {
 
         let player_zones = vec![(p1_id, PlayerZones::new(p1_id)), (p2_id, PlayerZones::new(p2_id))];
 
+        // Initialize mana indices for each player (wrapped in RefCell for interior mutability)
+        let mana_indices = vec![
+            (p1_id, RefCell::new(ManaProducerIndex::new(p1_id))),
+            (p2_id, RefCell::new(ManaProducerIndex::new(p2_id))),
+        ];
+
         // Use a unified PlayerId for shared zones (battlefield, stack)
         // These don't belong to a specific player, but we need an ID for the zone
         let shared_id = PlayerId::new(next_id);
@@ -135,6 +149,7 @@ impl GameState {
             cards,
             players,
             player_zones,
+            mana_indices,
             battlefield: CardZone::new(Zone::Battlefield, shared_id),
             stack: CardZone::new(Zone::Stack, shared_id),
             turn: TurnStructure::new_with_idx(p1_id, 0), // Player 1 starts at index 0
@@ -188,6 +203,12 @@ impl GameState {
             crate::undo::GameAction::TapCard { card_id, tapped: true },
             prior_log_size,
         );
+
+        // Notify mana indices about tap state change
+        for (_, index) in &self.mana_indices {
+            index.borrow_mut().on_tap_changed(card_id);
+        }
+
         self.increment_mana_version();
         Ok(())
     }
@@ -212,6 +233,12 @@ impl GameState {
             crate::undo::GameAction::TapCard { card_id, tapped: false },
             prior_log_size,
         );
+
+        // Notify mana indices about tap state change
+        for (_, index) in &self.mana_indices {
+            index.borrow_mut().on_tap_changed(card_id);
+        }
+
         self.increment_mana_version();
         Ok(())
     }
@@ -271,6 +298,14 @@ impl GameState {
             .iter_mut()
             .find(|(id, _)| *id == player_id)
             .map(|(_, zones)| zones)
+    }
+
+    /// Get mana producer index for a specific player (returns RefCell for interior mutability)
+    pub fn get_mana_index(&self, player_id: PlayerId) -> Option<&RefCell<ManaProducerIndex>> {
+        self.mana_indices
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .map(|(_, index)| index)
     }
 
     /// Get a player by ID
@@ -407,6 +442,29 @@ impl GameState {
             },
             prior_log_size,
         );
+
+        // Notify mana indices about battlefield changes incrementally
+        if from == Zone::Battlefield {
+            // Card left battlefield - remove from all player indices
+            for (_, index) in &self.mana_indices {
+                index.borrow_mut().on_card_left(card_id);
+            }
+        }
+        if to == Zone::Battlefield {
+            // Card entered battlefield - classify and add to appropriate bucket(s)
+            // Read card data first to avoid borrow checker issues
+            if let Some(card) = self.cards.try_get(card_id) {
+                let card_owner = card.owner;
+
+                // Update each player's index (card only added if it belongs to that player)
+                for (player_id, index) in &self.mana_indices {
+                    if *player_id == card_owner {
+                        // This index owns the card - add it using the card data we already fetched
+                        index.borrow_mut().on_card_entered_with_card(card_id, card);
+                    }
+                }
+            }
+        }
 
         // Increment mana state version if battlefield changed
         // This invalidates ManaEngine cache so next query rebuilds
@@ -1322,6 +1380,13 @@ impl Clone for GameState {
             cards: self.cards.clone(),
             players: self.players.clone(),
             player_zones: self.player_zones.clone(),
+            // Clone mana indices (they track battlefield state)
+            // Need to clone the inner ManaProducerIndex, not the RefCell wrapper
+            mana_indices: self
+                .mana_indices
+                .iter()
+                .map(|(id, index)| (*id, RefCell::new(index.borrow().clone())))
+                .collect(),
             battlefield: self.battlefield.clone(),
             stack: self.stack.clone(),
             turn: self.turn.clone(),

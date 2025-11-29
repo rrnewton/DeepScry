@@ -219,6 +219,15 @@ impl ManaProducerIndex {
             return false;
         };
 
+        self.on_card_entered_with_card(card_id, card)
+    }
+
+    /// Notify the index that a card entered the battlefield (with card data already fetched)
+    ///
+    /// This variant avoids borrowing GameState, useful when the card data is already available.
+    /// If the card is a mana producer, it will be added to the appropriate bucket(s).
+    /// Returns true if the card was added as a mana producer.
+    pub fn on_card_entered_with_card(&mut self, card_id: CardId, card: &crate::core::Card) -> bool {
         if card.owner != self.player_id {
             return false;
         }
@@ -321,6 +330,13 @@ impl ManaProducerIndex {
 
         // Check cached mana production (covers creatures and complex lands)
         if card.cache.mana_production.produces_mana() {
+            // Creatures with mana abilities ALWAYS go to Multi bucket (due to summoning sickness, creature-specific rules)
+            if card.types.contains(&CardType::Creature) {
+                buckets.push(ManaColorBucket::Multi);
+                return buckets;
+            }
+
+            // For non-creatures (lands), classify by production type
             match &card.cache.mana_production.kind {
                 ManaProductionKind::Fixed(color) => {
                     buckets.push(ManaColorBucket::from_color(*color));
