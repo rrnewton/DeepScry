@@ -33,7 +33,7 @@ mod tests {
 
         // Update mana engine
         let mut engine = ManaEngine::new();
-        engine.update(&game, p1_id);
+        engine.update_mut(&mut game, p1_id);
 
         // Check if we can pay for Spider-Suit
         let cost = game.cards.get(spider_suit_id).unwrap().mana_cost;

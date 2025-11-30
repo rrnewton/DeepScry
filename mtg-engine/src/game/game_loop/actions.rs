@@ -104,7 +104,7 @@ impl<'a> GameLoop<'a> {
         use crate::core::SpellAbility;
 
         // Update the mana engine for this player
-        self.mana_engine.update(self.game, player_id);
+        self.mana_engine.update_mut(self.game, player_id);
 
         // Check if this is the active player (only active player can cast sorceries)
         let is_active_player = self.game.turn.active_player == player_id;
@@ -179,7 +179,7 @@ impl<'a> GameLoop<'a> {
         use crate::core::SpellAbility;
 
         // Update the mana engine for this player
-        self.mana_engine.update(self.game, player_id);
+        self.mana_engine.update_mut(self.game, player_id);
 
         // Check all permanents controlled by this player
         for &card_id in &self.game.battlefield.cards {

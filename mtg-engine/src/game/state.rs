@@ -1,7 +1,7 @@
 //! Main game state structure
 
 use crate::core::{Card, CardId, EntityId, EntityStore, Player, PlayerId};
-use crate::game::{CombatState, GameLogger, TurnStructure};
+use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
 use crate::Result;
@@ -29,6 +29,11 @@ pub struct GameState {
 
     /// Zones for each player
     pub player_zones: Vec<(PlayerId, PlayerZones)>,
+
+    /// Mana source caches for incremental mana tracking (one per player)
+    /// Not serialized - rebuilt from battlefield after load
+    #[serde(skip)]
+    pub mana_caches: Vec<(PlayerId, ManaSourceCache)>,
 
     /// Shared battlefield (all players)
     pub battlefield: CardZone,
@@ -119,6 +124,12 @@ impl GameState {
 
         let player_zones = vec![(p1_id, PlayerZones::new(p1_id)), (p2_id, PlayerZones::new(p2_id))];
 
+        // Initialize mana source caches (one per player)
+        let mana_caches = vec![
+            (p1_id, ManaSourceCache::new(p1_id)),
+            (p2_id, ManaSourceCache::new(p2_id)),
+        ];
+
         // Use a unified PlayerId for shared zones (battlefield, stack)
         // These don't belong to a specific player, but we need an ID for the zone
         let shared_id = PlayerId::new(next_id);
@@ -135,6 +146,7 @@ impl GameState {
             cards,
             players,
             player_zones,
+            mana_caches,
             battlefield: CardZone::new(Zone::Battlefield, shared_id),
             stack: CardZone::new(Zone::Stack, shared_id),
             turn: TurnStructure::new_with_idx(p1_id, 0), // Player 1 starts at index 0
@@ -188,6 +200,15 @@ impl GameState {
             crate::undo::GameAction::TapCard { card_id, tapped: true },
             prior_log_size,
         );
+
+        // Update mana caches (event-driven incremental update)
+        // Read card data first to avoid borrow conflicts
+        if let Some(card) = self.cards.try_get(card_id) {
+            for (_, cache) in &mut self.mana_caches {
+                cache.on_tap(card_id, card);
+            }
+        }
+
         self.increment_mana_version();
         Ok(())
     }
@@ -212,6 +233,15 @@ impl GameState {
             crate::undo::GameAction::TapCard { card_id, tapped: false },
             prior_log_size,
         );
+
+        // Update mana caches (event-driven incremental update)
+        // Read card data first to avoid borrow conflicts
+        if let Some(card) = self.cards.try_get(card_id) {
+            for (_, cache) in &mut self.mana_caches {
+                cache.on_untap(card_id, card);
+            }
+        }
+
         self.increment_mana_version();
         Ok(())
     }
@@ -271,6 +301,56 @@ impl GameState {
             .iter_mut()
             .find(|(id, _)| *id == player_id)
             .map(|(_, zones)| zones)
+    }
+
+    /// Get mana source cache for a specific player
+    pub fn get_mana_cache(&self, player_id: PlayerId) -> Option<&ManaSourceCache> {
+        self.mana_caches
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .map(|(_, cache)| cache)
+    }
+
+    /// Get mutable mana source cache for a specific player
+    pub fn get_mana_cache_mut(&mut self, player_id: PlayerId) -> Option<&mut ManaSourceCache> {
+        self.mana_caches
+            .iter_mut()
+            .find(|(id, _)| *id == player_id)
+            .map(|(_, cache)| cache)
+    }
+
+    /// Rebuild mana cache for a player if it needs rebuilding
+    ///
+    /// This is a helper for ManaEngine that handles borrow checker issues
+    /// when calling rebuild_from_battlefield (which needs &mut cache and &GameState).
+    pub fn rebuild_mana_cache_if_needed(&mut self, player_id: PlayerId) {
+        // Check if rebuild is needed
+        let needs_rebuild = self
+            .get_mana_cache(player_id)
+            .map(|c| c.needs_rebuild())
+            .unwrap_or(false);
+
+        if !needs_rebuild {
+            return;
+        }
+
+        // Find cache index to rebuild
+        let cache_idx = self.mana_caches.iter().position(|(id, _)| *id == player_id);
+
+        if let Some(idx) = cache_idx {
+            // SAFETY: We use raw pointers to split the borrow:
+            // - cache_ptr: mutable access to the cache
+            // - game_ptr: immutable access to GameState
+            // This is safe because:
+            // 1. We're accessing non-overlapping parts (cache vs rest of game)
+            // 2. The cache is a distinct field in a Vec element
+            // 3. rebuild_from_battlefield only reads from GameState
+            let cache_ptr = &mut self.mana_caches[idx].1 as *mut ManaSourceCache;
+            let game_ptr = self as *const GameState;
+            unsafe {
+                (*cache_ptr).rebuild_from_battlefield(&*game_ptr);
+            }
+        }
     }
 
     /// Get a player by ID
@@ -407,6 +487,23 @@ impl GameState {
             },
             prior_log_size,
         );
+
+        // Update mana caches (event-driven incremental update)
+        // Read card data first to avoid borrow conflicts
+        if let Some(card) = self.cards.try_get(card_id) {
+            if from == Zone::Battlefield {
+                // Card left battlefield - remove from caches
+                for (_, cache) in &mut self.mana_caches {
+                    cache.on_card_left(card_id, card);
+                }
+            }
+            if to == Zone::Battlefield {
+                // Card entered battlefield - add to caches
+                for (_, cache) in &mut self.mana_caches {
+                    cache.on_card_entered(card_id, card);
+                }
+            }
+        }
 
         // Increment mana state version if battlefield changed
         // This invalidates ManaEngine cache so next query rebuilds
@@ -1057,6 +1154,12 @@ impl GameState {
             }
         }
 
+        // After undo, mark all mana caches as needing rebuild
+        // (Lazy rebuild on next query - cheaper than incrementally reversing events)
+        for (_, cache) in &mut self.mana_caches {
+            cache.mark_dirty();
+        }
+
         if let Some(log_size) = choice_log_size {
             eprintln!(
                 "[UNDO DEBUG] Undo complete: actions_undone={}, choice_log_size={}",
@@ -1309,6 +1412,13 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
             }
+
+            // After undo, mark all mana caches as needing rebuild
+            // (Lazy rebuild on next query - cheaper than incrementally reversing events)
+            for (_, cache) in &mut self.mana_caches {
+                cache.mark_dirty();
+            }
+
             Ok(Some(prior_log_size))
         } else {
             Ok(None)
@@ -1318,10 +1428,23 @@ impl GameState {
 
 impl Clone for GameState {
     fn clone(&self) -> Self {
+        // Clone mana caches and mark them as needing rebuild
+        // This is cheaper than rebuilding immediately (lazy rebuild on first query)
+        let mana_caches_cloned: Vec<(PlayerId, ManaSourceCache)> = self
+            .mana_caches
+            .iter()
+            .map(|(id, cache)| {
+                let mut cloned = cache.clone();
+                cloned.mark_dirty(); // Lazy rebuild on next query
+                (*id, cloned)
+            })
+            .collect();
+
         GameState {
             cards: self.cards.clone(),
             players: self.players.clone(),
             player_zones: self.player_zones.clone(),
+            mana_caches: mana_caches_cloned,
             battlefield: self.battlefield.clone(),
             stack: self.stack.clone(),
             turn: self.turn.clone(),

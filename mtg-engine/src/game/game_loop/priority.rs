@@ -426,7 +426,7 @@ impl<'a> GameLoop<'a> {
 
                                 // Pre-compute ManaEngine for mana payment (step 6)
                                 // This avoids allocating a new ManaEngine inside cast_spell_8_step
-                                self.mana_engine.update(self.game, current_priority);
+                                self.mana_engine.update_mut(self.game, current_priority);
 
                                 // Cast using 8-step process
                                 if let Err(e) = self.game.cast_spell_8_step(
@@ -512,7 +512,7 @@ impl<'a> GameLoop<'a> {
                                         // Reuse self.mana_engine to avoid allocation on each activated ability
                                         use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
 
-                                        self.mana_engine.update(self.game, current_priority);
+                                        self.mana_engine.update_mut(self.game, current_priority);
 
                                         // Get ManaSource list from engine (already built with proper production info)
                                         let mana_sources = self.mana_engine.all_sources();
