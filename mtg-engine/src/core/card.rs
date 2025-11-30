@@ -444,6 +444,10 @@ impl Card {
         self.is_type(&CardType::Enchantment)
     }
 
+    pub fn is_planeswalker(&self) -> bool {
+        self.is_type(&CardType::Planeswalker)
+    }
+
     pub fn is_aura(&self) -> bool {
         self.is_enchantment() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("aura"))
     }

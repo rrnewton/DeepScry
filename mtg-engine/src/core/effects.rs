@@ -2,6 +2,7 @@
 
 use crate::core::{CardId, PlayerId};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 /// Target reference for effects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,6 +13,105 @@ pub enum TargetRef {
     Permanent(CardId),
     /// No target (e.g., "each player", "all creatures")
     None,
+}
+
+/// Types of permanents that can be targeted
+///
+/// Used by spells like Disenchant (Artifact, Enchantment) or Terror (Creature)
+/// to restrict what can be legally targeted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TargetType {
+    /// Any permanent (no restriction)
+    Any,
+    /// Must be an artifact
+    Artifact,
+    /// Must be an enchantment
+    Enchantment,
+    /// Must be a creature
+    Creature,
+    /// Must be a land
+    Land,
+    /// Must be a planeswalker
+    Planeswalker,
+}
+
+impl TargetType {
+    /// Check if a card matches this target type restriction
+    pub fn matches(&self, card: &crate::core::Card) -> bool {
+        match self {
+            TargetType::Any => true,
+            TargetType::Artifact => card.is_artifact(),
+            TargetType::Enchantment => card.is_enchantment(),
+            TargetType::Creature => card.is_creature(),
+            TargetType::Land => card.is_land(),
+            TargetType::Planeswalker => card.is_planeswalker(),
+        }
+    }
+}
+
+/// Restrictions on what types of permanents can be targeted
+///
+/// For spells like Disenchant ("destroy target artifact or enchantment"),
+/// this would contain [Artifact, Enchantment].
+/// For Terror ("destroy target creature"), this would contain [Creature].
+/// An empty vec means any permanent can be targeted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetRestriction {
+    /// Valid target types (if empty, any permanent is valid)
+    pub types: SmallVec<[TargetType; 2]>,
+}
+
+impl TargetRestriction {
+    /// Create a restriction allowing any permanent
+    pub fn any() -> Self {
+        Self { types: SmallVec::new() }
+    }
+
+    /// Create a restriction from a list of target types
+    pub fn from_types(types: impl IntoIterator<Item = TargetType>) -> Self {
+        Self {
+            types: types.into_iter().collect(),
+        }
+    }
+
+    /// Check if a card matches this restriction
+    ///
+    /// Returns true if:
+    /// - types is empty (any permanent allowed), OR
+    /// - card matches at least one of the specified types
+    pub fn matches(&self, card: &crate::core::Card) -> bool {
+        if self.types.is_empty() {
+            return true; // No restriction
+        }
+        self.types.iter().any(|t| t.matches(card))
+    }
+
+    /// Parse ValidTgts string from Java Forge format
+    ///
+    /// Examples:
+    /// - "Artifact,Enchantment" -> [Artifact, Enchantment]
+    /// - "Creature" -> [Creature]
+    /// - "Creature.nonArtifact+nonBlack" -> [Creature] (modifiers ignored for now)
+    pub fn parse(valid_tgts: &str) -> Self {
+        let mut types = SmallVec::new();
+
+        for part in valid_tgts.split(',') {
+            // Strip any modifiers like ".nonArtifact+nonBlack"
+            let base_type = part.split('.').next().unwrap_or(part).trim();
+
+            match base_type {
+                "Artifact" => types.push(TargetType::Artifact),
+                "Enchantment" => types.push(TargetType::Enchantment),
+                "Creature" => types.push(TargetType::Creature),
+                "Land" => types.push(TargetType::Land),
+                "Planeswalker" => types.push(TargetType::Planeswalker),
+                // "Any", "Permanent", or unrecognized - allow any
+                _ => {}
+            }
+        }
+
+        Self { types }
+    }
 }
 
 /// Basic card effects that can be executed
@@ -30,8 +130,12 @@ pub enum Effect {
     GainLife { player: PlayerId, amount: i32 },
 
     /// Destroy a permanent
-    /// Example: "Destroy target creature"
-    DestroyPermanent { target: CardId },
+    /// Example: "Destroy target creature" or "Destroy target artifact or enchantment"
+    DestroyPermanent {
+        target: CardId,
+        /// Restriction on what types can be targeted (e.g., [Artifact, Enchantment] for Disenchant)
+        restriction: TargetRestriction,
+    },
 
     /// Tap a permanent
     /// Example: "Tap target creature"
@@ -402,10 +506,13 @@ mod tests {
             _ => panic!("Wrong effect type"),
         }
 
-        let destroy_effect = Effect::DestroyPermanent { target: card_id };
+        let destroy_effect = Effect::DestroyPermanent {
+            target: card_id,
+            restriction: TargetRestriction::any(),
+        };
 
         match destroy_effect {
-            Effect::DestroyPermanent { target } => {
+            Effect::DestroyPermanent { target, .. } => {
                 assert_eq!(target, card_id);
             }
             _ => panic!("Wrong effect type"),

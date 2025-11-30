@@ -1041,9 +1041,10 @@ mod tests {
         destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Use placeholder card ID 0 which will be replaced with a targetable opponent's creature
-        destroy_spell
-            .effects
-            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        destroy_spell.effects.push(Effect::DestroyPermanent {
+            target: CardId::new(0),
+            restriction: crate::core::TargetRestriction::any(),
+        });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
         // Put it on the stack (simulating cast)
@@ -1198,9 +1199,10 @@ mod tests {
         destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Use placeholder card ID 0 which will fail to be replaced with a target
-        destroy_spell
-            .effects
-            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        destroy_spell.effects.push(Effect::DestroyPermanent {
+            target: CardId::new(0),
+            restriction: crate::core::TargetRestriction::any(),
+        });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
         // Put it on the stack (simulating cast)
@@ -1300,6 +1302,7 @@ mod tests {
         // Explicitly target the indestructible creature
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: indestructible_id,
+            restriction: crate::core::TargetRestriction::any(),
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
@@ -1475,9 +1478,10 @@ mod tests {
         let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
         destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
-        destroy_spell
-            .effects
-            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        destroy_spell.effects.push(Effect::DestroyPermanent {
+            target: CardId::new(0),
+            restriction: crate::core::TargetRestriction::any(),
+        });
         game.cards.insert(destroy_spell_id, destroy_spell);
         game.stack.add(destroy_spell_id);
 

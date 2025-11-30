@@ -14,7 +14,8 @@ pub mod types;
 pub use card::{Card, CardCache, CardType};
 pub use costs::Cost;
 pub use effects::{
-    AbilityCache, ActivatedAbility, AffectedSelector, Effect, StaticAbility, TargetRef, Trigger, TriggerEvent,
+    AbilityCache, ActivatedAbility, AffectedSelector, Effect, StaticAbility, TargetRef, TargetRestriction, TargetType,
+    Trigger, TriggerEvent,
 };
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};

@@ -254,7 +254,7 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.normal(&message);
             }
-            Effect::DestroyPermanent { target } => {
+            Effect::DestroyPermanent { target, .. } => {
                 let target_name = self
                     .game
                     .cards

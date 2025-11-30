@@ -254,9 +254,10 @@ mod tests {
         destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Use placeholder card ID 0 which will be replaced with an opponent's creature
-        destroy_spell
-            .effects
-            .push(Effect::DestroyPermanent { target: CardId::new(0) });
+        destroy_spell.effects.push(Effect::DestroyPermanent {
+            target: CardId::new(0),
+            restriction: crate::core::TargetRestriction::any(),
+        });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
         // Put it on the stack (simulating cast)

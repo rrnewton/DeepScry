@@ -3,7 +3,7 @@
 //! This module bridges between ability_parser (tokenized parameters) and the Effect enum.
 
 use super::ability_parser::{AbilityParams, ApiType};
-use crate::core::{CardId, Effect, PlayerId, TargetRef};
+use crate::core::{CardId, Effect, PlayerId, TargetRef, TargetRestriction};
 
 /// Convert ability parameters to an Effect
 ///
@@ -45,8 +45,16 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
         ApiType::Destroy => {
             // Destroy effects target a permanent
+            // Parse ValidTgts to determine what types can be targeted
+            // Examples: "Artifact,Enchantment" for Disenchant, "Creature" for Terror
+            let restriction = params
+                .get("ValidTgts")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
             Some(Effect::DestroyPermanent {
                 target: CardId::new(0), // Placeholder - filled in at cast time
+                restriction,
             })
         }
 

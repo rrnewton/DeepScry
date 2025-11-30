@@ -74,11 +74,14 @@ impl GameState {
                     // Note: Players are also valid targets, but we handle them separately
                     // via TargetRef::Player since they don't have CardIds
                 }
-                Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
-                    // Destroy can target any permanent (typically creatures)
+                Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                    // Destroy targets permanents matching the restriction
+                    // For Disenchant: only artifacts or enchantments
+                    // For Terror: only creatures (with additional filters)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if Self::is_legal_target(card, spell_owner) {
+                            // Check if card matches the target type restriction
+                            if restriction.matches(card) && Self::is_legal_target(card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -204,8 +207,8 @@ impl GameState {
         // Check each effect to determine valid targets
         for effect in &ability.effects {
             match effect {
-                Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
-                    // Destroy effect needs targets
+                Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                    // Destroy effect needs targets matching restriction
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
                             // Check targeting restrictions
@@ -214,6 +217,11 @@ impl GameState {
                             // Cannot target the source card if it will be sacrificed as part of the cost
                             // (e.g., Strip Mine sacrifices itself, so it can't be the target)
                             if sacrifices_self && card_id == source_card_id {
+                                is_valid = false;
+                            }
+
+                            // Check spell-level type restriction from ValidTgts
+                            if !restriction.matches(card) {
                                 is_valid = false;
                             }
 

@@ -61,9 +61,12 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::DestroyPermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::DestroyPermanent { target, restriction }
+                        if target.as_u32() == 0 && target_index < targets.len() =>
+                    {
                         let replaced = Effect::DestroyPermanent {
                             target: targets[target_index],
+                            restriction: restriction.clone(),
                         };
                         target_index += 1;
                         replaced
@@ -582,11 +585,12 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                             // Replace placeholder targets with chosen targets
-                                            crate::core::Effect::DestroyPermanent { target }
+                                            crate::core::Effect::DestroyPermanent { target, restriction }
                                                 if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
                                             {
                                                 crate::core::Effect::DestroyPermanent {
                                                     target: chosen_targets_vec[0],
+                                                    restriction: restriction.clone(),
                                                 }
                                             }
                                             crate::core::Effect::TapPermanent { target }

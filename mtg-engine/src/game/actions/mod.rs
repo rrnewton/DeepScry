@@ -131,10 +131,13 @@ impl GameState {
                     };
                     target_index += 1;
                 }
-                Effect::DestroyPermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
+                Effect::DestroyPermanent { target, restriction }
+                    if target.as_u32() == 0 && target_index < chosen_targets.len() =>
+                {
                     // Use the chosen target
                     *effect = Effect::DestroyPermanent {
                         target: chosen_targets[target_index],
+                        restriction: restriction.clone(),
                     };
                     target_index += 1;
                 }
@@ -725,7 +728,7 @@ impl GameState {
                     prior_log_size,
                 );
             }
-            Effect::DestroyPermanent { target } => {
+            Effect::DestroyPermanent { target, .. } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
                     // Spell fizzles - no valid targets
@@ -1166,8 +1169,8 @@ impl GameState {
                             amount: *amount,
                         };
                     }
-                    Effect::DestroyPermanent { target } if target.as_u32() == 0 => {
-                        // Find a valid target (opponent's creature)
+                    Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                        // Find a valid target (opponent's creature matching restriction)
                         let controller = self.cards.get(trigger_source)?.controller;
                         if let Some(target_id) = self
                             .battlefield
@@ -1175,7 +1178,7 @@ impl GameState {
                             .iter()
                             .find(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
-                                    card.is_creature()
+                                    restriction.matches(card)
                                         && card.owner != controller
                                         && !card.has_hexproof()
                                         && !card.has_shroud()
@@ -1185,7 +1188,10 @@ impl GameState {
                             })
                             .copied()
                         {
-                            effect = Effect::DestroyPermanent { target: target_id };
+                            effect = Effect::DestroyPermanent {
+                                target: target_id,
+                                restriction: restriction.clone(),
+                            };
                         }
                     }
                     Effect::PumpCreature {

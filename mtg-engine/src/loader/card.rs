@@ -1724,7 +1724,7 @@ Oracle:Destroy target nonartifact, nonblack creature. It can't be regenerated.
 
         use crate::core::Effect;
         match &effects[0] {
-            Effect::DestroyPermanent { target: _ } => {
+            Effect::DestroyPermanent { target: _, .. } => {
                 // Success - correct effect type
             }
             _ => panic!("Expected DestroyPermanent effect, got {:?}", effects[0]),
