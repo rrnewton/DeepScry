@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-test
 
 # Default target - show available commands
 help:
@@ -26,6 +26,8 @@ help:
 	@echo "  make clippy         - Run linter (cargo clippy)"
 	@echo "  make doc            - Generate documentation and open in browser"
 	@echo "  make docs           - Generate documentation (no browser)"
+	@echo "  make wasm           - Build WebAssembly module for browser"
+	@echo "  make wasm-serve     - Build WASM and start local web server"
 	@echo ""
 
 # Build the project
@@ -399,3 +401,35 @@ dhatprofile:
 deck_list: full_deck_list.txt
 full_deck_list.txt:
 	find decks/ forge-java/ -name "*.dck" -type f | sort > $@
+
+# WebAssembly
+# ==============================================================================
+
+# Build WebAssembly module for browser
+wasm:
+	@echo "=== Building WebAssembly module ==="
+	@if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "Installing wasm-pack..."; \
+		cargo install wasm-pack; \
+	fi
+	@cd mtg-engine && wasm-pack build --target web --no-default-features --features wasm
+	@rm -rf web/pkg
+	@cp -r mtg-engine/pkg web/pkg
+	@echo ""
+	@echo "=== WASM build complete! ==="
+	@echo "Output: web/pkg/"
+	@echo "To test: make wasm-serve"
+
+# Build WASM and start local web server
+wasm-serve: wasm
+	@echo ""
+	@echo "=== Starting web server ==="
+	@echo "Open http://localhost:8080 in your browser"
+	@echo "Press Ctrl+C to stop"
+	@echo ""
+	@cd web && python3 -m http.server 8080
+
+# Test WASM module in headless browser
+wasm-test: wasm
+	@echo "=== Testing WASM in headless browser ==="
+	@cd web && npm install --silent 2>/dev/null && node test_wasm.js

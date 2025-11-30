@@ -988,45 +988,58 @@ impl GameState {
                 // Create token(s) on the battlefield
                 // MTG Rules 111.2: The player who creates a token is its owner and controller
 
-                // Look up token definition from cache (loaded during game initialization)
-                let token_def = self.token_definitions.get(token_script).cloned();
+                #[cfg(feature = "native")]
+                {
+                    // Look up token definition from cache (loaded during game initialization)
+                    let token_def = self.token_definitions.get(token_script).cloned();
 
-                if let Some(token_def) = token_def {
-                    // Use actual token definition from tokenscripts/
-                    for _ in 0..*amount {
-                        let token_id = self.next_card_id();
+                    if let Some(token_def) = token_def {
+                        // Use actual token definition from tokenscripts/
+                        for _ in 0..*amount {
+                            let token_id = self.next_card_id();
 
-                        // Instantiate token from definition
-                        let mut token = token_def.instantiate(token_id, *controller);
+                            // Instantiate token from definition
+                            let mut token = token_def.instantiate(token_id, *controller);
 
-                        // Ensure controller is set correctly (owner and controller are the same for tokens)
-                        token.controller = *controller;
+                            // Ensure controller is set correctly (owner and controller are the same for tokens)
+                            token.controller = *controller;
 
-                        // Add token to game
-                        let token_name = token.name.to_string();
-                        self.cards.insert(token_id, token);
+                            // Add token to game
+                            let token_name = token.name.to_string();
+                            self.cards.insert(token_id, token);
 
-                        // Put token onto the battlefield
-                        self.battlefield.add(token_id);
+                            // Put token onto the battlefield
+                            self.battlefield.add(token_id);
 
-                        // Debug log token creation
-                        log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
-                            token_name, token_id.as_u32(), controller.as_u32());
+                            // Debug log token creation
+                            log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
+                                token_name, token_id.as_u32(), controller.as_u32());
 
-                        // Log token creation
-                        self.logger.normal(&format!(
-                            "Created {} under {}'s control",
-                            token_name,
-                            self.get_player(*controller)?.name
-                        ));
+                            // Log token creation
+                            self.logger.normal(&format!(
+                                "Created {} under {}'s control",
+                                token_name,
+                                self.get_player(*controller)?.name
+                            ));
+                        }
+                    } else {
+                        // Token definition not found - this is an error
+                        // The token should have been preloaded during game initialization
+                        return Err(crate::MtgError::InvalidAction(format!(
+                            "Token definition not found: '{}' (should have been preloaded)",
+                            token_script
+                        )));
                     }
-                } else {
-                    // Token definition not found - this is an error
-                    // The token should have been preloaded during game initialization
-                    return Err(crate::MtgError::InvalidAction(format!(
-                        "Token definition not found: '{}' (should have been preloaded)",
-                        token_script
-                    )));
+                }
+
+                #[cfg(not(feature = "native"))]
+                {
+                    // WASM: Token creation not yet supported
+                    // TODO(wasm): Implement token definitions for WASM builds
+                    let _ = (controller, token_script, amount);
+                    return Err(crate::MtgError::InvalidAction(
+                        "Token creation not yet supported in WASM builds".to_string(),
+                    ));
                 }
             }
         }

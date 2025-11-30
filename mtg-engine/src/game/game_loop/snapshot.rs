@@ -4,7 +4,9 @@
 
 use crate::core::PlayerId;
 use crate::game::controller::PlayerController;
-use crate::{MtgError, Result};
+#[cfg(feature = "native")]
+use crate::MtgError;
+use crate::Result;
 
 use super::{GameEndReason, GameLoop, GameResult, VerbosityLevel};
 
@@ -131,6 +133,9 @@ impl<'a> GameLoop<'a> {
     ///
     /// This helps catch bugs where we might stop mid-action (e.g., in the middle
     /// of combat damage resolution).
+    ///
+    /// Native only - only used by save_snapshot_and_exit.
+    #[cfg(feature = "native")]
     pub(super) fn assert_valid_stopping_point(&self) {
         // Get the buffered logs
         let logs = self.game.logger.logs();
@@ -185,6 +190,9 @@ impl<'a> GameLoop<'a> {
     /// intra-turn choices, saves controller RNG state, and saves a GameSnapshot to disk.
     ///
     /// Returns a GameResult with `GameEndReason::Snapshot`.
+    ///
+    /// Native only - requires filesystem access.
+    #[cfg(feature = "native")]
     pub(super) fn save_snapshot_and_exit<P: AsRef<std::path::Path>>(
         &mut self,
         choice_limit: usize,

@@ -8,10 +8,10 @@
 use crate::game::state::GameState;
 use crate::undo::GameAction;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// Serialization format for snapshots
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "native", derive(clap::ValueEnum))]
 pub enum SnapshotFormat {
     /// JSON format (human-readable, slower)
     Json,
@@ -178,8 +178,13 @@ impl GameSnapshot {
         }
     }
 
-    /// Save this snapshot to a file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P, format: SnapshotFormat) -> Result<(), SnapshotError> {
+    /// Save this snapshot to a file (native only - requires filesystem access)
+    #[cfg(feature = "native")]
+    pub fn save_to_file<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+        format: SnapshotFormat,
+    ) -> Result<(), SnapshotError> {
         match format {
             SnapshotFormat::Json => {
                 let json = serde_json::to_string(self).map_err(|e| SnapshotError::Serialization(e.to_string()))?;
@@ -194,8 +199,9 @@ impl GameSnapshot {
         Ok(())
     }
 
-    /// Load a snapshot from a file
-    pub fn load_from_file<P: AsRef<Path>>(path: P, format: SnapshotFormat) -> Result<Self, SnapshotError> {
+    /// Load a snapshot from a file (native only - requires filesystem access)
+    #[cfg(feature = "native")]
+    pub fn load_from_file<P: AsRef<std::path::Path>>(path: P, format: SnapshotFormat) -> Result<Self, SnapshotError> {
         match format {
             SnapshotFormat::Json => {
                 let json = std::fs::read_to_string(path.as_ref()).map_err(|e| SnapshotError::Io(e.to_string()))?;
@@ -210,6 +216,26 @@ impl GameSnapshot {
                 Ok(decoded)
             }
         }
+    }
+
+    /// Serialize to JSON string (platform-independent)
+    pub fn to_json(&self) -> Result<String, SnapshotError> {
+        serde_json::to_string(self).map_err(|e| SnapshotError::Serialization(e.to_string()))
+    }
+
+    /// Serialize to bincode bytes (platform-independent)
+    pub fn to_bincode(&self) -> Result<Vec<u8>, SnapshotError> {
+        bincode::serialize(self).map_err(|e| SnapshotError::Serialization(e.to_string()))
+    }
+
+    /// Deserialize from JSON string (platform-independent)
+    pub fn from_json(json: &str) -> Result<Self, SnapshotError> {
+        serde_json::from_str(json).map_err(|e| SnapshotError::Deserialization(e.to_string()))
+    }
+
+    /// Deserialize from bincode bytes (platform-independent)
+    pub fn from_bincode(bytes: &[u8]) -> Result<Self, SnapshotError> {
+        bincode::deserialize(bytes).map_err(|e| SnapshotError::Deserialization(e.to_string()))
     }
 
     /// Get the number of intra-turn choices in this snapshot

@@ -5,6 +5,7 @@ pub mod combat;
 pub mod continuous_effects;
 pub mod controller;
 pub mod fancy_fixed_controller;
+#[cfg(feature = "native")]
 pub mod fancy_tui_controller;
 pub mod fancy_tui_renderer;
 pub mod fixed_script_controller;
@@ -12,6 +13,7 @@ pub mod game_loop;
 pub mod game_state_evaluator;
 pub mod hand_setup;
 pub mod heuristic_controller;
+#[cfg(feature = "native")]
 pub mod interactive_controller;
 pub mod logger;
 pub mod mana_colors;
@@ -22,6 +24,7 @@ pub mod mana_source_cache;
 pub mod phase;
 pub mod random_controller;
 pub mod replay_controller;
+#[cfg(feature = "native")]
 pub mod rich_input_controller;
 pub mod snapshot;
 pub mod state;
@@ -40,12 +43,14 @@ pub use combat::CombatState;
 pub use continuous_effects::PTBreakdown;
 pub use controller::{format_choice_menu, GameStateView, PlayerController};
 pub use fancy_fixed_controller::FancyFixedController;
+#[cfg(feature = "native")]
 pub use fancy_tui_controller::FancyTuiController;
 pub use fixed_script_controller::FixedScriptController;
 pub use game_loop::{GameEndReason, GameLoop, GameResult, VerbosityLevel};
 pub use game_state_evaluator::{GameStateEvaluator, Score};
 pub use hand_setup::{setup_opening_hands, HandSetup};
 pub use heuristic_controller::HeuristicController;
+#[cfg(feature = "native")]
 pub use interactive_controller::InteractiveController;
 pub use logger::{GameLogger, LogEntry, OutputFormat, OutputMode};
 pub use mana_colors::ManaColors;
@@ -59,6 +64,7 @@ pub use crate::core::{ManaColor, ManaProduction, ManaProductionKind};
 pub use phase::{Phase, Step, TurnStructure};
 pub use random_controller::RandomController;
 pub use replay_controller::{ReplayChoice, ReplayController};
+#[cfg(feature = "native")]
 pub use rich_input_controller::RichInputController;
 pub use snapshot::{ControllerState, ControllerType, GameSnapshot, SnapshotError};
 pub use state::GameState;

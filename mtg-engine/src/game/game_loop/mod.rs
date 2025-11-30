@@ -366,6 +366,7 @@ impl<'a> GameLoop<'a> {
             // Run one turn and check if game should end
             if let Some(result) = self.run_turn_once(controller1, controller2)? {
                 // Check if this is a snapshot request
+                #[cfg(feature = "native")]
                 if result.end_reason == GameEndReason::Snapshot {
                     // We're at the top level - save snapshot with access to both controllers!
 

@@ -20,12 +20,18 @@ pub enum MtgError {
     ParseError(String),
 
     #[error("IO error: {0}")]
+    #[cfg(feature = "native")]
     IoError(#[from] std::io::Error),
+
+    #[error("IO error: {0}")]
+    #[cfg(not(feature = "native"))]
+    IoError(String),
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
 
     #[error("Task join error: {0}")]
+    #[cfg(feature = "native")]
     JoinError(#[from] tokio::task::JoinError),
 }
 

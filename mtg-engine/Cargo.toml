@@ -6,10 +6,14 @@ edition.workspace = true
 [[bin]]
 name = "mtg"
 path = "src/main.rs"
+# Binary only built for native targets (not WASM)
+required-features = ["native"]
 
 [lib]
 name = "mtg_forge_rs"
 path = "src/lib.rs"
+# Library can be built for WASM without native features
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Serialization
@@ -43,27 +47,33 @@ rand_xoshiro = { version = "0.6", features = ["serde1"] }
 # Hashing (for fast lookups)
 rustc-hash = "1.1"
 
-# CLI argument parsing
-clap = { version = "4.5", features = ["derive"] }
+# CLI argument parsing (native only)
+clap = { version = "4.5", features = ["derive"], optional = true }
 
-# TUI
-ratatui = "0.28"
-crossterm = "0.28"
-signal-hook = "0.3"
-libc = "0.2"  # For signal handling (raise)
+# TUI (native only)
+ratatui = { version = "0.28", optional = true }
+crossterm = { version = "0.28", optional = true }
+signal-hook = { version = "0.3", optional = true }
+libc = { version = "0.2", optional = true }  # For signal handling (raise)
 
-# Async runtime
-tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "macros", "time", "sync"] }
+# Async runtime (native only)
+tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "macros", "time", "sync"], optional = true }
 
-# Parallel directory walking
-jwalk = "0.8"
+# Parallel directory walking (native only)
+jwalk = { version = "0.8", optional = true }
 
-# Parallel execution
-rayon = "1.10"
-num_cpus = "1.16"
+# Parallel execution (native only)
+rayon = { version = "1.10", optional = true }
+num_cpus = { version = "1.16", optional = true }
 
-# High-performance allocator (mimalloc)
-mimalloc = "0.1"
+# High-performance allocator (native only)
+mimalloc = { version = "0.1", optional = true }
+
+# WASM-specific dependencies
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", features = ["console"], optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
 
 [dev-dependencies]
 dir-test = "0.4"
@@ -71,7 +81,31 @@ similar-asserts = "1.5"
 tempfile = "3.10.1"
 
 [features]
+# Default builds include native features (CLI, TUI, async file loading)
+default = ["native", "verbose-logging"]
+
 # Enable verbose game event logging (format! allocations)
 # Disable this feature for maximum performance in benchmarks
-default = ["verbose-logging"]
 verbose-logging = []
+
+# Native platform features (CLI, TUI, file I/O, threading)
+native = [
+    "clap",
+    "ratatui",
+    "crossterm",
+    "signal-hook",
+    "libc",
+    "tokio",
+    "jwalk",
+    "rayon",
+    "num_cpus",
+    "mimalloc",
+]
+
+# WASM target features (browser-compatible, no threading)
+wasm = [
+    "wasm-bindgen",
+    "js-sys",
+    "web-sys",
+    "getrandom",
+]

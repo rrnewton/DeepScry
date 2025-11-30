@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Forge - WebAssembly Demo</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #ffd700;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .card h2 {
+            margin-top: 0;
+            color: #4cc9f0;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+        button {
+            background: #4361ee;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #3a0ca3;
+        }
+        button:disabled {
+            background: #333;
+            cursor: not-allowed;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        select {
+            background: #0f3460;
+            color: white;
+            border: 1px solid #444;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .game-state {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .player {
+            background: #0f3460;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .player h3 {
+            margin: 0 0 10px 0;
+            color: #ffd700;
+        }
+        .life {
+            font-size: 32px;
+            font-weight: bold;
+            color: #4cc9f0;
+        }
+        .stats {
+            color: #888;
+            font-size: 14px;
+        }
+        #logs {
+            background: #0a0a1a;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 5px;
+        }
+        .turn-info {
+            text-align: center;
+            font-size: 18px;
+            color: #ffd700;
+            margin-bottom: 15px;
+        }
+        .result {
+            text-align: center;
+            padding: 20px;
+            font-size: 24px;
+            color: #4cc9f0;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #888;
+        }
+        .error {
+            background: #4a1010;
+            color: #ff6b6b;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>MTG Forge - WebAssembly Demo</h1>
+    <p class="subtitle">Game engine running in your browser via Rust + WASM</p>
+
+    <div id="loading" class="loading">
+        Loading WebAssembly module...
+    </div>
+
+    <div id="app" style="display: none;">
+        <div class="card">
+            <h2>Game Setup</h2>
+            <div class="controls">
+                <div>
+                    <label>P1 Controller:</label>
+                    <select id="p1-controller">
+                        <option value="heuristic">Heuristic AI</option>
+                        <option value="random">Random</option>
+                        <option value="zero">Zero (Pass)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>P2 Controller:</label>
+                    <select id="p2-controller">
+                        <option value="heuristic">Heuristic AI</option>
+                        <option value="random">Random</option>
+                        <option value="zero">Zero (Pass)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="controls">
+                <button id="btn-new-game">New Game</button>
+                <button id="btn-run-turn" disabled>Run 1 Turn</button>
+                <button id="btn-run-game" disabled>Run Full Game</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Game State</h2>
+            <div id="turn-info" class="turn-info">No game started</div>
+            <div class="game-state">
+                <div class="player">
+                    <h3>Player 1</h3>
+                    <div class="life" id="p1-life">20</div>
+                    <div class="stats" id="p1-stats">-</div>
+                </div>
+                <div class="player">
+                    <h3>Player 2</h3>
+                    <div class="life" id="p2-life">20</div>
+                    <div class="stats" id="p2-stats">-</div>
+                </div>
+            </div>
+            <div id="result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="card">
+            <h2>Game Logs</h2>
+            <button id="btn-clear-logs">Clear Logs</button>
+            <div id="logs">Waiting for game to start...</div>
+        </div>
+
+        <div class="card">
+            <h2>Debug Info</h2>
+            <div id="debug">
+                <p>WASM Version: <span id="wasm-version">-</span></p>
+                <p>Module Status: <span id="wasm-status">-</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, {
+            version,
+            is_ready,
+            WasmGame,
+            WasmControllerType
+        } from './pkg/mtg_forge_rs.js';
+
+        let game = null;
+
+        async function main() {
+            try {
+                await init();
+
+                // Update status
+                document.getElementById('wasm-version').textContent = version();
+                document.getElementById('wasm-status').textContent = is_ready() ? 'Ready' : 'Error';
+
+                // Hide loading, show app
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('app').style.display = 'block';
+
+                // Set up event handlers
+                document.getElementById('btn-new-game').addEventListener('click', newGame);
+                document.getElementById('btn-run-turn').addEventListener('click', runOneTurn);
+                document.getElementById('btn-run-game').addEventListener('click', runFullGame);
+                document.getElementById('btn-clear-logs').addEventListener('click', clearLogs);
+
+                console.log('MTG Forge WASM initialized successfully!');
+            } catch (error) {
+                document.getElementById('loading').innerHTML = `
+                    <div class="error">
+                        <strong>Failed to load WASM module:</strong><br>
+                        ${error.message}<br><br>
+                        Make sure you've built the WASM module with:<br>
+                        <code>wasm-pack build --target web --no-default-features --features wasm</code>
+                    </div>
+                `;
+                console.error('Failed to initialize WASM:', error);
+            }
+        }
+
+        function getControllerType(value) {
+            switch (value) {
+                case 'zero': return WasmControllerType.Zero;
+                case 'random': return WasmControllerType.Random;
+                case 'heuristic': return WasmControllerType.Heuristic;
+                default: return WasmControllerType.Heuristic;
+            }
+        }
+
+        function newGame() {
+            const p1Controller = document.getElementById('p1-controller').value;
+            const p2Controller = document.getElementById('p2-controller').value;
+
+            game = new WasmGame("Player 1", "Player 2", 20);
+            game.set_p1_controller(getControllerType(p1Controller));
+            game.set_p2_controller(getControllerType(p2Controller));
+            game.set_seed(BigInt(Date.now()));
+
+            document.getElementById('btn-run-turn').disabled = false;
+            document.getElementById('btn-run-game').disabled = false;
+            document.getElementById('result').style.display = 'none';
+
+            updateGameState();
+            document.getElementById('logs').textContent = 'Game started!\n';
+
+            console.log('New game created');
+        }
+
+        function updateGameState() {
+            if (!game) return;
+
+            const state = JSON.parse(game.get_state_json());
+
+            document.getElementById('turn-info').textContent =
+                `Turn ${state.turn_number} - ${state.current_step} (Player ${state.active_player_idx + 1} active)`;
+
+            document.getElementById('p1-life').textContent = state.players[0].life;
+            document.getElementById('p1-stats').textContent =
+                `Lands played: ${state.players[0].lands_played}`;
+
+            document.getElementById('p2-life').textContent = state.players[1].life;
+            document.getElementById('p2-stats').textContent =
+                `Lands played: ${state.players[1].lands_played}`;
+
+            // Update logs
+            const logs = JSON.parse(game.get_logs_json());
+            if (logs.length > 0) {
+                const logDiv = document.getElementById('logs');
+                logDiv.textContent = logs.join('\n');
+                logDiv.scrollTop = logDiv.scrollHeight;
+            }
+        }
+
+        function runOneTurn() {
+            if (!game) return;
+
+            const ongoing = game.run_one_turn();
+            updateGameState();
+
+            if (!ongoing) {
+                showResult();
+            }
+        }
+
+        function runFullGame() {
+            if (!game) return;
+
+            const resultJson = game.run_ai_game(100);
+            const result = JSON.parse(resultJson);
+
+            updateGameState();
+            showResult(result);
+        }
+
+        function showResult(result) {
+            document.getElementById('btn-run-turn').disabled = true;
+            document.getElementById('btn-run-game').disabled = true;
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+
+            if (result && result.error) {
+                resultDiv.textContent = `Error: ${result.error}`;
+            } else if (result && result.winner !== null) {
+                resultDiv.textContent = `Player ${result.winner + 1} wins! (${result.end_reason} after ${result.turns_played} turns)`;
+            } else if (game.is_game_over()) {
+                const p1Life = game.get_player_life(0);
+                const p2Life = game.get_player_life(1);
+                if (p1Life <= 0) {
+                    resultDiv.textContent = 'Player 2 wins!';
+                } else if (p2Life <= 0) {
+                    resultDiv.textContent = 'Player 1 wins!';
+                } else {
+                    resultDiv.textContent = 'Game Over';
+                }
+            } else {
+                resultDiv.textContent = 'Game ended';
+            }
+        }
+
+        function clearLogs() {
+            if (game) {
+                game.clear_logs();
+            }
+            document.getElementById('logs').textContent = '';
+        }
+
+        main();
+    </script>
+</body>
+</html>
