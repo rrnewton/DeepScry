@@ -1160,6 +1160,10 @@ impl GameState {
             cache.mark_dirty();
         }
 
+        // Increment mana state version to invalidate ManaEngine memoization
+        // Without this, ManaEngine might use stale cached state from before the undo
+        self.increment_mana_version();
+
         if let Some(log_size) = choice_log_size {
             eprintln!(
                 "[UNDO DEBUG] Undo complete: actions_undone={}, choice_log_size={}",

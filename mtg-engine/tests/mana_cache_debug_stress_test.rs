@@ -17,7 +17,6 @@ use std::path::PathBuf;
 
 /// Run a small tournament of oldschool deck games with mana cache debug verification
 #[tokio::test]
-#[ignore] // TODO: Fix cache consistency bug - currently fails with capacity mismatch
 async fn test_oldschool_tourney_mana_cache_debug() -> Result<()> {
     println!("\n=== Mana Cache Debug Stress Test ===\n");
     println!("Running oldschool deck games with from-scratch consistency verification");

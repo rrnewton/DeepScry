@@ -33,9 +33,8 @@ impl<'a> GameLoop<'a> {
             .collect();
 
         for card_id in cards_to_untap {
-            if let Ok(card) = self.game.cards.get_mut(card_id) {
-                card.untap();
-            }
+            // Use untap_permanent to ensure mana cache is updated
+            let _ = self.game.untap_permanent(card_id);
         }
 
         Ok(())

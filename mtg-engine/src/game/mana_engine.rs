@@ -318,30 +318,36 @@ impl ManaEngine {
 
                 let production = &card.cache.mana_production;
 
-                // Classify source and update capacity
-                match &production.kind {
-                    ManaProductionKind::Fixed(color) => {
-                        use crate::core::ManaColor;
-                        scratch_simple_sources.push(card_id);
-                        if !card.tapped {
-                            match color {
-                                ManaColor::White => scratch_capacity.white += 1,
-                                ManaColor::Blue => scratch_capacity.blue += 1,
-                                ManaColor::Black => scratch_capacity.black += 1,
-                                ManaColor::Red => scratch_capacity.red += 1,
-                                ManaColor::Green => scratch_capacity.green += 1,
+                // Creatures with mana abilities are always complex sources
+                // (due to summoning sickness and other creature-specific rules)
+                if card.is_creature() {
+                    scratch_complex_sources.push(card_id);
+                } else {
+                    // Classify source and update capacity
+                    match &production.kind {
+                        ManaProductionKind::Fixed(color) => {
+                            use crate::core::ManaColor;
+                            scratch_simple_sources.push(card_id);
+                            if !card.tapped {
+                                match color {
+                                    ManaColor::White => scratch_capacity.white += 1,
+                                    ManaColor::Blue => scratch_capacity.blue += 1,
+                                    ManaColor::Black => scratch_capacity.black += 1,
+                                    ManaColor::Red => scratch_capacity.red += 1,
+                                    ManaColor::Green => scratch_capacity.green += 1,
+                                }
                             }
                         }
-                    }
-                    ManaProductionKind::Colorless => {
-                        scratch_simple_sources.push(card_id);
-                        if !card.tapped {
-                            scratch_capacity.colorless += 1;
+                        ManaProductionKind::Colorless => {
+                            scratch_simple_sources.push(card_id);
+                            if !card.tapped {
+                                scratch_capacity.colorless += 1;
+                            }
                         }
-                    }
-                    ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
-                        // Complex source - will be evaluated during payment
-                        scratch_complex_sources.push(card_id);
+                        ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
+                            // Complex source - will be evaluated during payment
+                            scratch_complex_sources.push(card_id);
+                        }
                     }
                 }
 
@@ -372,6 +378,36 @@ impl ManaEngine {
 
         // Check simple sources count
         if self.simple_sources.len() != scratch_simple.len() {
+            // Find missing cards
+            let mut missing_in_cache = Vec::new();
+            let mut missing_in_scratch = Vec::new();
+
+            for &card_id in &scratch_simple {
+                if !self.simple_sources.contains(&card_id) {
+                    if let Some(card) = game.cards.try_get(card_id) {
+                        missing_in_cache.push(format!(
+                            "{:?} ({}, tapped={}, owner={:?})",
+                            card_id, card.name, card.tapped, card.owner
+                        ));
+                    } else {
+                        missing_in_cache.push(format!("{:?} (not found)", card_id));
+                    }
+                }
+            }
+
+            for &card_id in &self.simple_sources {
+                if !scratch_simple.contains(&card_id) {
+                    if let Some(card) = game.cards.try_get(card_id) {
+                        missing_in_scratch.push(format!(
+                            "{:?} ({}, tapped={}, owner={:?})",
+                            card_id, card.name, card.tapped, card.owner
+                        ));
+                    } else {
+                        missing_in_scratch.push(format!("{:?} (not found)", card_id));
+                    }
+                }
+            }
+
             panic!(
                 "ManaEngine incremental computation error: simple_sources count mismatch\n\
                  Cached: {} sources\n\
@@ -379,13 +415,18 @@ impl ManaEngine {
                  Player: {:?}\n\
                  Turn: {}\n\
                  Cached sources: {:?}\n\
-                 Scratch sources: {:?}",
+                 Scratch sources: {:?}\n\
+                 \n\
+                 Missing in cache: {:?}\n\
+                 Missing in scratch: {:?}",
                 self.simple_sources.len(),
                 scratch_simple.len(),
                 player_id,
                 game.turn.turn_number,
                 self.simple_sources,
-                scratch_simple
+                scratch_simple,
+                missing_in_cache,
+                missing_in_scratch
             );
         }
 
@@ -406,12 +447,37 @@ impl ManaEngine {
 
         // Check capacity (this is the most critical - it affects can_pay() queries)
         if self.simple_capacity != scratch_capacity {
+            // Gather detailed diagnostics about the cards
+            let mut cached_card_info = String::new();
+            for &card_id in &self.simple_sources {
+                if let Some(card) = game.cards.try_get(card_id) {
+                    cached_card_info.push_str(&format!(
+                        "\n    Card {:?} ({}): tapped={}, owner={:?}, production={:?}",
+                        card_id, card.name, card.tapped, card.owner, card.cache.mana_production.kind
+                    ));
+                }
+            }
+
+            let mut scratch_card_info = String::new();
+            for &card_id in &scratch_simple {
+                if let Some(card) = game.cards.try_get(card_id) {
+                    scratch_card_info.push_str(&format!(
+                        "\n    Card {:?} ({}): tapped={}, owner={:?}, production={:?}",
+                        card_id, card.name, card.tapped, card.owner, card.cache.mana_production.kind
+                    ));
+                }
+            }
+
             panic!(
                 "ManaEngine incremental computation error: capacity mismatch\n\
                  Cached: W={} U={} B={} R={} G={} C={} (total={})\n\
                  From-scratch: W={} U={} B={} R={} G={} C={} (total={})\n\
                  Player: {:?}\n\
-                 Turn: {}",
+                 Turn: {}\n\
+                 \n\
+                 Cached simple sources ({}): {}\n\
+                 \n\
+                 Scratch simple sources ({}): {}",
                 self.simple_capacity.white,
                 self.simple_capacity.blue,
                 self.simple_capacity.black,
@@ -427,7 +493,11 @@ impl ManaEngine {
                 scratch_capacity.colorless,
                 scratch_capacity.total(),
                 player_id,
-                game.turn.turn_number
+                game.turn.turn_number,
+                self.simple_sources.len(),
+                cached_card_info,
+                scratch_simple.len(),
+                scratch_card_info
             );
         }
 
@@ -524,30 +594,36 @@ impl ManaEngine {
 
                 let production = &card.cache.mana_production;
 
-                // Classify source and update capacity
-                match &production.kind {
-                    ManaProductionKind::Fixed(color) => {
-                        use crate::core::ManaColor;
-                        self.simple_sources.push(card_id);
-                        if !card.tapped {
-                            match color {
-                                ManaColor::White => self.simple_capacity.white += 1,
-                                ManaColor::Blue => self.simple_capacity.blue += 1,
-                                ManaColor::Black => self.simple_capacity.black += 1,
-                                ManaColor::Red => self.simple_capacity.red += 1,
-                                ManaColor::Green => self.simple_capacity.green += 1,
+                // Creatures with mana abilities are always complex sources
+                // (due to summoning sickness and other creature-specific rules)
+                if card.is_creature() {
+                    self.complex_sources.push(card_id);
+                } else {
+                    // Classify source and update capacity
+                    match &production.kind {
+                        ManaProductionKind::Fixed(color) => {
+                            use crate::core::ManaColor;
+                            self.simple_sources.push(card_id);
+                            if !card.tapped {
+                                match color {
+                                    ManaColor::White => self.simple_capacity.white += 1,
+                                    ManaColor::Blue => self.simple_capacity.blue += 1,
+                                    ManaColor::Black => self.simple_capacity.black += 1,
+                                    ManaColor::Red => self.simple_capacity.red += 1,
+                                    ManaColor::Green => self.simple_capacity.green += 1,
+                                }
                             }
                         }
-                    }
-                    ManaProductionKind::Colorless => {
-                        self.simple_sources.push(card_id);
-                        if !card.tapped {
-                            self.simple_capacity.colorless += 1;
+                        ManaProductionKind::Colorless => {
+                            self.simple_sources.push(card_id);
+                            if !card.tapped {
+                                self.simple_capacity.colorless += 1;
+                            }
                         }
-                    }
-                    ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
-                        // Complex source - will be evaluated during payment
-                        self.complex_sources.push(card_id);
+                        ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
+                            // Complex source - will be evaluated during payment
+                            self.complex_sources.push(card_id);
+                        }
                     }
                 }
 

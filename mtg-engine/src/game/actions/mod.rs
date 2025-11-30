@@ -1367,6 +1367,14 @@ impl GameState {
             prior_log_size,
         );
 
+        // Update mana caches (event-driven incremental update)
+        // Read card data to avoid borrow conflicts
+        if let Some(card) = self.cards.try_get(card_id) {
+            for (_, cache) in &mut self.mana_caches {
+                cache.on_tap(card_id, card);
+            }
+        }
+
         // Increment mana state version to invalidate ManaEngine cache
         self.increment_mana_version();
 
@@ -1629,12 +1637,8 @@ impl GameState {
 
         match cost {
             Cost::Tap => {
-                // Tap the permanent
-                let card = self.cards.get_mut(card_id)?;
-                if card.tapped {
-                    return Err(MtgError::InvalidAction("Permanent is already tapped".to_string()));
-                }
-                card.tap();
+                // Tap the permanent (this updates cache and increments mana_version)
+                self.tap_permanent(card_id)?;
                 Ok(())
             }
 
@@ -1651,11 +1655,16 @@ impl GameState {
             Cost::TapAndMana(mana_cost) => {
                 // Pay both tap and mana
                 // Tap first (must happen before zone changes)
-                let card = self.cards.get_mut(card_id)?;
-                if card.tapped {
-                    return Err(MtgError::InvalidAction("Permanent is already tapped".to_string()));
+                // Check if already tapped
+                {
+                    let card = self.cards.get(card_id)?;
+                    if card.tapped {
+                        return Err(MtgError::InvalidAction("Permanent is already tapped".to_string()));
+                    }
                 }
-                card.tap();
+
+                // Tap the permanent (this updates cache and increments mana_version)
+                self.tap_permanent(card_id)?;
 
                 // Then pay mana
                 let player = self.get_player_mut(player_id)?;
