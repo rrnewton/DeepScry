@@ -6,7 +6,7 @@
 //! - Finding valid targets for activated abilities
 //! - Checking if a cost sacrifices the source card itself
 
-use crate::core::{CardId, Cost, Effect, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{CardId, Cost, Effect, PlayerId, TargetRef};
 use crate::game::state::GameState;
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
@@ -444,21 +444,21 @@ mod tests {
         // Add a creature to the battlefield
         let creature_id = game.cards.next_id();
         let mut creature_card = Card::new(creature_id, "Grizzly Bears", player2);
-        creature_card.types.push(CardType::Creature);
+        creature_card.add_type(CardType::Creature); // Use add_type() to update cache
         game.cards.insert(creature_id, creature_card);
         game.battlefield.cards.push(creature_id);
 
         // Add a land to the battlefield
         let land_id = game.cards.next_id();
         let mut land_card = Card::new(land_id, "Swamp", player2);
-        land_card.types.push(CardType::Land);
+        land_card.add_type(CardType::Land); // Use add_type() to update cache
         game.cards.insert(land_id, land_card);
         game.battlefield.cards.push(land_id);
 
         // Create Sinkhole spell card with oracle text
         let sinkhole_id = game.cards.next_id();
         let mut sinkhole_card = Card::new(sinkhole_id, "Sinkhole", player1);
-        sinkhole_card.types.push(CardType::Sorcery);
+        sinkhole_card.add_type(CardType::Sorcery);
         sinkhole_card.text = "Destroy target land.".to_string();
         sinkhole_card.cache = crate::core::CardCache::new(&sinkhole_card.text, sinkhole_card.name.as_str());
         sinkhole_card.effects.push(Effect::DestroyPermanent {
@@ -490,21 +490,21 @@ mod tests {
         // Add a creature to the battlefield
         let creature_id = game.cards.next_id();
         let mut creature_card = Card::new(creature_id, "Grizzly Bears", player2);
-        creature_card.types.push(CardType::Creature);
+        creature_card.add_type(CardType::Creature); // Use add_type() to update cache
         game.cards.insert(creature_id, creature_card);
         game.battlefield.cards.push(creature_id);
 
         // Add a land to the battlefield
         let land_id = game.cards.next_id();
         let mut land_card = Card::new(land_id, "Swamp", player2);
-        land_card.types.push(CardType::Land);
+        land_card.add_type(CardType::Land); // Use add_type() to update cache
         game.cards.insert(land_id, land_card);
         game.battlefield.cards.push(land_id);
 
         // Create Terror spell card with oracle text
         let terror_id = game.cards.next_id();
         let mut terror_card = Card::new(terror_id, "Terror", player1);
-        terror_card.types.push(CardType::Instant);
+        terror_card.add_type(CardType::Instant);
         terror_card.text = "Destroy target nonartifact, nonblack creature. It can't be regenerated.".to_string();
         terror_card.cache = crate::core::CardCache::new(&terror_card.text, terror_card.name.as_str());
         terror_card.effects.push(Effect::DestroyPermanent {
