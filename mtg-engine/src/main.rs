@@ -1701,7 +1701,7 @@ async fn run_resume(
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-        ControllerType::Fixed | ControllerType::FancyFixed => {
+        ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
             if let Some(input) = &p1_fixed_inputs {
                 // CLI override - use provided script
@@ -1726,6 +1726,25 @@ async fn run_resume(
             } else {
                 return Err(mtg_forge_rs::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --override-p1=fixed (no snapshot state available)".to_string(),
+                ));
+            }
+        }
+        ControllerType::FancyFixed => {
+            use mtg_forge_rs::game::FancyFixedController;
+
+            // FancyFixed requires --p1-fixed-inputs
+            if let Some(input) = &p1_fixed_inputs {
+                let script = parse_fixed_inputs(input).map_err(|e| {
+                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
+                })?;
+
+                // FancyFixed does not support snapshot restoration yet
+                let screenshot_dir = None; // Default to ./screenshots/
+
+                Box::new(FancyFixedController::new(p1_id, script, screenshot_dir)?)
+            } else {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "--p1-fixed-inputs is required when --override-p1=fancy-fixed".to_string(),
                 ));
             }
         }
@@ -1779,7 +1798,7 @@ async fn run_resume(
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-        ControllerType::Fixed | ControllerType::FancyFixed => {
+        ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
             if let Some(input) = &p2_fixed_inputs {
                 // CLI override - use provided script
@@ -1804,6 +1823,25 @@ async fn run_resume(
             } else {
                 return Err(mtg_forge_rs::MtgError::InvalidAction(
                     "--p2-fixed-inputs is required when --override-p2=fixed (no snapshot state available)".to_string(),
+                ));
+            }
+        }
+        ControllerType::FancyFixed => {
+            use mtg_forge_rs::game::FancyFixedController;
+
+            // FancyFixed requires --p2-fixed-inputs
+            if let Some(input) = &p2_fixed_inputs {
+                let script = parse_fixed_inputs(input).map_err(|e| {
+                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
+                })?;
+
+                // FancyFixed does not support snapshot restoration yet
+                let screenshot_dir = None; // Default to ./screenshots/
+
+                Box::new(FancyFixedController::new(p2_id, script, screenshot_dir)?)
+            } else {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "--p2-fixed-inputs is required when --override-p2=fancy-fixed".to_string(),
                 ));
             }
         }

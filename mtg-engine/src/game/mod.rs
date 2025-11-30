@@ -6,6 +6,7 @@ pub mod continuous_effects;
 pub mod controller;
 pub mod fancy_fixed_controller;
 pub mod fancy_tui_controller;
+pub mod fancy_tui_renderer;
 pub mod fixed_script_controller;
 pub mod game_loop;
 pub mod game_state_evaluator;

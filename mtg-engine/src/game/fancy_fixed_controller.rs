@@ -1,62 +1,153 @@
-//! Fancy TUI controller with fixed scripted inputs and screenshot capture
+//! FancyFixed controller for scripted TUI debugging
 //!
-//! This controller uses:
-//! - Fixed scripted input from RichInputController (uses --fixed-inputs script)
-//! - TODO: TUI rendering and screenshot capture (phase 2)
+//! This controller uses the shared `TuiRenderer` with ratatui's `TestBackend`
+//! to capture screenshots of the game state before each choice. It then delegates
+//! actual choice-making to the `RichInputController` for fully automated gameplay.
 //!
-//! Currently this is a thin wrapper around RichInputController. In a future enhancement,
-//! we'll add TUI rendering using a ratatui TestBackend to capture screenshots.
+//! This allows for visual debugging of TUI rendering issues without requiring
+//! interactive terminal input.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::{
-    controller::{ChoiceResult, GameStateView, PlayerController},
-    snapshot::ControllerType,
-    RichInputController,
-};
+use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
+use crate::game::fancy_tui_renderer::{ChoiceContext, TuiRenderer};
+use crate::game::snapshot::ControllerType;
+use crate::game::RichInputController;
 use crate::MtgError;
+use ratatui::{backend::TestBackend, Terminal};
 use smallvec::SmallVec;
 use std::path::PathBuf;
 
-/// Fancy TUI with fixed scripted inputs and screenshot capture
-///
-/// Currently delegates all functionality to RichInputController.
-/// TODO: Add TUI rendering and screenshot capture.
+/// A controller that renders TUI screenshots before delegating to RichInputController
 pub struct FancyFixedController {
-    /// The fixed input controller
-    fixed: RichInputController,
-
-    /// Directory to save screenshots (for future use)
-    #[allow(dead_code)]
-    screenshot_dir: Option<PathBuf>,
+    player_id: PlayerId,
+    renderer: TuiRenderer,
+    delegate: RichInputController,
+    screenshot_counter: usize,
+    screenshot_dir: PathBuf,
 }
 
 impl FancyFixedController {
-    /// Create a new FancyFixedController
+    /// Create a new FancyFixed controller
     ///
     /// # Arguments
     /// * `player_id` - The player this controller manages
-    /// * `script` - The fixed input script (parsed from --fixed-inputs)
-    /// * `screenshot_dir` - Optional directory to save screenshots (not yet implemented)
-    pub fn new(player_id: PlayerId, script: Vec<String>, screenshot_dir: Option<PathBuf>) -> Result<Self, MtgError> {
-        let fixed = RichInputController::new(player_id, script);
+    /// * `script` - The fixed input script (from RichInputController)
+    /// * `screenshot_dir` - Optional directory to save screenshots
+    pub fn new(
+        player_id: PlayerId,
+        script: Vec<String>,
+        screenshot_dir: Option<PathBuf>,
+    ) -> Result<Self, MtgError> {
+        let visual_stacks = true; // Use visual stacks by default for better TUI appearance
 
-        // Create screenshot directory if specified
-        if let Some(ref dir) = screenshot_dir {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| MtgError::InvalidAction(format!("Failed to create screenshot directory: {}", e)))?;
-            log::info!(
-                "Screenshot directory created (rendering not yet implemented): {}",
-                dir.display()
-            );
+        // Create screenshot directory
+        // Handle empty paths (from snapshot_output.parent() when snapshot_output is just a filename)
+        let dir = screenshot_dir
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| PathBuf::from("screenshots"));
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            MtgError::InvalidAction(format!("Failed to create screenshot directory: {}", e))
+        })?;
+        eprintln!("Screenshots will be saved to: {}", dir.display());
+
+        Ok(FancyFixedController {
+            player_id,
+            renderer: TuiRenderer::new(visual_stacks),
+            delegate: RichInputController::new(player_id, script),
+            screenshot_counter: 0,
+            screenshot_dir: dir,
+        })
+    }
+
+    /// Capture a screenshot of the current game state before making a choice
+    fn capture_screenshot(
+        &mut self,
+        view: &GameStateView,
+        prompt: &str,
+        choices: &[String],
+    ) -> Result<(), MtgError> {
+        // Create a TestBackend with a reasonable terminal size
+        let backend = TestBackend::new(160, 40);
+        let mut terminal = Terminal::new(backend).map_err(|e| {
+            MtgError::InvalidAction(format!("Failed to create test terminal: {}", e))
+        })?;
+
+        // Prepare choices for rendering (highlight the first one as a visual indicator)
+        let choice_tuples: Vec<(String, bool)> = choices
+            .iter()
+            .enumerate()
+            .map(|(idx, text)| {
+                let numbered_text = format!("[{}] {}", idx, text);
+                (numbered_text, idx == 0)
+            })
+            .collect();
+
+        // Render the UI
+        terminal
+            .draw(|f| {
+                self.renderer.draw_ui(f, view, Some(prompt), &choice_tuples);
+            })
+            .map_err(|e| MtgError::InvalidAction(format!("Failed to render TUI: {}", e)))?;
+
+        // Get the rendered buffer
+        let buffer = terminal.backend().buffer().clone();
+
+        // Save to file
+        self.save_buffer_to_file(&buffer, prompt)?;
+
+        Ok(())
+    }
+
+    /// Save a ratatui buffer to a text file
+    fn save_buffer_to_file(&mut self, buffer: &ratatui::buffer::Buffer, prompt: &str) -> Result<(), MtgError> {
+        use std::io::Write;
+
+        // Generate filename
+        self.screenshot_counter += 1;
+        let safe_prompt = prompt
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { '_' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join("_");
+        let truncated_prompt = if safe_prompt.len() > 40 {
+            &safe_prompt[..40]
+        } else {
+            &safe_prompt
+        };
+        let filename = self
+            .screenshot_dir
+            .join(format!("{:04}_{}.txt", self.screenshot_counter, truncated_prompt));
+
+        let mut file = std::fs::File::create(&filename).map_err(|e| {
+            MtgError::InvalidAction(format!("Failed to create screenshot file: {}", e))
+        })?;
+
+        // Write buffer content line by line
+        let area = buffer.area();
+        for y in 0..area.height {
+            let mut line = String::new();
+            for x in 0..area.width {
+                let cell = &buffer[(x, y)];
+                line.push_str(cell.symbol());
+            }
+            // Trim trailing whitespace
+            let trimmed = line.trim_end();
+            writeln!(file, "{}", trimmed).map_err(|e| {
+                MtgError::InvalidAction(format!("Failed to write to screenshot: {}", e))
+            })?;
         }
 
-        Ok(Self { fixed, screenshot_dir })
+        eprintln!("[SCREENSHOT] Saved: {}", filename.display());
+
+        Ok(())
     }
 }
 
 impl PlayerController for FancyFixedController {
     fn player_id(&self) -> PlayerId {
-        self.fixed.player_id()
+        self.player_id
     }
 
     fn choose_spell_ability_to_play(
@@ -64,8 +155,53 @@ impl PlayerController for FancyFixedController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_spell_ability_to_play(view, available)
+        // Set up renderer state for screenshot
+        self.renderer.state_mut().choice_context = ChoiceContext::PlayingSpell;
+        self.renderer.state_mut().valid_choices = available
+            .iter()
+            .map(|ability| match ability {
+                SpellAbility::PlayLand { card_id } => *card_id,
+                SpellAbility::CastSpell { card_id } => *card_id,
+                SpellAbility::ActivateAbility { card_id, .. } => *card_id,
+            })
+            .collect();
+
+        let player_name = view.player_name();
+        let prompt = format!("Priority {}: Choose action", player_name);
+
+        let choices: Vec<String> = std::iter::once("Pass".to_string())
+            .chain(available.iter().map(|ability| match ability {
+                SpellAbility::PlayLand { card_id } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("Play land: {}", name)
+                }
+                SpellAbility::CastSpell { card_id } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("Cast spell: {}", name)
+                }
+                SpellAbility::ActivateAbility { card_id, .. } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("Activate: {}", name)
+                }
+            }))
+            .collect();
+
+        // Capture screenshot before delegating (even if available is empty)
+        if let Err(e) = self.capture_screenshot(view, &prompt, &choices) {
+            eprintln!("Warning: Failed to capture screenshot: {:?}", e);
+        }
+
+        // Clean up renderer state
+        self.renderer.state_mut().choice_context = ChoiceContext::None;
+        self.renderer.state_mut().valid_choices.clear();
+
+        // Early return for empty available (after taking screenshot)
+        if available.is_empty() {
+            return ChoiceResult::Ok(None);
+        }
+
+        // Delegate to RichInputController
+        self.delegate.choose_spell_ability_to_play(view, available)
     }
 
     fn choose_targets(
@@ -74,8 +210,37 @@ impl PlayerController for FancyFixedController {
         spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_targets(view, spell, valid_targets)
+        // Set up renderer state
+        self.renderer.state_mut().choice_context = ChoiceContext::TargetSelection;
+        self.renderer.state_mut().valid_choices = valid_targets.to_vec();
+
+        let spell_name = view.card_name(spell).unwrap_or_else(|| format!("Card {:?}", spell));
+        let prompt = format!("Choose target for {}", spell_name);
+
+        let choices: Vec<String> = valid_targets
+            .iter()
+            .map(|&card_id| {
+                view.card_name(card_id)
+                    .unwrap_or_else(|| format!("Card {:?}", card_id))
+            })
+            .collect();
+
+        // Capture screenshot (even if valid_targets is empty)
+        if let Err(e) = self.capture_screenshot(view, &prompt, &choices) {
+            eprintln!("Warning: Failed to capture screenshot: {:?}", e);
+        }
+
+        // Clean up
+        self.renderer.state_mut().choice_context = ChoiceContext::None;
+        self.renderer.state_mut().valid_choices.clear();
+
+        // Early return for empty targets (after taking screenshot)
+        if valid_targets.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // Delegate
+        self.delegate.choose_targets(view, spell, valid_targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -84,8 +249,9 @@ impl PlayerController for FancyFixedController {
         cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_mana_sources_to_pay(view, cost, available_sources)
+        // For mana choices, we skip screenshots as they can be very frequent
+        // and less visually interesting
+        self.delegate.choose_mana_sources_to_pay(view, cost, available_sources)
     }
 
     fn choose_attackers(
@@ -93,8 +259,35 @@ impl PlayerController for FancyFixedController {
         view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_attackers(view, available_creatures)
+        // Set up renderer state
+        self.renderer.state_mut().choice_context = ChoiceContext::DeclareAttackers;
+        self.renderer.state_mut().valid_choices = available_creatures.to_vec();
+
+        let prompt = "Choose attackers (or Pass to skip)".to_string();
+
+        let choices: Vec<String> = std::iter::once("Done attacking".to_string())
+            .chain(available_creatures.iter().map(|&card_id| {
+                view.card_name(card_id)
+                    .unwrap_or_else(|| format!("Card {:?}", card_id))
+            }))
+            .collect();
+
+        // Capture screenshot (even if available_creatures is empty)
+        if let Err(e) = self.capture_screenshot(view, &prompt, &choices) {
+            eprintln!("Warning: Failed to capture screenshot: {:?}", e);
+        }
+
+        // Clean up
+        self.renderer.state_mut().choice_context = ChoiceContext::None;
+        self.renderer.state_mut().valid_choices.clear();
+
+        // Early return for empty creatures (after taking screenshot)
+        if available_creatures.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // Delegate
+        self.delegate.choose_attackers(view, available_creatures)
     }
 
     fn choose_blockers(
@@ -103,8 +296,35 @@ impl PlayerController for FancyFixedController {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_blockers(view, available_blockers, attackers)
+        // Set up renderer state
+        self.renderer.state_mut().choice_context = ChoiceContext::DeclareBlockers;
+        self.renderer.state_mut().valid_choices = available_blockers.to_vec();
+
+        let prompt = "Choose blockers (or Pass to skip)".to_string();
+
+        let choices: Vec<String> = std::iter::once("Done blocking".to_string())
+            .chain(available_blockers.iter().map(|&card_id| {
+                view.card_name(card_id)
+                    .unwrap_or_else(|| format!("Card {:?}", card_id))
+            }))
+            .collect();
+
+        // Capture screenshot (even if available_blockers or attackers is empty)
+        if let Err(e) = self.capture_screenshot(view, &prompt, &choices) {
+            eprintln!("Warning: Failed to capture screenshot: {:?}", e);
+        }
+
+        // Clean up
+        self.renderer.state_mut().choice_context = ChoiceContext::None;
+        self.renderer.state_mut().valid_choices.clear();
+
+        // Early return for empty blockers or attackers (after taking screenshot)
+        if available_blockers.is_empty() || attackers.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // Delegate
+        self.delegate.choose_blockers(view, available_blockers, attackers)
     }
 
     fn choose_damage_assignment_order(
@@ -113,8 +333,8 @@ impl PlayerController for FancyFixedController {
         attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_damage_assignment_order(view, attacker, blockers)
+        // Skip screenshot for damage assignment
+        self.delegate.choose_damage_assignment_order(view, attacker, blockers)
     }
 
     fn choose_cards_to_discard(
@@ -123,25 +343,28 @@ impl PlayerController for FancyFixedController {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_cards_to_discard(view, hand, count)
+        // Skip screenshot for discard
+        self.delegate.choose_cards_to_discard(view, hand, count)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // TODO: Render TUI and capture screenshot
-        self.fixed.choose_from_library(view, valid_cards)
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[CardId],
+    ) -> ChoiceResult<Option<CardId>> {
+        // Skip screenshot for library choice
+        self.delegate.choose_from_library(view, valid_cards)
     }
 
     fn on_priority_passed(&mut self, view: &GameStateView) {
-        self.fixed.on_priority_passed(view)
+        self.delegate.on_priority_passed(view);
     }
 
     fn on_game_end(&mut self, view: &GameStateView, won: bool) {
-        self.fixed.on_game_end(view, won)
+        self.delegate.on_game_end(view, won);
     }
 
     fn get_controller_type(&self) -> ControllerType {
-        // Return Fixed since we're using fixed scripting (even though we might add TUI later)
-        ControllerType::Fixed
+        ControllerType::FancyFixed
     }
 }
