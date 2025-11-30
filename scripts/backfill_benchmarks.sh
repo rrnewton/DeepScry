@@ -2,11 +2,12 @@
 # Backfill benchmark results for historical commits
 #
 # Usage:
-#   ./scripts/backfill_benchmarks.sh [--depth-range START END] [--last-n N] [--dry-run]
+#   ./scripts/backfill_benchmarks.sh [--depth-range START END] [--last-n N] [--cadence N] [--dry-run]
 #
 # Examples:
 #   ./scripts/backfill_benchmarks.sh --depth-range 1000 1030  # Fill depths 1000-1030
 #   ./scripts/backfill_benchmarks.sh --last-n 30             # Fill last 30 commits
+#   ./scripts/backfill_benchmarks.sh --last-n 30 --cadence 2 # Every 2nd commit (1006,1008,1010...)
 #   ./scripts/backfill_benchmarks.sh --dry-run --last-n 30   # Show what would be done
 
 set -euo pipefail
@@ -24,6 +25,7 @@ CSV_FILE="${RESULTS_DIR}/perf_history.csv"
 START_DEPTH=""
 END_DEPTH=""
 LAST_N=""
+CADENCE=1
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -37,13 +39,17 @@ while [[ $# -gt 0 ]]; do
             LAST_N="$2"
             shift 2
             ;;
+        --cadence)
+            CADENCE="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=true
             shift
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--depth-range START END] [--last-n N] [--dry-run]"
+            echo "Usage: $0 [--depth-range START END] [--last-n N] [--cadence N] [--dry-run]"
             exit 1
             ;;
     esac
@@ -70,6 +76,7 @@ fi
 echo "=== Backfilling Benchmarks ==="
 echo "CPU: $CPU_NAME"
 echo "Depth range: $START_DEPTH to $END_DEPTH ($((END_DEPTH - START_DEPTH + 1)) commits)"
+echo "Cadence: every ${CADENCE} commit(s)"
 echo "Results file: $CSV_FILE"
 echo "Dry run: $DRY_RUN"
 echo ""
@@ -138,8 +145,8 @@ echo "=== Analyzing commits in range ==="
 COMMITS_TO_BENCHMARK=()
 COMMITS_TO_SKIP=()
 
-# Get commits in depth range (oldest first)
-for depth in $(seq $START_DEPTH $END_DEPTH); do
+# Get commits in depth range (oldest first, with cadence)
+for depth in $(seq $START_DEPTH $CADENCE $END_DEPTH); do
     # Get commit at this depth
     commit_hash=$(git rev-list --reverse HEAD | sed -n "${depth}p")
 
