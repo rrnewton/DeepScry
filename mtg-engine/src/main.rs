@@ -393,13 +393,31 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging (controlled by RUST_LOG environment variable)
-    env_logger::Builder::from_default_env()
-        .format_timestamp(None)
-        .format_target(true)
-        .init();
-
+    // Parse CLI first to check if we're in fancy TUI mode
     let cli = Cli::parse();
+
+    // Initialize logging (controlled by RUST_LOG environment variable, defaults to Info level)
+    let mut builder = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info")
+    );
+    builder.format_timestamp(None).format_target(true);
+
+    // For Fancy TUI mode, redirect logs to a file since TUI takes over the screen
+    let log_file_path = if matches!(cli.command, Commands::Tui { p1: ControllerType::Fancy, .. } | Commands::Tui { p2: ControllerType::Fancy, .. }) {
+        use std::fs::OpenOptions;
+        let log_path = std::path::PathBuf::from("mtg_forge.log");
+        let log_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&log_path)?;
+        builder.target(env_logger::Target::Pipe(Box::new(log_file)));
+        Some(log_path)
+    } else {
+        None
+    };
+
+    builder.init();
 
     match cli.command {
         Commands::Tui {
@@ -467,7 +485,12 @@ async fn main() -> Result<()> {
                 p1_draw,
                 p2_draw,
             )
-            .await?
+            .await?;
+
+            // If we redirected logs to a file for Fancy TUI, print the location
+            if let Some(log_path) = log_file_path {
+                println!("\nLog file: {}", log_path.display());
+            }
         }
         Commands::Profile { games, seed, deck } => run_profile(games, seed, deck).await?,
         Commands::Tourney {
@@ -629,7 +652,7 @@ async fn run_tui(
     let deck_seed_resolved = deck_seed.map(|s| s.resolve());
 
     if !suppress_output {
-        println!("=== MTG Forge Rust - Text UI Mode ===\n");
+        log::info!("=== MTG Forge Rust - Text UI Mode ===\n");
     }
 
     // Parse stop condition if provided
@@ -637,8 +660,8 @@ async fn run_tui(
         let condition = StopCondition::parse(stop_str)
             .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --stop-on-choice: {}", e)))?;
         if !suppress_output {
-            println!("Stop condition: {:?}", condition);
-            println!("Snapshot output: {}\n", snapshot_output.display());
+            log::info!("Stop condition: {:?}", condition);
+            log::info!("Snapshot output: {}\n", snapshot_output.display());
         }
         Some(condition)
     } else {
@@ -690,10 +713,10 @@ async fn run_tui(
     let mut game = if let Some(ref snapshot) = loaded_snapshot {
         // Load game from snapshot
         if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
-            println!("Loading snapshot from: {}", start_from.as_ref().unwrap().display());
-            println!("  Turn number: {}", snapshot.turn_number);
-            println!("  Intra-turn choices to replay: {}", snapshot.choice_count());
-            println!("Game loaded from snapshot!\n");
+            log::info!("Loading snapshot from: {}", start_from.as_ref().unwrap().display());
+            log::info!("  Turn number: {}", snapshot.turn_number);
+            log::info!("  Intra-turn choices to replay: {}", snapshot.choice_count());
+            log::info!("Game loaded from snapshot!\n");
         }
 
         // Note: We don't need to load cards for snapshots since the GameState
@@ -702,17 +725,17 @@ async fn run_tui(
     } else if let Some(puzzle_file) = puzzle_path {
         // Load game from puzzle file
         if !suppress_output {
-            println!("Loading puzzle file: {}", puzzle_file.display());
+            log::info!("Loading puzzle file: {}", puzzle_file.display());
         }
         let puzzle_contents = std::fs::read_to_string(&puzzle_file)?;
         let puzzle = PuzzleFile::parse(&puzzle_contents)?;
         if !suppress_output {
-            println!("  Puzzle: {}", puzzle.metadata.name);
-            println!("  Goal: {:?}", puzzle.metadata.goal);
-            println!("  Difficulty: {:?}\n", puzzle.metadata.difficulty);
+            log::info!("  Puzzle: {}", puzzle.metadata.name);
+            log::info!("  Goal: {:?}", puzzle.metadata.goal);
+            log::info!("  Difficulty: {:?}\n", puzzle.metadata.difficulty);
 
             // Load cards needed for puzzle
-            println!("Loading card database...");
+            log::info!("Loading card database...");
         }
         let (count, duration) = if load_all_cards {
             card_db.eager_load().await?
@@ -734,10 +757,10 @@ async fn run_tui(
             card_db.load_cards(&card_names.into_iter().collect::<Vec<_>>()).await?
         };
         if !suppress_output {
-            println!("  Loaded {count} cards");
-            eprintln!("  (Loading time: {:.2}ms)", duration.as_secs_f64() * 1000.0);
+            log::info!("  Loaded {count} cards");
+            log::info!("  (Loading time: {:.2}ms)", duration.as_secs_f64() * 1000.0);
 
-            println!("Initializing game from puzzle...");
+            log::info!("Initializing game from puzzle...");
         }
         load_puzzle_into_game(&puzzle, &card_db).await?
     } else {
@@ -747,22 +770,22 @@ async fn run_tui(
         let deck2_path = deck2_path.as_ref().unwrap_or(&deck1_path);
 
         if !suppress_output {
-            println!("Loading deck files...");
+            log::info!("Loading deck files...");
         }
         let deck1 = DeckLoader::load_from_file(&deck1_path)?;
         let deck2 = DeckLoader::load_from_file(deck2_path)?;
 
         if !suppress_output {
             if deck2_path == &deck1_path {
-                println!("  Using same deck for both players: {} cards", deck1.total_cards());
+                log::info!("  Using same deck for both players: {} cards", deck1.total_cards());
             } else {
-                println!("  Player 1: {} cards", deck1.total_cards());
-                println!("  Player 2: {} cards", deck2.total_cards());
+                log::info!("  Player 1: {} cards", deck1.total_cards());
+                log::info!("  Player 2: {} cards", deck2.total_cards());
             }
-            println!();
+            log::info!("");
 
             // Load cards based on mode
-            println!("Loading card database...");
+            log::info!("Loading card database...");
         }
         let (count, duration) = if load_all_cards {
             // Load all cards from cardsfolder
@@ -774,11 +797,11 @@ async fn run_tui(
             card_db.load_cards(&unique_names).await?
         };
         if !suppress_output {
-            println!("  Loaded {count} cards");
-            eprintln!("  (Loading time: {:.2}ms)", duration.as_secs_f64() * 1000.0);
+            log::info!("  Loaded {count} cards");
+            log::info!("  (Loading time: {:.2}ms)", duration.as_secs_f64() * 1000.0);
 
             // Initialize game
-            println!("Initializing game...");
+            log::info!("Initializing game...");
         }
         let game_init = GameInitializer::new(&card_db);
         game_init
@@ -796,25 +819,25 @@ async fn run_tui(
     if let Some(seed_value) = seed_resolved {
         game.seed_rng(seed_value);
         if !suppress_output {
-            println!("Using random seed: {seed_value}");
+            log::info!("Using random seed: {seed_value}");
         }
     }
 
     // Report controller seeds if set
     if !suppress_output {
         if let Some(p1_seed_value) = seed_p1_resolved {
-            println!("Using explicit P1 controller seed: {p1_seed_value}");
+            log::info!("Using explicit P1 controller seed: {p1_seed_value}");
         } else if let Some(seed_value) = seed_resolved {
-            println!(
+            log::info!(
                 "Using derived P1 controller seed: {} (from master seed)",
                 seed_value.wrapping_add(0x1234_5678_9ABC_DEF0)
             );
         }
 
         if let Some(p2_seed_value) = seed_p2_resolved {
-            println!("Using explicit P2 controller seed: {p2_seed_value}");
+            log::info!("Using explicit P2 controller seed: {p2_seed_value}");
         } else if let Some(seed_value) = seed_resolved {
-            println!(
+            log::info!(
                 "Using derived P2 controller seed: {} (from master seed)",
                 seed_value.wrapping_add(0xFEDC_BA98_7654_3210)
             );
@@ -825,7 +848,7 @@ async fn run_tui(
     if numeric_choices {
         game.logger.set_numeric_choices(true);
         if !suppress_output {
-            println!("Numeric choices mode: enabled");
+            log::info!("Numeric choices mode: enabled");
         }
     }
 
@@ -833,14 +856,14 @@ async fn run_tui(
     if debug_state_hash {
         game.logger.set_debug_state_hash(true);
         if !suppress_output {
-            println!("State hash debugging: enabled");
+            log::info!("State hash debugging: enabled");
         }
     }
 
     if !suppress_output {
-        println!("Game initialized!");
-        println!("  Player 1: {} ({p1_type:?})", p1_name);
-        println!("  Player 2: {} ({p2_type:?})\n", p2_name);
+        log::info!("Game initialized!");
+        log::info!("  Player 1: {} ({p1_type:?})", p1_name);
+        log::info!("  Player 2: {} ({p2_type:?})\n", p2_name);
     }
 
     // Create controllers based on agent types
@@ -866,7 +889,7 @@ async fn run_tui(
                     &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!("Player 1 Random controller restored from snapshot");
+                        log::info!("Player 1 Random controller restored from snapshot");
                     }
                     Box::new(random_controller.clone())
                 } else if let Some(p1_seed) = p1_controller_seed {
@@ -876,11 +899,11 @@ async fn run_tui(
                     // No seed provided - generate from entropy with warning
                     let entropy_seed = SeedArg::FromEntropy.resolve();
                     if !suppress_output {
-                        eprintln!(
+                        log::warn!(
                             "Warning: No seed provided for P1 Random controller, using entropy: {}",
                             entropy_seed
                         );
-                        eprintln!("  To make this deterministic, use --seed or --seed-p1");
+                        log::warn!("  To make this deterministic, use --seed or --seed-p1");
                     }
                     Box::new(RandomController::with_seed(p1_id, entropy_seed))
                 }
@@ -890,11 +913,11 @@ async fn run_tui(
                 // No seed provided - generate from entropy with warning
                 let entropy_seed = SeedArg::FromEntropy.resolve();
                 if !suppress_output {
-                    eprintln!(
+                    log::warn!(
                         "Warning: No seed provided for P1 Random controller, using entropy: {}",
                         entropy_seed
                     );
-                    eprintln!("  To make this deterministic, use --seed or --seed-p1");
+                    log::warn!("  To make this deterministic, use --seed or --seed-p1");
                 }
                 Box::new(RandomController::with_seed(p1_id, entropy_seed))
             }
@@ -919,7 +942,7 @@ async fn run_tui(
                     &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!(
+                        log::info!(
                             "Player 1 Fixed controller restored from snapshot (at index {})",
                             fixed_controller.current_index
                         );
@@ -947,7 +970,7 @@ async fn run_tui(
                     &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!("Player 2 Random controller restored from snapshot");
+                        log::info!("Player 2 Random controller restored from snapshot");
                     }
                     Box::new(random_controller.clone())
                 } else if let Some(p2_seed) = p2_controller_seed {
@@ -957,11 +980,11 @@ async fn run_tui(
                     // No seed provided - generate from entropy with warning
                     let entropy_seed = SeedArg::FromEntropy.resolve();
                     if !suppress_output {
-                        eprintln!(
+                        log::warn!(
                             "Warning: No seed provided for P2 Random controller, using entropy: {}",
                             entropy_seed
                         );
-                        eprintln!("  To make this deterministic, use --seed or --seed-p2");
+                        log::warn!("  To make this deterministic, use --seed or --seed-p2");
                     }
                     Box::new(RandomController::with_seed(p2_id, entropy_seed))
                 }
@@ -971,11 +994,11 @@ async fn run_tui(
                 // No seed provided - generate from entropy with warning
                 let entropy_seed = SeedArg::FromEntropy.resolve();
                 if !suppress_output {
-                    eprintln!(
+                    log::warn!(
                         "Warning: No seed provided for P2 Random controller, using entropy: {}",
                         entropy_seed
                     );
-                    eprintln!("  To make this deterministic, use --seed or --seed-p2");
+                    log::warn!("  To make this deterministic, use --seed or --seed-p2");
                 }
                 Box::new(RandomController::with_seed(p2_id, entropy_seed))
             }
@@ -984,8 +1007,8 @@ async fn run_tui(
         ControllerType::Fancy => {
             // Fancy TUI is only available for Player 1
             if !suppress_output {
-                eprintln!("Warning: Fancy TUI controller is only available for Player 1");
-                eprintln!("  Using regular TUI controller for Player 2 instead");
+                log::warn!("Warning: Fancy TUI controller is only available for Player 1");
+                log::warn!("  Using regular TUI controller for Player 2 instead");
             }
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
@@ -1004,7 +1027,7 @@ async fn run_tui(
                     &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!(
+                        log::info!(
                             "Player 2 Fixed controller restored from snapshot (at index {})",
                             fixed_controller.current_index
                         );
@@ -1035,13 +1058,13 @@ async fn run_tui(
             let is_fixed = matches!(p1_type, ControllerType::Fixed);
             if is_fixed {
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!("Player 1 using Fixed controller (skipping Replay wrapper)");
+                    log::info!("Player 1 using Fixed controller (skipping Replay wrapper)");
                 }
                 base_controller1
             } else {
                 let p1_replay_choices = snapshot.extract_replay_choices_for_player(p1_id);
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!("Player 1 will replay {} intra-turn choices", p1_replay_choices.len());
+                    log::info!("Player 1 will replay {} intra-turn choices", p1_replay_choices.len());
                 }
                 Box::new(mtg_forge_rs::game::ReplayController::new(
                     p1_id,
@@ -1059,13 +1082,13 @@ async fn run_tui(
             let is_fixed = matches!(p2_type, ControllerType::Fixed);
             if is_fixed {
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!("Player 2 using Fixed controller (skipping Replay wrapper)");
+                    log::info!("Player 2 using Fixed controller (skipping Replay wrapper)");
                 }
                 base_controller2
             } else {
                 let p2_replay_choices = snapshot.extract_replay_choices_for_player(p2_id);
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!("Player 2 will replay {} intra-turn choices", p2_replay_choices.len());
+                    log::info!("Player 2 will replay {} intra-turn choices", p2_replay_choices.len());
                 }
                 Box::new(mtg_forge_rs::game::ReplayController::new(
                     p2_id,
@@ -1079,9 +1102,9 @@ async fn run_tui(
 
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
         if snapshot_turn_number.is_some() {
-            println!("=== Continuing Game ===\n");
+            log::info!("=== Continuing Game ===\n");
         } else {
-            println!("=== Starting Game ===\n");
+            log::info!("=== Starting Game ===\n");
         }
     }
 
@@ -1165,7 +1188,7 @@ async fn run_tui(
         game_loop = game_loop.with_baseline_choice_count(baseline_count);
 
         if verbosity >= VerbosityLevel::Verbose {
-            println!("Baseline choice count (from snapshot): {}", baseline_count);
+            log::info!("Baseline choice count (from snapshot): {}", baseline_count);
         }
     }
 
@@ -1184,7 +1207,7 @@ async fn run_tui(
         game_loop = game_loop.with_replay_mode(replay_choice_count);
 
         if verbosity >= VerbosityLevel::Verbose {
-            println!("Replay mode enabled: {} choices to replay", replay_choice_count);
+            log::info!("Replay mode enabled: {} choices to replay", replay_choice_count);
         }
     }
 
@@ -1208,9 +1231,9 @@ async fn run_tui(
         // If seed is not set but deck_seed is, the RNG stays at deck_seed for the whole game
         game_loop = game_loop.with_deck_seed(deck_seed, seed_resolved);
         if !suppress_output {
-            println!("Using deck seed for shuffle: {deck_seed}");
+            log::info!("Using deck seed for shuffle: {deck_seed}");
             if let Some(game_seed) = seed_resolved {
-                println!("Using game seed after shuffle: {game_seed}");
+                log::info!("Using game seed after shuffle: {game_seed}");
             }
         }
     }
@@ -1238,8 +1261,8 @@ async fn run_tui(
                     serde_json::from_value(json.clone())
                         .map_err(|e| {
                             if verbosity >= VerbosityLevel::Verbose {
-                                eprintln!("Failed to deserialize P1 controller state: {}", e);
-                                eprintln!("  JSON: {}", json);
+                                log::error!("Failed to deserialize P1 controller state: {}", e);
+                                log::error!("  JSON: {}", json);
                             }
                             e
                         })
@@ -1249,8 +1272,8 @@ async fn run_tui(
                     serde_json::from_value(json.clone())
                         .map_err(|e| {
                             if verbosity >= VerbosityLevel::Verbose {
-                                eprintln!("Failed to deserialize P2 controller state: {}", e);
-                                eprintln!("  JSON: {}", json);
+                                log::error!("Failed to deserialize P2 controller state: {}", e);
+                                log::error!("  JSON: {}", json);
                             }
                             e
                         })
@@ -1258,9 +1281,9 @@ async fn run_tui(
                 });
 
                 if let Err(e) = snapshot.save_to_file(&snapshot_output, snapshot_format) {
-                    eprintln!("Warning: Failed to update snapshot with controller state: {}", e);
+                    log::warn!("Warning: Failed to update snapshot with controller state: {}", e);
                 } else if verbosity >= VerbosityLevel::Verbose {
-                    println!("Snapshot updated with controller state");
+                    log::info!("Snapshot updated with controller state");
                 }
             }
         }
@@ -1268,23 +1291,23 @@ async fn run_tui(
 
     // Display results (suppress for snapshot exits)
     if verbosity >= VerbosityLevel::Minimal && result.end_reason != GameEndReason::Snapshot {
-        println!("\n=== Game Over ===");
+        log::info!("\n=== Game Over ===");
         match result.winner {
             Some(winner_id) => {
                 let winner = game.get_player(winner_id)?;
-                println!("Winner: {}", winner.name);
+                log::info!("Winner: {}", winner.name);
             }
             None => {
-                println!("Game ended in a draw");
+                log::info!("Game ended in a draw");
             }
         }
-        println!("Turns played: {}", result.turns_played);
-        println!("Reason: {:?}", result.end_reason);
+        log::info!("Turns played: {}", result.turns_played);
+        log::info!("Reason: {:?}", result.end_reason);
 
         // Final state
-        println!("\n=== Final State ===");
+        log::info!("\n=== Final State ===");
         for player in game.players.iter() {
-            println!("  {}: {} life", player.name, player.life);
+            log::info!("  {}: {} life", player.name, player.life);
         }
     }
 
@@ -1303,7 +1326,7 @@ async fn run_tui(
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
-                println!("\nFinal game state saved to: {}", final_state_path.display());
+                log::info!("\nFinal game state saved to: {}", final_state_path.display());
             }
         }
     }
@@ -1329,8 +1352,8 @@ async fn run_tui(
                 writeln!(file, "{}", entry.message)?;
             }
 
-            eprintln!("\n>>> Game log saved: {} lines written to:", log_count);
-            eprintln!("    {}", log_path.display());
+            log::info!("\n>>> Game log saved: {} lines written to:", log_count);
+            log::info!("    {}", log_path.display());
         }
     }
 
@@ -1339,12 +1362,12 @@ async fn run_tui(
 
 /// Run profiling games
 async fn run_profile(iterations: usize, seed: u64, deck_path: PathBuf) -> Result<()> {
-    println!("=== MTG Forge Rust - Profiling Mode ===\n");
+    log::info!("=== MTG Forge Rust - Profiling Mode ===\n");
 
     // Load deck
-    println!("Loading deck...");
+    log::info!("Loading deck...");
     let deck = DeckLoader::load_from_file(&deck_path)?;
-    println!("  Deck: {} cards", deck.total_cards());
+    log::info!("  Deck: {} cards", deck.total_cards());
 
     // Create card database (lazy loading - only loads cards on-demand)
     let cardsfolder = find_cardsfolder();
@@ -1355,11 +1378,11 @@ async fn run_profile(iterations: usize, seed: u64, deck_path: PathBuf) -> Result
     let unique_names = deck.unique_card_names();
     let (count, _) = card_db.load_cards(&unique_names).await?;
     let duration = start.elapsed();
-    println!("  Loaded {count} cards in {:.2}ms\n", duration.as_secs_f64() * 1000.0);
+    log::info!("  Loaded {count} cards in {:.2}ms\n", duration.as_secs_f64() * 1000.0);
 
-    println!("Profiling game execution...");
-    println!("Running {iterations} games with seed {seed}");
-    println!();
+    log::info!("Profiling game execution...");
+    log::info!("Running {iterations} games with seed {seed}");
+    log::info!("");
 
     // Run games in a tight loop for profiling
     for i in 0..iterations {
@@ -1388,20 +1411,20 @@ async fn run_profile(iterations: usize, seed: u64, deck_path: PathBuf) -> Result
 
         // Print progress every 100 games
         if (i + 1) % 100 == 0 {
-            println!("Completed {} games", i + 1);
+            log::info!("Completed {} games", i + 1);
         }
     }
 
-    println!();
-    println!("Profiling complete! {iterations} games executed.");
-    println!();
-    println!("For heap profiling:");
-    println!("  cargo heaptrack --bin mtg -- profile --games {iterations} --seed {seed}");
-    println!("  Or: make heapprofile");
-    println!();
-    println!("For CPU profiling:");
-    println!("  cargo flamegraph --bin mtg -- profile --games {iterations} --seed {seed}");
-    println!("  Or: make profile");
+    log::info!("");
+    log::info!("Profiling complete! {iterations} games executed.");
+    log::info!("");
+    log::info!("For heap profiling:");
+    log::info!("  cargo heaptrack --bin mtg -- profile --games {iterations} --seed {seed}");
+    log::info!("  Or: make heapprofile");
+    log::info!("");
+    log::info!("For CPU profiling:");
+    log::info!("  cargo flamegraph --bin mtg -- profile --games {iterations} --seed {seed}");
+    log::info!("  Or: make profile");
 
     Ok(())
 }
@@ -1440,7 +1463,7 @@ async fn run_resume(
     let override_seed_p2_resolved = override_seed_p2.map(|s| s.resolve());
 
     if !suppress_output {
-        println!("=== MTG Forge Rust - Resume Mode ===\n");
+        log::info!("=== MTG Forge Rust - Resume Mode ===\n");
     }
 
     // Parse stop condition if provided
@@ -1448,8 +1471,8 @@ async fn run_resume(
         let condition = StopCondition::parse(stop_str)
             .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --stop-on-choice: {}", e)))?;
         if !suppress_output {
-            println!("Stop condition: {:?}", condition);
-            println!("Snapshot output: {}\n", snapshot_output.display());
+            log::info!("Stop condition: {:?}", condition);
+            log::info!("Snapshot output: {}\n", snapshot_output.display());
         }
         Some(condition)
     } else {
@@ -1458,15 +1481,15 @@ async fn run_resume(
 
     // Load snapshot (always required for resume mode)
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
-        println!("Loading snapshot from: {}", snapshot_file.display());
+        log::info!("Loading snapshot from: {}", snapshot_file.display());
     }
 
     let snapshot = GameSnapshot::load_from_file(&snapshot_file, snapshot_format)
         .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
 
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
-        println!("  Turn number: {}", snapshot.turn_number);
-        println!("  Intra-turn choices to replay: {}", snapshot.choice_count());
+        log::info!("  Turn number: {}", snapshot.turn_number);
+        log::info!("  Intra-turn choices to replay: {}", snapshot.choice_count());
     }
 
     // Determine controller types (restore from snapshot or use overrides)
@@ -1495,24 +1518,24 @@ async fn run_resume(
     // Print what's being restored vs overridden
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
         if override_p1.is_some() {
-            println!("Player 1 controller: OVERRIDDEN to {:?}", p1_type);
+            log::info!("Player 1 controller: OVERRIDDEN to {:?}", p1_type);
         } else {
-            println!("Player 1 controller: restored from snapshot ({:?})", p1_type);
+            log::info!("Player 1 controller: restored from snapshot ({:?})", p1_type);
         }
 
         if override_p2.is_some() {
-            println!("Player 2 controller: OVERRIDDEN to {:?}", p2_type);
+            log::info!("Player 2 controller: OVERRIDDEN to {:?}", p2_type);
         } else {
-            println!("Player 2 controller: restored from snapshot ({:?})", p2_type);
+            log::info!("Player 2 controller: restored from snapshot ({:?})", p2_type);
         }
 
         if override_seed.is_some() {
-            println!("Game engine seed: OVERRIDDEN to {}", override_seed_resolved.unwrap());
+            log::info!("Game engine seed: OVERRIDDEN to {}", override_seed_resolved.unwrap());
         } else {
-            println!("Game engine seed: restored from snapshot");
+            log::info!("Game engine seed: restored from snapshot");
         }
 
-        println!("Game loaded from snapshot!\n");
+        log::info!("Game loaded from snapshot!\n");
     }
 
     // Restore game state from snapshot
@@ -1522,7 +1545,7 @@ async fn run_resume(
     if let Some(seed_value) = override_seed_resolved {
         game.seed_rng(seed_value);
         if !suppress_output {
-            println!("Overriding game engine seed: {seed_value}");
+            log::info!("Overriding game engine seed: {seed_value}");
         }
     }
 
@@ -1530,7 +1553,7 @@ async fn run_resume(
     if numeric_choices {
         game.logger.set_numeric_choices(true);
         if !suppress_output {
-            println!("Numeric choices mode: enabled");
+            log::info!("Numeric choices mode: enabled");
         }
     }
 
@@ -1538,7 +1561,7 @@ async fn run_resume(
     if debug_state_hash {
         game.logger.set_debug_state_hash(true);
         if !suppress_output {
-            println!("State hash debugging: enabled");
+            log::info!("State hash debugging: enabled");
         }
     }
 
@@ -1554,8 +1577,8 @@ async fn run_resume(
     let p2_name = game.get_player(p2_id)?.name.clone();
 
     if !suppress_output {
-        println!("  Player 1: {} ({p1_type:?})", p1_name);
-        println!("  Player 2: {} ({p2_type:?})\n", p2_name);
+        log::info!("  Player 1: {} ({p1_type:?})", p1_name);
+        log::info!("  Player 2: {} ({p2_type:?})\n", p2_name);
     }
 
     // Derive controller seeds (override takes precedence, otherwise restore from snapshot)
@@ -1584,18 +1607,18 @@ async fn run_resume(
             if override_p1.is_some() || p1_controller_seed.is_some() {
                 if let Some(p1_seed) = p1_controller_seed {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!("Player 1 Random controller: fresh with seed {}", p1_seed);
+                        log::info!("Player 1 Random controller: fresh with seed {}", p1_seed);
                     }
                     Box::new(RandomController::with_seed(p1_id, p1_seed))
                 } else {
                     // No seed provided - generate from entropy with warning
                     let entropy_seed = SeedArg::FromEntropy.resolve();
                     if !suppress_output {
-                        eprintln!(
+                        log::warn!(
                             "Warning: No seed provided for P1 Random controller, using entropy: {}",
                             entropy_seed
                         );
-                        eprintln!("  To make this deterministic, use --override-seed or --override-seed-p1");
+                        log::warn!("  To make this deterministic, use --override-seed or --override-seed-p1");
                     }
                     Box::new(RandomController::with_seed(p1_id, entropy_seed))
                 }
@@ -1605,7 +1628,7 @@ async fn run_resume(
                     &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!("Player 1 Random controller: restored from snapshot");
+                        log::info!("Player 1 Random controller: restored from snapshot");
                     }
                     Box::new(random_controller.clone())
                 } else {
@@ -1629,7 +1652,7 @@ async fn run_resume(
                     mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
                 })?;
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!("Player 1 Fixed controller: fresh with {} commands", script.len());
+                    log::info!("Player 1 Fixed controller: fresh with {} commands", script.len());
                 }
                 Box::new(RichInputController::new(p1_id, script))
             } else if let Some(mtg_forge_rs::game::ControllerState::Fixed(fixed_controller)) =
@@ -1637,7 +1660,7 @@ async fn run_resume(
             {
                 // Restore from snapshot
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!(
+                    log::info!(
                         "Player 1 Fixed controller: restored from snapshot (at index {})",
                         fixed_controller.current_index
                     );
@@ -1658,18 +1681,18 @@ async fn run_resume(
             if override_p2.is_some() || p2_controller_seed.is_some() {
                 if let Some(p2_seed) = p2_controller_seed {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!("Player 2 Random controller: fresh with seed {}", p2_seed);
+                        log::info!("Player 2 Random controller: fresh with seed {}", p2_seed);
                     }
                     Box::new(RandomController::with_seed(p2_id, p2_seed))
                 } else {
                     // No seed provided - generate from entropy with warning
                     let entropy_seed = SeedArg::FromEntropy.resolve();
                     if !suppress_output {
-                        eprintln!(
+                        log::warn!(
                             "Warning: No seed provided for P2 Random controller, using entropy: {}",
                             entropy_seed
                         );
-                        eprintln!("  To make this deterministic, use --override-seed or --override-seed-p2");
+                        log::warn!("  To make this deterministic, use --override-seed or --override-seed-p2");
                     }
                     Box::new(RandomController::with_seed(p2_id, entropy_seed))
                 }
@@ -1679,7 +1702,7 @@ async fn run_resume(
                     &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                        println!("Player 2 Random controller: restored from snapshot");
+                        log::info!("Player 2 Random controller: restored from snapshot");
                     }
                     Box::new(random_controller.clone())
                 } else {
@@ -1693,8 +1716,8 @@ async fn run_resume(
         ControllerType::Fancy => {
             // Fancy TUI is only available for Player 1
             if !suppress_output {
-                eprintln!("Warning: Fancy TUI controller is only available for Player 1");
-                eprintln!("  Using regular TUI controller for Player 2 instead");
+                log::warn!("Warning: Fancy TUI controller is only available for Player 1");
+                log::warn!("  Using regular TUI controller for Player 2 instead");
             }
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
@@ -1707,7 +1730,7 @@ async fn run_resume(
                     mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
                 })?;
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!("Player 2 Fixed controller: fresh with {} commands", script.len());
+                    log::info!("Player 2 Fixed controller: fresh with {} commands", script.len());
                 }
                 Box::new(RichInputController::new(p2_id, script))
             } else if let Some(mtg_forge_rs::game::ControllerState::Fixed(fixed_controller)) =
@@ -1715,7 +1738,7 @@ async fn run_resume(
             {
                 // Restore from snapshot
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    println!(
+                    log::info!(
                         "Player 2 Fixed controller: restored from snapshot (at index {})",
                         fixed_controller.current_index
                     );
@@ -1737,13 +1760,13 @@ async fn run_resume(
         let is_fixed = matches!(p1_type, ControllerType::Fixed);
         if is_fixed {
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                println!("Player 1 using Fixed controller (skipping Replay wrapper)");
+                log::info!("Player 1 using Fixed controller (skipping Replay wrapper)");
             }
             base_controller1
         } else {
             let p1_replay_choices = snapshot.extract_replay_choices_for_player(p1_id);
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                println!("Player 1 will replay {} intra-turn choices", p1_replay_choices.len());
+                log::info!("Player 1 will replay {} intra-turn choices", p1_replay_choices.len());
             }
             Box::new(mtg_forge_rs::game::ReplayController::new(
                 p1_id,
@@ -1757,13 +1780,13 @@ async fn run_resume(
         let is_fixed = matches!(p2_type, ControllerType::Fixed);
         if is_fixed {
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                println!("Player 2 using Fixed controller (skipping Replay wrapper)");
+                log::info!("Player 2 using Fixed controller (skipping Replay wrapper)");
             }
             base_controller2
         } else {
             let p2_replay_choices = snapshot.extract_replay_choices_for_player(p2_id);
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                println!("Player 2 will replay {} intra-turn choices", p2_replay_choices.len());
+                log::info!("Player 2 will replay {} intra-turn choices", p2_replay_choices.len());
             }
             Box::new(mtg_forge_rs::game::ReplayController::new(
                 p2_id,
@@ -1774,7 +1797,7 @@ async fn run_resume(
     };
 
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
-        println!("=== Resuming Game ===\n");
+        log::info!("=== Resuming Game ===\n");
     }
 
     // Enable log tail mode if requested (captures logs to buffer)
@@ -1852,7 +1875,7 @@ async fn run_resume(
         game_loop = game_loop.with_baseline_choice_count(baseline_count);
 
         if verbosity >= VerbosityLevel::Verbose {
-            println!("Baseline choice count (from snapshot): {}", baseline_count);
+            log::info!("Baseline choice count (from snapshot): {}", baseline_count);
         }
     }
 
@@ -1871,7 +1894,7 @@ async fn run_resume(
         game_loop = game_loop.with_replay_mode(replay_choice_count);
 
         if verbosity >= VerbosityLevel::Verbose {
-            println!("Replay mode enabled: {} choices to replay", replay_choice_count);
+            log::info!("Replay mode enabled: {} choices to replay", replay_choice_count);
         }
     }
 
@@ -1903,8 +1926,8 @@ async fn run_resume(
                     serde_json::from_value(json.clone())
                         .map_err(|e| {
                             if verbosity >= VerbosityLevel::Verbose {
-                                eprintln!("Failed to deserialize P1 controller state: {}", e);
-                                eprintln!("  JSON: {}", json);
+                                log::error!("Failed to deserialize P1 controller state: {}", e);
+                                log::error!("  JSON: {}", json);
                             }
                             e
                         })
@@ -1914,8 +1937,8 @@ async fn run_resume(
                     serde_json::from_value(json.clone())
                         .map_err(|e| {
                             if verbosity >= VerbosityLevel::Verbose {
-                                eprintln!("Failed to deserialize P2 controller state: {}", e);
-                                eprintln!("  JSON: {}", json);
+                                log::error!("Failed to deserialize P2 controller state: {}", e);
+                                log::error!("  JSON: {}", json);
                             }
                             e
                         })
@@ -1923,9 +1946,9 @@ async fn run_resume(
                 });
 
                 if let Err(e) = snapshot.save_to_file(&snapshot_output, snapshot_format) {
-                    eprintln!("Warning: Failed to update snapshot with controller state: {}", e);
+                    log::warn!("Warning: Failed to update snapshot with controller state: {}", e);
                 } else if verbosity >= VerbosityLevel::Verbose {
-                    println!("Snapshot updated with controller state");
+                    log::info!("Snapshot updated with controller state");
                 }
             }
         }
@@ -1933,23 +1956,23 @@ async fn run_resume(
 
     // Display results (suppress for snapshot exits)
     if verbosity >= VerbosityLevel::Minimal && result.end_reason != GameEndReason::Snapshot {
-        println!("\n=== Game Over ===");
+        log::info!("\n=== Game Over ===");
         match result.winner {
             Some(winner_id) => {
                 let winner = game.get_player(winner_id)?;
-                println!("Winner: {}", winner.name);
+                log::info!("Winner: {}", winner.name);
             }
             None => {
-                println!("Game ended in a draw");
+                log::info!("Game ended in a draw");
             }
         }
-        println!("Turns played: {}", result.turns_played);
-        println!("Reason: {:?}", result.end_reason);
+        log::info!("Turns played: {}", result.turns_played);
+        log::info!("Reason: {:?}", result.end_reason);
 
         // Final state
-        println!("\n=== Final State ===");
+        log::info!("\n=== Final State ===");
         for player in game.players.iter() {
-            println!("  {}: {} life", player.name, player.life);
+            log::info!("  {}: {} life", player.name, player.life);
         }
     }
 
@@ -1968,7 +1991,7 @@ async fn run_resume(
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
-                println!("\nFinal game state saved to: {}", final_state_path.display());
+                log::info!("\nFinal game state saved to: {}", final_state_path.display());
             }
         }
     }
@@ -1994,8 +2017,8 @@ async fn run_resume(
                 writeln!(file, "{}", entry.message)?;
             }
 
-            eprintln!("\n>>> Game log saved: {} lines written to:", log_count);
-            eprintln!("    {}", log_path.display());
+            log::info!("\n>>> Game log saved: {} lines written to:", log_count);
+            log::info!("    {}", log_path.display());
         }
     }
 
@@ -2006,18 +2029,18 @@ async fn run_resume(
 async fn run_stats() -> Result<()> {
     use std::collections::HashMap;
 
-    println!("=== MTG Forge Rust - Card Database Statistics ===\n");
+    log::info!("=== MTG Forge Rust - Card Database Statistics ===\n");
 
     // Find and load cardsfolder
     let cardsfolder = find_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
-    println!("Loading full card database...");
+    log::info!("Loading full card database...");
     let (loaded, duration) = card_db.eager_load().await?;
-    println!("Successfully loaded {} cards in {:?}\n", loaded, duration);
+    log::info!("Successfully loaded {} cards in {:?}\n", loaded, duration);
 
     // Generate comprehensive statistics
-    println!("=== Card Database Statistics ===");
+    log::info!("=== Card Database Statistics ===");
 
     let all_cards = card_db.all_cards().await;
 
@@ -2029,11 +2052,11 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    println!("\n--- Card Types ---");
+    log::info!("\n--- Card Types ---");
     let mut type_vec: Vec<_> = type_counts.iter().collect();
     type_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (card_type, count) in type_vec {
-        println!("  {:12} {:6}", card_type, count);
+        log::info!("  {:12} {:6}", card_type, count);
     }
 
     // Color distribution
@@ -2044,11 +2067,11 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    println!("\n--- Colors ---");
+    log::info!("\n--- Colors ---");
     let mut color_vec: Vec<_> = color_counts.iter().collect();
     color_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (color, count) in color_vec {
-        println!("  {:12} {:6}", color, count);
+        log::info!("  {:12} {:6}", color, count);
     }
 
     // Top subtypes
@@ -2059,12 +2082,12 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    println!("\n--- Top 30 Subtypes ---");
-    println!("  Total distinct subtypes: {}", subtype_counts.len());
+    log::info!("\n--- Top 30 Subtypes ---");
+    log::info!("  Total distinct subtypes: {}", subtype_counts.len());
     let mut subtype_vec: Vec<_> = subtype_counts.iter().collect();
     subtype_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (subtype, count) in subtype_vec.iter().take(30) {
-        println!("  {:20} {:6}", subtype, count);
+        log::info!("  {:20} {:6}", subtype, count);
     }
 
     // Keyword distribution
@@ -2216,21 +2239,21 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    println!("\n--- Top 30 Keywords ---");
-    println!("  Total distinct keywords: {}", keyword_counts.len());
+    log::info!("\n--- Top 30 Keywords ---");
+    log::info!("  Total distinct keywords: {}", keyword_counts.len());
     let mut keyword_vec: Vec<_> = keyword_counts.iter().collect();
     keyword_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (keyword, count) in keyword_vec.iter().take(30) {
-        println!("  {:25} {:6}", keyword, count);
+        log::info!("  {:25} {:6}", keyword, count);
     }
 
     // Ability statistics
     let cards_with_effects = all_cards.iter().filter(|c| !c.raw_abilities.is_empty()).count();
     let cards_with_keywords = all_cards.iter().filter(|c| !c.raw_keywords.is_empty()).count();
 
-    println!("\n--- Ability Statistics ---");
-    println!("  Cards with raw abilities:  {:6}", cards_with_effects);
-    println!("  Cards with keywords:       {:6}", cards_with_keywords);
+    log::info!("\n--- Ability Statistics ---");
+    log::info!("  Cards with raw abilities:  {:6}", cards_with_effects);
+    log::info!("  Cards with keywords:       {:6}", cards_with_keywords);
 
     // Trigger and activated ability counts
     let mut cards_with_triggers = 0;
@@ -2245,8 +2268,8 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    println!("  Cards with triggers:       {:6}", cards_with_triggers);
-    println!("  Cards with activated abs:  {:6}", cards_with_activated);
+    log::info!("  Cards with triggers:       {:6}", cards_with_triggers);
+    log::info!("  Cards with activated abs:  {:6}", cards_with_activated);
 
     // Mana cost distribution
     let mut cmc_counts = [0; 9]; // 0-7, and 8+ in index 8
@@ -2257,12 +2280,12 @@ async fn run_stats() -> Result<()> {
         cmc_counts[index] += 1;
     }
 
-    println!("\n--- Mana Cost Distribution ---");
+    log::info!("\n--- Mana Cost Distribution ---");
     for (cmc, count) in cmc_counts.iter().enumerate() {
         if cmc < 8 {
-            println!("  CMC {}:                     {:6}", cmc, count);
+            log::info!("  CMC {}:                     {:6}", cmc, count);
         } else {
-            println!("  CMC 8+:                    {:6}", count);
+            log::info!("  CMC 8+:                    {:6}", count);
         }
     }
 
