@@ -83,6 +83,22 @@ pub struct CardCache {
     /// (from evaluate_land function in game_state_evaluator.rs)
     /// Only meaningful for lands, 0 for non-lands
     pub land_evaluation_value: i32,
+
+    // ==== Land subtype flags (eliminate eq_ignore_ascii_case in hot paths) ====
+    /// Precomputed: Has "Plains" subtype (for mana production)
+    pub has_plains_subtype: bool,
+
+    /// Precomputed: Has "Island" subtype (for mana production)
+    pub has_island_subtype: bool,
+
+    /// Precomputed: Has "Swamp" subtype (for mana production)
+    pub has_swamp_subtype: bool,
+
+    /// Precomputed: Has "Mountain" subtype (for mana production)
+    pub has_mountain_subtype: bool,
+
+    /// Precomputed: Has "Forest" subtype (for mana production)
+    pub has_forest_subtype: bool,
 }
 
 impl CardCache {
@@ -123,6 +139,13 @@ impl CardCache {
             spell_targets_any: text_lower.contains("any target"),
 
             land_evaluation_value: 0,
+
+            // Land subtype flags (initialized to false, updated by update_from_subtypes)
+            has_plains_subtype: false,
+            has_island_subtype: false,
+            has_swamp_subtype: false,
+            has_mountain_subtype: false,
+            has_forest_subtype: false,
         }
     }
 
@@ -135,6 +158,51 @@ impl CardCache {
         self.is_land = types.contains(&CardType::Land);
         self.is_creature = types.contains(&CardType::Creature);
         self.is_artifact = types.contains(&CardType::Artifact);
+    }
+
+    /// Update cached land subtype flags from the card's subtypes and name
+    ///
+    /// Call this after subtypes are set in the card loader. This pre-computes
+    /// land subtype checks to avoid eq_ignore_ascii_case() overhead at runtime.
+    /// These flags are used in tap_for_mana_for_cost to determine mana colors.
+    ///
+    /// Also checks the card name as fallback for basic lands without explicit subtypes.
+    #[inline]
+    pub fn update_from_subtypes(&mut self, subtypes: &[crate::core::Subtype], card_name: &str) {
+        // First check explicit subtypes
+        for subtype in subtypes {
+            let s = subtype.as_str();
+            if s.eq_ignore_ascii_case("plains") {
+                self.has_plains_subtype = true;
+            } else if s.eq_ignore_ascii_case("island") {
+                self.has_island_subtype = true;
+            } else if s.eq_ignore_ascii_case("swamp") {
+                self.has_swamp_subtype = true;
+            } else if s.eq_ignore_ascii_case("mountain") {
+                self.has_mountain_subtype = true;
+            } else if s.eq_ignore_ascii_case("forest") {
+                self.has_forest_subtype = true;
+            }
+        }
+
+        // Fallback: check card name for basic lands without explicit subtypes
+        // This handles test cards and basic lands that may lack subtype metadata
+        let name_lower = card_name.to_lowercase();
+        if !self.has_plains_subtype && name_lower.contains("plains") {
+            self.has_plains_subtype = true;
+        }
+        if !self.has_island_subtype && name_lower.contains("island") {
+            self.has_island_subtype = true;
+        }
+        if !self.has_swamp_subtype && name_lower.contains("swamp") {
+            self.has_swamp_subtype = true;
+        }
+        if !self.has_mountain_subtype && name_lower.contains("mountain") {
+            self.has_mountain_subtype = true;
+        }
+        if !self.has_forest_subtype && name_lower.contains("forest") {
+            self.has_forest_subtype = true;
+        }
     }
 
     /// Update cache based on parsed activated abilities and card name
@@ -432,12 +500,18 @@ impl Card {
     /// Add a type to this card and update the cache
     ///
     /// Prefer this over `types.push()` to automatically maintain cache consistency.
+    /// For Land types, also updates subtype cache based on card name.
     #[inline]
     pub fn add_type(&mut self, card_type: CardType) {
         self.types.push(card_type);
         // Update cache inline for commonly checked types
         match card_type {
-            CardType::Land => self.cache.is_land = true,
+            CardType::Land => {
+                self.cache.is_land = true;
+                // Also update land subtype cache based on card name
+                // This handles test cards that use add_type() without explicit subtypes
+                self.cache.update_from_subtypes(&self.subtypes, self.name.as_str());
+            }
             CardType::Creature => self.cache.is_creature = true,
             CardType::Artifact => self.cache.is_artifact = true,
             _ => {}

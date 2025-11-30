@@ -29,8 +29,16 @@ Track performance optimization work for MTG Forge Rust.
 
 ---
 
-## Latest Optimization (2025-11-30_#1011)
+## Latest Optimization (2025-11-30_#1013)
 
+✅ **Cache land subtype flags in CardCache** - **~0.5-1.6% speedup**
+- Add has_plains/island/swamp/mountain/forest_subtype flags to CardCache
+- Eliminates eq_ignore_ascii_case() calls in tap_for_mana_for_cost hot path
+- Eliminates card_name.to_lowercase() allocation on every mana tap
+- Benchmark: simple_bolt/rewind_play_again -1.6% (p < 0.05)
+- Reference: String operations were 8.89% of CPU (perf profiling)
+
+**Previous (2025-11-30_#1011):**
 ✅ **Skip target validation for non-targeting abilities (49dcde6)** - **~2.3% speedup**
 - Check requires_target flag BEFORE calling get_valid_targets_for_ability()
 - Non-targeting abilities (firebreathing, regeneration) now skip expensive check
@@ -77,6 +85,7 @@ Track performance optimization work for MTG Forge Rust.
 - ✅ abilities_buffer reuse optimization (576e6a95, 2025-11-28_#959) - **8% total allocation reduction**
 - ✅ GameLoop/ManaEngine pre-allocation (34caa0c, 2025-11-29_#965) - **11.1% speedup**
 - ✅ **Skip target validation for non-targeting abilities (49dcde6, 2025-11-30_#1011)** - **~2.3% speedup**
+- ✅ **Land subtype caching in CardCache (2025-11-30_#1013)** - **~0.5-1.6% speedup** (eliminates string ops in mana tap)
 
 **Next high-priority optimizations:**
 1. Cache available actions (OPT-NEW-1) - invalidate on state change (5% potential)

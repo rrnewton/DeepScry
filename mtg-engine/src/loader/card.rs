@@ -207,6 +207,7 @@ impl CardDefinition {
         // and empty mana production (will be populated after abilities are parsed)
         card.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
         card.cache.update_from_types(&card.types);
+        card.cache.update_from_subtypes(&card.subtypes, card.name.as_str());
 
         // Parse keywords
         card.keywords = self.parse_keywords();

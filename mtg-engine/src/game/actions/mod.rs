@@ -1589,8 +1589,7 @@ impl GameState {
             return Err(MtgError::InvalidAction("Permanent cannot produce mana".to_string()));
         }
 
-        // Get card name and check for explicit mana ability before tapping
-        let card_name = card.name.to_lowercase();
+        // Check for explicit mana ability before tapping
         let explicit_mana = if !is_land && has_mana_ability {
             // For non-lands (creatures, artifacts) with mana abilities,
             // extract the mana from the activated ability's AddMana effect
@@ -1761,7 +1760,7 @@ impl GameState {
             produces_colorless,
         ) = {
             let card = self.cards.get(card_id)?;
-            // Use the pre-computed cache for mana production type (derived from abilities, not text)
+            // Use pre-computed cache for mana production type (derived from abilities, not text)
             let is_any_color = matches!(
                 card.cache.mana_production.kind,
                 crate::core::ManaProductionKind::AnyColor
@@ -1770,14 +1769,13 @@ impl GameState {
                 card.cache.mana_production.kind,
                 crate::core::ManaProductionKind::Colorless
             );
+            // Use cached land subtype flags (eliminates eq_ignore_ascii_case overhead)
             (
-                card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("swamp")),
-                card.subtypes
-                    .iter()
-                    .any(|s| s.as_str().eq_ignore_ascii_case("mountain")),
-                card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("island")),
-                card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("forest")),
-                card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("plains")),
+                card.cache.has_swamp_subtype,
+                card.cache.has_mountain_subtype,
+                card.cache.has_island_subtype,
+                card.cache.has_forest_subtype,
+                card.cache.has_plains_subtype,
                 is_any_color,
                 is_colorless,
             )
@@ -1789,20 +1787,21 @@ impl GameState {
         let player = self.get_player_mut(player_id)?;
 
         // Determine what colors this land can produce
+        // Uses cached land subtype flags (includes name fallback from card loading)
         let mut available_colors = Vec::new();
-        if has_plains_subtype || card_name.contains("plains") {
+        if has_plains_subtype {
             available_colors.push(crate::core::Color::White);
         }
-        if has_island_subtype || card_name.contains("island") {
+        if has_island_subtype {
             available_colors.push(crate::core::Color::Blue);
         }
-        if has_swamp_subtype || card_name.contains("swamp") {
+        if has_swamp_subtype {
             available_colors.push(crate::core::Color::Black);
         }
-        if has_mountain_subtype || card_name.contains("mountain") {
+        if has_mountain_subtype {
             available_colors.push(crate::core::Color::Red);
         }
-        if has_forest_subtype || card_name.contains("forest") {
+        if has_forest_subtype {
             available_colors.push(crate::core::Color::Green);
         }
 
