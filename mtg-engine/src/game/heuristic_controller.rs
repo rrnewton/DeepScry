@@ -3720,6 +3720,52 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(hand_cards.iter().take(count).map(|c| c.id).collect())
     }
 
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Heuristic: Choose the best card from library based on game state evaluation
+        if valid_cards.is_empty() {
+            view.logger()
+                .controller_choice("HEURISTIC", "Library search: fail to find (no valid cards)");
+            return ChoiceResult::Ok(None);
+        }
+
+        // Evaluate each valid card and pick the best one
+        let mut best_card = None;
+        let mut best_score = i32::MIN;
+
+        for &card_id in valid_cards {
+            if let Some(card) = view.get_card(card_id) {
+                let score = if card.is_land() {
+                    // For lands, prefer dual lands > basic lands
+                    use crate::game::game_state_evaluator::GameStateEvaluator;
+                    GameStateEvaluator::evaluate_land(card)
+                } else if card.is_creature() {
+                    // For creatures, evaluate based on P/T and abilities
+                    self.evaluate_creature(view, card_id)
+                } else {
+                    // For spells, use a simple value heuristic
+                    // Lower CMC is better (can cast sooner)
+                    let cmc = card.mana_cost.cmc();
+                    100 - cmc as i32
+                };
+
+                if score > best_score {
+                    best_score = score;
+                    best_card = Some(card_id);
+                }
+            }
+        }
+
+        if let Some(card_id) = best_card {
+            let card_name = view.get_card_name(card_id).unwrap_or("Unknown".to_string());
+            view.logger().controller_choice(
+                "HEURISTIC",
+                &format!("Library search: found {} (score: {})", card_name, best_score),
+            );
+        }
+
+        ChoiceResult::Ok(best_card)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Could track game state here for future decisions
     }

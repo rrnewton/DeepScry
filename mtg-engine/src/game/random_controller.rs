@@ -301,6 +301,38 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(hand_vec.iter().take(num_discarding).copied().collect())
     }
 
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Randomly choose a card from the library, or decline to find
+        if valid_cards.is_empty() {
+            // No valid cards - must fail to find
+            view.logger()
+                .controller_choice("RANDOM", "Library search: fail to find (no valid cards)");
+            return ChoiceResult::Ok(None);
+        }
+
+        // Random: 90% chance to find a card, 10% chance to fail to find (legal in MTG)
+        let find_card = self.rng.gen_bool(0.9);
+
+        if find_card {
+            // Pick a random card from valid options
+            let choice = valid_cards.choose(&mut self.rng).copied();
+
+            if let Some(card_id) = choice {
+                // Log the choice with card name if available
+                let card_name = view.get_card_name(card_id).unwrap_or("Unknown".to_string());
+                view.logger()
+                    .controller_choice("RANDOM", &format!("Library search: found {}", card_name));
+            }
+
+            ChoiceResult::Ok(choice)
+        } else {
+            // Randomly decide to fail to find
+            view.logger()
+                .controller_choice("RANDOM", "Library search: fail to find (declined)");
+            ChoiceResult::Ok(None)
+        }
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Random AI doesn't need to react to priority passes
     }

@@ -822,6 +822,28 @@ pub trait PlayerController {
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>>;
 
+    /// Choose a card from library (for tutoring/searching effects)
+    ///
+    /// Called when a SearchLibrary effect executes (e.g., Vibrant Cityscape,
+    /// fetchlands, Demonic Tutor, Evolving Wilds).
+    ///
+    /// The controller receives a list of cards in the library that match the
+    /// search filter (e.g., "Land.Basic" for basic lands). The controller chooses
+    /// one card to move to the destination zone, or returns None to decline to find.
+    ///
+    /// MTG Rules 701.19a: To search a zone, a player looks at all cards in that zone
+    /// and may find a card that matches the given description.
+    ///
+    /// MTG Rules 701.19b: If a player is searching a hidden zone for cards with
+    /// a stated quality, they don't have to find a card (they can "fail to find").
+    ///
+    /// Returns ChoiceResult with the chosen card (or None to fail to find),
+    /// or a special request (UndoRequest, ExitGame, Error).
+    ///
+    /// ## Java Forge Equivalent
+    /// Matches `PlayerController.chooseCardsForEffect(..., "Search library")`
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>>;
+
     /// Notification that priority was passed
     ///
     /// Called when this controller passes priority, allowing it to track

@@ -3142,6 +3142,56 @@ impl PlayerController for FancyTuiController {
         ChoiceResult::Ok(discards)
     }
 
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        if valid_cards.is_empty() {
+            // No valid cards to choose from
+            return ChoiceResult::Ok(None);
+        }
+
+        // Build choice list with card names and details
+        let mut choices: Vec<String> = valid_cards
+            .iter()
+            .map(|&card_id| {
+                let name = view.get_card_name(card_id).unwrap_or("Unknown".to_string());
+                if let Some(card) = view.get_card(card_id) {
+                    let mana_str = card.mana_cost.to_string();
+                    let type_str = card
+                        .types
+                        .iter()
+                        .map(|t| format!("{:?}", t))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+
+                    if card.is_creature() {
+                        let power_str = card.base_power().map(|p| p.to_string()).unwrap_or("*".to_string());
+                        let toughness_str = card.base_toughness().map(|t| t.to_string()).unwrap_or("*".to_string());
+                        format!("{} {} - {}/{} ({})", mana_str, name, power_str, toughness_str, type_str)
+                    } else {
+                        format!("{} {} ({})", mana_str, name, type_str)
+                    }
+                } else {
+                    name
+                }
+            })
+            .collect();
+
+        // Add option to fail to find
+        choices.push("Fail to find".to_string());
+
+        match self.prompt_for_choice(view, "Search library for a card", &choices) {
+            Ok(PromptResult::Undo) => ChoiceResult::UndoRequest(usize::MAX),
+            Ok(PromptResult::Choice(Some(idx))) if idx < valid_cards.len() => {
+                // User chose a valid card
+                ChoiceResult::Ok(Some(valid_cards[idx]))
+            }
+            Ok(PromptResult::Choice(_)) => {
+                // User chose "fail to find" or invalid index
+                ChoiceResult::Ok(None)
+            }
+            Err(e) => ChoiceResult::Error(format!("Failed to prompt for library search: {}", e)),
+        }
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Logging is handled by the game logger, no local state tracking needed
     }

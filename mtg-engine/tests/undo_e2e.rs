@@ -1008,6 +1008,14 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
             ChoiceResult::Ok(hand.iter().take(count).copied().collect())
         }
 
+        fn choose_from_library(
+            &mut self,
+            _view: &GameStateView,
+            valid_cards: &[CardId],
+        ) -> ChoiceResult<Option<CardId>> {
+            ChoiceResult::Ok(valid_cards.first().copied())
+        }
+
         fn on_priority_passed(&mut self, _view: &GameStateView) {}
 
         fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}

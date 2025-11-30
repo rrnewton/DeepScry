@@ -25,6 +25,8 @@ pub enum ReplayChoice {
     DamageOrder(SmallVec<[CardId; 4]>),
     /// Choice of cards to discard
     Discard(SmallVec<[CardId; 7]>),
+    /// Choice of card from library (or None to fail to find)
+    LibrarySearch(Option<CardId>),
 }
 
 /// Controller that replays a sequence of choices then delegates to another controller
@@ -252,6 +254,22 @@ impl PlayerController for ReplayController {
 
         // No replay choice available, delegate to inner controller
         self.inner.choose_cards_to_discard(view, hand, count)
+    }
+
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Try to consume a replay choice first
+        if let Some(choice) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::LibrarySearch(card_opt) = c {
+                Some(*card_opt)
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(choice);
+        }
+
+        // No replay choice available, delegate to inner controller
+        self.inner.choose_from_library(view, valid_cards)
     }
 
     fn on_priority_passed(&mut self, view: &GameStateView) {

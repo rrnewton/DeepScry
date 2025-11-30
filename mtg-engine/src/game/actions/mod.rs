@@ -1037,7 +1037,7 @@ impl GameState {
     /// - "Plains,Island" = Land with Plains OR Island subtype (fetch lands)
     /// - "Artifact.Equipment" = Artifact type + Equipment subtype
     /// - "Forest" = Land with Forest subtype (single subtype)
-    fn card_matches_search_filter(card: &crate::core::Card, filter: &str) -> bool {
+    pub fn card_matches_search_filter(card: &crate::core::Card, filter: &str) -> bool {
         // Check if filter is comma-separated subtypes (e.g., "Plains,Island")
         // This is the format used by fetch lands
         if filter.contains(',') {

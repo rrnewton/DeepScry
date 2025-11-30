@@ -658,6 +658,86 @@ impl<'a> GameLoop<'a> {
                                                 target: crate::core::TargetRef::Permanent(chosen_targets_vec[0]),
                                                 amount: *amount,
                                             },
+                                            // SearchLibrary needs special handling - ask controller to choose card
+                                            crate::core::Effect::SearchLibrary {
+                                                player,
+                                                card_type_filter,
+                                                destination,
+                                                enters_tapped,
+                                                shuffle,
+                                            } if player.as_u32() == 0 => {
+                                                // Handle library search with controller input
+                                                let search_player = current_priority;
+
+                                                // Get library and filter for matching cards
+                                                let library_cards = self
+                                                    .game
+                                                    .player_zones
+                                                    .iter()
+                                                    .find(|(id, _)| *id == search_player)
+                                                    .map(|(_, zones)| zones.library.cards.clone())
+                                                    .unwrap_or_default();
+
+                                                // Filter cards by type
+                                                let mut valid_cards = Vec::new();
+                                                for &card_id in &library_cards {
+                                                    if let Ok(card) = self.game.cards.get(card_id) {
+                                                        if crate::game::state::GameState::card_matches_search_filter(
+                                                            card,
+                                                            card_type_filter,
+                                                        ) {
+                                                            valid_cards.push(card_id);
+                                                        }
+                                                    }
+                                                }
+
+                                                // Ask controller to choose a card (or decline to find)
+                                                let prior_log_size = self.game.logger.log_count();
+                                                let view = crate::game::controller::GameStateView::new(
+                                                    self.game,
+                                                    current_priority,
+                                                );
+                                                let choice = controller.choose_from_library(&view, &valid_cards);
+                                                let chosen_card_opt =
+                                                    handle_choice_result_break!(choice, self.game, current_priority);
+
+                                                // Log the choice for replay
+                                                let replay_choice =
+                                                    crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
+                                                self.log_choice_point(
+                                                    current_priority,
+                                                    Some(replay_choice),
+                                                    prior_log_size,
+                                                );
+
+                                                // If a card was chosen, move it to destination
+                                                if let Some(chosen_card) = chosen_card_opt {
+                                                    if let Err(e) = self.game.move_card(
+                                                        chosen_card,
+                                                        crate::zones::Zone::Library,
+                                                        *destination,
+                                                        search_player,
+                                                    ) {
+                                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                            eprintln!("    Failed to move chosen card: {e}");
+                                                        }
+                                                    }
+
+                                                    // If destination is battlefield and enters_tapped is true, tap the card
+                                                    if *destination == crate::zones::Zone::Battlefield && *enters_tapped
+                                                    {
+                                                        let _ = self.game.tap_permanent(chosen_card);
+                                                    }
+                                                }
+
+                                                // Shuffle library if required
+                                                if *shuffle {
+                                                    self.game.shuffle_library(search_player);
+                                                }
+
+                                                // Skip execute_effect for SearchLibrary - we handled it above
+                                                continue;
+                                            }
                                             _ => effect.clone(),
                                         };
 

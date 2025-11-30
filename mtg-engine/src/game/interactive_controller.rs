@@ -1136,6 +1136,70 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(discards)
     }
 
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Interactive: Show library and let user choose
+        if valid_cards.is_empty() {
+            println!("\nLibrary search: No valid cards found.");
+            return ChoiceResult::Ok(None);
+        }
+
+        println!("\n=== Library Search ===");
+        println!("Choose a card from your library (or enter 'n' to fail to find):");
+        for (i, &card_id) in valid_cards.iter().enumerate() {
+            if let Some(card_name) = view.get_card_name(card_id) {
+                let card = view.get_card(card_id);
+                if let Some(c) = card {
+                    // Show card details
+                    let mana_str = c.mana_cost.to_string();
+                    let type_str = c.types.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(" ");
+
+                    if c.is_creature() {
+                        let power_str = c.base_power().map(|p| p.to_string()).unwrap_or("*".to_string());
+                        let toughness_str = c.base_toughness().map(|t| t.to_string()).unwrap_or("*".to_string());
+                        println!("  [{}] {} {} - {}/{}", i, mana_str, card_name, power_str, toughness_str);
+                        println!("       Type: {}", type_str);
+                    } else {
+                        println!("  [{}] {} {}", i, mana_str, card_name);
+                        println!("       Type: {}", type_str);
+                    }
+                } else {
+                    println!("  [{}] {}", i, card_name);
+                }
+            }
+        }
+
+        println!("\nEnter choice (0-{}, or 'n' to fail to find):", valid_cards.len() - 1);
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            // On input error, auto-select first card
+            return ChoiceResult::Ok(Some(valid_cards[0]));
+        }
+
+        let trimmed = input.trim();
+
+        // Check for fail to find
+        if trimmed.eq_ignore_ascii_case("n") || trimmed.eq_ignore_ascii_case("no") {
+            println!("Failed to find.");
+            return ChoiceResult::Ok(None);
+        }
+
+        // Parse numeric choice
+        if let Ok(idx) = trimmed.parse::<usize>() {
+            if idx < valid_cards.len() {
+                let chosen = valid_cards[idx];
+                if let Some(card_name) = view.get_card_name(chosen) {
+                    println!("Selected: {}", card_name);
+                }
+                return ChoiceResult::Ok(Some(chosen));
+            }
+        }
+
+        // Invalid input - auto-select first card
+        println!("Invalid choice, auto-selecting first card.");
+        ChoiceResult::Ok(Some(valid_cards[0]))
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Optional: log when player passes
     }

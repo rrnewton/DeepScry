@@ -123,6 +123,11 @@ impl PlayerController for ZeroController {
         ChoiceResult::Ok(hand.iter().take(count.min(hand.len())).copied().collect())
     }
 
+    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Always choose first valid card (or None if empty)
+        ChoiceResult::Ok(valid_cards.first().copied())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Zero controller doesn't need to log
     }

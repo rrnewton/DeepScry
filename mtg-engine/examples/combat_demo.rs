@@ -117,6 +117,11 @@ impl PlayerController for AliceController {
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
+    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Alice picks the first valid card if available
+        ChoiceResult::Ok(valid_cards.first().copied())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {}
 
     fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
@@ -228,6 +233,11 @@ impl PlayerController for BobController {
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Bob discards the first N cards in hand
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
+    }
+
+    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Bob picks the first valid card if available
+        ChoiceResult::Ok(valid_cards.first().copied())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {}
