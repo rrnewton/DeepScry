@@ -29,9 +29,9 @@ echo ""
 echo "Starting in 3 seconds..."
 sleep 3
 
-# Run with debug logging for TUI, zone, and token events
+# Run with debug logging for TUI, zone, token, and SBA (state-based actions) events
 # Use --p1-draw to GUARANTEE Peter Porker is in opening hand
-RUST_LOG=tui=debug,zone=debug,token=debug cargo run --release --bin mtg -- tui \
+RUST_LOG=tui=debug,zone=debug,token=debug,sba=debug cargo run --release --bin mtg -- tui \
     decks/peter_porker_test.dck \
     decks/peter_porker_test.dck \
     --p1=fancy \

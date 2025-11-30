@@ -727,6 +727,12 @@ impl GameState {
                 let toughness = card.current_toughness();
                 let has_lethal = card.damage >= toughness as i32;
 
+                // Debug: Log SBA check for creatures with damage or low toughness
+                if card.damage > 0 || toughness <= 0 || card.name.as_str().contains("Peter Porker") {
+                    log::debug!(target: "sba", "SBA check: {} (id={}) damage={} toughness={} has_lethal={} indestructible={}",
+                        card.name, card_id.as_u32(), card.damage, toughness, has_lethal, card.has_indestructible());
+                }
+
                 // MTG CR 702.12b: Indestructible permanents aren't destroyed by lethal damage
                 if has_lethal && !card.has_indestructible() {
                     Some((card_id, card.owner))

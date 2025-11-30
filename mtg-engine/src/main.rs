@@ -43,6 +43,8 @@ enum ControllerType {
     Heuristic,
     /// Fixed script controller with predetermined choices (requires --fixed-inputs)
     Fixed,
+    /// Fancy TUI with fixed scripted inputs (captures screenshots, requires --fixed-inputs)
+    FancyFixed,
 }
 
 /// Verbosity level for game output (custom parser supporting both names and numbers)
@@ -935,7 +937,7 @@ async fn run_tui(
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-        ControllerType::Fixed => {
+        ControllerType::Fixed | ControllerType::FancyFixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
             if let Some(input) = &p1_fixed_inputs {
                 // CLI override - use provided script
@@ -963,6 +965,29 @@ async fn run_tui(
             } else {
                 return Err(mtg_forge_rs::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --p1=fixed".to_string(),
+                ));
+            }
+        }
+        ControllerType::FancyFixed => {
+            use mtg_forge_rs::game::FancyFixedController;
+
+            // FancyFixed requires --p1-fixed-inputs
+            if let Some(input) = &p1_fixed_inputs {
+                let script = parse_fixed_inputs(input).map_err(|e| {
+                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
+                })?;
+
+                // Determine screenshot directory from snapshot-output or use current.game
+                let screenshot_dir = if true {
+                    snapshot_output.parent().map(|p| p.to_path_buf())
+                } else {
+                    None
+                };
+
+                Box::new(FancyFixedController::new(p1_id, script, screenshot_dir)?)
+            } else {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "--p1-fixed-inputs is required when --p1=fancy-fixed".to_string(),
                 ));
             }
         }
@@ -1020,7 +1045,7 @@ async fn run_tui(
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-        ControllerType::Fixed => {
+        ControllerType::Fixed | ControllerType::FancyFixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
             if let Some(input) = &p2_fixed_inputs {
                 // CLI override - use provided script
@@ -1051,6 +1076,29 @@ async fn run_tui(
                 ));
             }
         }
+        ControllerType::FancyFixed => {
+            use mtg_forge_rs::game::FancyFixedController;
+
+            // FancyFixed requires --p2-fixed-inputs
+            if let Some(input) = &p2_fixed_inputs {
+                let script = parse_fixed_inputs(input).map_err(|e| {
+                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
+                })?;
+
+                // Determine screenshot directory from snapshot-output
+                let screenshot_dir = if true {
+                    snapshot_output.parent().map(|p| p.to_path_buf())
+                } else {
+                    None
+                };
+
+                Box::new(FancyFixedController::new(p2_id, script, screenshot_dir)?)
+            } else {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "--p2-fixed-inputs is required when --p2=fancy-fixed".to_string(),
+                ));
+            }
+        }
     };
 
     // Wrap with ReplayController if resuming from snapshot
@@ -1061,11 +1109,11 @@ async fn run_tui(
     // double-replay (ReplayController replays intra-turn, then Fixed restarts from index 0).
     let mut controller1: Box<dyn mtg_forge_rs::game::controller::PlayerController> =
         if let Some(ref snapshot) = loaded_snapshot {
-            // Check if base controller is Fixed - don't wrap if it is
-            let is_fixed = matches!(p1_type, ControllerType::Fixed);
+            // Check if base controller is Fixed or FancyFixed - don't wrap if it is
+            let is_fixed = matches!(p1_type, ControllerType::Fixed | ControllerType::FancyFixed);
             if is_fixed {
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    log::info!("Player 1 using Fixed controller (skipping Replay wrapper)");
+                    log::info!("Player 1 using Fixed/FancyFixed controller (skipping Replay wrapper)");
                 }
                 base_controller1
             } else {
@@ -1085,11 +1133,11 @@ async fn run_tui(
 
     let mut controller2: Box<dyn mtg_forge_rs::game::controller::PlayerController> =
         if let Some(ref snapshot) = loaded_snapshot {
-            // Check if base controller is Fixed - don't wrap if it is
-            let is_fixed = matches!(p2_type, ControllerType::Fixed);
+            // Check if base controller is Fixed or FancyFixed - don't wrap if it is
+            let is_fixed = matches!(p2_type, ControllerType::Fixed | ControllerType::FancyFixed);
             if is_fixed {
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                    log::info!("Player 2 using Fixed controller (skipping Replay wrapper)");
+                    log::info!("Player 2 using Fixed/FancyFixed controller (skipping Replay wrapper)");
                 }
                 base_controller2
             } else {
@@ -1507,7 +1555,8 @@ async fn run_resume(
             mtg_forge_rs::game::ControllerType::Random => ControllerType::Random,
             mtg_forge_rs::game::ControllerType::Tui => ControllerType::Tui,
             mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
-            mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
+            mtg_forge_rs::game::ControllerType::Fixed | mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::Fixed,
+            mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
         }
     });
 
@@ -1518,7 +1567,8 @@ async fn run_resume(
             mtg_forge_rs::game::ControllerType::Random => ControllerType::Random,
             mtg_forge_rs::game::ControllerType::Tui => ControllerType::Tui,
             mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
-            mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
+            mtg_forge_rs::game::ControllerType::Fixed | mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::Fixed,
+            mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
         }
     });
 
@@ -1651,7 +1701,7 @@ async fn run_resume(
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-        ControllerType::Fixed => {
+        ControllerType::Fixed | ControllerType::FancyFixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
             if let Some(input) = &p1_fixed_inputs {
                 // CLI override - use provided script
@@ -1729,7 +1779,7 @@ async fn run_resume(
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-        ControllerType::Fixed => {
+        ControllerType::Fixed | ControllerType::FancyFixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
             if let Some(input) = &p2_fixed_inputs {
                 // CLI override - use provided script
@@ -1784,10 +1834,10 @@ async fn run_resume(
     };
 
     let mut controller2: Box<dyn mtg_forge_rs::game::controller::PlayerController> = {
-        let is_fixed = matches!(p2_type, ControllerType::Fixed);
+        let is_fixed = matches!(p2_type, ControllerType::Fixed | ControllerType::FancyFixed);
         if is_fixed {
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
-                log::info!("Player 2 using Fixed controller (skipping Replay wrapper)");
+                log::info!("Player 2 using Fixed/FancyFixed controller (skipping Replay wrapper)");
             }
             base_controller2
         } else {

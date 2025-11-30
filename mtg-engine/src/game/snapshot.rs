@@ -33,6 +33,8 @@ pub enum ControllerType {
     Tui,
     Heuristic,
     Fixed,
+    #[serde(rename = "fancyfixed")]
+    FancyFixed,
 }
 
 /// Default controller type for backward compatibility with old snapshots
