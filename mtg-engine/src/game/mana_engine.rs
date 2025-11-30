@@ -230,6 +230,12 @@ pub struct ManaEngine {
     cached_player: Option<PlayerId>,
     /// Cached mana state version for memoization
     cached_version: u32,
+    /// Debug mode: verify incremental computation against from-scratch computation
+    ///
+    /// When enabled, every cache read will be verified against a full battlefield
+    /// scan to ensure the incremental computation is correct. This is expensive
+    /// and should only be used for testing.
+    debug_verify_incremental: bool,
 }
 
 /// Default capacity for mana source vectors.
@@ -250,6 +256,7 @@ impl Default for ManaEngine {
             use_greedy_resolver: false,
             cached_player: None,
             cached_version: u32::MAX, // Start with invalid version to force first update
+            debug_verify_incremental: false,
         }
     }
 }
@@ -258,6 +265,186 @@ impl ManaEngine {
     /// Create a new mana engine
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable debug mode for from-scratch consistency verification
+    ///
+    /// When enabled, every cache read will be verified against a full battlefield
+    /// scan to ensure the incremental computation matches the from-scratch result.
+    ///
+    /// This is expensive (defeats the purpose of caching) and should only be used
+    /// in stress tests to verify correctness of the incremental computation.
+    pub fn with_debug_verification(mut self) -> Self {
+        self.debug_verify_incremental = true;
+        self
+    }
+
+    /// Compute mana sources from scratch by scanning the battlefield
+    ///
+    /// This is the gold standard for correctness. It performs a full scan of the
+    /// battlefield and computes all mana sources without using any cached state.
+    ///
+    /// Used for debug verification of the incremental cache-based computation.
+    fn compute_from_scratch(
+        &self,
+        game: &GameState,
+        player_id: PlayerId,
+    ) -> (Vec<CardId>, Vec<CardId>, ManaCapacity, Vec<ManaSource>) {
+        use crate::core::ManaProductionKind;
+
+        let mut scratch_simple_sources = Vec::new();
+        let mut scratch_complex_sources = Vec::new();
+        let mut scratch_capacity = ManaCapacity::new();
+        let mut scratch_mana_sources = Vec::new();
+
+        // Scan battlefield for mana-producing permanents owned by this player
+        for &card_id in &game.battlefield.cards {
+            if let Some(card) = game.cards.try_get(card_id) {
+                // Only process mana sources owned by this player
+                if card.owner != player_id || !card.cache.is_mana_source {
+                    continue;
+                }
+
+                // Determine if this source has summoning sickness (for creatures)
+                let has_summoning_sickness = if card.is_creature() {
+                    if let Some(entered_turn) = card.turn_entered_battlefield {
+                        entered_turn == game.turn.turn_number && !card.has_keyword(crate::core::Keyword::Haste)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                let production = &card.cache.mana_production;
+
+                // Classify source and update capacity
+                match &production.kind {
+                    ManaProductionKind::Fixed(color) => {
+                        use crate::core::ManaColor;
+                        scratch_simple_sources.push(card_id);
+                        if !card.tapped {
+                            match color {
+                                ManaColor::White => scratch_capacity.white += 1,
+                                ManaColor::Blue => scratch_capacity.blue += 1,
+                                ManaColor::Black => scratch_capacity.black += 1,
+                                ManaColor::Red => scratch_capacity.red += 1,
+                                ManaColor::Green => scratch_capacity.green += 1,
+                            }
+                        }
+                    }
+                    ManaProductionKind::Colorless => {
+                        scratch_simple_sources.push(card_id);
+                        if !card.tapped {
+                            scratch_capacity.colorless += 1;
+                        }
+                    }
+                    ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
+                        // Complex source - will be evaluated during payment
+                        scratch_complex_sources.push(card_id);
+                    }
+                }
+
+                // Add to full source list
+                scratch_mana_sources.push(ManaSource {
+                    card_id,
+                    production: *production,
+                    is_tapped: card.tapped,
+                    has_summoning_sickness,
+                });
+            }
+        }
+
+        (
+            scratch_simple_sources,
+            scratch_complex_sources,
+            scratch_capacity,
+            scratch_mana_sources,
+        )
+    }
+
+    /// Verify that the cached state matches the from-scratch computation
+    ///
+    /// Panics if there's a mismatch, with detailed diagnostic information.
+    fn verify_incremental_correctness(&self, game: &GameState, player_id: PlayerId) {
+        let (scratch_simple, scratch_complex, scratch_capacity, scratch_sources) =
+            self.compute_from_scratch(game, player_id);
+
+        // Check simple sources count
+        if self.simple_sources.len() != scratch_simple.len() {
+            panic!(
+                "ManaEngine incremental computation error: simple_sources count mismatch\n\
+                 Cached: {} sources\n\
+                 From-scratch: {} sources\n\
+                 Player: {:?}\n\
+                 Turn: {}\n\
+                 Cached sources: {:?}\n\
+                 Scratch sources: {:?}",
+                self.simple_sources.len(),
+                scratch_simple.len(),
+                player_id,
+                game.turn.turn_number,
+                self.simple_sources,
+                scratch_simple
+            );
+        }
+
+        // Check complex sources count
+        if self.complex_sources.len() != scratch_complex.len() {
+            panic!(
+                "ManaEngine incremental computation error: complex_sources count mismatch\n\
+                 Cached: {} sources\n\
+                 From-scratch: {} sources\n\
+                 Player: {:?}\n\
+                 Turn: {}",
+                self.complex_sources.len(),
+                scratch_complex.len(),
+                player_id,
+                game.turn.turn_number
+            );
+        }
+
+        // Check capacity (this is the most critical - it affects can_pay() queries)
+        if self.simple_capacity != scratch_capacity {
+            panic!(
+                "ManaEngine incremental computation error: capacity mismatch\n\
+                 Cached: W={} U={} B={} R={} G={} C={} (total={})\n\
+                 From-scratch: W={} U={} B={} R={} G={} C={} (total={})\n\
+                 Player: {:?}\n\
+                 Turn: {}",
+                self.simple_capacity.white,
+                self.simple_capacity.blue,
+                self.simple_capacity.black,
+                self.simple_capacity.red,
+                self.simple_capacity.green,
+                self.simple_capacity.colorless,
+                self.simple_capacity.total(),
+                scratch_capacity.white,
+                scratch_capacity.blue,
+                scratch_capacity.black,
+                scratch_capacity.red,
+                scratch_capacity.green,
+                scratch_capacity.colorless,
+                scratch_capacity.total(),
+                player_id,
+                game.turn.turn_number
+            );
+        }
+
+        // Check total mana sources count
+        if self.mana_sources.len() != scratch_sources.len() {
+            panic!(
+                "ManaEngine incremental computation error: mana_sources count mismatch\n\
+                 Cached: {} sources\n\
+                 From-scratch: {} sources\n\
+                 Player: {:?}\n\
+                 Turn: {}",
+                self.mana_sources.len(),
+                scratch_sources.len(),
+                player_id,
+                game.turn.turn_number
+            );
+        }
     }
 
     /// Update the engine by reading from the ManaSourceCache (immutable version)
@@ -300,6 +487,11 @@ impl ManaEngine {
         } else {
             // Cache is valid - read from it
             self.read_from_cache(game, cache, player_id);
+        }
+
+        // Debug mode: verify incremental computation against from-scratch result
+        if self.debug_verify_incremental {
+            self.verify_incremental_correctness(game, player_id);
         }
     }
 
@@ -427,6 +619,11 @@ impl ManaEngine {
         // Phase 2: Read from cache (immutable borrow)
         let cache = game.get_mana_cache(player_id).expect("Cache exists after rebuild");
         self.read_from_cache(game, cache, player_id);
+
+        // Debug mode: verify incremental computation against from-scratch result
+        if self.debug_verify_incremental {
+            self.verify_incremental_correctness(game, player_id);
+        }
     }
 
     /// Read mana sources from the cache and populate internal vectors

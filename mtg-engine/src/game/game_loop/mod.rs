@@ -177,6 +177,19 @@ impl<'a> GameLoop<'a> {
         self
     }
 
+    /// Enable debug mode for mana cache verification
+    ///
+    /// When enabled, every mana query will be verified against a full battlefield
+    /// scan to ensure the incremental cache-based computation matches the from-scratch
+    /// result. This is expensive and should only be used in stress tests.
+    ///
+    /// This implements the "from-scratch consistency" principle: incremental
+    /// computation must match full recomputation.
+    pub fn with_mana_debug_verification(mut self) -> Self {
+        self.mana_engine = self.mana_engine.with_debug_verification();
+        self
+    }
+
     /// Set verbosity level for output
     ///
     /// This sets the verbosity on both the game loop and the game's centralized logger,
