@@ -210,12 +210,8 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
     all_values = df[metric_col].dropna()
     use_log = len(all_values) > 0 and (all_values > 0).all()
 
-    # Create visibility arrays for toggling regressions
-    total_traces = len(fig.data)
-    show_regressions = [True] * total_traces
-    hide_regressions = [True] * total_traces
-    for idx in regression_trace_indices:
-        hide_regressions[idx] = False
+    # Note: Regression visibility now controlled by global HTML buttons
+    # (removed per-plot buttons for cleaner UX)
 
     # Don't create sliders here - we'll use a global slider instead
     # (individual sliders removed to use global HTML slider)
@@ -257,24 +253,14 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
                 direction='left',
                 buttons=[
                     dict(
-                        label='Show All',
+                        label='Show All Lines',
                         method='update',
                         args=[{'visible': True}]
                     ),
                     dict(
-                        label='Hide All',
+                        label='Hide All Lines',
                         method='update',
                         args=[{'visible': 'legendonly'}]
-                    ),
-                    dict(
-                        label='Hide Regressions',
-                        method='update',
-                        args=[{'visible': hide_regressions}]
-                    ),
-                    dict(
-                        label='Show Regressions',
-                        method='update',
-                        args=[{'visible': show_regressions}]
                     )
                 ],
                 pad={'r': 10, 't': 10},
@@ -286,7 +272,7 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
             )
         ],
         # No individual sliders - using global slider instead
-        template='plotly_white',
+        template='plotly_dark',  # Dark mode by default
         height=500,
         showlegend=True
     )
@@ -375,12 +361,75 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '            font-weight: bold;',
         '            color: #333;',
         '        }',
+        '        .global-controls {',
+        '            display: flex;',
+        '            gap: 10px;',
+        '            margin-top: 15px;',
+        '            flex-wrap: wrap;',
+        '        }',
+        '        .control-btn {',
+        '            padding: 10px 20px;',
+        '            border: none;',
+        '            border-radius: 6px;',
+        '            cursor: pointer;',
+        '            font-size: 14px;',
+        '            font-weight: 500;',
+        '            transition: all 0.3s;',
+        '        }',
+        '        .control-btn:hover {',
+        '            transform: translateY(-1px);',
+        '            box-shadow: 0 2px 8px rgba(0,0,0,0.2);',
+        '        }',
+        '        .theme-btn {',
+        '            background-color: #007bff;',
+        '            color: white;',
+        '        }',
+        '        .regression-btn {',
+        '            background-color: #6c757d;',
+        '            color: white;',
+        '        }',
+        '        body.dark-mode {',
+        '            background-color: #1a1a1a;',
+        '            color: #e0e0e0;',
+        '        }',
+        '        body.dark-mode .header {',
+        '            background-color: #2d2d2d;',
+        '            color: #e0e0e0;',
+        '        }',
+        '        body.dark-mode .subtitle {',
+        '            color: #b0b0b0;',
+        '        }',
+        '        body.dark-mode .plot-container {',
+        '            background-color: #2d2d2d;',
+        '        }',
+        '        body.dark-mode .stat-card {',
+        '            background-color: #3d3d3d;',
+        '            color: #e0e0e0;',
+        '        }',
+        '        body.dark-mode .stat-label {',
+        '            color: #b0b0b0;',
+        '        }',
+        '        body.dark-mode .stat-value {',
+        '            color: #e0e0e0;',
+        '        }',
+        '        .slider-container {',
+        '            background-color: #e8f4f8;',
+        '            border-left: 4px solid #007bff;',
+        '        }',
+        '        body.dark-mode .slider-container {',
+        '            background-color: #1e3a4a;',
+        '            border-left: 4px solid #4a9eff;',
+        '        }',
         '    </style>',
         '</head>',
-        '<body>',
+        '<body class="dark-mode">',  # Start in dark mode
         '    <div class="header">',
         '        <h1>🚀 MTG Forge-rs Performance Dashboard</h1>',
         f'        <div class="subtitle">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}</div>',
+        '        <div class="global-controls">',
+        '            <button id="themeToggle" class="control-btn theme-btn">☀️ Light Mode</button>',
+        '            <button id="regressionToggle" class="control-btn regression-btn">Hide Regressions</button>',
+        '        </div>',
     ]
 
     # Detect typical thread count for this machine from parallel benchmarks
@@ -448,10 +497,11 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '        <p>',
         '        <strong>Interactive Controls:</strong>',
         '        <ul>',
+        '            <li><strong>🌙 Dark/Light Mode Toggle:</strong> Global button switches all plots between dark and light themes. Defaults to dark mode.</li>',
+        '            <li><strong>Hide/Show Regressions:</strong> Global button toggles red X regression markers across all plots. Independent from line visibility.</li>',
         '            <li><strong>Global Git Depth Slider:</strong> Single slider controls all plots simultaneously. Default is 900 (recent commits). Slide left to see full history.</li>',
-        '            <li><strong>Show/Hide All:</strong> Quickly toggle visibility of all benchmark series (per-plot buttons)</li>',
-        '            <li><strong>Hide/Show Regressions:</strong> Toggle regression markers on/off (per-plot buttons, red X markers)</li>',
-        '            <li><strong>Single click legend:</strong> Show/hide individual benchmarks (regression markers follow their lines)</li>',
+        '            <li><strong>Show/Hide All Lines:</strong> Per-plot buttons to quickly toggle visibility of all benchmark series</li>',
+        '            <li><strong>Single click legend:</strong> Show/hide individual benchmarks (regression markers linked to their lines)</li>',
         '            <li><strong>Double click legend:</strong> Isolate a single benchmark (hides all others)</li>',
         '            <li><strong>Hover over points:</strong> See detailed information (commit, date, exact values)</li>',
         '            <li><strong>Toolbar:</strong> Zoom, pan, box select, reset axes, download plot as PNG</li>',
@@ -558,7 +608,7 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         padded_max = plot_metadata['padded_max_depth']
 
         html_parts.extend([
-            '    <div class="plot-container" style="background-color: #e8f4f8; border-left: 4px solid #007bff;">',
+            '    <div class="plot-container slider-container">',
             '        <h3 style="margin-top: 0;">🎚️ Global Git Depth Filter</h3>',
             '        <p style="margin-bottom: 15px;">',
             '            Adjust the slider to filter all plots by minimum git depth. ',
@@ -611,6 +661,65 @@ def create_dashboard(df, output_file, filter_benchmark=None):
             plot_html,
             '    </div>',
         ])
+
+    # Add global control JavaScript
+    html_parts.extend([
+        '    <script>',
+        '    // Theme toggle',
+        '    (function() {',
+        '        const themeBtn = document.getElementById("themeToggle");',
+        f'        const plotIds = {[f"plot_{m[0]}" for m in metrics]};',
+        '        let isDark = true;  // Start in dark mode',
+        '        ',
+        '        themeBtn.addEventListener("click", function() {',
+        '            isDark = !isDark;',
+        '            document.body.classList.toggle("dark-mode");',
+        '            const newTemplate = isDark ? "plotly_dark" : "plotly_white";',
+        '            themeBtn.textContent = isDark ? "☀️ Light Mode" : "🌙 Dark Mode";',
+        '            ',
+        '            // Update all plots',
+        '            plotIds.forEach(plotId => {',
+        '                const plotDiv = document.getElementById(plotId);',
+        '                if (plotDiv && plotDiv.layout) {',
+        '                    Plotly.relayout(plotId, {',
+        '                        template: newTemplate',
+        '                    });',
+        '                }',
+        '            });',
+        '        });',
+        '    })();',
+        '    ',
+        '    // Regression toggle - only affects regression markers (showlegend=false traces)',
+        '    (function() {',
+        '        const regressionBtn = document.getElementById("regressionToggle");',
+        f'        const plotIds = {[f"plot_{m[0]}" for m in metrics]};',
+        '        let regressionsVisible = true;',
+        '        ',
+        '        regressionBtn.addEventListener("click", function() {',
+        '            regressionsVisible = !regressionsVisible;',
+        '            regressionBtn.textContent = regressionsVisible ? "Hide Regressions" : "Show Regressions";',
+        '            ',
+        '            // Update all plots - only toggle traces with showlegend=false',
+        '            plotIds.forEach(plotId => {',
+        '                const plotDiv = document.getElementById(plotId);',
+        '                if (plotDiv && plotDiv.data) {',
+        '                    const updates = {};',
+        '                    plotDiv.data.forEach((trace, idx) => {',
+        '                        // Only affect regression markers (showlegend=false)',
+        '                        if (trace.showlegend === false) {',
+        '                            updates[`visible[${idx}]`] = regressionsVisible;',
+        '                        }',
+        '                    });',
+        '                    ',
+        '                    if (Object.keys(updates).length > 0) {',
+        '                        Plotly.restyle(plotId, updates);',
+        '                    }',
+        '                }',
+        '            });',
+        '        });',
+        '    })();',
+        '    </script>',
+    ])
 
     # Close HTML
     html_parts.extend([
