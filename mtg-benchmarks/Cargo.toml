@@ -16,7 +16,6 @@ criterion = "0.5"
 stats_alloc = "0.1"
 mimalloc = "0.1"
 tikv-jemallocator = "0.6"
-tikv-jemalloc-ctl = "0.6"
 dhat = "0.3"
 
 # Required for benchmark code
