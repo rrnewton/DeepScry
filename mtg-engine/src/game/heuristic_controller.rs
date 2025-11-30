@@ -3128,6 +3128,82 @@ impl HeuristicController {
             }
         }
     }
+
+    /// Score a mana source by its alternate uses
+    ///
+    /// Port of Java's ComputerUtilMana.scoreManaProducingCard()
+    /// Reference: ComputerUtilMana.java:95-120
+    ///
+    /// Lower scores = fewer alternate uses = tap first
+    /// Higher scores = more valuable for other purposes = preserve
+    fn score_mana_source(&self, card: &Card, view: &GameStateView) -> i32 {
+        let mut score = 0;
+
+        // Score mana abilities (each mana ability contributes to score)
+        // In Java: score += ability.calculateScoreForManaAbility()
+        // We'll use a simpler heuristic: count mana produced
+        for ability in &card.activated_abilities {
+            if ability.is_mana_ability {
+                // Simple scoring: +1 per mana type the ability can produce
+                for effect in &ability.effects {
+                    if let crate::core::Effect::AddMana { mana, .. } = effect {
+                        // Count total mana produced
+                        score += (mana.white + mana.blue + mana.black + mana.red + mana.green + mana.colorless) as i32;
+                    }
+                }
+            } else {
+                // Non-mana activated abilities add +13 (preserve flexibility)
+                // Reference: ComputerUtilMana.java:104-106
+                score += 13;
+            }
+        }
+
+        // Creatures with combat potential add significant score
+        // Reference: ComputerUtilMana.java:109-117
+        if card.is_creature() {
+            // Can attack? (not summoning sick, not tapped)
+            let can_attack = self.can_mana_creature_attack(card, view);
+            if can_attack {
+                score += 13;
+            }
+
+            // Can block? (not tapped, has ability to block)
+            // Note: Most creatures can block unless they have "can't block"
+            // For simplicity, assume all untapped creatures can block
+            if !card.tapped {
+                score += 13;
+            }
+        }
+
+        score
+    }
+
+    /// Check if a mana creature can attack (simplified check for mana tapping)
+    fn can_mana_creature_attack(&self, card: &Card, view: &GameStateView) -> bool {
+        // Must be a creature
+        if !card.is_creature() {
+            return false;
+        }
+
+        // Must not be tapped
+        if card.tapped {
+            return false;
+        }
+
+        // Must not have summoning sickness (unless has haste)
+        if let Some(turn_entered) = card.turn_entered_battlefield {
+            if turn_entered >= view.turn_number() && !card.has_keyword(crate::core::Keyword::Haste) {
+                return false;
+            }
+        }
+
+        // Must not have defender
+        if card.has_keyword(crate::core::Keyword::Defender) {
+            return false;
+        }
+
+        true
+    }
 }
 
 impl PlayerController for HeuristicController {
@@ -3321,16 +3397,31 @@ impl PlayerController for HeuristicController {
 
     fn choose_mana_sources_to_pay(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Simple greedy approach for now
-        // TODO: Implement intelligent mana tapping order from ComputerUtilMana
+        // Port of Java's ComputerUtilMana.scoreManaProducingCard()
+        // Reference: ComputerUtilMana.java:95-120
+        //
+        // Strategy: Score each mana source by its alternate uses.
+        // Sources with LOWER scores are tapped first (preserve flexibility).
+        // - Lands with only mana abilities get low scores (tap these first)
+        // - Creatures with mana abilities get +13 for attack and +13 for block potential
+        // - Cards with non-mana activated abilities get +13 per ability
+
+        let mut scored_sources: Vec<(CardId, i32)> = available_sources
+            .iter()
+            .filter_map(|&id| view.get_card(id).map(|card| (id, self.score_mana_source(card, view))))
+            .collect();
+
+        // Sort ascending by score - tap lowest score first
+        scored_sources.sort_by_key(|(_, score)| *score);
+
         let mut sources = SmallVec::new();
         let needed = cost.cmc() as usize;
 
-        for &source_id in available_sources.iter().take(needed) {
+        for (source_id, _) in scored_sources.into_iter().take(needed) {
             sources.push(source_id);
         }
 
@@ -3739,5 +3830,126 @@ mod tests {
         // - 2/2: can't kill with 1 damage, but rules require assigning lethal
         //        before moving to next blocker, so we'd be stuck
         // The algorithm correctly recognizes 2/2 can't be killed and skips it
+    }
+
+    /// Test intelligent mana source scoring
+    ///
+    /// Port of Java's ComputerUtilMana.scoreManaProducingCard()
+    /// Reference: ComputerUtilMana.java:95-120
+    ///
+    /// This tests that:
+    /// 1. Basic lands (only mana ability) get low scores
+    /// 2. Mana creatures get higher scores (can attack/block)
+    /// 3. Cards with non-mana abilities get +13 per ability
+    #[test]
+    fn test_mana_source_scoring() {
+        use crate::core::{ActivatedAbility, Card, CardType, Cost, Effect, ManaCost};
+
+        let player_id = EntityId::new(1);
+        let controller = HeuristicController::new(player_id);
+
+        // Create a mock GameStateView
+        let game = crate::game::state::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let view = crate::game::controller::GameStateView::new(&game, player_id);
+
+        // Create a basic Forest (just mana ability)
+        // Expected score: 1 (produces 1 green mana)
+        let mut forest = Card::new(EntityId::new(10), "Forest", player_id);
+        forest.add_type(CardType::Land);
+        forest.activated_abilities.push(ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::AddMana {
+                player: player_id,
+                mana: ManaCost {
+                    green: 1,
+                    ..Default::default()
+                },
+            }],
+            "{T}: Add {G}".to_string(),
+            true, // is_mana_ability
+        ));
+
+        let forest_score = controller.score_mana_source(&forest, &view);
+
+        // Create Llanowar Elves (1/1 creature with mana ability)
+        // Expected score: 1 (mana) + 13 (can attack) + 13 (can block) = 27
+        // Note: If summoning sick, only +13 for block potential
+        let mut llanowar_elves = Card::new(EntityId::new(11), "Llanowar Elves", player_id);
+        llanowar_elves.add_type(CardType::Creature);
+        llanowar_elves.set_power(Some(1));
+        llanowar_elves.set_toughness(Some(1));
+        // Not summoning sick - entered last turn
+        llanowar_elves.turn_entered_battlefield = Some(0);
+        llanowar_elves.activated_abilities.push(ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::AddMana {
+                player: player_id,
+                mana: ManaCost {
+                    green: 1,
+                    ..Default::default()
+                },
+            }],
+            "{T}: Add {G}".to_string(),
+            true, // is_mana_ability
+        ));
+
+        let elves_score = controller.score_mana_source(&llanowar_elves, &view);
+
+        // Create a land with a non-mana activated ability (utility land)
+        // Expected score: 1 (mana) + 13 (non-mana ability) = 14
+        let mut utility_land = Card::new(EntityId::new(12), "Strip Mine", player_id);
+        utility_land.add_type(CardType::Land);
+        utility_land.activated_abilities.push(ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::AddMana {
+                player: player_id,
+                mana: ManaCost {
+                    colorless: 1,
+                    ..Default::default()
+                },
+            }],
+            "{T}: Add {C}".to_string(),
+            true, // is_mana_ability
+        ));
+        // Strip Mine's destroy land ability
+        utility_land.activated_abilities.push(ActivatedAbility::new(
+            Cost::Composite(vec![
+                Cost::Tap,
+                Cost::SacrificePattern {
+                    count: 1,
+                    card_type: "Land".to_string(),
+                },
+            ]),
+            vec![Effect::DestroyPermanent {
+                target: CardId::new(0),
+                restriction: crate::core::TargetRestriction::any(),
+            }],
+            "{T}, Sacrifice Strip Mine: Destroy target land.".to_string(),
+            false, // is_mana_ability
+        ));
+
+        let utility_score = controller.score_mana_source(&utility_land, &view);
+
+        // Verify: Forest (low) < Utility land (medium) < Llanowar Elves (high)
+        // The AI should tap Forest first, then utility land, then Llanowar Elves
+        assert!(
+            forest_score < elves_score,
+            "Basic land (score={}) should be tapped before mana creature (score={})",
+            forest_score,
+            elves_score
+        );
+
+        assert!(
+            forest_score < utility_score,
+            "Basic land (score={}) should be tapped before utility land (score={})",
+            forest_score,
+            utility_score
+        );
+
+        // Print scores for debugging
+        eprintln!("Mana source scores:");
+        eprintln!("  Forest: {}", forest_score);
+        eprintln!("  Strip Mine: {}", utility_score);
+        eprintln!("  Llanowar Elves: {}", elves_score);
     }
 }

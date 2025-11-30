@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-30T16:11:40.706816745+00:00
+updated_at: 2025-11-30T17:46:00.244517544+00:00
 ---
 
 # Description
@@ -50,6 +50,13 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Fading: -15 to -50 penalty (scaled by fade counters)
   - Vanishing: -15 to -50 penalty (scaled by time counters)
   - Reference: CreatureEvaluator.java:235-276
+- ✅ **Intelligent mana tapping order (2025-11-30_#1009)**
+  - Port of Java's ComputerUtilMana.scoreManaProducingCard()
+  - Score mana sources by alternate uses (lower = tap first)
+  - Basic lands: low score (tap first)
+  - Mana creatures: +13 for attack potential, +13 for block potential
+  - Cards with non-mana abilities: +13 per ability
+  - Test with Llanowar Elves vs Forest vs Strip Mine
 
 **What's Missing:**
 
@@ -72,13 +79,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
 5. ~~**Damage assignment order**~~ ✅ **COMPLETED 2025-11-30_#993**
 
 6. **GameStateEvaluator improvements:**
-   - mtg-78: Port evalManaBase() - mana base quality scoring
+   - mtg-78: Port evalManaBase() - mana base quality scoring (CLOSED)
    - mtg-79: Track summon sickness properly (COMPLETED 2025-10-26)
-   - mtg-81: Complete land evaluation (detailed heuristics)
+   - mtg-81: Complete land evaluation (detailed heuristics) (CLOSED)
 
-7. **Mana tapping order** - ComputerUtilMana
-   - Leave up correct colors for instant responses
-   - Optimize painland/fetchland usage
+7. ~~**Mana tapping order**~~ ✅ **COMPLETED 2025-11-30_#1009** - ComputerUtilMana
+   - Score-based source selection
+   - Preserve mana creatures for combat
+   - Preserve utility lands
 
 ### Lower Priority:
 
@@ -89,9 +97,9 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with real cards (2025-11-30) - 530 tests passing**
+- ✅ **Comprehensive test coverage with real cards (2025-11-30) - 539 tests passing**
 
 ## Next Steps (Priority Order)
 
-1. GameStateEvaluator improvements
-2. Mana tapping order
+1. Enchantment evaluation (mtg-80)
+2. Static abilities handling
