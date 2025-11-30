@@ -202,7 +202,8 @@ impl CardDefinition {
         card.set_toughness(self.toughness);
         card.text = self.oracle.clone();
 
-        // Populate cache after text is set (avoids allocation in gameplay)
+        // Initialize empty cache - will be populated after abilities are parsed
+        // (mana production is derived from parsed abilities, not text)
         card.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
 
         // Parse keywords
@@ -289,6 +290,13 @@ impl CardDefinition {
                     .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
             }
         }
+
+        // Update cache AFTER all abilities are parsed (including implicit mana abilities)
+        // This derives mana production from Effect::AddMana in the abilities,
+        // following Java Forge's approach of using structured Produced$ data.
+        // Falls back to land name detection for test cards without explicit abilities.
+        card.cache
+            .update_from_abilities_with_name(&card.activated_abilities, card.name.as_str());
 
         card
     }

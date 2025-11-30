@@ -1083,6 +1083,8 @@ mod tests {
 
     #[test]
     fn test_mana_engine_with_llanowar_elves() {
+        use crate::core::{ActivatedAbility, Cost, Effect};
+
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
         let p1_id = game.players[0].id;
 
@@ -1099,6 +1101,17 @@ mod tests {
         elf.types.push(CardType::Creature);
         elf.controller = p1_id;
         elf.set_text("{T}: Add {G}.".to_string());
+        // Add explicit mana ability (mana production is derived from abilities, not text)
+        elf.activated_abilities.push(ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::AddMana {
+                player: p1_id,
+                mana: ManaCost::from_string("G"),
+            }],
+            "Add {G}".to_string(),
+            true, // is_mana_ability
+        ));
+        elf.cache.update_from_abilities(&elf.activated_abilities);
         elf.turn_entered_battlefield = Some(game.turn.turn_number - 1); // Not summoning sick
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
@@ -1121,6 +1134,8 @@ mod tests {
 
     #[test]
     fn test_mana_engine_summoning_sickness() {
+        use crate::core::{ActivatedAbility, Cost, Effect};
+
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
         let p1_id = game.players[0].id;
 
@@ -1138,6 +1153,17 @@ mod tests {
         elf.types.push(CardType::Creature);
         elf.controller = p1_id;
         elf.set_text("{T}: Add {G}.".to_string());
+        // Add explicit mana ability (mana production is derived from abilities, not text)
+        elf.activated_abilities.push(ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::AddMana {
+                player: p1_id,
+                mana: ManaCost::from_string("G"),
+            }],
+            "Add {G}".to_string(),
+            true, // is_mana_ability
+        ));
+        elf.cache.update_from_abilities(&elf.activated_abilities);
         elf.turn_entered_battlefield = Some(game.turn.turn_number); // Summoning sick!
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
@@ -1167,6 +1193,8 @@ mod tests {
     /// Test that non-basic lands with {T}: Add {C} are correctly identified as mana sources
     #[test]
     fn test_mishras_factory_colorless_mana() {
+        use crate::core::{ActivatedAbility, Cost, Effect};
+
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
         let p1_id = game.players[0].id;
 
@@ -1175,8 +1203,18 @@ mod tests {
         let mut factory = Card::new(factory_id, "Mishra's Factory".to_string(), p1_id);
         factory.types.push(CardType::Land);
         factory.controller = p1_id;
-        // This is the oracle text that should trigger colorless mana detection
         factory.set_text("{T}: Add {C}.\n{1}: Mishra's Factory becomes a 2/2 Assembly-Worker artifact creature until end of turn. It's still a land.".to_string());
+        // Add explicit mana ability (mana production is derived from abilities, not text)
+        factory.activated_abilities.push(ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::AddMana {
+                player: p1_id,
+                mana: ManaCost::from_string("C"),
+            }],
+            "Add {C}".to_string(),
+            true, // is_mana_ability
+        ));
+        factory.cache.update_from_abilities(&factory.activated_abilities);
 
         // Verify the cache detects colorless mana production
         assert!(

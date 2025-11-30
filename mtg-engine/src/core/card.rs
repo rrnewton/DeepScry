@@ -20,64 +20,14 @@ pub enum CardType {
     Planeswalker,
 }
 
-/// Cache for expensive string operations and precomputed properties on Card
-/// Pre-computed at card load time to avoid repeated allocations and computations during gameplay
+/// Cache for precomputed properties on Card
+/// Pre-computed at card load time to avoid repeated computations during gameplay
+///
+/// DESIGN: Mana production is derived from parsed ActivatedAbility data (via `Produced$`
+/// parameter in card files), NOT from oracle text. This follows the Java Forge approach
+/// where `AbilityManaPart.origProduced` stores the structured Produced$ value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardCache {
-    /// Lowercase version of card.text (computed once)
-    pub text_lowercase: String,
-
-    /// Lowercase version of card.name (computed once)
-    pub name_lowercase: String,
-
-    // Pre-computed contains() checks for mana abilities
-    /// Contains "add" in text (generic mana ability marker)
-    pub text_contains_add: bool,
-
-    /// Contains "{t}:" in text (tap symbol)
-    pub text_contains_tap_colon: bool,
-
-    /// Contains "mana" in text
-    pub text_contains_mana: bool,
-
-    /// Contains "any color" in text (produces mana of any color)
-    pub text_contains_any_color: bool,
-
-    // Specific mana colors
-    /// Contains "{t}: add {w}" or "add {w}" (white mana)
-    pub text_produces_white: bool,
-
-    /// Contains "{t}: add {u}" or "add {u}" (blue mana)
-    pub text_produces_blue: bool,
-
-    /// Contains "{t}: add {b}" or "add {b}" (black mana)
-    pub text_produces_black: bool,
-
-    /// Contains "{t}: add {r}" or "add {r}" (red mana)
-    pub text_produces_red: bool,
-
-    /// Contains "{t}: add {g}" or "add {g}" (green mana)
-    pub text_produces_green: bool,
-
-    /// Contains "{t}: add {c}" or "add {c}" (colorless mana)
-    pub text_produces_colorless: bool,
-
-    // Basic land type detection in name
-    /// Name contains "plains"
-    pub name_is_plains: bool,
-
-    /// Name contains "island"
-    pub name_is_island: bool,
-
-    /// Name contains "swamp"
-    pub name_is_swamp: bool,
-
-    /// Name contains "mountain"
-    pub name_is_mountain: bool,
-
-    /// Name contains "forest"
-    pub name_is_forest: bool,
-
     // ==== Precomputed function results (eliminate runtime computation) ====
     /// Precomputed mana production (upper bound, OR semantics)
     /// - Default (empty Choice) = no mana production
@@ -88,7 +38,9 @@ pub struct CardCache {
     ///
     /// This is an UPPER BOUND - it represents what the card CAN produce, not accounting
     /// for tap status, summoning sickness, or activation costs (which are always None/free for cached values).
-    /// 11 bytes total (2 bytes for ManaProductionKind + 9 bytes for Option<ManaCost>).
+    ///
+    /// This value is derived from parsed ActivatedAbility effects (Effect::AddMana),
+    /// NOT from grepping oracle text. See `derive_mana_production_from_abilities()`.
     pub mana_production: ManaProduction,
 
     /// Precomputed: Is this card a mana source? (produces any mana)
@@ -106,120 +58,157 @@ pub struct CardCache {
 }
 
 impl CardCache {
-    /// Create a new cache from card text and name
-    pub fn new(text: &str, name: &str) -> Self {
-        let text_lower = text.to_lowercase();
-        let name_lower = name.to_lowercase();
-
-        // Compute mana production from card text and name
-        let mana_production = Self::compute_mana_production(&text_lower, &name_lower);
-        let is_mana_source = mana_production.produces_mana();
-
+    /// Create a new empty cache (default values)
+    ///
+    /// Call `update_from_abilities()` after parsing abilities to populate mana production.
+    /// This two-phase initialization is necessary because abilities are parsed after
+    /// the Card struct is created.
+    pub fn new(_text: &str, _name: &str) -> Self {
+        // NOTE: text and name parameters are kept for API compatibility but no longer used.
+        // Mana production is now derived from parsed abilities, not text.
         CardCache {
-            // Store lowercase versions
-            text_lowercase: text_lower.clone(),
-            name_lowercase: name_lower.clone(),
-
-            // Mana ability markers
-            text_contains_add: text_lower.contains("add"),
-            text_contains_tap_colon: text_lower.contains("{t}:"),
-            text_contains_mana: text_lower.contains("mana"),
-            text_contains_any_color: text_lower.contains("any color"),
-
-            // Specific mana production
-            text_produces_white: text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}"),
-            text_produces_blue: text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}"),
-            text_produces_black: text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}"),
-            text_produces_red: text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}"),
-            text_produces_green: text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}"),
-            text_produces_colorless: text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}"),
-
-            // Basic land names
-            name_is_plains: name_lower.contains("plains"),
-            name_is_island: name_lower.contains("island"),
-            name_is_swamp: name_lower.contains("swamp"),
-            name_is_mountain: name_lower.contains("mountain"),
-            name_is_forest: name_lower.contains("forest"),
-
-            // Precomputed function results
-            mana_production,
-            is_mana_source,
-            requires_stack_target: false, // TODO: implement during card loading
-            land_evaluation_value: 0,     // TODO: implement during card loading
+            mana_production: ManaProduction::default(),
+            is_mana_source: false,
+            requires_stack_target: false,
+            land_evaluation_value: 0,
         }
     }
 
-    /// Compute mana production from lowercase card text and name
-    /// Returns an upper bound on what this card can produce (OR semantics)
+    /// Update cache based on parsed activated abilities and card name
     ///
-    /// If text doesn't specify mana production, falls back to checking for
-    /// basic land names (Plains, Island, Swamp, Mountain, Forest, Wastes).
-    /// This handles tests/examples that create lands without setting oracle text.
-    fn compute_mana_production(text_lower: &str, name_lower: &str) -> ManaProduction {
+    /// This derives mana production from Effect::AddMana in mana abilities,
+    /// following the Java Forge approach where mana production comes from
+    /// the structured `Produced$` parameter, not oracle text.
+    ///
+    /// Falls back to basic land name detection if no mana abilities exist,
+    /// which handles test cards created without explicit abilities.
+    ///
+    /// Call this after parsing abilities in the card loader.
+    pub fn update_from_abilities(&mut self, abilities: &[crate::core::ActivatedAbility]) {
+        self.mana_production = Self::derive_mana_production_from_abilities(abilities);
+        self.is_mana_source = self.mana_production.produces_mana();
+    }
+
+    /// Update cache based on abilities, with fallback to land name detection
+    ///
+    /// This is the primary entry point for card loading. It:
+    /// 1. Tries to derive mana production from parsed abilities
+    /// 2. Falls back to basic land name detection for test cards
+    pub fn update_from_abilities_with_name(&mut self, abilities: &[crate::core::ActivatedAbility], name: &str) {
+        self.mana_production = Self::derive_mana_production_from_abilities(abilities);
+
+        // Fallback for test cards that create basic lands without explicit abilities
+        if !self.mana_production.produces_mana() {
+            self.mana_production = Self::derive_mana_production_from_name(name);
+        }
+
+        self.is_mana_source = self.mana_production.produces_mana();
+    }
+
+    /// Derive mana production from basic land names (fallback for tests)
+    ///
+    /// This handles test cards that create lands like `Card::new(..., "Mountain", ...)`
+    /// without adding explicit mana abilities.
+    ///
+    /// Public for use by Card::new() to enable simple test card creation.
+    pub fn derive_mana_production_from_name(name: &str) -> ManaProduction {
         use crate::core::{ManaColor, ManaProductionKind};
+
+        let name_lower = name.to_lowercase();
+        if name_lower.contains("plains") {
+            ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White))
+        } else if name_lower.contains("island") {
+            ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue))
+        } else if name_lower.contains("swamp") {
+            ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black))
+        } else if name_lower.contains("mountain") {
+            ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red))
+        } else if name_lower.contains("forest") {
+            ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green))
+        } else if name_lower.contains("wastes") {
+            ManaProduction::free(ManaProductionKind::Colorless)
+        } else {
+            ManaProduction::default()
+        }
+    }
+
+    /// Set mana production directly (for tests and special cases)
+    pub fn set_mana_production(&mut self, production: ManaProduction) {
+        self.mana_production = production;
+        self.is_mana_source = production.produces_mana();
+    }
+
+    /// Derive mana production from parsed activated abilities
+    ///
+    /// Scans all mana abilities (is_mana_ability = true) for Effect::AddMana
+    /// and combines them into a single ManaProduction using OR semantics.
+    ///
+    /// Returns the upper bound of what colors this card can produce.
+    fn derive_mana_production_from_abilities(abilities: &[crate::core::ActivatedAbility]) -> ManaProduction {
+        use crate::core::{Effect, ManaColor, ManaProductionKind};
         use crate::game::mana_colors::ManaColors;
 
-        // Check for any-color production first (most permissive)
-        if text_lower.contains("any color") {
+        let mut colors = ManaColors::new();
+        let mut produces_colorless = false;
+        let mut produces_any = false;
+
+        for ability in abilities {
+            // Only consider mana abilities
+            if !ability.is_mana_ability {
+                continue;
+            }
+
+            for effect in &ability.effects {
+                if let Effect::AddMana { mana, .. } = effect {
+                    // Check each color component
+                    if mana.white > 0 {
+                        colors.insert(ManaColor::White);
+                    }
+                    if mana.blue > 0 {
+                        colors.insert(ManaColor::Blue);
+                    }
+                    if mana.black > 0 {
+                        colors.insert(ManaColor::Black);
+                    }
+                    if mana.red > 0 {
+                        colors.insert(ManaColor::Red);
+                    }
+                    if mana.green > 0 {
+                        colors.insert(ManaColor::Green);
+                    }
+                    if mana.colorless > 0 {
+                        produces_colorless = true;
+                    }
+
+                    // Check for "any color" - this is indicated by having all 5 colors set
+                    // (from Produced$ Any which the effect converter handles)
+                    // TODO(mtg-s3ri5): Track "any color" explicitly in Effect::AddMana
+                    // For now, if all 5 colors are present, treat as any color
+                    if mana.white > 0 && mana.blue > 0 && mana.black > 0 && mana.red > 0 && mana.green > 0 {
+                        produces_any = true;
+                    }
+                }
+            }
+        }
+
+        // Build ManaProduction from accumulated colors
+        if produces_any {
             return ManaProduction::free(ManaProductionKind::AnyColor);
         }
 
-        // Check for colorless production
-        let produces_colorless = text_lower.contains("{t}: add {c}") || text_lower.contains("add {c}");
-
-        // Build ManaColors bitfield from all colors this card can produce
-        let mut colors = ManaColors::new();
-
-        if text_lower.contains("{t}: add {w}") || text_lower.contains("add {w}") {
-            colors.insert(ManaColor::White);
-        }
-        if text_lower.contains("{t}: add {u}") || text_lower.contains("add {u}") {
-            colors.insert(ManaColor::Blue);
-        }
-        if text_lower.contains("{t}: add {b}") || text_lower.contains("add {b}") {
-            colors.insert(ManaColor::Black);
-        }
-        if text_lower.contains("{t}: add {r}") || text_lower.contains("add {r}") {
-            colors.insert(ManaColor::Red);
-        }
-        if text_lower.contains("{t}: add {g}") || text_lower.contains("add {g}") {
-            colors.insert(ManaColor::Green);
-        }
-
-        // Prioritize colored mana over colorless
-        let production_from_text = match colors.len() {
+        match colors.len() {
             0 if produces_colorless => ManaProduction::free(ManaProductionKind::Colorless),
-            0 => ManaProduction::default(), // No mana production from text
+            0 => ManaProduction::default(), // No mana production
             1 => {
                 // Single color - use Fixed variant
                 let color = colors.iter().next().unwrap();
                 ManaProduction::free(ManaProductionKind::Fixed(color))
             }
             _ => {
-                // Multiple colors - use Choice variant (OR logic: choose one)
+                // Multiple colors - use Choice variant (OR logic)
                 ManaProduction::free(ManaProductionKind::Choice(colors))
             }
-        };
-
-        // If text doesn't specify mana production, check for basic land names
-        // This handles tests/examples that create lands without setting text
-        if !production_from_text.produces_mana() {
-            if name_lower.contains("plains") {
-                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White));
-            } else if name_lower.contains("island") {
-                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue));
-            } else if name_lower.contains("swamp") {
-                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black));
-            } else if name_lower.contains("mountain") {
-                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red));
-            } else if name_lower.contains("forest") {
-                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green));
-            } else if name_lower.contains("wastes") {
-                return ManaProduction::free(ManaProductionKind::Colorless);
-            }
         }
-
-        production_from_text
     }
 }
 
@@ -326,9 +315,16 @@ impl Card {
         let name: CardName = name.into();
         let text = String::new();
 
+        // Initialize cache with name-based fallback for basic lands
+        // This allows test code to create lands with just Card::new(..., "Mountain", ...)
+        // without needing to add explicit mana abilities
+        let mut cache = CardCache::new(&text, name.as_str());
+        cache.mana_production = CardCache::derive_mana_production_from_name(name.as_str());
+        cache.is_mana_source = cache.mana_production.produces_mana();
+
         Card {
             id,
-            cache: CardCache::new(&text, name.as_str()),
+            cache,
             name,
             mana_cost: ManaCost::new(),
             types: SmallVec::new(),
@@ -528,10 +524,12 @@ impl Card {
             .unwrap_or(0)
     }
 
-    /// Set the card text and regenerate the cache
-    /// Use this in tests or when modifying card text after creation
+    /// Set the card text
+    ///
+    /// NOTE: This does NOT update mana production in the cache. Mana production
+    /// is derived from parsed abilities, not text. Call `cache.update_from_abilities()`
+    /// after adding mana abilities if needed.
     pub fn set_text(&mut self, text: String) {
-        self.cache = CardCache::new(&text, self.name.as_str());
         self.text = text;
     }
 
