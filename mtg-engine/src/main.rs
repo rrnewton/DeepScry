@@ -397,13 +397,20 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging (controlled by RUST_LOG environment variable, defaults to Info level)
-    let mut builder = env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info")
-    );
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
     builder.format_timestamp(None).format_target(true);
 
     // For Fancy TUI mode, redirect logs to a file since TUI takes over the screen
-    let log_file_path = if matches!(cli.command, Commands::Tui { p1: ControllerType::Fancy, .. } | Commands::Tui { p2: ControllerType::Fancy, .. }) {
+    let log_file_path = if matches!(
+        cli.command,
+        Commands::Tui {
+            p1: ControllerType::Fancy,
+            ..
+        } | Commands::Tui {
+            p2: ControllerType::Fancy,
+            ..
+        }
+    ) {
         use std::fs::OpenOptions;
         let log_path = std::path::PathBuf::from("mtg_forge.log");
         let log_file = OpenOptions::new()

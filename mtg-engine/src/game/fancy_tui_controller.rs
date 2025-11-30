@@ -1040,15 +1040,32 @@ impl FancyTuiController {
     /// Draw a single battlefield
     fn draw_battlefield(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, _title: &str) {
         let battlefield = view.battlefield();
+
+        // Debug: log all cards on battlefield
+        log::debug!(target: "tui", "draw_battlefield for player {}: battlefield has {} cards total",
+            owner_id.as_u32(), battlefield.len());
+
         let player_cards: Vec<CardId> = battlefield
             .iter()
             .filter(|&&card_id| {
-                view.get_card(card_id)
-                    .map(|c| c.controller == owner_id)
-                    .unwrap_or(false)
+                let matches = view
+                    .get_card(card_id)
+                    .map(|c| {
+                        let is_match = c.controller == owner_id;
+                        if is_match || c.name.as_str().contains("Peter Porker") {
+                            log::debug!(target: "tui", "  Card {} (id={}): controller={} owner_id={} match={}",
+                                c.name, card_id.as_u32(), c.controller.as_u32(), owner_id.as_u32(), is_match);
+                        }
+                        is_match
+                    })
+                    .unwrap_or(false);
+                matches
             })
             .copied()
             .collect();
+
+        log::debug!(target: "tui", "After filtering: player {} has {} cards",
+            owner_id.as_u32(), player_cards.len());
 
         // Group cards: lands, creatures, artifacts, enchantments
         let (lands, creatures, artifacts, enchantments): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
@@ -1073,6 +1090,9 @@ impl FancyTuiController {
                 (lands, creatures, artifacts, enchantments)
             },
         );
+
+        log::debug!(target: "tui", "After categorization: player {} has {} lands, {} creatures, {} artifacts, {} enchantments",
+            owner_id.as_u32(), lands.len(), creatures.len(), artifacts.len(), enchantments.len());
 
         // Determine focus state
         let is_player_bf = owner_id == view.player_id();
