@@ -64,8 +64,8 @@ mod benchlib;
 use benchlib::{
     allocator::{AllocStats, AllocTracker},
     ensure_correct_working_directory, get_benchmark_measurement_time, get_benchmark_num_threads,
-    print_aggregated_metrics, BatchBenchmark, BenchmarkSetup, GameMetrics, LoggingMode, ParPinned, ParRayon,
-    RestartStrategy, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
+    get_benchmark_num_threads_high, print_aggregated_metrics, BatchBenchmark, BenchmarkSetup, GameMetrics, LoggingMode,
+    ParPinned, ParRayon, RestartStrategy, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mtg_forge_rs::{
@@ -318,12 +318,13 @@ fn bench_robots_mirror_rewind_play_again(c: &mut Criterion) {
 ///    - Times only the actual parallel gameplay
 /// 3. Tracks win rates and allocations across all threads
 fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
+    // Standard 4-thread version
     let num_threads = get_benchmark_num_threads();
     bench_parallel_rayon_rewind_play_again(
         c,
         "robots_mirror",
-        "par_rewind_play_again",
-        "Rewind + Play Again (Parallel)",
+        &format!("{}x_par_rewind_play_again", num_threads),
+        &format!("Rewind + Play Again (Parallel {}T)", num_threads),
         num_threads,
         RewindPlayAgainConfig::default,
     );
@@ -342,15 +343,44 @@ fn bench_robots_mirror_par_rewind_play_again(c: &mut Criterion) {
 ///
 /// CRITICAL: Uses custom thread pool with spin barriers for microsecond-accurate timing.
 fn bench_robots_mirror_pinned_par_rewind_play_again(c: &mut Criterion) {
+    // Standard 4-thread version
     let num_threads = get_benchmark_num_threads();
     bench_parallel_pinned_rewind_play_again(
         c,
         "robots_mirror",
-        "pinned_par_rewind_play_again",
-        "Rewind + Play Again (Pinned-Parallel)",
+        &format!("{}x_pinned_par_rewind_play_again", num_threads),
+        &format!("Rewind + Play Again (Pinned-Parallel {}T)", num_threads),
         num_threads,
         RewindPlayAgainConfig::default,
     );
+}
+
+/// Benchmark: 32-thread parallel rewind (only on machines with 32+ cores)
+fn bench_robots_mirror_par_rewind_play_again_32t(c: &mut Criterion) {
+    if let Some(num_threads) = get_benchmark_num_threads_high() {
+        bench_parallel_rayon_rewind_play_again(
+            c,
+            "robots_mirror",
+            &format!("{}x_par_rewind_play_again", num_threads),
+            &format!("Rewind + Play Again (Parallel {}T)", num_threads),
+            num_threads,
+            RewindPlayAgainConfig::default,
+        );
+    }
+}
+
+/// Benchmark: 32-thread pinned parallel rewind (only on machines with 32+ cores)
+fn bench_robots_mirror_pinned_par_rewind_play_again_32t(c: &mut Criterion) {
+    if let Some(num_threads) = get_benchmark_num_threads_high() {
+        bench_parallel_pinned_rewind_play_again(
+            c,
+            "robots_mirror",
+            &format!("{}x_pinned_par_rewind_play_again", num_threads),
+            &format!("Rewind + Play Again (Pinned-Parallel {}T)", num_threads),
+            num_threads,
+            RewindPlayAgainConfig::default,
+        );
+    }
 }
 
 /// Benchmark: Old School deck matchup - Mono Black vs The Deck
@@ -649,6 +679,8 @@ criterion_group!(
     bench_robots_mirror_rewind_play_again,
     bench_robots_mirror_par_rewind_play_again,
     bench_robots_mirror_pinned_par_rewind_play_again,
+    bench_robots_mirror_par_rewind_play_again_32t,
+    bench_robots_mirror_pinned_par_rewind_play_again_32t,
     bench_save_snapshot,
     bench_monoblack_thedeck_rewind_play_again,
     bench_whiteweenie_mirror_rewind_play_again,

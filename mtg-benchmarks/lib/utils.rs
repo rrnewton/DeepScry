@@ -27,15 +27,27 @@ pub fn get_benchmark_measurement_time() -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Get number of threads to use for parallel benchmarks
+/// Get standard number of threads for parallel benchmarks
+/// Returns 4 threads as the standard configuration (all benchmarked machines have ≥4 cores)
 #[allow(dead_code)] // Used by benchmarks but not by all binaries
 pub fn get_benchmark_num_threads() -> usize {
-    // Configure thread count: Check BENCH_NUM_THREADS env var, otherwise use physical cores
-    let num_physical_cores = num_cpus::get_physical();
+    // Standard: 4 threads (can override with BENCH_NUM_THREADS)
     std::env::var("BENCH_NUM_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(num_physical_cores)
+        .unwrap_or(4)
+}
+
+/// Get high thread count for parallel benchmarks on big machines
+/// Returns 32 on machines with ≥32 cores, None otherwise
+#[allow(dead_code)]
+pub fn get_benchmark_num_threads_high() -> Option<usize> {
+    let num_physical_cores = num_cpus::get_physical();
+    if num_physical_cores >= 32 {
+        Some(32)
+    } else {
+        None
+    }
 }
 
 /// Helper function to ensure we're in the correct working directory

@@ -141,10 +141,14 @@ parse_metrics() {
         # Normalize benchmark name to lowercase, remove "with" variations
         local norm_name=$(echo "$benchmark_name" | tr '[:upper:]' '[:lower:]' | sed 's/ /_/g')
 
-        # Determine num_threads based on benchmark name and CPU
+        # Determine num_threads based on benchmark name
         local num_threads=1
-        if [[ "$norm_name" =~ ^par_ || "$norm_name" =~ ^pinned_par_ ]]; then
-            # Parallel benchmarks use num_cpus::get_physical()
+        # New naming convention: "{N}x_par_..." or "{N}x_pinned_par_..."
+        if [[ "$norm_name" =~ ^([0-9]+)x_(pinned_)?par_ ]]; then
+            num_threads="${BASH_REMATCH[1]}"
+        # Legacy naming convention: "par_..." or "pinned_par_..." (use CPU-based detection)
+        elif [[ "$norm_name" =~ ^par_ || "$norm_name" =~ ^pinned_par_ ]]; then
+            # Old parallel benchmarks used num_cpus::get_physical()
             # AMD Ryzen Threadripper PRO 7975WX = 32 physical cores
             # AMD Ryzen 7 9800X3D = 8 physical cores
             if [[ "$CPU_NAME" == *"7975WX"* ]]; then

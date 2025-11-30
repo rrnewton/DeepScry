@@ -217,30 +217,15 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
     for idx in regression_trace_indices:
         hide_regressions[idx] = False
 
-    # Create slider steps for git depth filtering
-    slider_steps = []
-    # Create steps from abs_min_depth to max_depth in increments
-    step_size = max(50, (max_depth - abs_min_depth) // 20)  # ~20 steps
-    active_step = 0
-    for i, depth in enumerate(range(abs_min_depth, max_depth + 1, step_size)):
-        slider_steps.append(dict(
-            method='relayout',
-            args=[{'xaxis.range': [depth, max_depth]}],
-            label=str(depth)
-        ))
-        # Find the step closest to min_depth for the default position
-        if depth <= min_depth:
-            active_step = i
+    # Don't create sliders here - we'll use a global slider instead
+    # (individual sliders removed to use global HTML slider)
 
-    # Add a final step for the exact max if needed
-    if slider_steps and slider_steps[-1]['label'] != str(max_depth):
-        slider_steps.append(dict(
-            method='relayout',
-            args=[{'xaxis.range': [max_depth, max_depth]}],
-            label=str(max_depth)
-        ))
+    # Add 2% right-edge padding to prevent datapoints from being cut off
+    depth_range = max_depth - abs_min_depth
+    right_padding = int(depth_range * 0.02) or 10  # At least 10 units padding
+    padded_max_depth = max_depth + right_padding
 
-    # Update layout with buttons and slider
+    # Update layout with buttons (no individual slider)
     fig.update_layout(
         title=dict(
             text=title,
@@ -248,7 +233,7 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
         ),
         xaxis=dict(
             title='Git Depth (commit count)',
-            range=[min_depth, max_depth],  # Set initial range
+            range=[min_depth, padded_max_depth],  # Set initial range with right padding
             gridcolor='lightgray',
             showgrid=True
         ),
@@ -300,18 +285,7 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
                 yanchor='top'
             )
         ],
-        sliders=[
-            dict(
-                active=active_step,  # Start at the step corresponding to min_depth
-                currentvalue=dict(
-                    prefix='Min Git Depth: ',
-                    visible=True,
-                    xanchor='left'
-                ),
-                pad={'t': 50},
-                steps=slider_steps
-            )
-        ],
+        # No individual sliders - using global slider instead
         template='plotly_white',
         height=500,
         showlegend=True
@@ -319,7 +293,8 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
 
     print(f"  - {trace_count} traces, {len(regression_trace_indices)} regression overlays, log scale: {use_log}")
 
-    return fig
+    # Return figure and metadata needed for global slider
+    return fig, {'abs_min_depth': abs_min_depth, 'max_depth': max_depth, 'padded_max_depth': padded_max_depth}
 
 
 def create_dashboard(df, output_file, filter_benchmark=None):
@@ -473,9 +448,9 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '        <p>',
         '        <strong>Interactive Controls:</strong>',
         '        <ul>',
-        '            <li><strong>Git Depth Slider:</strong> Filter data by minimum git depth (default: 900 for recent commits, slide left to see full history)</li>',
-        '            <li><strong>Show/Hide All:</strong> Quickly toggle visibility of all benchmark series</li>',
-        '            <li><strong>Hide/Show Regressions:</strong> Toggle regression markers on/off (red X markers)</li>',
+        '            <li><strong>Global Git Depth Slider:</strong> Single slider controls all plots simultaneously. Default is 900 (recent commits). Slide left to see full history.</li>',
+        '            <li><strong>Show/Hide All:</strong> Quickly toggle visibility of all benchmark series (per-plot buttons)</li>',
+        '            <li><strong>Hide/Show Regressions:</strong> Toggle regression markers on/off (per-plot buttons, red X markers)</li>',
         '            <li><strong>Single click legend:</strong> Show/hide individual benchmarks (regression markers follow their lines)</li>',
         '            <li><strong>Double click legend:</strong> Isolate a single benchmark (hides all others)</li>',
         '            <li><strong>Hover over points:</strong> See detailed information (commit, date, exact values)</li>',
@@ -550,13 +525,21 @@ def create_dashboard(df, output_file, filter_benchmark=None):
     # Default to showing only recent data (git depth >= 900)
     default_min_depth = 900
 
+    # Collect plot metadata for global slider
+    plot_metadata = None
+    plot_htmls = []
+
     for metric_col, ylabel, plot_title in metrics:
         if metric_col not in df.columns:
             print(f"Warning: Metric '{metric_col}' not found in data", file=sys.stderr)
             continue
 
         print(f"Generating plot: {plot_title}")
-        fig = create_metric_plot(df, metric_col, ylabel, plot_title, min_depth=default_min_depth)
+        fig, metadata = create_metric_plot(df, metric_col, ylabel, plot_title, min_depth=default_min_depth)
+
+        # Store metadata from first plot (all plots have same depth range)
+        if plot_metadata is None:
+            plot_metadata = metadata
 
         # Convert to HTML div
         plot_html = fig.to_html(
@@ -566,6 +549,63 @@ def create_dashboard(df, output_file, filter_benchmark=None):
             include_mathjax=False
         )
 
+        plot_htmls.append((metric_col, plot_html))
+
+    # Add global slider control before plots
+    if plot_metadata:
+        abs_min = plot_metadata['abs_min_depth']
+        max_depth = plot_metadata['max_depth']
+        padded_max = plot_metadata['padded_max_depth']
+
+        html_parts.extend([
+            '    <div class="plot-container" style="background-color: #e8f4f8; border-left: 4px solid #007bff;">',
+            '        <h3 style="margin-top: 0;">🎚️ Global Git Depth Filter</h3>',
+            '        <p style="margin-bottom: 15px;">',
+            '            Adjust the slider to filter all plots by minimum git depth. ',
+            '            Default is 900 (recent commits). Slide left to see full history.',
+            '        </p>',
+            f'        <label for="gitDepthSlider" style="display: block; margin-bottom: 5px; font-weight: bold;">',
+            f'            Min Git Depth: <span id="gitDepthValue">{default_min_depth}</span>',
+            '        </label>',
+            f'        <input type="range" id="gitDepthSlider" min="{abs_min}" max="{max_depth}" value="{default_min_depth}" step="10" ',
+            '               style="width: 100%; height: 30px; cursor: pointer;">',
+            '        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-top: 5px;">',
+            f'            <span>Full History ({abs_min})</span>',
+            f'            <span>Latest ({max_depth})</span>',
+            '        </div>',
+            '    </div>',
+            '',
+            '    <script>',
+            '    // Global slider control for all plots',
+            '    (function() {',
+            '        const slider = document.getElementById("gitDepthSlider");',
+            '        const valueDisplay = document.getElementById("gitDepthValue");',
+            f'        const paddedMax = {padded_max};',
+            '        ',
+            '        // Get all plot divs',
+            f'        const plotIds = {[f"plot_{m[0]}" for m in metrics]};',
+            '        ',
+            '        slider.addEventListener("input", function() {',
+            '            const minDepth = parseInt(this.value);',
+            '            valueDisplay.textContent = minDepth;',
+            '            ',
+            '            // Update all plots',
+            '            plotIds.forEach(plotId => {',
+            '                const plotDiv = document.getElementById(plotId);',
+            '                if (plotDiv && plotDiv.layout) {',
+            '                    Plotly.relayout(plotId, {',
+            '                        "xaxis.range": [minDepth, paddedMax]',
+            '                    });',
+            '                }',
+            '            });',
+            '        });',
+            '    })();',
+            '    </script>',
+            '',
+        ])
+
+    # Add all the plot HTMLs
+    for metric_col, plot_html in plot_htmls:
         html_parts.extend([
             '    <div class="plot-container">',
             plot_html,
