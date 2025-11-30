@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-30T13:26:55.601424949+00:00
-updated_at: 2025-11-30T13:37:05.073069903+00:00
+updated_at: 2025-11-30T13:43:56.903642525+00:00
 ---
 
 # Description
@@ -13,69 +13,47 @@ updated_at: 2025-11-30T13:37:05.073069903+00:00
 
 ## Problem
 
-The Rust engine currently parses oracle text to determine card capabilities (mana production, keywords, etc.)
-when this information is already available in structured form from the card files' ability notation.
-
-Java Forge card files have explicit structured notation:
-```
-A:AB$ Mana | Cost$ T | Produced$ G | SpellDescription$ Add {G}.
-```
-
-The `Produced$` parameter explicitly declares mana production. We should NEVER need to grep card text.
+The Rust engine was parsing oracle text to determine card capabilities (mana production)
+when this information is already available from structured ability data (`Produced$` parameter).
 
 ## Progress
 
 ### ✅ Phase 1: CardCache mana production - COMPLETED (928a862)
 
-Commit 928a862 removed CardCache's dependence on oracle text:
+Removed CardCache's dependence on oracle text:
 - Removed 12 unused text-derived fields
 - Added `derive_mana_production_from_abilities()` to scan ActivatedAbility entries
-- Added `update_from_abilities_with_name()` with fallback for test cards
 - Card loader now calls cache update AFTER parsing abilities
 
-### 🔲 Phase 2: Fix runtime text parsing - REMAINING
+### ✅ Phase 2: Runtime text parsing - COMPLETED (a615482)
 
-Two locations in actions/mod.rs still grep card text at runtime:
+Removed runtime text parsing in game/actions/mod.rs:
 
-#### 2a. activate_mana_ability() at line ~1378
-```rust
-let card_text = self.cards.get(card_id)?.text.to_lowercase();
-let is_any_color = card_text.contains("any color");
-```
-**Fix**: Use `card.cache.mana_production.kind` which already has `AnyColor` variant.
+**activate_mana_ability() at ~line 1378:**
+- Before: `card_text.to_lowercase().contains("any color")`
+- After: `matches!(card.cache.mana_production.kind, ManaProductionKind::AnyColor)`
 
-#### 2b. Land mana activation at line ~1498-1509
-```rust
-let text_lower = card.text.to_lowercase();
-text_lower.contains("any color"),
-text_lower.contains("add {c}") || card_name.eq_ignore_ascii_case("wastes"),
-```
-**Fix**: Use the pre-computed `card.cache.mana_production` field.
+**Land mana activation at ~line 1500:**
+- Before: `text_lower.contains("any color")` and `text_lower.contains("add {c}")`
+- After: Uses `card.cache.mana_production.kind` for AnyColor/Colorless detection
 
-### 🔲 Phase 3: Clean up - REMAINING
+### 🔲 Phase 3: Clean up - OPTIONAL
 
-1. Remove any remaining `card.text` usage in game logic
-2. Consider removing `card.text` field entirely (keep only for display in TUI)
-3. AbilityCache targeting hints could be derived from ValidTgts$ instead of SpellDescription$
+Lower priority remaining items:
+1. AbilityCache targeting hints could be derived from ValidTgts$ instead of SpellDescription$
+2. Consider removing `card.text` field entirely (keep only for TUI display)
+
+## Summary
+
+The main mana production path now uses structured ability data throughout:
+- CardCache derives from ActivatedAbility effects
+- ManaEngine uses CardCache
+- ManaSourceCache uses CardCache  
+- Runtime mana activation uses CardCache
+
+No more `card.text.to_lowercase().contains(...)` calls in the mana path!
 
 ## Java Forge Approach (Reference)
 
 Java Forge's `AbilityManaPart.java` stores `origProduced` from the `Produced$` parameter.
-The `canProduce()` method checks this structured data:
-
-```java
-public final boolean canProduce(final String s, final SpellAbility sa) {
-    if (isAnyMana() && !s.equals("C")) {
-        return true;
-    }
-    return mana(sa).contains(s);  // Uses origProduced, not card text!
-}
-```
-
-Cards expose `getManaAbilities()` which returns parsed `SpellAbility` objects with all mana
-information derived from the structured `Produced$`, `Amount$`, `Combo`, etc. parameters.
-
-## NOT a Problem
-
-- `Cost::parse()` in costs.rs parses structured `Cost$` notation - this is correct
-- AbilityCache parses `SpellDescription$` for AI hints - lower priority
+We now follow the same pattern via `derive_mana_production_from_abilities()`.
