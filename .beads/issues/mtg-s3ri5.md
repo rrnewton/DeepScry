@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-11-30T13:26:55.601424949+00:00
-updated_at: 2025-11-30T13:43:56.903642525+00:00
+updated_at: 2025-11-30T17:25:38.522928185+00:00
 ---
 
 # Description
@@ -16,44 +16,65 @@ updated_at: 2025-11-30T13:43:56.903642525+00:00
 The Rust engine was parsing oracle text to determine card capabilities (mana production)
 when this information is already available from structured ability data (`Produced$` parameter).
 
-## Progress
+## Status: MOSTLY COMPLETE ✅
 
 ### ✅ Phase 1: CardCache mana production - COMPLETED (928a862)
 
 Removed CardCache's dependence on oracle text:
-- Removed 12 unused text-derived fields
+- Removed 12 unused text-derived fields (text_lowercase, text_contains_*, text_produces_*, name_is_*)
 - Added `derive_mana_production_from_abilities()` to scan ActivatedAbility entries
 - Card loader now calls cache update AFTER parsing abilities
 
 ### ✅ Phase 2: Runtime text parsing - COMPLETED (a615482)
 
 Removed runtime text parsing in game/actions/mod.rs:
+- `activate_mana_ability()`: Now uses `card.cache.mana_production.kind`
+- Land mana activation: Now uses `card.cache.mana_production.kind`
 
-**activate_mana_ability() at ~line 1378:**
-- Before: `card_text.to_lowercase().contains("any color")`
-- After: `matches!(card.cache.mana_production.kind, ManaProductionKind::AnyColor)`
+## Complete Enumeration of Remaining `card.text` Usage
 
-**Land mana activation at ~line 1500:**
-- Before: `text_lower.contains("any color")` and `text_lower.contains("add {c}")`
-- After: Uses `card.cache.mana_production.kind` for AnyColor/Colorless detection
+### Appropriate Display Usage (KEEP)
+These correctly use `card.text` for showing oracle text to players:
+- `interactive_controller.rs:341-343` - Displays card text in simple TUI
+- `fancy_tui_controller.rs:1843-1845` - Displays card description lines
+- `fancy_tui_controller.rs:1954-1958` - Shows card text in details pane
 
-### 🔲 Phase 3: Clean up - OPTIONAL
+### Appropriate Assignment (KEEP)
+- `card.rs:533` - `set_text()` method assigns text
+- `loader/card.rs:203` - Sets card.text from oracle field during loading
+- `loader/card.rs:207` - Passes text to CardCache::new (now ignored)
 
-Lower priority remaining items:
-1. AbilityCache targeting hints could be derived from ValidTgts$ instead of SpellDescription$
-2. Consider removing `card.text` field entirely (keep only for TUI display)
+### Name-Based Fallback (KEEP - Test Support)
+- `card.rs:114-132` - `derive_mana_production_from_name()` uses card NAME (not text)
+  to detect basic lands for test cards. This is intentional fallback behavior.
+
+### AbilityCache Targeting Hints (LOW PRIORITY)
+- `effects.rs:299-310` - `AbilityCache::new()` parses `SpellDescription$` for AI hints:
+  ```rust
+  targets_tapped: desc_lower.contains("tapped"),
+  targets_creature: desc_lower.contains("creature"),
+  requires_target: desc_lower.contains("target"),
+  ```
+  This parses the structured `SpellDescription$` field, NOT oracle text.
+  Could be improved to use `ValidTgts$` parameter, but is low priority.
+
+## Other to_lowercase() Uses (NOT Card Text)
+
+The following are NOT parsing card oracle text:
+- `main.rs` - CLI argument parsing
+- `puzzle/*.rs` - Puzzle file format parsing
+- `database_async.rs` - Card name lookups for database
+- `interactive_controller.rs:768,904` - User command parsing
+- `rich_input_controller.rs` - User command parsing
+- `types.rs:829` - CardName comparison helper
 
 ## Summary
 
-The main mana production path now uses structured ability data throughout:
-- CardCache derives from ActivatedAbility effects
-- ManaEngine uses CardCache
-- ManaSourceCache uses CardCache  
-- Runtime mana activation uses CardCache
+**No remaining card.text parsing for game logic!**
 
-No more `card.text.to_lowercase().contains(...)` calls in the mana path!
+All `card.text` usage is now either:
+1. Display (showing oracle text to player) - appropriate
+2. Assignment (setting the text field) - appropriate
+3. AbilityCache (parsing SpellDescription$, not oracle text) - lower priority improvement
 
-## Java Forge Approach (Reference)
-
-Java Forge's `AbilityManaPart.java` stores `origProduced` from the `Produced$` parameter.
-We now follow the same pattern via `derive_mana_production_from_abilities()`.
+The main mana production path fully uses structured ability data.
