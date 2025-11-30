@@ -60,6 +60,9 @@ jwalk = "0.8"
 rayon = "1.10"
 num_cpus = "1.16"
 
+# High-performance allocator (mimalloc)
+mimalloc = "0.1"
+
 [dev-dependencies]
 dir-test = "0.4"
 similar-asserts = "1.5"

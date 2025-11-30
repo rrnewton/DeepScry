@@ -2,6 +2,10 @@
 //!
 //! Text-based Magic: The Gathering game engine with TUI support
 
+// Use mimalloc as the global allocator for better performance
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use mtg_forge_rs::{
     game::{

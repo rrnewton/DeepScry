@@ -967,6 +967,7 @@ dependencies = [
  "enumset",
  "jwalk",
  "libc",
+ "mimalloc",
  "nom",
  "num_cpus",
  "rand",
