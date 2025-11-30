@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench
 
 # Default target - show available commands
 help:
@@ -179,6 +179,7 @@ plot:
 
 # Run all performance benchmarks and record to CSV (takes a long time)
 # This is the OFFICIAL benchmark entrypoint - always use this for tracked results
+bench: full-benchmark
 full-benchmark:
 	@echo "=== Running all benchmarks (results recorded to CSV) ==="
 	./scripts/run_benchmark.sh

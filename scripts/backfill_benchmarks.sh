@@ -1,5 +1,8 @@
 #!/bin/bash
-# Backfill benchmark results for historical commits
+# Backfill benchmark results for historical commits with benchmark naming fix
+#
+# This script applies a patch to fix benchmark naming (to distinguish different
+# deck matchups) before running benchmarks on each historical commit.
 #
 # Usage:
 #   ./scripts/backfill_benchmarks.sh [--depth-range START END] [--last-n N] [--cadence N] [--dry-run]
@@ -85,6 +88,27 @@ echo ""
 ORIGINAL_HEAD=$(git rev-parse HEAD)
 ORIGINAL_BRANCH=$(git branch --show-current || echo "detached")
 
+# Create patch file for benchmark naming fix
+PATCH_FILE="/tmp/benchmark_naming_fix.patch"
+echo "=== Creating benchmark naming patch ==="
+cat > "$PATCH_FILE" << 'PATCH_EOF'
+--- a/mtg-benchmarks/benches/game_benchmark.rs
++++ b/mtg-benchmarks/benches/game_benchmark.rs
+@@ -150,7 +150,9 @@ fn bench_rewind_play_again<B, C, F, P>(
+         let total_games = bench.total_games();
+         if total_games > 0 {
+             let aggregated_metrics = bench.get_metrics();
+-            print_aggregated_metrics(bench_name, bench.orig_seed(), &aggregated_metrics, total_games);
++            // Use full group/bench name to distinguish different deck matchups
++            let full_bench_name = format!("{}/{}", group_name, bench_name);
++            print_aggregated_metrics(&full_bench_name, bench.orig_seed(), &aggregated_metrics, total_games);
+             print_fn(bench);
+         }
+     }
+PATCH_EOF
+echo "Patch saved to: $PATCH_FILE"
+echo ""
+
 # Function to restore original state
 restore_state() {
     echo ""
@@ -94,6 +118,8 @@ restore_state() {
     else
         git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
     fi
+    # Clean up patch file
+    rm -f "$PATCH_FILE"
 }
 
 # Trap to ensure we restore state on exit
@@ -289,15 +315,35 @@ for item in "${COMMITS_TO_BENCHMARK[@]}"; do
     # Checkout the commit
     git checkout "$hash" 2>/dev/null
 
+    # Apply benchmark naming patch
+    echo "Applying benchmark naming patch..."
+    if patch -p1 < "$PATCH_FILE" >/dev/null 2>&1; then
+        echo "✓ Patch applied successfully"
+    else
+        # Patch may already be applied or not applicable
+        echo "Note: Patch did not apply (may already be present or N/A for this commit)"
+        # Check if the fix is already present
+        if grep -q 'format!("{}/{}", group_name, bench_name)' mtg-benchmarks/benches/game_benchmark.rs 2>/dev/null; then
+            echo "✓ Benchmark naming fix already present in this commit"
+        else
+            echo "Warning: Could not apply patch and fix not present - benchmarks may have poor labeling"
+        fi
+    fi
+
     # Clean any previous build artifacts to ensure fresh build
     cargo clean -q 2>/dev/null || true
 
     # Run benchmark (which appends to CSV)
     if ! ./scripts/run_benchmark.sh; then
         echo "Error: Benchmark failed for depth $depth"
+        # Restore clean state before continuing
+        git checkout mtg-benchmarks/benches/game_benchmark.rs 2>/dev/null || true
         echo "Continuing with next commit..."
         continue
     fi
+
+    # Restore game_benchmark.rs to original state (undo patch)
+    git checkout mtg-benchmarks/benches/game_benchmark.rs 2>/dev/null || true
 
     echo "✓ Benchmarked depth $depth"
 done
