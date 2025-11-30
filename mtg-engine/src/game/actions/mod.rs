@@ -1182,6 +1182,18 @@ impl GameState {
                         }
                     }
                     Effect::DealDamage {
+                        target: TargetRef::Player(player_id),
+                        amount,
+                    } if player_id.as_u32() == 0 => {
+                        // Placeholder player ID 0 means the controller of the trigger source
+                        // Used by cards like Juzám Djinn ("deals 1 damage to you")
+                        let controller = self.cards.get(trigger_source)?.controller;
+                        effect = Effect::DealDamage {
+                            target: TargetRef::Player(controller),
+                            amount: *amount,
+                        };
+                    }
+                    Effect::DealDamage {
                         target: TargetRef::None,
                         amount,
                     } => {
@@ -1286,6 +1298,107 @@ impl GameState {
 
                 self.execute_effect(&effect)?;
             }
+        }
+
+        Ok(())
+    }
+
+    /// Check and execute triggered abilities for a specific card only
+    ///
+    /// This is used by phase triggers where we've already determined which cards
+    /// should trigger based on the active player (controller_only filtering).
+    /// Accepts the active player for proper trigger filtering.
+    pub fn check_triggers_for_controller(
+        &mut self,
+        event: TriggerEvent,
+        card_id: CardId,
+        active_player: PlayerId,
+    ) -> Result<()> {
+        // Get the card's triggers
+        let effects_to_execute: Vec<Effect> = {
+            let card = self.cards.get(card_id)?;
+
+            // Only process triggers where the controller matches the active player
+            // OR the trigger doesn't have the [controller_only] flag
+            card.triggers
+                .iter()
+                .filter(|trigger| {
+                    if trigger.event != event {
+                        return false;
+                    }
+                    // [controller_only] triggers should only fire on the controller's turn
+                    // This was already checked in check_phase_triggers, but verify here too
+                    if trigger.description.starts_with("[controller_only]") {
+                        return card.controller == active_player;
+                    }
+                    true
+                })
+                .flat_map(|trigger| trigger.effects.clone())
+                .collect()
+        };
+
+        // Execute each effect with placeholder resolution
+        for mut effect in effects_to_execute {
+            // Fill in placeholder values in trigger effects
+            match &mut effect {
+                Effect::DealDamage {
+                    target: TargetRef::Player(player_id),
+                    amount,
+                } if player_id.as_u32() == 0 => {
+                    // Placeholder player ID 0 means the controller of the trigger source
+                    // Used by cards like Juzám Djinn ("deals 1 damage to you")
+                    let controller = self.cards.get(card_id)?.controller;
+                    effect = Effect::DealDamage {
+                        target: TargetRef::Player(controller),
+                        amount: *amount,
+                    };
+                }
+                Effect::GainLife { player, amount } if player.as_u32() == 0 => {
+                    // Placeholder player ID 0 means the controller of the trigger source
+                    let controller = self.cards.get(card_id)?.controller;
+                    effect = Effect::GainLife {
+                        player: controller,
+                        amount: *amount,
+                    };
+                }
+                Effect::DrawCards { player, count } if player.as_u32() == 0 => {
+                    // Placeholder player ID 0 means the controller of the trigger source
+                    let controller = self.cards.get(card_id)?.controller;
+                    effect = Effect::DrawCards {
+                        player: controller,
+                        count: *count,
+                    };
+                }
+                _ => {}
+            }
+
+            // Log the trigger effect
+            if let Ok(card) = self.cards.get(card_id) {
+                let card_name = card.name.clone();
+                let message = match &effect {
+                    Effect::DealDamage {
+                        target: TargetRef::Player(player_id),
+                        amount,
+                    } => {
+                        let player_name = self
+                            .get_player(*player_id)
+                            .map(|p| p.name.as_str().to_string())
+                            .unwrap_or_else(|_| "player".to_string());
+                        format!("{} deals {} damage to {}", card_name, amount, player_name)
+                    }
+                    Effect::GainLife { player, amount } => {
+                        let player_name = self
+                            .get_player(*player)
+                            .map(|p| p.name.as_str().to_string())
+                            .unwrap_or_else(|_| "player".to_string());
+                        format!("{} causes {} to gain {} life", card_name, player_name, amount)
+                    }
+                    _ => format!("{} trigger effect", card_name),
+                };
+                self.logger.normal(&message);
+            }
+
+            self.execute_effect(&effect)?;
         }
 
         Ok(())

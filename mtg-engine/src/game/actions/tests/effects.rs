@@ -774,4 +774,143 @@ mod tests {
         assert_eq!(pumped_card.power_bonus, 2, "Target should have +2 power bonus");
         assert_eq!(pumped_card.toughness_bonus, 2, "Target should have +2 toughness bonus");
     }
+
+    /// Test upkeep trigger dealing damage to controller (like Juzám Djinn)
+    #[test]
+    fn test_upkeep_trigger_damage_to_controller() {
+        use crate::core::{Effect, TargetRef, Trigger, TriggerEvent};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Verify initial life
+        assert_eq!(game.players[0].life, 20);
+
+        // Create a creature with an upkeep trigger (like Juzám Djinn)
+        let djinn_id = game.next_entity_id();
+        let mut djinn = Card::new(djinn_id, "Juzám Djinn".to_string(), p1_id);
+        djinn.types.push(CardType::Creature);
+        djinn.set_power(Some(5));
+        djinn.set_toughness(Some(5));
+        djinn.controller = p1_id;
+
+        // Add upkeep trigger: "At the beginning of your upkeep, deal 1 damage to you"
+        // The [controller_only] flag ensures it only triggers on the controller's turn
+        djinn.triggers.push(Trigger::new(
+            TriggerEvent::BeginningOfUpkeep,
+            vec![Effect::DealDamage {
+                target: TargetRef::Player(crate::core::PlayerId::new(0)), // Placeholder for controller
+                amount: 1,
+            }],
+            "[controller_only] At the beginning of your upkeep, Juzám Djinn deals 1 damage to you.".to_string(),
+        ));
+
+        game.cards.insert(djinn_id, djinn);
+        game.battlefield.add(djinn_id);
+
+        // Set the active player to P1
+        game.turn.active_player = p1_id;
+
+        // Execute the upkeep trigger
+        let result = game.check_triggers_for_controller(TriggerEvent::BeginningOfUpkeep, djinn_id, p1_id);
+        assert!(result.is_ok(), "Upkeep trigger should execute successfully");
+
+        // Verify P1 took 1 damage
+        assert_eq!(
+            game.players[0].life, 19,
+            "Controller should have taken 1 damage from Juzám Djinn"
+        );
+    }
+
+    /// Test upkeep trigger only fires on controller's turn (not opponent's)
+    #[test]
+    fn test_upkeep_trigger_controller_only() {
+        use crate::core::{Effect, TargetRef, Trigger, TriggerEvent};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create Juzám Djinn controlled by P1
+        let djinn_id = game.next_entity_id();
+        let mut djinn = Card::new(djinn_id, "Juzám Djinn".to_string(), p1_id);
+        djinn.types.push(CardType::Creature);
+        djinn.set_power(Some(5));
+        djinn.set_toughness(Some(5));
+        djinn.controller = p1_id;
+
+        // [controller_only] trigger should only fire when controller is active
+        djinn.triggers.push(Trigger::new(
+            TriggerEvent::BeginningOfUpkeep,
+            vec![Effect::DealDamage {
+                target: TargetRef::Player(crate::core::PlayerId::new(0)),
+                amount: 1,
+            }],
+            "[controller_only] At the beginning of your upkeep, Juzám Djinn deals 1 damage to you.".to_string(),
+        ));
+
+        game.cards.insert(djinn_id, djinn);
+        game.battlefield.add(djinn_id);
+
+        // Try to fire trigger during P2's turn (should not fire)
+        game.turn.active_player = p2_id;
+        let result = game.check_triggers_for_controller(TriggerEvent::BeginningOfUpkeep, djinn_id, p2_id);
+        assert!(result.is_ok());
+
+        // P1 should NOT have taken damage (it's not their upkeep)
+        assert_eq!(game.players[0].life, 20, "P1 should not take damage during P2's upkeep");
+
+        // Now fire during P1's turn (should fire)
+        game.turn.active_player = p1_id;
+        let result = game.check_triggers_for_controller(TriggerEvent::BeginningOfUpkeep, djinn_id, p1_id);
+        assert!(result.is_ok());
+
+        // P1 should have taken 1 damage
+        assert_eq!(game.players[0].life, 19, "P1 should take 1 damage during their upkeep");
+    }
+
+    /// Test loading real Juzám Djinn from cardsfolder and verifying trigger parsing
+    #[test]
+    fn test_juzam_djinn_from_cardsfolder() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/j/juzam_djinn.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Juzám Djinn");
+        assert_eq!(def.name.as_str(), "Juzám Djinn");
+
+        // Instantiate the card
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify the upkeep trigger was parsed
+        let upkeep_triggers: Vec<_> = card
+            .triggers
+            .iter()
+            .filter(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .collect();
+
+        assert_eq!(
+            upkeep_triggers.len(),
+            1,
+            "Juzám Djinn should have exactly one upkeep trigger"
+        );
+
+        // Verify the trigger has the DealDamage effect
+        let trigger = upkeep_triggers[0];
+        assert!(!trigger.effects.is_empty(), "Upkeep trigger should have effects");
+
+        // Verify the trigger description indicates controller-only
+        assert!(
+            trigger.description.contains("[controller_only]") || trigger.description.contains("your upkeep"),
+            "Trigger should indicate it's controller-only"
+        );
+    }
 }

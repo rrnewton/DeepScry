@@ -3,7 +3,8 @@
 //! Loads card definitions from Forge's cardsfolder format
 
 use crate::core::{
-    Card, CardName, CardType, Color, Keyword, KeywordArgs, KeywordSet, ManaCost, Subtype, Trigger, TriggerEvent,
+    Card, CardName, CardType, Color, Effect, Keyword, KeywordArgs, KeywordSet, ManaCost, PlayerId, Subtype, TargetRef,
+    Trigger, TriggerEvent,
 };
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
@@ -1289,9 +1290,6 @@ impl CardDefinition {
                 };
 
                 if let Some(event) = trigger_event {
-                    // For now, create a simple trigger without complex conditions
-                    // TODO(mtg-111): Support CheckSVar$, SVarCompare$, Execute$ sub-abilities
-                    // TODO(mtg-111): Support ValidPlayer$ filtering (You vs Opponent vs Each)
                     // TODO(mtg-111): Support OptionalDecider$ for optional triggers
 
                     let description = params
@@ -1299,10 +1297,109 @@ impl CardDefinition {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "At the beginning of upkeep".to_string());
 
-                    // For now, don't add effects - phase triggers usually need complex parsing
-                    // This creates a placeholder trigger that can be detected in the game loop
-                    // Real implementation will need to parse Execute$ and SubAbility references
-                    triggers.push(Trigger::new(event, vec![], description));
+                    // Parse effects from Execute$ SVar reference
+                    let mut effects = Vec::new();
+
+                    // Check ValidPlayer$ to determine if trigger is for "You" only
+                    // "You" means only triggers on the controller's upkeep
+                    let valid_player = params.get("ValidPlayer").map(|s| s.as_str());
+                    let is_controller_only = valid_player == Some("You");
+
+                    // Check if we have Execute$ parameter (references a SVar with effects)
+                    if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
+                        // Look up the SVar that Execute$ references
+                        // Example: Execute$ TrigDealDamage looks for "SVar:TrigDealDamage:..."
+                        for ab in &self.raw_abilities {
+                            if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
+                                // Parse the SVar body
+                                if let Some((_prefix, body)) =
+                                    ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                                {
+                                    // Parse DB$ DealDamage effects
+                                    // Example: "DB$ DealDamage | Defined$ You | NumDmg$ 1"
+                                    if body.contains("DB$ DealDamage") {
+                                        let mut damage_amount = 1i32;
+                                        let mut target_is_controller = false;
+
+                                        for param in body.split('|') {
+                                            let param = param.trim();
+                                            if let Some((key, value)) = param.split_once('$') {
+                                                let key = key.trim();
+                                                let value = value.trim();
+
+                                                match key {
+                                                    "NumDmg" => {
+                                                        if let Ok(amt) = value.parse::<i32>() {
+                                                            damage_amount = amt;
+                                                        }
+                                                    }
+                                                    "Defined" => {
+                                                        // "You" means the controller of the card
+                                                        target_is_controller = value == "You";
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+
+                                        // Use placeholder PlayerId(0) for controller - resolved at trigger time
+                                        if target_is_controller {
+                                            effects.push(Effect::DealDamage {
+                                                target: TargetRef::Player(PlayerId::new(0)),
+                                                amount: damage_amount,
+                                            });
+                                        }
+                                    }
+
+                                    // Parse DB$ GainLife effects
+                                    // Example: "DB$ GainLife | Defined$ You | LifeAmount$ 1"
+                                    if body.contains("DB$ GainLife") {
+                                        let mut life_amount = 1i32;
+                                        let mut target_is_controller = false;
+
+                                        for param in body.split('|') {
+                                            let param = param.trim();
+                                            if let Some((key, value)) = param.split_once('$') {
+                                                let key = key.trim();
+                                                let value = value.trim();
+
+                                                match key {
+                                                    "LifeAmount" => {
+                                                        if let Ok(amt) = value.parse::<i32>() {
+                                                            life_amount = amt;
+                                                        }
+                                                    }
+                                                    "Defined" => {
+                                                        target_is_controller = value == "You";
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+
+                                        if target_is_controller {
+                                            effects.push(Effect::GainLife {
+                                                player: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                                amount: life_amount,
+                                            });
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // Create trigger with parsed effects
+                    // Note: is_controller_only flag is stored in description for now
+                    // A proper implementation would add a field to Trigger struct
+                    let desc_with_flag = if is_controller_only && !effects.is_empty() {
+                        format!("[controller_only] {}", description)
+                    } else {
+                        description
+                    };
+
+                    triggers.push(Trigger::new(event, effects, desc_with_flag));
                 }
             }
         }

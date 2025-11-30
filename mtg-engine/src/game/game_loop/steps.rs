@@ -42,6 +42,8 @@ impl<'a> GameLoop<'a> {
 
     /// Check and execute phase-triggered abilities
     pub(super) fn check_phase_triggers(&mut self, trigger_event: TriggerEvent) -> Result<()> {
+        let active_player = self.game.turn.active_player;
+
         // Collect all permanents with triggers matching this event
         // Also collect trigger descriptions for logging
         let triggered_info: SmallVec<[(CardId, Vec<String>); 4]> = self
@@ -51,11 +53,29 @@ impl<'a> GameLoop<'a> {
             .iter()
             .filter_map(|&card_id| {
                 if let Ok(card) = self.game.cards.get(card_id) {
+                    // Filter triggers: match event and respect ValidPlayer$ You restriction
                     let matching_descriptions: Vec<String> = card
                         .triggers
                         .iter()
-                        .filter(|t| t.event == trigger_event)
-                        .map(|t| format!("Trigger: {} - {}", card.name, t.description))
+                        .filter(|t| {
+                            if t.event != trigger_event {
+                                return false;
+                            }
+                            // Check [controller_only] flag - if present, only fire on controller's turn
+                            // This implements ValidPlayer$ You from the card definition
+                            if t.description.starts_with("[controller_only]") {
+                                return card.controller == active_player;
+                            }
+                            true
+                        })
+                        .map(|t| {
+                            // Strip the [controller_only] prefix for display
+                            let desc = t
+                                .description
+                                .strip_prefix("[controller_only] ")
+                                .unwrap_or(&t.description);
+                            format!("Trigger: {} - {}", card.name, desc)
+                        })
                         .collect();
 
                     if !matching_descriptions.is_empty() {
@@ -81,7 +101,8 @@ impl<'a> GameLoop<'a> {
 
             // Use the existing check_triggers method to execute effects
             // Pass the card_id as the source for filling in placeholders
-            self.game.check_triggers(trigger_event, card_id)?;
+            self.game
+                .check_triggers_for_controller(trigger_event, card_id, active_player)?;
         }
 
         Ok(())
