@@ -248,27 +248,26 @@ impl<'a> GameLoop<'a> {
 
                     // TODO(mtg-70): Check if ability has valid targets
                     // For targeting abilities, check that there's at least one valid target
+                    //
+                    // OPT: Check requires_target FIRST to skip expensive get_valid_targets_for_ability
+                    // call for non-targeting abilities (firebreathing, regeneration, etc.)
                     if can_activate {
-                        // Check if this ability requires targets
-                        let valid_targets = self
-                            .game
-                            .get_valid_targets_for_ability(card_id, ability_index)
-                            .unwrap_or_else(|_| SmallVec::new());
-
-                        // If get_valid_targets_for_ability returned an empty list,
-                        // it might mean either:
-                        // 1. The ability doesn't require targets (non-targeting ability)
-                        // 2. The ability requires targets but none are available
-                        //
-                        // We need to distinguish between these cases.
-                        // For now, check if the ability description contains "target"
                         // Use cached value to avoid allocation
                         let requires_targets = ability.cache.requires_target;
 
-                        if requires_targets && valid_targets.is_empty() {
-                            // Ability requires targets but none are available
-                            can_activate = false;
+                        if requires_targets {
+                            // Only call get_valid_targets_for_ability for targeting abilities
+                            let valid_targets = self
+                                .game
+                                .get_valid_targets_for_ability(card_id, ability_index)
+                                .unwrap_or_else(|_| SmallVec::new());
+
+                            if valid_targets.is_empty() {
+                                // Ability requires targets but none are available
+                                can_activate = false;
+                            }
                         }
+                        // Non-targeting abilities (requires_targets = false) skip the expensive check
                     }
 
                     if can_activate {
