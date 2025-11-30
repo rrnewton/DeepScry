@@ -173,8 +173,17 @@ impl HeuristicController {
             value += power * 10;
         }
 
-        // Horsemanship: Not implemented in Keyword enum yet, skip for now
-        // TODO: Add Horsemanship to Keyword enum
+        // Horsemanship: Similar to flying, only blockable by creatures with horsemanship
+        // Java: if (c.hasKeyword(Keyword.HORSEMANSHIP)) { value += addValue(power * 10, "horsemanship"); }
+        if card.has_keyword(Keyword::Horsemanship) {
+            value += power * 10;
+        }
+
+        // Shadow: Can only be blocked by creatures with shadow
+        // Java: if (c.hasKeyword(Keyword.SHADOW)) { value += addValue(power * 10, "shadow"); }
+        if card.has_keyword(Keyword::Shadow) {
+            value += power * 10;
+        }
 
         // Unblockable check
         // Java: if (StaticAbilityCantAttackBlock.cantBlockBy(c, null)) { value += addValue(power * 10, "unblockable"); }

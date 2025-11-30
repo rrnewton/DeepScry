@@ -63,6 +63,10 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Prioritize countering creatures, damage spells, removal, other counters
   - CMC-based filtering (counter CMC 1+ spells)
   - Test with Counterspell vs monored deck
+- ✅ **Evasion keyword evaluation (2025-11-30_#1015)**
+  - Horsemanship: +power*10 (like flying, only blocked by horsemanship)
+  - Shadow: +power*10 (only blocked by creatures with shadow)
+  - Reference: CreatureEvaluator.java evasion keyword handling
 
 **What's Missing:**
 
