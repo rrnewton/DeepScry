@@ -44,6 +44,12 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Evaluate during Declare Blockers step
   - Save creatures, kill blockers, deal lethal with pump abilities
   - Test with real 4ED cards (Shivan Dragon)
+- ✅ **Upkeep cost penalties in creature evaluation (2025-11-30_#988)**
+  - Cumulative Upkeep: -30 penalty (costs increase each turn)
+  - Echo: -10 penalty (must pay again or sacrifice)
+  - Fading: -15 to -50 penalty (scaled by fade counters)
+  - Vanishing: -15 to -50 penalty (scaled by time counters)
+  - Reference: CreatureEvaluator.java:235-276
 
 **What's Missing:**
 
@@ -83,7 +89,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with 4ED cards (2025-10-26) - 512 tests passing**
+- ✅ **Comprehensive test coverage with real cards (2025-11-30) - 530 tests passing**
 
 ## Next Steps (Priority Order)
 

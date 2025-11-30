@@ -437,3 +437,401 @@ fn test_shroud_creature() {
 
     assert_eq!(score, 210, "Troll Ascetic should score 210");
 }
+
+// =========================================================================
+// UPKEEP COST PENALTY TESTS
+// Reference: CreatureEvaluator.java:235-276
+// These tests verify that creatures with recurring costs are properly penalized
+// =========================================================================
+
+use mtg_forge_rs::core::KeywordArgs;
+
+/// Helper for creating creatures with complex keywords (those requiring arguments)
+fn create_test_setup_with_complex_keywords(
+    name: &str,
+    power: i8,
+    toughness: i8,
+    cmc: u8,
+    complex_keywords: Vec<KeywordArgs>,
+) -> (GameState, CardId, PlayerId) {
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+
+    // Create the creature card
+    let card_id = CardId::new(100);
+    let mut card = Card::new(card_id, name, player_id);
+    card.types.push(CardType::Creature);
+    card.set_power(Some(power));
+    card.set_toughness(Some(toughness));
+    let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
+    mana_cost.generic = cmc;
+    card.mana_cost = mana_cost;
+
+    // Add complex keywords using insert_complex
+    for keyword_args in complex_keywords {
+        card.keywords.insert_complex(keyword_args);
+    }
+
+    game.cards.insert(card_id, card);
+    (game, card_id, player_id)
+}
+
+#[test]
+fn test_cumulative_upkeep_penalty() {
+    // Test a creature with Cumulative Upkeep (severe penalty -30)
+    // E.g., Krovikan Horror: 2/2 with Cumulative Upkeep: Pay 1 life
+    //
+    // Expected score calculation:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (4): +20 (4 * 5)
+    // - Cumulative Upkeep: -30
+    // Total: 80 + 20 + 30 + 20 + 20 - 30 = 140
+
+    let (game, card_id, player_id) = create_test_setup_with_complex_keywords(
+        "Krovikan Horror",
+        2,
+        2,
+        4,
+        vec![KeywordArgs::CumulativeUpkeep {
+            cost: mtg_forge_rs::core::ManaCost::new(),
+        }],
+    );
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Without cumulative upkeep: 170, with penalty: 140
+    assert_eq!(score, 140, "Creature with Cumulative Upkeep should have -30 penalty");
+}
+
+#[test]
+fn test_echo_penalty() {
+    // Test a creature with Echo (moderate penalty -10)
+    // E.g., Albino Troll: 3/3 with Echo for 1G (CMC 2)
+    //
+    // Expected score calculation:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (3): +30 (3 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Echo: -10
+    // Total: 80 + 20 + 45 + 30 + 10 - 10 = 175
+
+    let (game, card_id, player_id) = create_test_setup_with_complex_keywords(
+        "Albino Troll",
+        3,
+        3,
+        2,
+        vec![KeywordArgs::Echo {
+            cost: mtg_forge_rs::core::ManaCost::new(),
+        }],
+    );
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Without echo: 185, with penalty: 175
+    assert_eq!(score, 175, "Creature with Echo should have -10 penalty");
+}
+
+#[test]
+fn test_fading_penalty() {
+    // Test a creature with Fading (penalty scales with counters)
+    // E.g., Parallax Tide: 2/2 with Fading 5 (starts with 5 fade counters)
+    //
+    // Since we don't have fade counters set, penalty is -50 (about to die)
+    //
+    // Expected score calculation:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (4): +20 (4 * 5)
+    // - Fading (0 counters): -50
+    // Total: 80 + 20 + 30 + 20 + 20 - 50 = 120
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_complex_keywords("Parallax Tide", 2, 2, 4, vec![KeywordArgs::Fading { counters: 5 }]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Without fading: 170, with penalty (0 counters on card): 120
+    assert_eq!(
+        score, 120,
+        "Creature with Fading and 0 counters should have -50 penalty"
+    );
+}
+
+#[test]
+fn test_vanishing_penalty() {
+    // Test a creature with Vanishing (penalty scales with time counters)
+    // E.g., Chronozoa: 3/3 with Vanishing 3
+    //
+    // Since we don't have time counters set, penalty is -50 (about to die)
+    //
+    // Expected score calculation:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (3): +30 (3 * 10)
+    // - CMC (4): +20 (4 * 5)
+    // - Vanishing (0 counters): -50
+    // Total: 80 + 20 + 45 + 30 + 20 - 50 = 145
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_complex_keywords("Chronozoa", 3, 3, 4, vec![KeywordArgs::Vanishing { counters: 3 }]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Without vanishing: 195, with penalty (0 counters on card): 145
+    assert_eq!(
+        score, 145,
+        "Creature with Vanishing and 0 counters should have -50 penalty"
+    );
+}
+
+// =========================================================================
+// E2E TESTS WITH REAL CARDS FROM DATABASE
+// These tests load actual cards from cardsfolder and verify AI evaluation
+// =========================================================================
+
+use mtg_forge_rs::loader::CardLoader;
+use std::path::PathBuf;
+
+/// Test evaluating real Jötun Grunt (Cumulative Upkeep) from cardsfolder
+/// Jötun Grunt: 4/4 for 1W with Cumulative Upkeep
+#[test]
+fn test_e2e_jotun_grunt_cumulative_upkeep() {
+    let path = PathBuf::from("../cardsfolder/j/jotun_grunt.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Jötun Grunt");
+    assert_eq!(def.name.as_str(), "Jötun Grunt");
+
+    // Create game and instantiate the card
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify Cumulative Upkeep keyword was parsed
+    assert!(
+        card.has_keyword(Keyword::CumulativeUpkeep),
+        "Jötun Grunt should have Cumulative Upkeep keyword"
+    );
+
+    // Add card to game
+    game.cards.insert(card_id, card);
+
+    // Evaluate
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Expected calculation:
+    // Base: 80 + Non-token: 20 + Power(4)*15: 60 + Toughness(4)*10: 40 + CMC(2)*5: 10 = 210
+    // Cumulative Upkeep penalty: -30
+    // Total: 180
+    assert_eq!(score, 180, "Jötun Grunt (4/4 with Cumulative Upkeep) should score 180");
+}
+
+/// Test evaluating real Avalanche Riders (Echo) from cardsfolder
+/// Avalanche Riders: 2/2 with Haste for 3R, Echo 3R
+#[test]
+fn test_e2e_avalanche_riders_echo() {
+    let path = PathBuf::from("../cardsfolder/a/avalanche_riders.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Avalanche Riders");
+    assert_eq!(def.name.as_str(), "Avalanche Riders");
+
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify Echo and Haste keywords were parsed
+    assert!(
+        card.has_keyword(Keyword::Echo),
+        "Avalanche Riders should have Echo keyword"
+    );
+    assert!(
+        card.has_keyword(Keyword::Haste),
+        "Avalanche Riders should have Haste keyword"
+    );
+
+    game.cards.insert(card_id, card);
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Expected calculation:
+    // Base: 80 + Non-token: 20 + Power(2)*15: 30 + Toughness(2)*10: 20 + CMC(4)*5: 20 = 170
+    // Note: Haste has no static bonus in creature evaluation (only affects pump spells)
+    // Echo penalty: -10
+    // Total: 160
+    assert_eq!(score, 160, "Avalanche Riders (2/2 Haste with Echo) should score 160");
+}
+
+/// Test evaluating real Blastoderm (Fading) from cardsfolder
+/// Blastoderm: 5/5 with Shroud for 2GG, Fading 3
+#[test]
+fn test_e2e_blastoderm_fading() {
+    let path = PathBuf::from("../cardsfolder/b/blastoderm.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Blastoderm");
+    assert_eq!(def.name.as_str(), "Blastoderm");
+
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify Fading and Shroud keywords were parsed
+    assert!(
+        card.has_keyword(Keyword::Fading),
+        "Blastoderm should have Fading keyword"
+    );
+    assert!(
+        card.has_keyword(Keyword::Shroud),
+        "Blastoderm should have Shroud keyword"
+    );
+
+    game.cards.insert(card_id, card);
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Expected calculation:
+    // Base: 80 + Non-token: 20 + Power(5)*15: 75 + Toughness(5)*10: 50 + CMC(4)*5: 20 = 245
+    // Shroud: +30
+    // Fading penalty (0 counters on card, so -50 "about to die"): -50
+    // Total: 225
+    assert_eq!(
+        score, 225,
+        "Blastoderm (5/5 Shroud with Fading, 0 counters) should score 225"
+    );
+}
+
+/// Test evaluating real Keldon Marauders (Vanishing) from cardsfolder
+/// Keldon Marauders: 3/3 for 1R, Vanishing 2
+#[test]
+fn test_e2e_keldon_marauders_vanishing() {
+    let path = PathBuf::from("../cardsfolder/k/keldon_marauders.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Keldon Marauders");
+    assert_eq!(def.name.as_str(), "Keldon Marauders");
+
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify Vanishing keyword was parsed
+    assert!(
+        card.has_keyword(Keyword::Vanishing),
+        "Keldon Marauders should have Vanishing keyword"
+    );
+
+    game.cards.insert(card_id, card);
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Expected calculation:
+    // Base: 80 + Non-token: 20 + Power(3)*15: 45 + Toughness(3)*10: 30 + CMC(2)*5: 10 = 185
+    // Vanishing penalty (0 counters on card, so -50 "about to die"): -50
+    // Total: 135
+    assert_eq!(
+        score, 135,
+        "Keldon Marauders (3/3 with Vanishing, 0 counters) should score 135"
+    );
+}
+
+/// Test evaluating classic 4ED cards from cardsfolder (Serra Angel, Shivan Dragon)
+/// These test the baseline creature evaluation with Flying and Vigilance
+#[test]
+fn test_e2e_serra_angel_classic() {
+    let path = PathBuf::from("../cardsfolder/s/serra_angel.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Serra Angel");
+    assert_eq!(def.name.as_str(), "Serra Angel");
+
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify keywords
+    assert!(card.has_keyword(Keyword::Flying), "Serra Angel should have Flying");
+    assert!(
+        card.has_keyword(Keyword::Vigilance),
+        "Serra Angel should have Vigilance"
+    );
+
+    game.cards.insert(card_id, card);
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Expected: same as unit test
+    // Base: 80 + Non-token: 20 + P(4)*15: 60 + T(4)*10: 40 + CMC(5)*5: 25 + Flying(4*10): 40 + Vigilance(4*5+4*5): 40 = 305
+    assert_eq!(score, 305, "Serra Angel (4/4 Flying Vigilance) should score 305");
+}
+
+/// Test evaluating Shivan Dragon from cardsfolder
+#[test]
+fn test_e2e_shivan_dragon_classic() {
+    let path = PathBuf::from("../cardsfolder/s/shivan_dragon.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Shivan Dragon");
+    assert_eq!(def.name.as_str(), "Shivan Dragon");
+
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, player_id);
+
+    assert!(card.has_keyword(Keyword::Flying), "Shivan Dragon should have Flying");
+
+    game.cards.insert(card_id, card);
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Base: 80 + Non-token: 20 + P(5)*15: 75 + T(5)*10: 50 + CMC(6)*5: 30 + Flying(5*10): 50 = 305
+    assert_eq!(score, 305, "Shivan Dragon (5/5 Flying) should score 305");
+}

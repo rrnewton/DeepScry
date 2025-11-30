@@ -275,6 +275,49 @@ impl HeuristicController {
             value -= power * 9 + 40;
         }
 
+        // Upkeep cost penalties (recurring costs make creatures less valuable)
+        // Reference: CreatureEvaluator.java:235-276
+
+        // Cumulative Upkeep: Costs increase each turn, severe penalty
+        // Java: if (c.hasKeyword(Keyword.CUMULATIVE_UPKEEP)) { value -= 30; }
+        if card.has_keyword(Keyword::CumulativeUpkeep) {
+            value -= 30;
+        }
+
+        // Echo: Must pay cost again on next turn or sacrifice
+        // Java: if (c.hasKeyword(Keyword.ECHO)) { value -= 10; }
+        if card.has_keyword(Keyword::Echo) {
+            value -= 10;
+        }
+
+        // Fading: Enters with fade counters, remove one each upkeep, sacrifice when none left
+        // Java: value -= 20 * (1.0 - fadeCounters/initialFadeCounters) for scaling
+        // Simplified: flat penalty since we don't track initial counters
+        if card.has_keyword(Keyword::Fading) {
+            // Get current fade counters if any
+            let fade_counters = card.get_counter(crate::core::CounterType::Fade) as i32;
+            if fade_counters == 0 {
+                value -= 50; // About to die
+            } else if fade_counters <= 2 {
+                value -= 30; // Low counters
+            } else {
+                value -= 15; // Has time left
+            }
+        }
+
+        // Vanishing: Similar to Fading, uses time counters
+        // Java: value -= 20 * (1.0 - timeCounters/initialTimeCounters)
+        if card.has_keyword(Keyword::Vanishing) {
+            let time_counters = card.get_counter(crate::core::CounterType::Time) as i32;
+            if time_counters == 0 {
+                value -= 50; // About to die
+            } else if time_counters <= 2 {
+                value -= 30; // Low counters
+            } else {
+                value -= 15; // Has time left
+            }
+        }
+
         // Mana abilities add value
         // Java: if (!c.getManaAbilities().isEmpty()) { value += addValue(10, "mana"); }
         // TODO: Implement mana ability check
