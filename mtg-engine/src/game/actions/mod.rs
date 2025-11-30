@@ -788,6 +788,8 @@ impl GameState {
                     (card.owner, card.has_indestructible())
                 };
                 if !has_indestructible {
+                    // Check death triggers BEFORE moving the card (trigger still has access to card data)
+                    let _ = self.check_death_triggers(*target);
                     self.move_card(*target, Zone::Battlefield, Zone::Graveyard, owner)?;
                 }
             }
@@ -1396,6 +1398,92 @@ impl GameState {
                     _ => format!("{} trigger effect", card_name),
                 };
                 self.logger.normal(&message);
+            }
+
+            self.execute_effect(&effect)?;
+        }
+
+        Ok(())
+    }
+
+    /// Check and execute death triggers for a creature that is dying
+    ///
+    /// Called BEFORE the creature is moved to the graveyard, so its triggers
+    /// are still accessible. This handles "When CARDNAME dies" triggers like Su-Chi.
+    ///
+    /// MTG Rules 603.6c: Triggered abilities look back in time to determine if
+    /// the event occurred. Death triggers trigger when a creature moves from
+    /// battlefield to graveyard.
+    pub fn check_death_triggers(&mut self, dying_card_id: CardId) -> Result<()> {
+        // Get the card's triggers and controller while it's still on battlefield
+        let (effects_to_execute, controller): (Vec<Effect>, PlayerId) = {
+            let card = self.cards.get(dying_card_id)?;
+
+            // Collect LeavesBattlefield triggers (which we use for "dies" events)
+            let effects: Vec<Effect> = card
+                .triggers
+                .iter()
+                .filter(|trigger| trigger.event == TriggerEvent::LeavesBattlefield)
+                .flat_map(|trigger| trigger.effects.clone())
+                .collect();
+
+            (effects, card.controller)
+        };
+
+        if effects_to_execute.is_empty() {
+            return Ok(());
+        }
+
+        // Log the trigger
+        if let Ok(card) = self.cards.get(dying_card_id) {
+            for trigger in &card.triggers {
+                if trigger.event == TriggerEvent::LeavesBattlefield {
+                    self.logger
+                        .normal(&format!("Trigger: {} - {}", card.name, trigger.description));
+                }
+            }
+        }
+
+        // Execute each effect with placeholder resolution
+        for mut effect in effects_to_execute {
+            // Fill in placeholder values in trigger effects
+            match &mut effect {
+                Effect::AddMana { player, mana } if player.as_u32() == 0 => {
+                    // Placeholder player ID 0 means the controller of the trigger source
+                    // Su-Chi adds mana to its controller's pool when it dies
+                    effect = Effect::AddMana {
+                        player: controller,
+                        mana: *mana,
+                    };
+
+                    // Log the mana addition
+                    if let Ok(card) = self.cards.get(dying_card_id) {
+                        let player_name = self
+                            .get_player(controller)
+                            .map(|p| p.name.as_str().to_string())
+                            .unwrap_or_else(|_| "player".to_string());
+                        self.logger.normal(&format!(
+                            "{} dies, {} adds mana to {}'s pool",
+                            card.name, card.name, player_name
+                        ));
+                    }
+                }
+                Effect::DealDamage {
+                    target: TargetRef::Player(player_id),
+                    amount,
+                } if player_id.as_u32() == 0 => {
+                    effect = Effect::DealDamage {
+                        target: TargetRef::Player(controller),
+                        amount: *amount,
+                    };
+                }
+                Effect::GainLife { player, amount } if player.as_u32() == 0 => {
+                    effect = Effect::GainLife {
+                        player: controller,
+                        amount: *amount,
+                    };
+                }
+                _ => {}
             }
 
             self.execute_effect(&effect)?;

@@ -1280,6 +1280,88 @@ impl CardDefinition {
                 triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
             }
 
+            // Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)
+            // Example: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigAddMana
+            if mode == Some("ChangesZone")
+                && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
+                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self")
+            {
+                use crate::core::{Effect, ManaCost, PlayerId};
+
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
+                    // Look up the SVar that Execute$ references
+                    // Example: Execute$ TrigAddMana looks for "SVar:TrigAddMana:..."
+                    for ab in &self.raw_abilities {
+                        if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
+                            // Parse the SVar body
+                            if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                            {
+                                // Parse DB$ Mana effects (add mana when creature dies)
+                                // Example: "DB$ Mana | Produced$ C | Amount$ 4"
+                                if body.contains("DB$ Mana") {
+                                    let mut produced = String::new();
+                                    let mut amount = 1u32;
+
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+
+                                            match key {
+                                                "Produced" => {
+                                                    produced = value.to_string();
+                                                }
+                                                "Amount" => {
+                                                    if let Ok(amt) = value.parse::<u32>() {
+                                                        amount = amt;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    // Convert Produced$ value to ManaCost
+                                    // C = colorless, W/U/B/R/G = colors
+                                    if !produced.is_empty() {
+                                        let mana_str = match produced.as_str() {
+                                            "C" => format!("{{{}}}", amount),
+                                            "W" => "{W}".repeat(amount as usize),
+                                            "U" => "{U}".repeat(amount as usize),
+                                            "B" => "{B}".repeat(amount as usize),
+                                            "R" => "{R}".repeat(amount as usize),
+                                            "G" => "{G}".repeat(amount as usize),
+                                            _ => format!("{{{}}}", amount), // Default to colorless
+                                        };
+                                        let mana = ManaCost::from_string(&mana_str);
+                                        if mana.cmc() > 0 {
+                                            effects.push(Effect::AddMana {
+                                                player: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                                mana,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "When this creature dies".to_string());
+
+                triggers.push(Trigger::new(TriggerEvent::LeavesBattlefield, effects, description));
+            }
+
             // Parse phase triggers (Mode$ Phase)
             if mode == Some("Phase") {
                 // Determine which phase/step this triggers on using tokenized params

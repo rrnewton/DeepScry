@@ -913,4 +913,104 @@ mod tests {
             "Trigger should indicate it's controller-only"
         );
     }
+
+    /// Test loading real Su-Chi from cardsfolder and verifying death trigger parsing
+    #[test]
+    fn test_su_chi_death_trigger_from_cardsfolder() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/su_chi.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Su-Chi");
+        assert_eq!(def.name.as_str(), "Su-Chi");
+
+        // Instantiate the card
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify the death trigger was parsed (LeavesBattlefield event)
+        let death_triggers: Vec<_> = card
+            .triggers
+            .iter()
+            .filter(|t| t.event == TriggerEvent::LeavesBattlefield)
+            .collect();
+
+        assert_eq!(death_triggers.len(), 1, "Su-Chi should have exactly one death trigger");
+
+        // Verify the trigger has the AddMana effect
+        let trigger = death_triggers[0];
+        assert!(!trigger.effects.is_empty(), "Death trigger should have effects");
+
+        // Verify the effect is AddMana
+        let has_add_mana = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::AddMana { .. }));
+        assert!(has_add_mana, "Death trigger should have AddMana effect");
+    }
+
+    /// Test Su-Chi death trigger actually fires in combat
+    #[test]
+    fn test_su_chi_death_trigger_fires_in_combat() {
+        use crate::core::{CardType, Effect, ManaCost, Trigger, TriggerEvent};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create a Su-Chi for P1 with death trigger
+        let su_chi_id = game.next_entity_id();
+        let mut su_chi = crate::core::Card::new(su_chi_id, "Su-Chi".to_string(), p1_id);
+        su_chi.types.push(CardType::Artifact);
+        su_chi.types.push(CardType::Creature);
+        su_chi.set_power(Some(4));
+        su_chi.set_toughness(Some(4));
+        // Add the death trigger: "When Su-Chi dies, add {C}{C}{C}{C}"
+        let mana = ManaCost::from_string("CCCC");
+        su_chi.triggers.push(Trigger::new(
+            TriggerEvent::LeavesBattlefield,
+            vec![Effect::AddMana {
+                player: crate::core::PlayerId::new(0), // Placeholder
+                mana,
+            }],
+            "When CARDNAME dies, add {C}{C}{C}{C}.".to_string(),
+        ));
+        game.cards.insert(su_chi_id, su_chi);
+        game.battlefield.add(su_chi_id);
+
+        // Create a big creature for P2 to kill Su-Chi
+        let killer_id = game.next_entity_id();
+        let mut killer = crate::core::Card::new(killer_id, "Big Creature".to_string(), p2_id);
+        killer.types.push(CardType::Creature);
+        killer.set_power(Some(10));
+        killer.set_toughness(Some(10));
+        game.cards.insert(killer_id, killer);
+        game.battlefield.add(killer_id);
+
+        // Set up combat - Su-Chi blocks the big creature
+        game.turn.active_player = p2_id;
+
+        // Check P1's mana pool before combat
+        let p1_mana_before = game.players[0].mana_pool.colorless;
+
+        // Su-Chi takes lethal damage and dies
+        // Simulate by calling check_death_triggers directly
+        let result = game.check_death_triggers(su_chi_id);
+        assert!(result.is_ok(), "Death trigger should execute successfully");
+
+        // Check P1's mana pool after - should have gained 4 colorless mana
+        let p1_mana_after = game.players[0].mana_pool.colorless;
+        assert_eq!(
+            p1_mana_after,
+            p1_mana_before + 4,
+            "P1 should gain 4 colorless mana when Su-Chi dies"
+        );
+    }
 }

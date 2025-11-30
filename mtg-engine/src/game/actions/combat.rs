@@ -477,8 +477,19 @@ impl GameState {
             }
         }
 
-        // Move all dying creatures to graveyard (MTG Rules 704.5f)
-        for creature_id in creatures_to_destroy {
+        // Process dying creatures: check death triggers, then move to graveyard
+        // (MTG Rules 704.5f: State-based actions move creatures with lethal damage to graveyard)
+        // (MTG Rules 603.6c: Death triggers check the game state as it was just before the creature left)
+        // Sort by CardId for deterministic ordering when multiple creatures die simultaneously
+        let mut creatures_to_destroy_sorted: Vec<_> = creatures_to_destroy.into_iter().collect();
+        creatures_to_destroy_sorted.sort_by_key(|id| id.as_u32());
+
+        for creature_id in creatures_to_destroy_sorted {
+            // Check death triggers BEFORE moving the card (trigger still has access to card data)
+            // This handles cards like Su-Chi which adds mana when it dies
+            let _ = self.check_death_triggers(creature_id);
+
+            // Now move the creature to graveyard
             if let Ok(creature) = self.cards.get(creature_id) {
                 let owner = creature.owner;
                 self.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, owner)?;
