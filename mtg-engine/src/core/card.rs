@@ -64,6 +64,21 @@ pub struct CardCache {
     /// (from spell_requires_stack_target function in game_loop.rs)
     pub requires_stack_target: bool,
 
+    /// Precomputed: Spell targeting restrictions (from oracle text analysis)
+    /// These are used by get_valid_targets_for_spell() to filter valid targets
+    /// Example: "Destroy target land" sets spell_targets_land = true
+    pub spell_targets_land: bool,
+
+    /// Spell targets creature(s) (e.g., "Destroy target creature")
+    pub spell_targets_creature: bool,
+
+    /// Spell targets player(s) (e.g., "Target player draws three cards")
+    pub spell_targets_player: bool,
+
+    /// Spell can target "any target" (creature or player)
+    /// Example: "Lightning Bolt deals 3 damage to any target"
+    pub spell_targets_any: bool,
+
     /// Precomputed: Static value of this land for AI evaluation
     /// (from evaluate_land function in game_state_evaluator.rs)
     /// Only meaningful for lands, 0 for non-lands
@@ -80,6 +95,9 @@ impl CardCache {
     pub fn new(_text: &str, _name: &str) -> Self {
         // NOTE: text and name parameters are kept for API compatibility but no longer used.
         // Mana production is now derived from parsed abilities, not text.
+        // Parse text for targeting restrictions
+        let text_lower = _text.to_lowercase();
+
         CardCache {
             is_land: false,
             is_creature: false,
@@ -87,6 +105,23 @@ impl CardCache {
             mana_production: ManaProduction::default(),
             is_mana_source: false,
             requires_stack_target: false,
+
+            // Spell targeting restrictions (parsed from oracle text)
+            // "target land" means ONLY lands can be targeted (e.g., Sinkhole)
+            spell_targets_land: text_lower.contains("target land")
+                && !text_lower.contains("target creature")
+                && !text_lower.contains("any target"),
+            // "target creature" means ONLY creatures can be targeted (e.g., Terror)
+            spell_targets_creature: (text_lower.contains("target creature")
+                || text_lower.contains("target nonartifact")
+                || text_lower.contains("target tapped creature")
+                || text_lower.contains("target untapped creature"))
+                && !text_lower.contains("any target"),
+            // "target player" for draw/life effects
+            spell_targets_player: text_lower.contains("target player") || text_lower.contains("target opponent"),
+            // "any target" means creatures or players (e.g., Lightning Bolt)
+            spell_targets_any: text_lower.contains("any target"),
+
             land_evaluation_value: 0,
         }
     }
