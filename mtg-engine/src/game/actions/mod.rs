@@ -1381,10 +1381,13 @@ impl GameState {
         // Handle non-land mana sources with explicit mana abilities
         if let Some(mana_to_add) = explicit_mana {
             // For creatures with "Add mana of any color", we need to choose based on cost hint
-            // Check if this is an any-color source by looking at the card text
-            // Extract this BEFORE getting mutable player reference to avoid borrow conflicts
-            let card_text = self.cards.get(card_id)?.text.to_lowercase();
-            let is_any_color = card_text.contains("any color");
+            // Check if this is an any-color source using the pre-computed cache
+            // (derived from parsed abilities, not text)
+            let is_any_color = self
+                .cards
+                .get(card_id)
+                .map(|c| matches!(c.cache.mana_production.kind, crate::core::ManaProductionKind::AnyColor))
+                .unwrap_or(false);
 
             // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
             let prior_log_size = self.logger.log_count();
@@ -1490,9 +1493,9 @@ impl GameState {
         }
 
         // Add mana to player's pool based on land type
-        // For basic lands and simple cases, check name
+        // For basic lands and simple cases, check subtypes
         // For dual lands (e.g., Underground Sea = Island Swamp), we need smarter logic
-        // First, check subtypes and any-color before we borrow player_mut
+        // First, check subtypes and mana production cache before we borrow player_mut
         let (
             has_swamp_subtype,
             has_mountain_subtype,
@@ -1503,7 +1506,15 @@ impl GameState {
             produces_colorless,
         ) = {
             let card = self.cards.get(card_id)?;
-            let text_lower = card.text.to_lowercase();
+            // Use the pre-computed cache for mana production type (derived from abilities, not text)
+            let is_any_color = matches!(
+                card.cache.mana_production.kind,
+                crate::core::ManaProductionKind::AnyColor
+            );
+            let is_colorless = matches!(
+                card.cache.mana_production.kind,
+                crate::core::ManaProductionKind::Colorless
+            );
             (
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("swamp")),
                 card.subtypes
@@ -1512,9 +1523,8 @@ impl GameState {
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("island")),
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("forest")),
                 card.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("plains")),
-                text_lower.contains("any color"),
-                // Detect colorless mana production (e.g., Mishra's Factory "{T}: Add {C}")
-                text_lower.contains("add {c}") || card_name.eq_ignore_ascii_case("wastes"),
+                is_any_color,
+                is_colorless,
             )
         };
 
