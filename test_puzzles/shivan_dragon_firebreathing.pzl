@@ -1,0 +1,21 @@
+[metadata]
+Name=Shivan Dragon Firebreathing Combat Test
+Goal=Win
+Turns=3
+Difficulty=Medium
+Description=P0 has Shivan Dragon (5/5 flying) which should attack and potentially use firebreathing to win. Giant Spider has Reach so can block it.
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain;Mountain;Mountain;Mountain;Mountain;Shivan Dragon
+p0library=Mountain;Mountain;Mountain
+p0graveyard=
+p1life=10
+p1hand=
+p1battlefield=Forest;Forest;Forest;Forest;Giant Spider;Giant Spider
+p1library=Forest;Forest;Forest
+p1graveyard=

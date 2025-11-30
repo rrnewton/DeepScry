@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-30T15:15:51.454478198+00:00
+updated_at: 2025-11-30T16:11:40.706816745+00:00
 ---
 
 # Description
@@ -39,6 +39,11 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Intelligent blocker ordering to maximize kills
   - Sort by creature evaluation, prioritize killable blockers
   - Port of Java Forge's AiBlockController.orderBlockers()
+- ✅ **Enhanced pump activated abilities during combat (2025-11-30_#998)**
+  - Firebreathing support (Shivan Dragon's {R}: +1/+0)
+  - Evaluate during Declare Blockers step
+  - Save creatures, kill blockers, deal lethal with pump abilities
+  - Test with real 4ED cards (Shivan Dragon)
 
 **What's Missing:**
 
@@ -50,7 +55,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
    - ✅ Expose game.stack through GameStateView (2025-11-28_#956)
    - ✅ Better ping targeting - choose best KILLABLE creature (2025-11-29_#968)
    - ✅ During-combat pump evaluation (2025-11-29_#975)
-   - Enhanced pump *activated abilities* during combat (pending)
+   - ✅ Enhanced pump *activated abilities* during combat (2025-11-30_#998)
 
 3. ~~**Creature casting mana efficiency**~~ ✅ **COMPLETED 2025-11-29_#973**
 
@@ -78,10 +83,9 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with 4ED cards (2025-10-26) - 508 tests passing**
+- ✅ **Comprehensive test coverage with 4ED cards (2025-10-26) - 512 tests passing**
 
 ## Next Steps (Priority Order)
 
 1. GameStateEvaluator improvements
 2. Mana tapping order
-3. Enhanced pump activated abilities during combat
