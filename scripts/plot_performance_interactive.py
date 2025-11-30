@@ -438,14 +438,26 @@ def create_dashboard(df, output_file, filter_benchmark=None):
 
     # Add benchmark documentation
     benchmark_docs = {
-        'fresh_games': 'Fresh Games (Baseline) - Play complete games from start to finish without rewind. No logging overhead. Tests core game engine throughput. (1 thread)',
-        'mem_logging_rewind_play_again': 'Memory Logging + Rewind - Play to midpoint, rewind, play forward. Logs stored in memory. Tests undo system with realistic logging. (1 thread)',
-        'stdout_logging_rewind_play_again': 'Stdout Logging + Rewind - Same as memory logging but writes to stdout. Tests worst-case logging overhead. (1 thread)',
-        'snapshot_games': 'Snapshot Games - Like fresh games but uses Clone-based snapshots instead of undo log. Tests memory cloning overhead. (1 thread)',
-        'rewind': 'Rewind Only - Measures pure rewind speed by rewinding a completed game repeatedly. Tests undo system in isolation. (1 thread)',
-        'rewind_play_again': 'Rewind + Play Again (Sequential) - Rewind to midpoint then play forward. Sequential execution. Core rewind benchmark. (1 thread)',
-        'par_rewind_play_again': f'Rewind + Play Again (Parallel) - Same as sequential but uses Rayon parallel iterators. Tests multi-core scaling. ({cpu_threads} threads)',
-        'pinned_par_rewind_play_again': f'Rewind + Play Again (Pinned-Parallel) - Parallel execution with CPU affinity pinning. Tests NUMA-aware performance. ({cpu_threads} threads)',
+        # Robots mirror matchup (baseline)
+        'robots_mirror/fresh_games': 'Robots Mirror: Fresh Games - Play complete games from start to finish without rewind. (1 thread)',
+        'robots_mirror/mem_logging_rewind_play_again': 'Robots Mirror: Memory Logging + Rewind - Tests undo system with realistic logging. (1 thread)',
+        'robots_mirror/stdout_logging_rewind_play_again': 'Robots Mirror: Stdout Logging + Rewind - Tests worst-case logging overhead. (1 thread)',
+        'robots_mirror/snapshot_games': 'Robots Mirror: Snapshot Games - Uses Clone-based snapshots instead of undo log. (1 thread)',
+        'robots_mirror/rewind': 'Robots Mirror: Rewind Only - Pure rewind speed measurement. (1 thread)',
+        'robots_mirror/rewind_play_again': 'Robots Mirror: Rewind + Play Again (Sequential) - Core rewind benchmark. (1 thread)',
+        'robots_mirror/4x_par_rewind_play_again': 'Robots Mirror: Parallel (Rayon, 4 threads) - Tests multi-core scaling.',
+        'robots_mirror/4x_pinned_par_rewind_play_again': 'Robots Mirror: Parallel (Pinned, 4 threads) - CPU affinity pinning for NUMA awareness.',
+        'robots_mirror/32x_par_rewind_play_again': f'Robots Mirror: Parallel (Rayon, 32 threads) - High thread count scaling test.',
+        'robots_mirror/32x_pinned_par_rewind_play_again': f'Robots Mirror: Parallel (Pinned, 32 threads) - High thread count with pinning.',
+
+        # Other deck matchups
+        'monoblack_thedeck/rewind_play_again': 'Mono Black vs The Deck: Rewind + Play Again - Control vs aggro matchup. (1 thread)',
+        'whiteweenie_mirror/rewind_play_again': 'White Weenie Mirror: Rewind + Play Again - Creature aggro mirror. (1 thread)',
+        'jeskai_trolldisk/rewind_play_again': 'Jeskai vs Troll Disk: Rewind + Play Again - Tempo vs control. (1 thread)',
+        'simple_bolt/rewind_play_again': 'Simple Bolt Mirror: Rewind + Play Again - Minimal deck for fast iteration. (1 thread)',
+
+        # Snapshot serialization
+        'snapshot_serialization/save_to_file': 'Snapshot Serialization: Save to File - Tests bincode serialization speed. (1 thread)',
     }
 
     deck_info = [
