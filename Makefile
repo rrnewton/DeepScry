@@ -175,7 +175,7 @@ info:
 # ==============================================================================
 
 plot:
-	./scripts/plot_performance.py
+	python3 scripts/plot_performance_interactive.py
 
 # Run all performance benchmarks and record to CSV (takes a long time)
 # This is the OFFICIAL benchmark entrypoint - always use this for tracked results
