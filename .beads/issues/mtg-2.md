@@ -6,30 +6,44 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-27T16:19:48.577248922+00:00
+updated_at: 2025-11-29T22:34:58.944478693+00:00
 ---
 
 # Description
 
 Track performance optimization work for MTG Forge Rust.
 
-## ⚠️ CRITICAL: Parallel Bottleneck Discovered
+## Linux Perf Profiling Infrastructure (2025-11-29_#966)
 
-**See mtg-162 for parallel MCTS optimization plan.**
+✅ **Perf profiling working in container** (a1365f5, a05ecc6)
+- Removed sudo requirement (CAP_PERFMON + CAP_SYS_ADMIN capabilities)
+- Fixed rewind_bench CLI arguments (--sequential → -m sequential)
+- Added explicit output file (-o perf.data) to prevent piping issues
+- Updated docs/PERF_PROFILING_PODMAN.md with status
 
-The new parallel benchmark (mtg-161) exposed **catastrophic allocator contention**:
-- Parallel aggregate: 0.23x speedup (actually SLOWER than sequential!)
-- Per-thread: 68.8x slowdown (1.5% of sequential throughput)
-- Parallel efficiency: 1.5% (should be >60%)
+✅ **Wall-clock CPU hotspot analysis complete** (2025-11-29_#966)
+- 5000 games benchmark: 2,838 games/sec (1.8s CPU, 5.4s total)
+- 3,160 samples, 8.09 billion cycles analyzed
+- Complements Callgrind (instruction count) with wall-clock view
+- See ai_docs/perf_cpu_profiling_2025-11-29.md for detailed analysis
 
-**Root cause:** System allocator (glibc malloc) global lock serializes all 16 threads.
+**Perf vs Callgrind comparison:**
 
-**Plan:** Two-phase approach in mtg-162:
-1. Maximize zero-copy patterns (target <2KB/game)
-2. Quick win: Try mimalloc/jemalloc (expect 10-30x improvement)
-3. Per-thread bump allocators (target 80-90% efficiency)
+| Tool | Measurement | Top Hotspot | Use Case |
+|------|-------------|-------------|----------|
+| **Perf** | Wall-clock time (sampling) | priority_round (17.75%) | Real-world performance |
+| **Callgrind** | Instruction count (simulation) | ManaEngine::update (30.5%) | Micro-optimization |
 
-**Impact on MCTS:** Without fixing this, parallel MCTS will be slower than sequential MCTS!
+**Key findings from perf profiling:**
+- priority_round (17.75%) dominated by HashMap lookups + action generation
+- ManaEngine::update (15%) confirms Callgrind findings
+- String operations (8.89% combined) - mostly memory-bound
+- EntityStore HashMap overhead appears across multiple call sites (~3%)
+
+**Optimization roadmap updated in mtg-166:**
+- Quick wins (10-13% CPU): Cache flags, reuse buffers, complete bitfield migration
+- Medium impact (10-15% CPU): Cache actions, EntityStore Vec indices
+- High risk/reward (5-7% CPU): Incremental ManaTracker caching
 
 ---
 
@@ -182,6 +196,11 @@ Top hotspots:
   - Buffer is cleared and reused (retains capacity) instead of moved out via mem::take
   - Eliminated push_castable_spells hotspot (~5.3% of allocations)
   - Bytes/action: 48.01 → 40.29 (-16.1%)
+- ✅ **GameLoop/ManaEngine pre-allocation (34caa0c, 2025-11-29_#965)** - **11.1% speedup**
+  - Pre-allocate abilities_buffer (capacity 16) in GameLoop::new()
+  - Pre-allocate ManaEngine vectors (capacity 8) in ManaEngine::default()
+  - Reuse self.mana_engine in priority.rs instead of creating new per ability
+  - Reduced allocation blocks: 24,425 → 24,027 (-398 blocks, -1.6%)
 
 **Parallel optimization infrastructure:**
 - ✅ Pinned thread pool for precise parallel timing
@@ -223,4 +242,4 @@ See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/dhat_allocation_analysis_2025-11-07_#822.md for complete analysis.
 
 ---
-**Updated 2025-11-28_#959(576e6a95)** - abilities_buffer reuse: 8% total allocation reduction, 16% bytes/action reduction
+**Updated 2025-11-29_#965(34caa0c)** - GameLoop/ManaEngine pre-allocation: 11.1% speedup, 398 fewer allocation blocks

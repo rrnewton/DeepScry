@@ -305,6 +305,97 @@ impl HeuristicController {
             .copied()
     }
 
+    /// Evaluate a creature for casting with mana efficiency consideration
+    ///
+    /// This method balances raw creature value against mana efficiency, especially
+    /// in the early game where curving out and leaving mana open for interaction matters.
+    ///
+    /// Scoring formula:
+    /// - Base: creature_value (from evaluate_creature)
+    /// - Bonus: mana_efficiency_bonus (value / CMC ratio, scaled)
+    /// - Bonus: curve_bonus (if CMC matches available mana well)
+    /// - Penalty: if casting leaves awkward leftover mana
+    ///
+    /// Reference: ComputerUtil.java creature casting logic
+    fn evaluate_creature_for_casting(
+        &self,
+        view: &GameStateView,
+        card_id: CardId,
+        available_mana: u32,
+        turn_number: u32,
+    ) -> i32 {
+        let Some(card) = view.get_card(card_id) else {
+            return i32::MIN;
+        };
+
+        let base_value = self.evaluate_creature(view, card_id);
+        let cmc = card.mana_cost.cmc() as u32;
+
+        // Avoid division by zero - free creatures are always castable
+        if cmc == 0 {
+            return base_value + 50; // Bonus for free creatures
+        }
+
+        let mut score = base_value;
+
+        // Mana efficiency bonus: value per mana spent
+        // Scale by 10 to make it meaningful but not dominant
+        // A 2-mana 2/2 (value ~130) has efficiency 65, a 5-mana 4/4 (value ~200) has efficiency 40
+        let efficiency = (base_value * 10) / (cmc as i32);
+        score += efficiency / 5; // Add ~13 for the 2/2, ~8 for the 4/4
+
+        // Early game bonus for curving out (turns 1-4)
+        // Reward creatures whose CMC matches available mana closely
+        if turn_number <= 4 {
+            let mana_fit = if cmc == available_mana {
+                30 // Perfect curve
+            } else if cmc == available_mana.saturating_sub(1) {
+                20 // One under (leaves 1 mana open)
+            } else if cmc == available_mana.saturating_sub(2) {
+                10 // Two under (might want to double-spell)
+            } else {
+                0
+            };
+            score += mana_fit;
+        }
+
+        // Leftover mana consideration
+        // Penalize awkward amounts of leftover mana that can't be used
+        let leftover = available_mana.saturating_sub(cmc);
+        if leftover == 1 {
+            // 1 mana leftover is good - can activate abilities or hold up minor interaction
+            score += 5;
+        } else if (2..=3).contains(&leftover) {
+            // 2-3 mana leftover is great - can hold up removal or counterspells
+            score += 10;
+        }
+        // 0 leftover or large leftover: no bonus/penalty
+
+        score
+    }
+
+    /// Count available mana from untapped lands
+    ///
+    /// This is a simplified count that assumes each untapped land produces 1 mana.
+    /// It doesn't account for multi-mana lands or mana dorks, but is sufficient
+    /// for early game mana efficiency calculations.
+    ///
+    /// For accurate mana availability, use the ManaEngine - but for heuristic
+    /// purposes this simple count is fast and good enough.
+    fn count_available_mana(&self, view: &GameStateView) -> u32 {
+        view.battlefield()
+            .iter()
+            .filter(|&&card_id| {
+                if let Some(card) = view.get_card(card_id) {
+                    // Count untapped lands we control
+                    card.owner == self.player_id && card.is_land() && !view.is_tapped(card_id)
+                } else {
+                    false
+                }
+            })
+            .count() as u32
+    }
+
     /// Evaluate whether a land should be played
     ///
     /// Reference: AiController.java:1428-1446 (land play decision logic)
@@ -459,17 +550,27 @@ impl HeuristicController {
             }
         }
 
-        // 2b: Cast creatures (best evaluation first)
-        // Evaluate all castable creatures and choose the best one
-        // This prioritizes high-value threats over weak creatures
+        // 2b: Cast creatures (best evaluation first, with mana efficiency)
+        // Evaluate all castable creatures considering both raw value and mana efficiency
+        // This prioritizes curving out in early game while still preferring high-value threats
         let mut best_creature_ability: Option<SpellAbility> = None;
         let mut best_creature_value = i32::MIN;
+
+        // Get game state for mana efficiency calculation
+        let turn_number = view.turn_number();
+        let available_mana = self.count_available_mana(view);
 
         for ability in available {
             if let SpellAbility::CastSpell { card_id } = ability {
                 if let Some(card) = view.get_card(*card_id) {
                     if card.is_creature() {
-                        let value = self.evaluate_creature(view, *card_id);
+                        // Use mana-efficient evaluation in early game (turns 1-5)
+                        // In late game, just use raw creature value
+                        let value = if turn_number <= 5 {
+                            self.evaluate_creature_for_casting(view, *card_id, available_mana, turn_number)
+                        } else {
+                            self.evaluate_creature(view, *card_id)
+                        };
                         if value > best_creature_value {
                             best_creature_value = value;
                             best_creature_ability = Some(ability.clone());
@@ -1270,12 +1371,207 @@ impl HeuristicController {
         // PHASE 2: During combat evaluation (Declare Blockers)
         // Reference: ComputerUtilCard.java:1468-1600
         if current_step == crate::game::phase::Step::DeclareBlockers {
-            // TODO(mtg-77): Implement during-combat pump evaluation
-            // This requires combat state tracking to know:
-            // - Which creatures are attacking/blocking
-            // - Which creatures would die in combat
-            // - Whether pumping would save a creature or kill an opponent
-            // For now, return false (don't cast during combat until we have combat state)
+            let combat = view.combat();
+
+            // Check if target creature is in combat
+            let is_attacking = combat.is_attacking(target.id);
+            let is_blocking = combat.is_blocking(target.id);
+
+            if !is_attacking && !is_blocking {
+                // Target not in combat - don't pump during declare blockers
+                return false;
+            }
+
+            // Get effective stats for damage calculations
+            let target_power = view
+                .get_effective_power(target.id)
+                .unwrap_or(target.current_power() as i32);
+            let target_toughness = view
+                .get_effective_toughness(target.id)
+                .unwrap_or(target.current_toughness() as i32);
+            let pumped_effective_power = target_power + power_bonus;
+            let pumped_effective_toughness = target_toughness + toughness_bonus;
+
+            if is_attacking {
+                // Case: Our creature is attacking
+                let blockers = combat.get_blockers(target.id);
+
+                if blockers.is_empty() {
+                    // Unblocked attacker - pump to deal lethal damage
+                    if pumped_power >= opponent_life {
+                        return true;
+                    }
+
+                    // Calculate total damage from all attackers to check for lethal
+                    let mut total_damage = 0i32;
+                    for &attacker_id in combat.attackers.keys() {
+                        if attacker_id == target.id {
+                            total_damage += pumped_effective_power;
+                        } else if !combat.is_blocked(attacker_id) {
+                            if let Some(atk_card) = view.get_card(attacker_id) {
+                                let atk_power = view
+                                    .get_effective_power(attacker_id)
+                                    .unwrap_or(atk_card.current_power() as i32);
+                                total_damage += atk_power;
+                            }
+                        } else {
+                            // Blocked attacker - only counts trample damage
+                            if let Some(atk_card) = view.get_card(attacker_id) {
+                                if atk_card.has_trample() {
+                                    let atk_power = view
+                                        .get_effective_power(attacker_id)
+                                        .unwrap_or(atk_card.current_power() as i32);
+                                    let blocker_toughness: i32 = combat
+                                        .get_blockers(attacker_id)
+                                        .iter()
+                                        .filter_map(|&b| view.get_card(b))
+                                        .map(|b| {
+                                            view.get_effective_toughness(b.id)
+                                                .unwrap_or(b.current_toughness() as i32)
+                                        })
+                                        .sum();
+                                    let trample_damage = (atk_power - blocker_toughness).max(0);
+                                    total_damage += trample_damage;
+                                }
+                            }
+                        }
+                    }
+
+                    // Pump if it would be lethal
+                    if total_damage >= opponent_life {
+                        return true;
+                    }
+                } else {
+                    // Blocked attacker - evaluate combat outcome
+                    let total_blocker_power: i32 = blockers
+                        .iter()
+                        .filter_map(|&b| view.get_card(b))
+                        .map(|b| view.get_effective_power(b.id).unwrap_or(b.current_power() as i32))
+                        .sum();
+
+                    let total_blocker_toughness: i32 = blockers
+                        .iter()
+                        .filter_map(|&b| view.get_card(b))
+                        .map(|b| {
+                            view.get_effective_toughness(b.id)
+                                .unwrap_or(b.current_toughness() as i32)
+                        })
+                        .sum();
+
+                    // Check for first strike on either side (for future damage race logic)
+                    let _attacker_has_first_strike = target.has_first_strike() || target.has_double_strike();
+                    let _blocker_has_first_strike = blockers
+                        .iter()
+                        .filter_map(|&b| view.get_card(b))
+                        .any(|b| b.has_first_strike() || b.has_double_strike());
+
+                    // 1. Save our creature: Would we die without pump but survive with it?
+                    // Note: First strike matters for damage race timing, but simplify for now
+                    // as lethal damage is still lethal regardless of timing
+                    let would_die_without_pump = total_blocker_power >= target_toughness;
+
+                    let would_survive_with_pump =
+                        pumped_effective_toughness > total_blocker_power || target.has_indestructible();
+
+                    if would_die_without_pump && would_survive_with_pump {
+                        return true;
+                    }
+
+                    // 2. Kill blockers: Can pumping let us kill blockers that would survive?
+                    for &blocker_id in &blockers {
+                        if let Some(blocker) = view.get_card(blocker_id) {
+                            let blocker_toughness = view
+                                .get_effective_toughness(blocker_id)
+                                .unwrap_or(blocker.current_toughness() as i32);
+
+                            // Would this blocker die without pump?
+                            let blocker_dies_without_pump =
+                                target_power >= blocker_toughness || target.has_deathtouch();
+
+                            // Would this blocker die with pump?
+                            let blocker_dies_with_pump =
+                                pumped_effective_power >= blocker_toughness || target.has_deathtouch();
+
+                            // Pump if it would kill a blocker that wouldn't die otherwise
+                            if !blocker_dies_without_pump && blocker_dies_with_pump && !blocker.has_indestructible() {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 3. Trample damage: If we have trample, pump to deal more damage
+                    if target.has_trample() || keywords_granted.iter().any(|k| k == "Trample") {
+                        let damage_without_pump = (target_power - total_blocker_toughness).max(0);
+                        let damage_with_pump = (pumped_effective_power - total_blocker_toughness).max(0);
+
+                        if damage_with_pump > damage_without_pump && damage_with_pump >= opponent_life {
+                            return true;
+                        }
+                    }
+                }
+            } else if is_blocking {
+                // Case: Our creature is blocking
+                let attackers_blocked = combat.blockers.get(&target.id).cloned().unwrap_or_default();
+
+                if attackers_blocked.is_empty() {
+                    return false;
+                }
+
+                // Calculate total attacking power
+                let total_attacker_power: i32 = attackers_blocked
+                    .iter()
+                    .filter_map(|&a| view.get_card(a))
+                    .map(|a| view.get_effective_power(a.id).unwrap_or(a.current_power() as i32))
+                    .sum();
+
+                // Check for first strike (for future damage race logic)
+                let _attacker_has_first_strike = attackers_blocked
+                    .iter()
+                    .filter_map(|&a| view.get_card(a))
+                    .any(|a| a.has_first_strike() || a.has_double_strike());
+                let _blocker_has_first_strike = target.has_first_strike() || target.has_double_strike();
+
+                // 1. Save our blocker
+                // Note: First strike timing could matter but simplify for now
+                let would_die_without_pump = total_attacker_power >= target_toughness;
+
+                let would_survive_with_pump =
+                    pumped_effective_toughness > total_attacker_power || target.has_indestructible();
+
+                if would_die_without_pump && would_survive_with_pump {
+                    return true;
+                }
+
+                // 2. Kill attackers with pump
+                for &attacker_id in &attackers_blocked {
+                    if let Some(attacker) = view.get_card(attacker_id) {
+                        let attacker_toughness = view
+                            .get_effective_toughness(attacker_id)
+                            .unwrap_or(attacker.current_toughness() as i32);
+
+                        let attacker_dies_without_pump = target_power >= attacker_toughness || target.has_deathtouch();
+                        let attacker_dies_with_pump =
+                            pumped_effective_power >= attacker_toughness || target.has_deathtouch();
+
+                        if !attacker_dies_without_pump && attacker_dies_with_pump && !attacker.has_indestructible() {
+                            return true;
+                        }
+                    }
+                }
+
+                // 3. Reduce trample damage by pumping toughness
+                let any_trampler = attackers_blocked
+                    .iter()
+                    .filter_map(|&a| view.get_card(a))
+                    .any(|a| a.has_trample());
+
+                if any_trampler && toughness_bonus > 0 {
+                    // Pumping toughness reduces trample damage to us
+                    return true;
+                }
+            }
+
+            // No good combat reason to pump
             return false;
         }
 
@@ -2652,13 +2948,24 @@ impl PlayerController for HeuristicController {
         let spell_card = view.get_card(spell);
 
         // Check if this is a damage-dealing activated ability (like Prodigal Sorcerer)
-        // For such abilities, we want to target opponent's creatures
-        let is_damage_ability = spell_card.is_some_and(|c| {
-            c.activated_abilities.iter().any(|a| {
-                a.effects
-                    .iter()
-                    .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }))
-            })
+        // For such abilities, we want to target opponent's creatures that can be killed
+        // Reference: DamageDealAi.java - getBestCreatureAI filters for killable creatures
+        let damage_amount = spell_card.and_then(|c| {
+            // First check activated abilities (Prodigal Sorcerer, Tim, etc.)
+            for ability in &c.activated_abilities {
+                for effect in &ability.effects {
+                    if let crate::core::Effect::DealDamage { amount, .. } = effect {
+                        return Some(*amount);
+                    }
+                }
+            }
+            // Then check spell effects (Lightning Bolt, Shock, etc.)
+            for effect in &c.effects {
+                if let crate::core::Effect::DealDamage { amount, .. } = effect {
+                    return Some(*amount);
+                }
+            }
+            None
         });
 
         // Check if the spell has pump effects (target self)
@@ -2674,13 +2981,41 @@ impl PlayerController for HeuristicController {
         });
 
         // Choose targeting strategy based on spell/ability type
-        let filtered_target_ids: Vec<CardId> = if is_damage_ability {
-            // Damage abilities: Target opponent's best killable creature
-            valid_targets
+        let filtered_target_ids: Vec<CardId> = if let Some(damage) = damage_amount {
+            // Damage abilities: Target opponent's best KILLABLE creature
+            // Reference: DamageDealAi.java - prioritize creatures we can actually kill
+            let killable_targets: Vec<CardId> = valid_targets
                 .iter()
-                .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                .filter(|&&id| {
+                    if let Some(card) = view.get_card(id) {
+                        if card.owner == self.player_id {
+                            return false; // Don't target our own creatures
+                        }
+                        if !card.is_creature() {
+                            return false;
+                        }
+                        // Check if this creature would die from the damage
+                        if let Some(toughness) = card.base_toughness() {
+                            let effective_toughness = i32::from(toughness) + card.toughness_bonus;
+                            return effective_toughness <= damage;
+                        }
+                    }
+                    false
+                })
                 .copied()
-                .collect()
+                .collect();
+
+            // If we have killable creatures, prioritize those
+            // Otherwise fall back to any opponent creature (damage still useful)
+            if !killable_targets.is_empty() {
+                killable_targets
+            } else {
+                valid_targets
+                    .iter()
+                    .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                    .copied()
+                    .collect()
+            }
         } else if has_pump_effect {
             // Pump effects: Target our best creature
             valid_targets

@@ -85,6 +85,20 @@ impl ManaSourceCache {
         self.needs_rebuild = true;
     }
 
+    /// Check if cache is empty (no mana sources tracked)
+    ///
+    /// This can happen when tests create cards and add them to battlefield
+    /// without triggering the event system that populates the cache.
+    pub fn is_empty(&self) -> bool {
+        self.white_sources.is_empty()
+            && self.blue_sources.is_empty()
+            && self.black_sources.is_empty()
+            && self.red_sources.is_empty()
+            && self.green_sources.is_empty()
+            && self.colorless_sources.is_empty()
+            && self.complex_sources.is_empty()
+    }
+
     /// Get reference to white mana sources
     pub fn white_sources(&self) -> &[CardId] {
         &self.white_sources

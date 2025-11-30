@@ -248,6 +248,22 @@ pub enum AffectedSelector {
     /// Used by Auras that grant abilities to enchanted lands (e.g., Friendly Neighborhood)
     LandAttachedBy,
 
+    /// Single creature type you control (tribal lords)
+    /// Corresponds to: `Affected$ Goblin.YouCtrl`, `Affected$ Zombie.YouCtrl`, etc.
+    /// Used by tribal lord cards that grant bonuses to a single creature type
+    CreatureTypeYouControl {
+        /// The creature subtype (e.g., "Goblin", "Zombie")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Single creature type you control, excluding self
+    /// Corresponds to: `Affected$ Goblin.Other+YouCtrl`
+    /// Used by tribal lord cards that exclude themselves from the bonus
+    CreatureTypeOtherYouControl {
+        /// The creature subtype (e.g., "Goblin", "Zombie")
+        subtype: crate::core::Subtype,
+    },
+
     /// Multiple creature types you control, excluding self
     /// Corresponds to: `Affected$ Spider.Other+YouCtrl,Boar.Other+YouCtrl,...`
     /// Used by cards like Spider-Ham that grant bonuses to multiple creature types
@@ -256,6 +272,10 @@ pub enum AffectedSelector {
         /// List of creature subtypes (e.g., ["Spider", "Boar", "Goat", ...])
         types: Vec<crate::core::Subtype>,
     },
+
+    /// The creature enchanted by this Aura
+    /// Corresponds to: `Affected$ Creature.EnchantedBy`
+    CreatureEnchantedBy,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

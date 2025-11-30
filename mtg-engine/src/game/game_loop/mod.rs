@@ -128,6 +128,11 @@ pub struct GameLoop<'a> {
     p1_hand_setup: Option<crate::game::HandSetup>,
     /// Optional hand setup for Player 2 (controlled initial hand)
     p2_hand_setup: Option<crate::game::HandSetup>,
+    /// Optional separate seed for deck shuffling (--deck-seed)
+    /// If set, library shuffling uses this seed, then game continues with game_seed
+    deck_seed: Option<u64>,
+    /// The main game seed to use after shuffling (only needed when deck_seed is set)
+    game_seed: Option<u64>,
 }
 
 impl<'a> GameLoop<'a> {
@@ -143,7 +148,7 @@ impl<'a> GameLoop<'a> {
             spell_targets: Vec::new(),
             choice_counter: 0,
             mana_engine: crate::game::mana_engine::ManaEngine::new(),
-            abilities_buffer: Vec::new(), // Starts empty, capacity grows and is retained via mem::replace
+            abilities_buffer: Vec::with_capacity(16), // Pre-allocate for typical game (lands + spells + abilities)
             stop_when_fixed_exhausted: false,
             snapshot_path_for_fixed: None,
             snapshot_format: crate::game::snapshot::SnapshotFormat::default(),
@@ -155,6 +160,8 @@ impl<'a> GameLoop<'a> {
             resumed_turn_number: None,
             p1_hand_setup: None,
             p2_hand_setup: None,
+            deck_seed: None,
+            game_seed: None,
         }
     }
 
@@ -249,6 +256,21 @@ impl<'a> GameLoop<'a> {
     /// Set hand setup for Player 2 (controlled initial hand for testing)
     pub fn with_p2_hand_setup(mut self, hand_setup: crate::game::HandSetup) -> Self {
         self.p2_hand_setup = Some(hand_setup);
+        self
+    }
+
+    /// Set a separate seed for deck shuffling
+    ///
+    /// When provided, library shuffling uses `deck_seed` and then the RNG is re-seeded
+    /// with `game_seed` for the rest of gameplay. This allows varying the game seed
+    /// independently while keeping the same initial hands.
+    ///
+    /// # Arguments
+    /// * `deck_seed` - Seed used for initial library shuffling
+    /// * `game_seed` - Seed used for game RNG after shuffling (if None, keeps deck_seed)
+    pub fn with_deck_seed(mut self, deck_seed: u64, game_seed: Option<u64>) -> Self {
+        self.deck_seed = Some(deck_seed);
+        self.game_seed = game_seed;
         self
     }
 
@@ -447,6 +469,12 @@ impl<'a> GameLoop<'a> {
         let is_puzzle_game = self.game.turn.turn_number > 1 || has_cards_in_play;
 
         if !is_resuming_from_snapshot && !is_puzzle_game {
+            // If a separate deck seed is configured, apply it before shuffling
+            // This allows sampling different games (via --seed) with the same initial hands (--deck-seed)
+            if let Some(deck_seed) = self.deck_seed {
+                self.game.seed_rng(deck_seed);
+            }
+
             // Setup opening hands using unified hand setup logic (MTG Rules 103.2-103.4)
             // This handles shuffling, drawing, and optional controlled hand setup for testing
             // TODO(mtg-102): Implement mulligan system (MTG Rules 103.5)
@@ -457,6 +485,12 @@ impl<'a> GameLoop<'a> {
                 self.p1_hand_setup.as_ref(),
                 self.p2_hand_setup.as_ref(),
             )?;
+
+            // If a game seed is configured (different from deck seed), re-seed after shuffling
+            // This allows the game to proceed with a different RNG stream than was used for shuffling
+            if let Some(game_seed) = self.game_seed {
+                self.game.seed_rng(game_seed);
+            }
 
             // Log the start of Turn 1 (for fresh games only)
             // This matches the format used in state.rs when transitioning between turns

@@ -177,6 +177,15 @@ enum Commands {
         #[arg(long)]
         seed_p2: Option<SeedArg>,
 
+        /// Separate seed for initial deck shuffling (for sampling different games with same hands)
+        ///
+        /// When provided, this seed is used ONLY for the initial library shuffling.
+        /// The main --seed is then used for all subsequent game RNG. This allows running
+        /// multiple games with different RNG streams but identical starting hands, useful
+        /// for comparing AI strategies or testing game outcomes under controlled conditions.
+        #[arg(long)]
+        deck_seed: Option<SeedArg>,
+
         /// Load all cards from cardsfolder (default: only load cards in decks)
         #[arg(long)]
         load_all_cards: bool,
@@ -396,6 +405,7 @@ async fn main() -> Result<()> {
             seed,
             seed_p1,
             seed_p2,
+            deck_seed,
             load_all_cards,
             verbosity,
             numeric_choices,
@@ -431,6 +441,7 @@ async fn main() -> Result<()> {
                 seed,
                 seed_p1,
                 seed_p2,
+                deck_seed,
                 load_all_cards,
                 verbosity,
                 numeric_choices,
@@ -582,6 +593,7 @@ async fn run_tui(
     seed: Option<SeedArg>,
     seed_p1: Option<SeedArg>,
     seed_p2: Option<SeedArg>,
+    deck_seed: Option<SeedArg>,
     load_all_cards: bool,
     verbosity: VerbosityArg,
     numeric_choices: bool,
@@ -604,6 +616,7 @@ async fn run_tui(
     let seed_resolved = seed.map(|s| s.resolve());
     let seed_p1_resolved = seed_p1.map(|s| s.resolve());
     let seed_p2_resolved = seed_p2.map(|s| s.resolve());
+    let deck_seed_resolved = deck_seed.map(|s| s.resolve());
 
     if !suppress_output {
         println!("=== MTG Forge Rust - Text UI Mode ===\n");
@@ -1176,6 +1189,20 @@ async fn run_tui(
     }
     if let Some(ref p2_setup) = p2_hand_setup {
         game_loop = game_loop.with_p2_hand_setup(p2_setup.clone());
+    }
+
+    // Set separate deck seed for shuffling if provided (--deck-seed)
+    // This allows running multiple games with different RNG but same initial hands
+    if let Some(deck_seed) = deck_seed_resolved {
+        // If deck_seed is set, seed_resolved becomes the game seed after shuffling
+        // If seed is not set but deck_seed is, the RNG stays at deck_seed for the whole game
+        game_loop = game_loop.with_deck_seed(deck_seed, seed_resolved);
+        if !suppress_output {
+            println!("Using deck seed for shuffle: {deck_seed}");
+            if let Some(game_seed) = seed_resolved {
+                println!("Using game seed after shuffle: {game_seed}");
+            }
+        }
     }
 
     // Run the game (with mid-turn exits if stop conditions enabled)

@@ -322,6 +322,59 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            AffectedSelector::CreatureTypeYouControl { subtype } => {
+                                // Check if this affects the creature:
+                                // 1. Creature must have the specified subtype
+                                // 2. Creature must be controlled by the source's controller
+                                // Example: Goblin Chieftain granting +1/+1 to all Goblins you control
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if creature has the specified subtype
+                                if creature.subtypes.contains(subtype) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::CreatureTypeOtherYouControl { subtype } => {
+                                // Check if this affects the creature:
+                                // 1. Creature must have the specified subtype
+                                // 2. Creature must be controlled by the source's controller
+                                // 3. Creature must NOT be the source itself (Other qualifier)
+                                // Example: Death Baron granting +1/+1 to other Zombies you control
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "Other" - exclude the source card itself
+                                if creature_id == source_id {
+                                    continue;
+                                }
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if creature has the specified subtype
+                                if creature.subtypes.contains(subtype) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::CreatureEnchantedBy => {
+                                // This Aura grants bonuses to the creature it's attached to
+                                // Check if this Aura is attached to creature_id
+                                let attached_auras = self.get_attached_auras(creature_id);
+                                if attached_auras.contains(&source_id) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                 }

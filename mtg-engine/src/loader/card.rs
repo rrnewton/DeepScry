@@ -1388,6 +1388,62 @@ impl CardDefinition {
     /// in CR 613 Layer 7c (MODIFYPT).
     fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
         use crate::core::{AffectedSelector, StaticAbility};
+
+        /// Parse tribal type selector patterns
+        ///
+        /// Handles patterns like:
+        /// - "Goblin.YouCtrl" → CreatureTypeYouControl { Goblin }
+        /// - "Goblin.Other+YouCtrl" → CreatureTypeOtherYouControl { Goblin }
+        /// - "Creature.Goblin+YouCtrl" → CreatureTypeYouControl { Goblin }
+        /// - "Creature.Goblin+Other+YouCtrl" → CreatureTypeOtherYouControl { Goblin }
+        ///
+        /// Returns None if the pattern doesn't match a recognized tribal format.
+        fn parse_tribal_selector(value: &str) -> Option<AffectedSelector> {
+            // Pattern: Creature.TYPE+Other+YouCtrl (e.g., "Creature.Goblin+Other+YouCtrl")
+            // This is the most common format for tribal lords
+            if value.starts_with("Creature.") && value.ends_with("+Other+YouCtrl") {
+                let remainder = value.strip_prefix("Creature.")?;
+                let subtype = remainder.strip_suffix("+Other+YouCtrl")?;
+                return Some(AffectedSelector::CreatureTypeOtherYouControl {
+                    subtype: crate::core::Subtype::new(subtype),
+                });
+            }
+
+            // Pattern: Creature.TYPE+YouCtrl (e.g., "Creature.Zombie+YouCtrl")
+            // For cards that also buff themselves (no "Other")
+            if value.starts_with("Creature.") && value.ends_with("+YouCtrl") && !value.contains("+Other") {
+                let remainder = value.strip_prefix("Creature.")?;
+                let subtype = remainder.strip_suffix("+YouCtrl")?;
+                return Some(AffectedSelector::CreatureTypeYouControl {
+                    subtype: crate::core::Subtype::new(subtype),
+                });
+            }
+
+            // Pattern: TYPE.YouCtrl (e.g., "Goblin.YouCtrl")
+            // Simpler format without "Creature." prefix
+            if value.ends_with(".YouCtrl") && !value.contains('+') {
+                let subtype = value.strip_suffix(".YouCtrl")?;
+                // Verify it's not a generic type like "Creature" (already handled)
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
+                    return Some(AffectedSelector::CreatureTypeYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: TYPE.Other+YouCtrl (e.g., "Goblin.Other+YouCtrl")
+            // Simpler format without "Creature." prefix
+            if value.ends_with(".Other+YouCtrl") {
+                let subtype = value.strip_suffix(".Other+YouCtrl")?;
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
+                    return Some(AffectedSelector::CreatureTypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            None
+        }
         let mut abilities = Vec::new();
 
         for ability in &self.raw_abilities {
@@ -1415,19 +1471,30 @@ impl CardDefinition {
 
                     match key {
                         "Affected" => {
-                            // Check for comma-separated selectors (e.g., "Spider.Other+YouCtrl,Boar.Other+YouCtrl,...")
+                            // Check for comma-separated selectors (e.g., "Creature.Zombie+Other+YouCtrl,Creature.Skeleton+YouCtrl")
                             if value.contains(',') {
-                                // Parse comma-separated list of creature types with ".Other+YouCtrl" pattern
+                                // Parse comma-separated list of creature types
+                                // Handles both old format (TYPE.Other+YouCtrl) and new format (Creature.TYPE+Other+YouCtrl)
                                 let types: Vec<Subtype> = value
                                     .split(',')
                                     .filter_map(|part| {
                                         let part = part.trim();
-                                        // Extract type from "TYPE.Other+YouCtrl" pattern
-                                        if part.contains(".Other+YouCtrl") {
-                                            part.split('.').next().map(|t| Subtype::new(t.trim()))
-                                        } else {
-                                            None
+                                        // Pattern: Creature.TYPE+Other+YouCtrl (e.g., "Creature.Zombie+Other+YouCtrl")
+                                        if part.starts_with("Creature.") && part.contains("+YouCtrl") {
+                                            let remainder = part.strip_prefix("Creature.")?;
+                                            // Extract the TYPE part (before any + modifier)
+                                            let subtype = remainder.split('+').next()?.trim();
+                                            return Some(Subtype::new(subtype));
                                         }
+                                        // Pattern: TYPE.Other+YouCtrl (legacy format)
+                                        if part.contains(".Other+YouCtrl") {
+                                            return part.split('.').next().map(|t| Subtype::new(t.trim()));
+                                        }
+                                        // Pattern: TYPE.YouCtrl (no "Other" qualifier)
+                                        if part.contains(".YouCtrl") && !part.contains("+Other") {
+                                            return part.split('.').next().map(|t| Subtype::new(t.trim()));
+                                        }
+                                        None
                                     })
                                     .collect();
 
@@ -1441,16 +1508,25 @@ impl CardDefinition {
                                     affected = AffectedSelector::Self_;
                                 }
                             } else {
-                                // Single selector (existing logic)
+                                // Single selector - try exact match first, then pattern-based parsing
                                 affected = match value {
                                     "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
+                                    "Creature.EnchantedBy" => AffectedSelector::CreatureEnchantedBy,
                                     "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
                                     "Creature" => AffectedSelector::AllCreatures,
                                     "Card.Self" => AffectedSelector::Self_,
                                     "Land.AttachedBy" => AffectedSelector::LandAttachedBy,
                                     _ => {
-                                        eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
-                                        AffectedSelector::Self_
+                                        // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
+                                        if let Some(parsed) = parse_tribal_selector(value) {
+                                            parsed
+                                        } else {
+                                            eprintln!(
+                                                "Warning: Unknown Affected$ selector '{}' in '{}'",
+                                                value, ability
+                                            );
+                                            AffectedSelector::Self_
+                                        }
                                     }
                                 };
                             }

@@ -1,6 +1,24 @@
 # Perf Profiling in Podman Containers
 
-## Problem Summary
+## Status Update (2025-11-29)
+
+**Perf profiling now works in this container!** The container has been launched with the necessary capabilities (`CAP_PERFMON` and `CAP_SYS_ADMIN`), so `make perfprofile` works without requiring `sudo`.
+
+To verify perf is working:
+```bash
+# Quick test
+perf stat ls
+
+# Check capabilities
+capsh --print | grep cap_perfmon
+```
+
+The Makefile has been updated to:
+1. Remove the `sudo` requirement (no longer needed with expanded permissions)
+2. Fix `rewind_bench` CLI arguments (`--sequential` → `-m sequential`)
+3. Explicitly specify output file (`-o perf.data`) to prevent piping issues
+
+## Historical Context: Problem Summary
 
 When running `make perfprofile` in a Podman container, you'll encounter permission errors:
 
