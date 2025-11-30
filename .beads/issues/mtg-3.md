@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-23T00:00:00+00:00
+updated_at: 2025-11-30T14:51:46.958157234+00:00
 ---
 
 # Description
@@ -30,6 +30,17 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Completed Work
 
+**Death Triggers (2025-11, commit 6b4ff21):**
+- ✅ Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)
+- ✅ Execute death triggers before moving creatures to graveyard
+- ✅ Su-Chi death trigger adds {C}{C}{C}{C} correctly
+- ✅ Deterministic trigger ordering when multiple creatures die
+
+**Upkeep Triggers (2025-11, commit a11add5):**
+- ✅ Parse upkeep triggers (Mode$ Phase | Phase$ Upkeep)
+- ✅ ValidPlayer$ You filtering for controller-only triggers
+- ✅ Juzám Djinn / Serendib Efreet damage triggers work
+
 **Equipment System (2025-11):**
 - ✅ Equip ability timing (sorcery-speed)
 - ✅ Target validation
@@ -44,8 +55,4 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Entity not found: 0 bug (2eabce7) - Fixed activated abilities being parsed as spell effects
 
 ## Related Issues
-
-See individual mtg-* issues for specific features and bugs.
-
----
-Updated 2025-11-23_#895(2eabce7)
+- mtg-111: Phase triggers / Execute$ SVar resolution
