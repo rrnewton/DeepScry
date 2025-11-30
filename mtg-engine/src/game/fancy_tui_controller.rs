@@ -400,6 +400,9 @@ impl FancyTuiController {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
             |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
                 if let Some(card) = view.get_card(card_id) {
+                    log::debug!(target: "tui", "Categorizing card {} (id={}): land={} creature={} artifact={} enchant={}",
+                        card.name, card_id.as_u32(), card.is_land(), card.is_creature(), card.is_artifact(), card.is_enchantment());
+
                     if card.is_land() {
                         lands.push(card_id);
                     } else if card.is_creature() {
@@ -1052,6 +1055,9 @@ impl FancyTuiController {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
             |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
                 if let Some(card) = view.get_card(card_id) {
+                    log::debug!(target: "tui", "Categorizing card {} (id={}): land={} creature={} artifact={} enchant={}",
+                        card.name, card_id.as_u32(), card.is_land(), card.is_creature(), card.is_artifact(), card.is_enchantment());
+
                     if card.is_land() {
                         lands.push(card_id);
                     } else if card.is_creature() {
