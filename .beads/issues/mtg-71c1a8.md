@@ -4,97 +4,126 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2025-11-30T01:38:10.628973363+00:00
-updated_at: 2025-11-30T01:38:10.628973363+00:00
+updated_at: 2025-11-30T02:03:22.458879461+00:00
 ---
 
 # Description
 
 ## Bug Report
 
-**Card:** Vibrant Cityscape (Land)
-**Deck:** decks/ryan_spiderman_draft.dck or decks/julian_spiderman_draft.dck
+## Investigation (2025-11-29)
 
-### Expected Behavior
+### Root Cause FOUND
 
-Vibrant Cityscape has the activated ability:
-- "{T}, Sacrifice this land: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle."
+The Vibrant Cityscape ability IS being parsed and IS executing - but it's **missing player interaction**.
 
-When activated, the player should:
-1. Be prompted to search their library
-2. Choose a basic land card (or decline)
-3. The chosen land enters the battlefield tapped
-4. The library is shuffled
+**Code Flow:**
+1. ✅ Ability parsing:  correctly creates  effect
+2. ✅ Effect execution:  searches library and moves card
+3. ❌ **BUG**: No player choice - automatically picks first matching card (line 893)
 
-### Actual Behavior
-
-When Vibrant Cityscape's ability is activated:
-1. The player is given the option to activate it
-2. Upon activation, the ability fizzles - no library search occurs
-3. No basic land is put onto the battlefield
-4. The land is sacrificed (cost is paid) but the effect does nothing
-
-### Root Cause Hypothesis
-
-Possible issues:
-1. **Library search not implemented:** The ChangeZone effect with Origin=Library may not support player choice/searching
-2. **Missing player interaction:** The game may not be prompting for the tutoring choice
-3. **Ability parsing issue:** The ability script may not be fully parsed/executed
-
-This is likely a **missing feature** rather than a bug in existing code - library searching/tutoring effects may not be implemented yet.
-
-### Card Definition Reference
-
-```
-Name:Vibrant Cityscape
-ManaCost:no cost
-Types:Land
-A:AB$ ChangeZone | Cost$ T Sac<1/CARDNAME> | Origin$ Library | Destination$ Battlefield | Tapped$ True | ChangeType$ Land.Basic | ChangeTypeDesc$ basic land | SpellDescription$ Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.
+**Current Implementation (actions/mod.rs:887-897):**
+```rust
+let mut found_card = None;
+for &card_id in &library_cards {
+    if let Ok(card) = self.cards.get(card_id) {
+        if Self::card_matches_search_filter(card, card_type_filter) {
+            found_card = Some(card_id);  // AUTO-SELECT first match\!
+            break;  // No player choice\!
+        }
+    }
+}
 ```
 
-### Reproduction
+**What's Happening:**
+- Vibrant Cityscape ability activates correctly ✓
+- Cost is paid (tap + sacrifice land) ✓
+- SearchLibrary effect executes ✓
+- First basic land in library is auto-selected
+- Land enters battlefield tapped ✓
+- Library is shuffled ✓
+- **Player never sees library or makes a choice** ❌
 
-1. Play `./target/release/mtg tui --p1=fancy decks/ryan_spiderman_draft.dck decks/julian_spiderman_draft.dck`
-2. Play Vibrant Cityscape
-3. Activate its ability (tap and sacrifice)
-4. Observe: No library search occurs, ability fizzles
+### Why It Seems to "Fizzle"
 
-### Impact
+From the player's perspective:
+- They activate the ability
+- No library search UI appears
+- No choice is presented
+- A random land (first in library) appears on battlefield
+- This looks like it "did nothing" or "fizzled"
 
-**Severity:** High (for this card)
-- Makes Vibrant Cityscape completely useless
-- Affects all tutoring/library search effects
-- Common mechanic in Magic (fetchlands, tutors, etc.)
+But the code IS working - it's just invisible/automatic\!
 
-**Broader Impact:** Medium-High
-- Library searching is a core Magic mechanic
-- Affects many cards (fetchlands, Demonic Tutor, Evolving Wilds, etc.)
-- May require significant player interaction infrastructure
+### Fix Required
 
-### Related Issues/Features
+**Add player interaction to SearchLibrary:**
 
-- May need new player interaction type: "Choose from library"
-- May need library viewing UI in TUI
-- Related to general tutoring/searching mechanics
+1. **Controller method needed:**
+   ```rust
+   fn choose_from_library(
+       &mut self,
+       view: &GameStateView,
+       valid_cards: &[CardId],
+   ) -> Result<Option<CardId>>;  // None = decline to find
+   ```
 
-### Technical Notes
+2. **Update SearchLibrary execution (actions/mod.rs:863-915):**
+   - Filter library cards by card_type_filter
+   - Present filtered list to controller
+   - Let player choose (or decline)
+   - Move chosen card to destination
 
-**ChangeZone with Origin=Library:**
-- Requires player to search/view library
-- Requires filtering by ChangeType (e.g., Land.Basic)
-- Requires putting chosen card in Destination zone
-- Requires shuffling library afterward
+3. **TUI Implementation:**
+   - Show library view with filtered cards
+   - Allow scrolling/selection
+   - Confirm choice
+   - Similar to existing targeting UI
 
-**Possible implementation:**
-1. Add PlayerChoice::ChooseFromLibrary variant
-2. Filter library by ChangeType
-3. Present filtered cards to player
-4. Move chosen card to Destination
-5. Shuffle library
+### Implementation Plan
 
-### Next Steps
+1. Add  variant (if needed)
+2. Add  method
+3. Update  execution to call controller
+4. Implement TUI library view
+5. Handle "decline to find" (legal in MTG - you can fail to find)
 
-1. Check if ChangeZone Origin=Library is implemented at all
-2. Check if player library searching is implemented
-3. Implement library search player interaction if missing
-4. Add test case for basic tutoring effect
-5. Consider adding library view to TUI (mtg-122 may be related)
+### Test Case
+
+```rust
+// Test that SearchLibrary asks for player choice
+let mut game = GameState::new_two_player("P1", "P2", 20);
+let p1 = game.players[0].id;
+
+// Put basic lands in P1's library
+add_forest_to_library(&mut game, p1);
+add_plains_to_library(&mut game, p1);
+
+// Execute SearchLibrary for Land.Basic
+let effect = Effect::SearchLibrary {
+    player: p1,
+    card_type_filter: "Land.Basic".to_string(),
+    destination: Zone::Battlefield,
+    enters_tapped: true,
+    shuffle: true,
+};
+
+// Should call controller.choose_from_library([Forest, Plains])
+// Currently: auto-picks first without asking
+```
+
+### Priority
+
+**Medium-High** - Common mechanic (fetchlands, tutors, ramp spells)
+
+### Workaround
+
+For testing: The ability DOES work, it just auto-selects the first matching card. So Vibrant Cityscape will fetch a basic land, it's just not interactive.
+
+---
+
+**Status:** Root cause identified. Needs player interaction implementation.
+
+**Complexity:** Medium (requires TUI changes + controller method)
+
+**Related:** Similar issue affects ALL library search effects (Demonic Tutor, Evolving Wilds, fetchlands, etc.)
