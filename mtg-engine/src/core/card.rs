@@ -111,8 +111,8 @@ impl CardCache {
         let text_lower = text.to_lowercase();
         let name_lower = name.to_lowercase();
 
-        // Compute mana production from card text
-        let mana_production = Self::compute_mana_production(&text_lower);
+        // Compute mana production from card text and name
+        let mana_production = Self::compute_mana_production(&text_lower, &name_lower);
         let is_mana_source = mana_production.produces_mana();
 
         CardCache {
@@ -149,9 +149,13 @@ impl CardCache {
         }
     }
 
-    /// Compute mana production from lowercase card text
+    /// Compute mana production from lowercase card text and name
     /// Returns an upper bound on what this card can produce (OR semantics)
-    fn compute_mana_production(text_lower: &str) -> ManaProduction {
+    ///
+    /// If text doesn't specify mana production, falls back to checking for
+    /// basic land names (Plains, Island, Swamp, Mountain, Forest, Wastes).
+    /// This handles tests/examples that create lands without setting oracle text.
+    fn compute_mana_production(text_lower: &str, name_lower: &str) -> ManaProduction {
         use crate::core::{ManaColor, ManaProductionKind};
         use crate::game::mana_colors::ManaColors;
 
@@ -183,9 +187,9 @@ impl CardCache {
         }
 
         // Prioritize colored mana over colorless
-        match colors.len() {
+        let production_from_text = match colors.len() {
             0 if produces_colorless => ManaProduction::free(ManaProductionKind::Colorless),
-            0 => ManaProduction::default(), // No mana production
+            0 => ManaProduction::default(), // No mana production from text
             1 => {
                 // Single color - use Fixed variant
                 let color = colors.iter().next().unwrap();
@@ -195,7 +199,27 @@ impl CardCache {
                 // Multiple colors - use Choice variant (OR logic: choose one)
                 ManaProduction::free(ManaProductionKind::Choice(colors))
             }
+        };
+
+        // If text doesn't specify mana production, check for basic land names
+        // This handles tests/examples that create lands without setting text
+        if !production_from_text.produces_mana() {
+            if name_lower.contains("plains") {
+                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White));
+            } else if name_lower.contains("island") {
+                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue));
+            } else if name_lower.contains("swamp") {
+                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black));
+            } else if name_lower.contains("mountain") {
+                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red));
+            } else if name_lower.contains("forest") {
+                return ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green));
+            } else if name_lower.contains("wastes") {
+                return ManaProduction::free(ManaProductionKind::Colorless);
+            }
         }
+
+        production_from_text
     }
 }
 

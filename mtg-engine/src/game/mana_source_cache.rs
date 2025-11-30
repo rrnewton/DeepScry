@@ -165,6 +165,13 @@ impl ManaSourceCache {
             return;
         }
 
+        // Creatures with mana abilities are always complex sources
+        // (due to summoning sickness and other creature-specific rules)
+        if card.is_creature() {
+            self.complex_sources.push(card_id);
+            return;
+        }
+
         // Classify card based on mana production type
         let production = &card.cache.mana_production;
 
