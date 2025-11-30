@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..5 {
         let land_id = game.next_card_id();
         let mut land = Card::new(land_id, format!("Forest {}", i + 1), alice_id);
-        land.types.push(CardType::Land);
+        land.add_type(CardType::Land);
         land.colors.push(mtg_forge_rs::core::Color::Green);
         game.cards.insert(land_id, land);
         game.battlefield.add(land_id);
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Adding target creature for Bob ===");
     let target_id = game.next_entity_id();
     let mut target = Card::new(target_id, "Grizzly Bears".to_string(), bob_id);
-    target.types.push(CardType::Creature);
+    target.add_type(CardType::Creature);
     target.set_power(Some(2));
     target.set_toughness(Some(2));
     target.mana_cost = ManaCost::from_string("1G");
@@ -109,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Manually create Elvish Visionary for demo
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Elvish Visionary".to_string(), alice_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(1));
         creature.set_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("1G");
@@ -162,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Manually create Flametongue Kavu for demo
     let kavu_id = game.next_entity_id();
     let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), alice_id);
-    kavu.types.push(CardType::Creature);
+    kavu.add_type(CardType::Creature);
     kavu.set_power(Some(4));
     kavu.set_toughness(Some(2));
     kavu.mana_cost = ManaCost::from_string("3R");

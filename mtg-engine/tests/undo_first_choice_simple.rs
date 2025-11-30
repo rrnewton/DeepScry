@@ -21,7 +21,7 @@ async fn test_undo_first_choice_direct() -> Result<()> {
     // Add a Forest to P1's hand
     let forest_id = game.next_card_id();
     let mut forest = Card::new(forest_id, "Forest", p1_id);
-    forest.types.push(CardType::Land);
+    forest.add_type(CardType::Land);
     game.cards.insert(forest_id, forest);
 
     if let Some(zones) = game.get_player_zones_mut(p1_id) {

@@ -473,7 +473,7 @@ fn create_creature(
 ) -> CardId {
     let card_id = game.next_card_id();
     let mut card = Card::new(card_id, name.to_string(), owner);
-    card.types.push(CardType::Creature);
+    card.add_type(CardType::Creature);
     card.set_power(Some(power));
     card.set_toughness(Some(toughness));
     card.controller = owner;

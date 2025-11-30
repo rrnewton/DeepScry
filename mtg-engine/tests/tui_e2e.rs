@@ -262,7 +262,7 @@ async fn test_discard_to_hand_size() -> Result<()> {
     for i in 0..10 {
         let card_id = EntityId::<Card>::new(1000 + i);
         let mut card = Card::new(card_id, "Mountain", p1_id);
-        card.types.push(CardType::Land);
+        card.add_type(CardType::Land);
         game.cards.insert(card_id, card);
 
         if let Some(zones) = game.get_player_zones_mut(p1_id) {
@@ -583,7 +583,7 @@ async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
     // Create a test spell that costs 2W (2 generic + 1 white)
     let spell_id = EntityId::<Card>::new(9000);
     let mut spell_card = Card::new(spell_id, "Test Spell", p1_id);
-    spell_card.types.push(CardType::Instant);
+    spell_card.add_type(CardType::Instant);
     spell_card.mana_cost = ManaCost {
         generic: 2,
         white: 1,

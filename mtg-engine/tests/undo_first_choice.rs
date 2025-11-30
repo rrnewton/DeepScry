@@ -180,17 +180,17 @@ async fn test_undo_first_choice_forest() -> Result<()> {
     // Add multiple Forests to P1's hand so they can make choices on multiple turns
     let forest1_id = game.next_card_id();
     let mut forest1 = Card::new(forest1_id, "Forest", p1_id);
-    forest1.types.push(CardType::Land);
+    forest1.add_type(CardType::Land);
     game.cards.insert(forest1_id, forest1);
 
     let forest2_id = game.next_card_id();
     let mut forest2 = Card::new(forest2_id, "Forest", p1_id);
-    forest2.types.push(CardType::Land);
+    forest2.add_type(CardType::Land);
     game.cards.insert(forest2_id, forest2);
 
     let forest3_id = game.next_card_id();
     let mut forest3 = Card::new(forest3_id, "Forest", p1_id);
-    forest3.types.push(CardType::Land);
+    forest3.add_type(CardType::Land);
     game.cards.insert(forest3_id, forest3);
 
     if let Some(zones) = game.get_player_zones_mut(p1_id) {

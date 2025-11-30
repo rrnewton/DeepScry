@@ -40,7 +40,7 @@ mod tests {
         // Create a 2/2 creature on battlefield
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -55,7 +55,7 @@ mod tests {
         // Create Giant Growth (pump +3/+3)
         let pump_spell_id = game.next_card_id();
         let mut pump_spell = Card::new(pump_spell_id, "Giant Growth".to_string(), p1_id);
-        pump_spell.types.push(CardType::Instant);
+        pump_spell.add_type(CardType::Instant);
         pump_spell.mana_cost = ManaCost::from_string("G");
         // Target the creature we created
         pump_spell.effects.push(Effect::PumpCreature {
@@ -107,7 +107,7 @@ mod tests {
         // Create a 2/2 creature on battlefield
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -155,7 +155,7 @@ mod tests {
         // P1: Create a 3/3 creature without first strike (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Hill Giant".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -166,7 +166,7 @@ mod tests {
         // P2: Create a 2/2 creature with First Strike (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "First Strike Knight".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -224,7 +224,7 @@ mod tests {
         // Create an untapped creature for P2
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p2_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p2_id;
@@ -238,7 +238,7 @@ mod tests {
         // Create a Tap spell
         let tap_spell_id = game.next_card_id();
         let mut tap_spell = Card::new(tap_spell_id, "Frost Breath".to_string(), p1_id);
-        tap_spell.types.push(CardType::Instant);
+        tap_spell.add_type(CardType::Instant);
         tap_spell.mana_cost = ManaCost::from_string("2U");
         // Target the specific creature
         tap_spell.effects.push(Effect::TapPermanent { target: creature_id });
@@ -342,7 +342,7 @@ mod tests {
         // P1 casts Lightning Bolt (target spell to be countered)
         let bolt_id = game.next_card_id();
         let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p1_id);
-        bolt.types.push(CardType::Instant);
+        bolt.add_type(CardType::Instant);
         bolt.mana_cost = ManaCost::from_string("R");
         bolt.effects.push(Effect::DealDamage {
             target: crate::core::TargetRef::Player(p2_id),
@@ -354,7 +354,7 @@ mod tests {
         // P2 responds with Counterspell
         let counter_id = game.next_card_id();
         let mut counterspell = Card::new(counter_id, "Counterspell".to_string(), p2_id);
-        counterspell.types.push(CardType::Instant);
+        counterspell.add_type(CardType::Instant);
         counterspell.mana_cost = ManaCost::from_string("UU");
         counterspell.effects.push(Effect::CounterSpell { target: bolt_id });
         game.cards.insert(counter_id, counterspell);
@@ -398,7 +398,7 @@ mod tests {
         // P1 casts Lightning Bolt
         let bolt_id = game.next_card_id();
         let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p1_id);
-        bolt.types.push(CardType::Instant);
+        bolt.add_type(CardType::Instant);
         bolt.mana_cost = ManaCost::from_string("R");
         bolt.effects.push(Effect::DealDamage {
             target: crate::core::TargetRef::Player(p2_id),
@@ -410,7 +410,7 @@ mod tests {
         // P2 responds with Counterspell using placeholder target (CardId::new(0))
         let counter_id = game.next_card_id();
         let mut counterspell = Card::new(counter_id, "Counterspell".to_string(), p2_id);
-        counterspell.types.push(CardType::Instant);
+        counterspell.add_type(CardType::Instant);
         counterspell.mana_cost = ManaCost::from_string("UU");
         // Use placeholder target - should automatically target opponent's spell
         counterspell.effects.push(Effect::CounterSpell {
@@ -452,7 +452,7 @@ mod tests {
         // Create a creature with an ETB trigger (like Elvish Visionary)
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Elvish Visionary".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(1));
         creature.set_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("1G");
@@ -496,7 +496,7 @@ mod tests {
         // P2: Create a target creature
         let target_creature_id = game.next_entity_id();
         let mut target = Card::new(target_creature_id, "Grizzly Bears".to_string(), p2_id);
-        target.types.push(CardType::Creature);
+        target.add_type(CardType::Creature);
         target.set_power(Some(2));
         target.set_toughness(Some(2));
         game.cards.insert(target_creature_id, target);
@@ -505,7 +505,7 @@ mod tests {
         // P1: Create a creature with ETB damage trigger (like Flametongue Kavu)
         let kavu_id = game.next_entity_id();
         let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), p1_id);
-        kavu.types.push(CardType::Creature);
+        kavu.add_type(CardType::Creature);
         kavu.set_power(Some(4));
         kavu.set_toughness(Some(2));
         kavu.mana_cost = ManaCost::from_string("3R");
@@ -690,7 +690,7 @@ mod tests {
         // Create a creature with ETB gain life trigger
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Soul Warden".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(1));
         creature.set_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("W");
@@ -736,7 +736,7 @@ mod tests {
         // Create a target creature on battlefield
         let target_id = game.next_entity_id();
         let mut target = Card::new(target_id, "Grizzly Bears".to_string(), p1_id);
-        target.types.push(CardType::Creature);
+        target.add_type(CardType::Creature);
         target.set_power(Some(2));
         target.set_toughness(Some(2));
         game.cards.insert(target_id, target);
@@ -745,7 +745,7 @@ mod tests {
         // Create a creature with ETB pump trigger
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Glorious Anthem".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(1));
         creature.set_toughness(Some(1));
 

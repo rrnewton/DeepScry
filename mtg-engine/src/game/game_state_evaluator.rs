@@ -453,7 +453,7 @@ mod tests {
 
         // Test basic land (Forest: T: Add G)
         let mut forest = Card::new(CardId::new(1), "Forest", player_id);
-        forest.types.push(CardType::Land);
+        forest.add_type(CardType::Land);
 
         let mut green_mana = ManaCost::new();
         green_mana.green = 1;
@@ -474,7 +474,7 @@ mod tests {
 
         // Test dual land (Command Tower: T: Add W or U)
         let mut dual_land = Card::new(CardId::new(2), "Command Tower", player_id);
-        dual_land.types.push(CardType::Land);
+        dual_land.add_type(CardType::Land);
 
         let mut white_mana = ManaCost::new();
         white_mana.white = 1;
@@ -509,7 +509,7 @@ mod tests {
 
         // Test utility land with tap ability
         let mut utility_land = Card::new(CardId::new(3), "Utility Land", player_id);
-        utility_land.types.push(CardType::Land);
+        utility_land.add_type(CardType::Land);
 
         // Add mana ability
         let mut colorless = ManaCost::new();

@@ -3268,7 +3268,7 @@ mod tests {
         let mut bears = Card::new(EntityId::new(10), "Grizzly Bears", player_id);
         bears.set_power(Some(2));
         bears.set_toughness(Some(2));
-        bears.types.push(CardType::Creature);
+        bears.add_type(CardType::Creature);
 
         // Test Case 1: Pump that doesn't kill the creature (+3/+3)
         // Should return true if it would enable attacking
@@ -3315,13 +3315,13 @@ mod tests {
         let mut ground_creature = Card::new(EntityId::new(10), "Grizzly Bears", player_id);
         ground_creature.set_power(Some(2));
         ground_creature.set_toughness(Some(2));
-        ground_creature.types.push(CardType::Creature);
+        ground_creature.add_type(CardType::Creature);
 
         // Create a 1/1 flying creature (opponent's blocker)
         let mut flying_creature = Card::new(EntityId::new(11), "Bird", EntityId::new(2));
         flying_creature.set_power(Some(1));
         flying_creature.set_toughness(Some(1));
-        flying_creature.types.push(CardType::Creature);
+        flying_creature.add_type(CardType::Creature);
         flying_creature.keywords.insert(Keyword::Flying);
 
         // Scenario 1: Ground creature attacks, flying creature tries to block

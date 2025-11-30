@@ -15,7 +15,7 @@ mod tests {
         // Create a mountain card
         let card_id = game.next_entity_id();
         let mut card = Card::new(card_id, "Mountain".to_string(), p1_id);
-        card.types.push(CardType::Land);
+        card.add_type(CardType::Land);
         game.cards.insert(card_id, card);
 
         // Add to hand
@@ -43,7 +43,7 @@ mod tests {
         // Create a mountain on battlefield
         let card_id = game.next_entity_id();
         let mut card = Card::new(card_id, "Mountain".to_string(), p1_id);
-        card.types.push(CardType::Land);
+        card.add_type(CardType::Land);
         game.cards.insert(card_id, card);
         game.battlefield.add(card_id);
 
@@ -106,7 +106,7 @@ mod tests {
         // Create a 2/2 creature on battlefield
         let card_id = game.next_card_id();
         let mut card = Card::new(card_id, "Grizzly Bears".to_string(), p1_id);
-        card.types.push(CardType::Creature);
+        card.add_type(CardType::Creature);
         card.set_power(Some(2));
         card.set_toughness(Some(2));
         game.cards.insert(card_id, card);

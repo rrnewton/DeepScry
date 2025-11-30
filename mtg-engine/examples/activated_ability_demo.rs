@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     println!("=== Turn 1: Alice casts Prodigal Sorcerer ===");
     let prodigal_id = game.next_card_id();
     let mut prodigal = Card::new(prodigal_id, "Prodigal Sorcerer".to_string(), alice_id);
-    prodigal.types.push(CardType::Creature);
+    prodigal.add_type(CardType::Creature);
     prodigal.set_power(Some(1));
     prodigal.set_toughness(Some(1));
 

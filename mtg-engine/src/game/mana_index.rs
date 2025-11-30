@@ -464,7 +464,7 @@ mod tests {
         // Add a Mountain
         let mountain_id = game.next_card_id();
         let mut mountain = Card::new(mountain_id, "Mountain".to_string(), p1_id);
-        mountain.types.push(CardType::Land);
+        mountain.add_type(CardType::Land);
         mountain.controller = p1_id;
         game.cards.insert(mountain_id, mountain);
         game.battlefield.add(mountain_id);
@@ -489,7 +489,7 @@ mod tests {
         // Add a Forest incrementally
         let forest_id = game.next_card_id();
         let mut forest = Card::new(forest_id, "Forest".to_string(), p1_id);
-        forest.types.push(CardType::Land);
+        forest.add_type(CardType::Land);
         forest.controller = p1_id;
         game.cards.insert(forest_id, forest);
         game.battlefield.add(forest_id);
@@ -511,7 +511,7 @@ mod tests {
         // Add an Island
         let island_id = game.next_card_id();
         let mut island = Card::new(island_id, "Island".to_string(), p1_id);
-        island.types.push(CardType::Land);
+        island.add_type(CardType::Land);
         island.controller = p1_id;
         game.cards.insert(island_id, island);
         game.battlefield.add(island_id);

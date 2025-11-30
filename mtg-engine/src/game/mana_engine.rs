@@ -1024,14 +1024,14 @@ mod tests {
         // Add some basic lands to the battlefield
         let mountain_id = game.next_card_id();
         let mut mountain = Card::new(mountain_id, "Mountain".to_string(), p1_id);
-        mountain.types.push(CardType::Land);
+        mountain.add_type(CardType::Land);
         mountain.controller = p1_id;
         game.cards.insert(mountain_id, mountain);
         game.battlefield.add(mountain_id);
 
         let island_id = game.next_card_id();
         let mut island = Card::new(island_id, "Island".to_string(), p1_id);
-        island.types.push(CardType::Land);
+        island.add_type(CardType::Land);
         island.controller = p1_id;
         game.cards.insert(island_id, island);
         game.battlefield.add(island_id);
@@ -1059,7 +1059,7 @@ mod tests {
         for _ in 0..3 {
             let land_id = game.next_card_id();
             let mut land = Card::new(land_id, "Mountain".to_string(), p1_id);
-            land.types.push(CardType::Land);
+            land.add_type(CardType::Land);
             land.controller = p1_id;
             game.cards.insert(land_id, land);
             game.battlefield.add(land_id);
@@ -1091,14 +1091,14 @@ mod tests {
         // Add a Forest and Llanowar Elves
         let forest_id = game.next_card_id();
         let mut forest = Card::new(forest_id, "Forest".to_string(), p1_id);
-        forest.types.push(CardType::Land);
+        forest.add_type(CardType::Land);
         forest.controller = p1_id;
         game.cards.insert(forest_id, forest);
         game.battlefield.add(forest_id);
 
         let elf_id = game.next_card_id();
         let mut elf = Card::new(elf_id, "Llanowar Elves".to_string(), p1_id);
-        elf.types.push(CardType::Creature);
+        elf.add_type(CardType::Creature);
         elf.controller = p1_id;
         elf.set_text("{T}: Add {G}.".to_string());
         // Add explicit mana ability (mana production is derived from abilities, not text)
@@ -1142,7 +1142,7 @@ mod tests {
         // Add a Forest
         let forest_id = game.next_card_id();
         let mut forest = Card::new(forest_id, "Forest".to_string(), p1_id);
-        forest.types.push(CardType::Land);
+        forest.add_type(CardType::Land);
         forest.controller = p1_id;
         game.cards.insert(forest_id, forest);
         game.battlefield.add(forest_id);
@@ -1150,7 +1150,7 @@ mod tests {
         // Add Llanowar Elves with summoning sickness (entered this turn)
         let elf_id = game.next_card_id();
         let mut elf = Card::new(elf_id, "Llanowar Elves".to_string(), p1_id);
-        elf.types.push(CardType::Creature);
+        elf.add_type(CardType::Creature);
         elf.controller = p1_id;
         elf.set_text("{T}: Add {G}.".to_string());
         // Add explicit mana ability (mana production is derived from abilities, not text)
@@ -1201,7 +1201,7 @@ mod tests {
         // Create Mishra's Factory - a land that produces colorless mana
         let factory_id = game.next_card_id();
         let mut factory = Card::new(factory_id, "Mishra's Factory".to_string(), p1_id);
-        factory.types.push(CardType::Land);
+        factory.add_type(CardType::Land);
         factory.controller = p1_id;
         factory.set_text("{T}: Add {C}.\n{1}: Mishra's Factory becomes a 2/2 Assembly-Worker artifact creature until end of turn. It's still a land.".to_string());
         // Add explicit mana ability (mana production is derived from abilities, not text)

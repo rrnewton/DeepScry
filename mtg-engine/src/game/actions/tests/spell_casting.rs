@@ -15,7 +15,7 @@ mod tests {
         // Create a Lightning Bolt in hand (cost: R)
         let bolt_id = game.next_card_id();
         let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p1_id);
-        bolt.types.push(CardType::Instant);
+        bolt.add_type(CardType::Instant);
         bolt.mana_cost = ManaCost::from_string("R");
         game.cards.insert(bolt_id, bolt);
 
@@ -54,7 +54,7 @@ mod tests {
         // Create a spell with cost 2R
         let spell_id = game.next_card_id();
         let mut spell = Card::new(spell_id, "Lava Spike".to_string(), p1_id);
-        spell.types.push(CardType::Sorcery);
+        spell.add_type(CardType::Sorcery);
         spell.mana_cost = ManaCost::from_string("2R");
         game.cards.insert(spell_id, spell);
 
@@ -145,7 +145,7 @@ mod tests {
         // Create Lightning Bolt with damage effect
         let bolt_id = game.next_card_id();
         let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p1_id);
-        bolt.types.push(CardType::Instant);
+        bolt.add_type(CardType::Instant);
         bolt.mana_cost = ManaCost::from_string("R");
         bolt.effects.push(Effect::DealDamage {
             target: TargetRef::Player(p2_id),
@@ -190,7 +190,7 @@ mod tests {
         // Create a Draw spell (like Divination)
         let draw_spell_id = game.next_card_id();
         let mut draw_spell = Card::new(draw_spell_id, "Divination".to_string(), p1_id);
-        draw_spell.types.push(CardType::Sorcery);
+        draw_spell.add_type(CardType::Sorcery);
         draw_spell.mana_cost = ManaCost::from_string("2U");
         // Use placeholder player ID 0 which will be replaced with card owner
         draw_spell.effects.push(Effect::DrawCards {
@@ -241,7 +241,7 @@ mod tests {
         // Create a creature for P2 (the target)
         let target_creature_id = game.next_card_id();
         let mut target = Card::new(target_creature_id, "Grizzly Bears".to_string(), p2_id);
-        target.types.push(CardType::Creature);
+        target.add_type(CardType::Creature);
         target.set_power(Some(2));
         target.set_toughness(Some(2));
         target.controller = p2_id;
@@ -251,7 +251,7 @@ mod tests {
         // Create a Destroy spell (like Terror)
         let destroy_spell_id = game.next_card_id();
         let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
-        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Use placeholder card ID 0 which will be replaced with an opponent's creature
         destroy_spell
@@ -307,7 +307,7 @@ mod tests {
         // Create a GainLife spell (like Angel's Mercy)
         let gainlife_spell_id = game.next_card_id();
         let mut gainlife_spell = Card::new(gainlife_spell_id, "Angel's Mercy".to_string(), p1_id);
-        gainlife_spell.types.push(CardType::Instant);
+        gainlife_spell.add_type(CardType::Instant);
         gainlife_spell.mana_cost = ManaCost::from_string("2WW");
         // Use placeholder player ID 0 which will be replaced with card controller
         gainlife_spell.effects.push(Effect::GainLife {

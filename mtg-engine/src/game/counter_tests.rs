@@ -11,7 +11,7 @@ fn test_put_counter_effect() {
     // Create a creature on the battlefield
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
-    creature.types.push(CardType::Creature);
+    creature.add_type(CardType::Creature);
     creature.set_power(Some(2));
     creature.set_toughness(Some(2));
     game.cards.insert(creature_id, creature);
@@ -41,7 +41,7 @@ fn test_remove_counter_effect() {
     // Create a creature with counters
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
-    creature.types.push(CardType::Creature);
+    creature.add_type(CardType::Creature);
     creature.set_power(Some(2));
     creature.set_toughness(Some(2));
     creature.add_counter(CounterType::P1P1, 5);
@@ -71,7 +71,7 @@ fn test_counter_undo() {
     // Create a creature on the battlefield
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
-    creature.types.push(CardType::Creature);
+    creature.add_type(CardType::Creature);
     creature.set_power(Some(2));
     creature.set_toughness(Some(2));
     game.cards.insert(creature_id, creature);
@@ -104,7 +104,7 @@ fn test_counter_annihilation_through_effects() {
     // Create a creature on the battlefield
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
-    creature.types.push(CardType::Creature);
+    creature.add_type(CardType::Creature);
     creature.set_power(Some(2));
     creature.set_toughness(Some(2));
     game.cards.insert(creature_id, creature);
@@ -142,7 +142,7 @@ fn test_multiple_counter_types() {
     // Create a permanent on the battlefield
     let permanent_id = game.next_card_id();
     let mut permanent = Card::new(permanent_id, "Test Artifact", p1_id);
-    permanent.types.push(CardType::Artifact);
+    permanent.add_type(CardType::Artifact);
     game.cards.insert(permanent_id, permanent);
     game.battlefield.add(permanent_id);
 
@@ -166,7 +166,7 @@ fn test_remove_counter_undo() {
     // Create a creature with counters
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, "Test Creature", p1_id);
-    creature.types.push(CardType::Creature);
+    creature.add_type(CardType::Creature);
     creature.add_counter(CounterType::P1P1, 5);
     game.cards.insert(creature_id, creature);
     game.battlefield.add(creature_id);

@@ -16,7 +16,7 @@ mod tests {
         // Create a tapped land for P1
         let land_id = game.next_card_id();
         let mut land = Card::new(land_id, "Forest".to_string(), p1_id);
-        land.types.push(CardType::Land);
+        land.add_type(CardType::Land);
         land.controller = p1_id;
         land.tapped = true; // Start tapped
         game.cards.insert(land_id, land);
@@ -29,7 +29,7 @@ mod tests {
         // Create an Untap spell
         let untap_spell_id = game.next_card_id();
         let mut untap_spell = Card::new(untap_spell_id, "Untap".to_string(), p1_id);
-        untap_spell.types.push(CardType::Instant);
+        untap_spell.add_type(CardType::Instant);
         untap_spell.mana_cost = ManaCost::from_string("U");
         // Target the specific land
         untap_spell.effects.push(Effect::UntapPermanent { target: land_id });
@@ -69,7 +69,7 @@ mod tests {
         // P1: Create a 5/5 creature with Trample (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Craw Wurm".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -81,7 +81,7 @@ mod tests {
         // P2: Create a 2/2 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -128,7 +128,7 @@ mod tests {
         // P1: Create a 3/3 creature with Trample (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Trained Armodon".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -140,7 +140,7 @@ mod tests {
         // P2: Create a 3/3 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(3));
         blocker.set_toughness(Some(3));
         blocker.controller = p2_id;
@@ -186,7 +186,7 @@ mod tests {
         // P1: Create a 5/5 creature WITHOUT Trample (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Serra Angel".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -198,7 +198,7 @@ mod tests {
         // P2: Create a 1/1 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Llanowar Elves".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(1));
         blocker.set_toughness(Some(1));
         blocker.controller = p2_id;
@@ -244,7 +244,7 @@ mod tests {
         // P1: Create a 7/7 creature with Trample (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Enormous Baloth".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(7));
         attacker.set_toughness(Some(7));
         attacker.controller = p1_id;
@@ -256,7 +256,7 @@ mod tests {
         // P2: Create two blockers (2/2 and 3/3)
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Grizzly Bears".to_string(), p2_id);
-        blocker1.types.push(CardType::Creature);
+        blocker1.add_type(CardType::Creature);
         blocker1.set_power(Some(2));
         blocker1.set_toughness(Some(2));
         blocker1.controller = p2_id;
@@ -265,7 +265,7 @@ mod tests {
 
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Hill Giant".to_string(), p2_id);
-        blocker2.types.push(CardType::Creature);
+        blocker2.add_type(CardType::Creature);
         blocker2.set_power(Some(3));
         blocker2.set_toughness(Some(3));
         blocker2.controller = p2_id;
@@ -320,7 +320,7 @@ mod tests {
         // P1: Create a 3/3 creature with Lifelink (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Healer's Hawk".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -332,7 +332,7 @@ mod tests {
         // P2: Create a 2/2 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -379,7 +379,7 @@ mod tests {
         // P1: Create a 4/4 creature with Lifelink (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Ajani's Pridemate".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(4));
         attacker.set_toughness(Some(4));
         attacker.controller = p1_id;
@@ -426,7 +426,7 @@ mod tests {
         // P1: Create a 3/3 creature (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Hill Giant".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -437,7 +437,7 @@ mod tests {
         // P2: Create a 2/2 creature with Lifelink (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Vampire Cutthroat".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -499,7 +499,7 @@ mod tests {
         // P1: Create a 5/5 creature with Lifelink AND Trample (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Baneslayer Angel".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -512,7 +512,7 @@ mod tests {
         // P2: Create a 2/2 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -568,7 +568,7 @@ mod tests {
         // P1: Create a 1/1 creature with Deathtouch (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Deadly Recluse".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(1));
         attacker.set_toughness(Some(1));
         attacker.controller = p1_id;
@@ -580,7 +580,7 @@ mod tests {
         // P2: Create a 5/5 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Serra Angel".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(5));
         blocker.set_toughness(Some(5));
         blocker.controller = p2_id;
@@ -626,7 +626,7 @@ mod tests {
         // P1: Create a 5/5 creature (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Serra Angel".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -637,7 +637,7 @@ mod tests {
         // P2: Create a 1/1 creature with Deathtouch (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Typhoid Rats".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(1));
         blocker.set_toughness(Some(1));
         blocker.controller = p2_id;
@@ -684,7 +684,7 @@ mod tests {
         // P1: Create a 5/5 creature with Deathtouch AND Trample (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Chevill, Bane of Monsters".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -697,7 +697,7 @@ mod tests {
         // P2: Create a 3/3 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(3));
         blocker.set_toughness(Some(3));
         blocker.controller = p2_id;
@@ -753,7 +753,7 @@ mod tests {
         // P1: Create a 3/3 creature with Deathtouch (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Gifted Aetherborn".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -765,7 +765,7 @@ mod tests {
         // P2: Create two blockers (both 5/5)
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Serra Angel".to_string(), p2_id);
-        blocker1.types.push(CardType::Creature);
+        blocker1.add_type(CardType::Creature);
         blocker1.set_power(Some(5));
         blocker1.set_toughness(Some(5));
         blocker1.controller = p2_id;
@@ -774,7 +774,7 @@ mod tests {
 
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Air Elemental".to_string(), p2_id);
-        blocker2.types.push(CardType::Creature);
+        blocker2.add_type(CardType::Creature);
         blocker2.set_power(Some(5));
         blocker2.set_toughness(Some(5));
         blocker2.controller = p2_id;
@@ -831,7 +831,7 @@ mod tests {
         // P1: Create a 3/3 creature with Menace (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Mardu Skullhunter".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -843,7 +843,7 @@ mod tests {
         // P2: Create two blockers
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Grizzly Bears".to_string(), p2_id);
-        blocker1.types.push(CardType::Creature);
+        blocker1.add_type(CardType::Creature);
         blocker1.set_power(Some(2));
         blocker1.set_toughness(Some(2));
         blocker1.controller = p2_id;
@@ -852,7 +852,7 @@ mod tests {
 
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Elite Vanguard".to_string(), p2_id);
-        blocker2.types.push(CardType::Creature);
+        blocker2.add_type(CardType::Creature);
         blocker2.set_power(Some(2));
         blocker2.set_toughness(Some(1));
         blocker2.controller = p2_id;
@@ -898,7 +898,7 @@ mod tests {
         // P1: Create a 3/3 creature with Menace (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Goblin Heelcutter".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -940,7 +940,7 @@ mod tests {
         // P1: Create a 5/5 creature with Menace (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Charging Monstrosaur".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -952,7 +952,7 @@ mod tests {
         // P2: Create three blockers (1/1 each)
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Soldier Token 1".to_string(), p2_id);
-        blocker1.types.push(CardType::Creature);
+        blocker1.add_type(CardType::Creature);
         blocker1.set_power(Some(1));
         blocker1.set_toughness(Some(1));
         blocker1.controller = p2_id;
@@ -961,7 +961,7 @@ mod tests {
 
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Soldier Token 2".to_string(), p2_id);
-        blocker2.types.push(CardType::Creature);
+        blocker2.add_type(CardType::Creature);
         blocker2.set_power(Some(1));
         blocker2.set_toughness(Some(1));
         blocker2.controller = p2_id;
@@ -970,7 +970,7 @@ mod tests {
 
         let blocker3_id = game.next_entity_id();
         let mut blocker3 = Card::new(blocker3_id, "Soldier Token 3".to_string(), p2_id);
-        blocker3.types.push(CardType::Creature);
+        blocker3.add_type(CardType::Creature);
         blocker3.set_power(Some(1));
         blocker3.set_toughness(Some(1));
         blocker3.controller = p2_id;
@@ -1019,7 +1019,7 @@ mod tests {
         // P2: Create a hexproof creature
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
-        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.add_type(CardType::Creature);
         hexproof_creature.set_power(Some(1));
         hexproof_creature.set_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
@@ -1029,7 +1029,7 @@ mod tests {
         // P2: Create a normal creature
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
-        normal_creature.types.push(CardType::Creature);
+        normal_creature.add_type(CardType::Creature);
         normal_creature.set_power(Some(2));
         normal_creature.set_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
@@ -1038,7 +1038,7 @@ mod tests {
         // P1: Cast a destroy spell (Terror) - should target normal creature, not hexproof one
         let destroy_spell_id = game.next_entity_id();
         let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
-        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Use placeholder card ID 0 which will be replaced with a targetable opponent's creature
         destroy_spell
@@ -1079,7 +1079,7 @@ mod tests {
         // P2: Create a hexproof creature
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
-        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.add_type(CardType::Creature);
         hexproof_creature.set_power(Some(1));
         hexproof_creature.set_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
@@ -1089,7 +1089,7 @@ mod tests {
         // P2: Create a normal creature
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
-        normal_creature.types.push(CardType::Creature);
+        normal_creature.add_type(CardType::Creature);
         normal_creature.set_power(Some(2));
         normal_creature.set_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
@@ -1098,7 +1098,7 @@ mod tests {
         // P1: Cast a tap spell - should target normal creature, not hexproof one
         let tap_spell_id = game.next_entity_id();
         let mut tap_spell = Card::new(tap_spell_id, "Frost Breath".to_string(), p1_id);
-        tap_spell.types.push(CardType::Instant);
+        tap_spell.add_type(CardType::Instant);
         tap_spell.mana_cost = ManaCost::from_string("2U");
         // Use placeholder card ID 0 which will be replaced with a targetable opponent's creature
         tap_spell.effects.push(Effect::TapPermanent { target: CardId::new(0) });
@@ -1131,7 +1131,7 @@ mod tests {
         // P1: Create a hexproof creature
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p1_id);
-        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.add_type(CardType::Creature);
         hexproof_creature.set_power(Some(1));
         hexproof_creature.set_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
@@ -1141,7 +1141,7 @@ mod tests {
         // P1: Cast Giant Growth on their own hexproof creature - should work!
         let pump_spell_id = game.next_entity_id();
         let mut pump_spell = Card::new(pump_spell_id, "Giant Growth".to_string(), p1_id);
-        pump_spell.types.push(CardType::Instant);
+        pump_spell.add_type(CardType::Instant);
         pump_spell.mana_cost = ManaCost::from_string("G");
         // Use placeholder card ID 0 which will be replaced with a targetable creature
         pump_spell.effects.push(Effect::PumpCreature {
@@ -1185,7 +1185,7 @@ mod tests {
         // P2: Create only a hexproof creature (no valid targets for opponent)
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
-        hexproof_creature.types.push(CardType::Creature);
+        hexproof_creature.add_type(CardType::Creature);
         hexproof_creature.set_power(Some(1));
         hexproof_creature.set_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
@@ -1195,7 +1195,7 @@ mod tests {
         // P1: Try to cast a destroy spell - should fail to find valid target
         let destroy_spell_id = game.next_entity_id();
         let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
-        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Use placeholder card ID 0 which will fail to be replaced with a target
         destroy_spell
@@ -1229,7 +1229,7 @@ mod tests {
         // P1: Create a 2/2 indestructible creature
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Darksteel Myr".to_string(), p1_id);
-        indestructible.types.push(CardType::Creature);
+        indestructible.add_type(CardType::Creature);
         indestructible.set_power(Some(2));
         indestructible.set_toughness(Some(2));
         indestructible.keywords.insert(Keyword::Indestructible);
@@ -1241,7 +1241,7 @@ mod tests {
         // P2: Create a 5/5 creature (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(5));
         blocker.set_toughness(Some(5));
         blocker.controller = p2_id;
@@ -1285,7 +1285,7 @@ mod tests {
         // P2: Create an indestructible creature
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Darksteel Myr".to_string(), p2_id);
-        indestructible.types.push(CardType::Creature);
+        indestructible.add_type(CardType::Creature);
         indestructible.set_power(Some(0));
         indestructible.set_toughness(Some(1));
         indestructible.keywords.insert(Keyword::Indestructible);
@@ -1295,7 +1295,7 @@ mod tests {
         // P1: Cast Terror targeting the indestructible creature
         let destroy_spell_id = game.next_entity_id();
         let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
-        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         // Explicitly target the indestructible creature
         destroy_spell.effects.push(Effect::DestroyPermanent {
@@ -1329,7 +1329,7 @@ mod tests {
         // P1: Create a 1/1 deathtouch creature (attacker)
         let deathtouch_id = game.next_entity_id();
         let mut deathtouch = Card::new(deathtouch_id, "Typhoid Rats".to_string(), p1_id);
-        deathtouch.types.push(CardType::Creature);
+        deathtouch.add_type(CardType::Creature);
         deathtouch.set_power(Some(1));
         deathtouch.set_toughness(Some(1));
         deathtouch.keywords.insert(Keyword::Deathtouch);
@@ -1341,7 +1341,7 @@ mod tests {
         // P2: Create a 5/5 indestructible creature (blocker)
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Darksteel Colossus".to_string(), p2_id);
-        indestructible.types.push(CardType::Creature);
+        indestructible.add_type(CardType::Creature);
         indestructible.set_power(Some(5));
         indestructible.set_toughness(Some(5));
         indestructible.keywords.insert(Keyword::Indestructible);
@@ -1393,7 +1393,7 @@ mod tests {
         // P1: Create a 3/3 indestructible creature (attacker)
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Indomitable".to_string(), p1_id);
-        indestructible.types.push(CardType::Creature);
+        indestructible.add_type(CardType::Creature);
         indestructible.set_power(Some(3));
         indestructible.set_toughness(Some(3));
         indestructible.keywords.insert(Keyword::Indestructible);
@@ -1405,7 +1405,7 @@ mod tests {
         // P2: Create a 3/3 normal creature (blocker)
         let normal_id = game.next_entity_id();
         let mut normal = Card::new(normal_id, "Hill Giant".to_string(), p2_id);
-        normal.types.push(CardType::Creature);
+        normal.add_type(CardType::Creature);
         normal.set_power(Some(3));
         normal.set_toughness(Some(3));
         normal.controller = p2_id;
@@ -1454,7 +1454,7 @@ mod tests {
         // P2: Create a shroud creature
         let shroud_creature_id = game.next_entity_id();
         let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p2_id);
-        shroud_creature.types.push(CardType::Creature);
+        shroud_creature.add_type(CardType::Creature);
         shroud_creature.set_power(Some(1));
         shroud_creature.set_toughness(Some(1));
         shroud_creature.keywords.insert(Keyword::Shroud);
@@ -1464,7 +1464,7 @@ mod tests {
         // P2: Create a normal creature
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
-        normal_creature.types.push(CardType::Creature);
+        normal_creature.add_type(CardType::Creature);
         normal_creature.set_power(Some(2));
         normal_creature.set_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
@@ -1473,7 +1473,7 @@ mod tests {
         // P1: Cast Terror - should target normal creature, not shroud one
         let destroy_spell_id = game.next_entity_id();
         let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
-        destroy_spell.types.push(CardType::Instant);
+        destroy_spell.add_type(CardType::Instant);
         destroy_spell.mana_cost = ManaCost::from_string("1B");
         destroy_spell
             .effects
@@ -1509,7 +1509,7 @@ mod tests {
         // P1: Create a shroud creature
         let shroud_creature_id = game.next_entity_id();
         let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p1_id);
-        shroud_creature.types.push(CardType::Creature);
+        shroud_creature.add_type(CardType::Creature);
         shroud_creature.set_power(Some(1));
         shroud_creature.set_toughness(Some(1));
         shroud_creature.keywords.insert(Keyword::Shroud);
@@ -1519,7 +1519,7 @@ mod tests {
         // P1: Create a normal creature
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p1_id);
-        normal_creature.types.push(CardType::Creature);
+        normal_creature.add_type(CardType::Creature);
         normal_creature.set_power(Some(2));
         normal_creature.set_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
@@ -1528,7 +1528,7 @@ mod tests {
         // P1: Cast Giant Growth - should target normal creature, not shroud one
         let pump_spell_id = game.next_entity_id();
         let mut pump_spell = Card::new(pump_spell_id, "Giant Growth".to_string(), p1_id);
-        pump_spell.types.push(CardType::Instant);
+        pump_spell.add_type(CardType::Instant);
         pump_spell.mana_cost = ManaCost::from_string("G");
         pump_spell.effects.push(Effect::PumpCreature {
             target: CardId::new(0),
@@ -1568,7 +1568,7 @@ mod tests {
         // P2: Create a shroud creature
         let shroud_creature_id = game.next_entity_id();
         let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p2_id);
-        shroud_creature.types.push(CardType::Creature);
+        shroud_creature.add_type(CardType::Creature);
         shroud_creature.set_power(Some(1));
         shroud_creature.set_toughness(Some(1));
         shroud_creature.keywords.insert(Keyword::Shroud);
@@ -1578,7 +1578,7 @@ mod tests {
         // P2: Create a normal creature
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
-        normal_creature.types.push(CardType::Creature);
+        normal_creature.add_type(CardType::Creature);
         normal_creature.set_power(Some(2));
         normal_creature.set_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
@@ -1587,7 +1587,7 @@ mod tests {
         // P1: Cast tap spell - should target normal creature, not shroud one
         let tap_spell_id = game.next_entity_id();
         let mut tap_spell = Card::new(tap_spell_id, "Frost Breath".to_string(), p1_id);
-        tap_spell.types.push(CardType::Instant);
+        tap_spell.add_type(CardType::Instant);
         tap_spell.mana_cost = ManaCost::from_string("2U");
         tap_spell.effects.push(Effect::TapPermanent { target: CardId::new(0) });
         game.cards.insert(tap_spell_id, tap_spell);

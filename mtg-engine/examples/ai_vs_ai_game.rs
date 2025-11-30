@@ -169,7 +169,7 @@ fn run_simplified_game() {
         for i in 0..20 {
             let card_id = game.next_card_id();
             let mut card = Card::new(card_id, format!("Mountain {i}"), *player_id);
-            card.types.push(CardType::Land);
+            card.add_type(CardType::Land);
             card.colors.push(Color::Red);
             game.cards.insert(card_id, card);
 
@@ -183,7 +183,7 @@ fn run_simplified_game() {
         for i in 0..20 {
             let card_id = game.next_card_id();
             let mut card = Card::new(card_id, format!("Lightning Bolt {i}"), *player_id);
-            card.types.push(CardType::Instant);
+            card.add_type(CardType::Instant);
             card.colors.push(Color::Red);
             card.mana_cost = ManaCost::from_string("R");
             card.effects.push(Effect::DealDamage {

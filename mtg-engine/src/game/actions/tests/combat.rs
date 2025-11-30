@@ -16,7 +16,7 @@ mod tests {
         // Create a creature
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -47,7 +47,7 @@ mod tests {
         // Create an attacker
         let attacker_id = game.next_card_id();
         let mut attacker = Card::new(attacker_id, "Goblin".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(2));
         attacker.set_toughness(Some(1));
         attacker.controller = p1_id;
@@ -60,7 +60,7 @@ mod tests {
         // Create a blocker
         let blocker_id = game.next_card_id();
         let mut blocker = Card::new(blocker_id, "Wall".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(0));
         blocker.set_toughness(Some(3));
         blocker.controller = p2_id;
@@ -92,7 +92,7 @@ mod tests {
         // Create an attacker
         let attacker_id = game.next_card_id();
         let mut attacker = Card::new(attacker_id, "Dragon".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -127,7 +127,7 @@ mod tests {
         // Create an attacker (3/3)
         let attacker_id = game.next_card_id();
         let mut attacker = Card::new(attacker_id, "Bear".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -137,7 +137,7 @@ mod tests {
         // Create a blocker (2/2)
         let blocker_id = game.next_card_id();
         let mut blocker = Card::new(blocker_id, "Wolf".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -182,7 +182,7 @@ mod tests {
         // Create a powerful attacker (5/5)
         let attacker_id = game.next_card_id();
         let mut attacker = Card::new(attacker_id, "Dragon".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(5));
         attacker.set_toughness(Some(5));
         attacker.controller = p1_id;
@@ -192,7 +192,7 @@ mod tests {
         // Create first blocker (2/2)
         let blocker1_id = game.next_card_id();
         let mut blocker1 = Card::new(blocker1_id, "Bear".to_string(), p2_id);
-        blocker1.types.push(CardType::Creature);
+        blocker1.add_type(CardType::Creature);
         blocker1.set_power(Some(2));
         blocker1.set_toughness(Some(2));
         blocker1.controller = p2_id;
@@ -202,7 +202,7 @@ mod tests {
         // Create second blocker (3/3)
         let blocker2_id = game.next_card_id();
         let mut blocker2 = Card::new(blocker2_id, "Wolf".to_string(), p2_id);
-        blocker2.types.push(CardType::Creature);
+        blocker2.add_type(CardType::Creature);
         blocker2.set_power(Some(3));
         blocker2.set_toughness(Some(3));
         blocker2.controller = p2_id;
@@ -256,7 +256,7 @@ mod tests {
         // Create a creature and put it on battlefield
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -282,7 +282,7 @@ mod tests {
         // Create a creature and put it on battlefield
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -308,7 +308,7 @@ mod tests {
         // Create a creature with haste
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Lightning Elemental".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(4));
         creature.set_toughness(Some(1));
         creature.controller = p1_id;
@@ -335,7 +335,7 @@ mod tests {
         // Create a creature with defender
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Wall of Stone".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(0));
         creature.set_toughness(Some(8));
         creature.controller = p1_id;
@@ -394,7 +394,7 @@ mod tests {
         // Create a creature WITHOUT vigilance
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -496,7 +496,7 @@ mod tests {
         // P1: Create a creature with Flying (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Storm Crow".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(1));
         attacker.set_toughness(Some(2));
         attacker.controller = p1_id;
@@ -508,7 +508,7 @@ mod tests {
         // P2: Create a creature without Flying or Reach (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -539,7 +539,7 @@ mod tests {
         // P1: Create a creature without Flying (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Grizzly Bears".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(2));
         attacker.set_toughness(Some(2));
         attacker.controller = p1_id;
@@ -550,7 +550,7 @@ mod tests {
         // P2: Create a creature without Flying or Reach (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(3));
         blocker.set_toughness(Some(3));
         blocker.controller = p2_id;
@@ -577,7 +577,7 @@ mod tests {
         // P1: Create a creature with Flying (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Storm Crow".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(1));
         attacker.set_toughness(Some(2));
         attacker.controller = p1_id;
@@ -589,7 +589,7 @@ mod tests {
         // P2: Create a creature with both Flying AND Reach (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Mystic Drake".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(3));
         blocker.controller = p2_id;
@@ -723,7 +723,7 @@ mod tests {
         // P1: Create a 2/2 creature with Double Strike (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Double Strike Knight".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(2));
         attacker.set_toughness(Some(2));
         attacker.controller = p1_id;
@@ -735,7 +735,7 @@ mod tests {
         // P2: Create a 2/2 creature with First Strike (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "First Strike Soldier".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;
@@ -794,7 +794,7 @@ mod tests {
         // Create a 2/2 creature on battlefield
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -809,7 +809,7 @@ mod tests {
         // Create Giant Growth (pump +3/+3)
         let pump_spell_id = game.next_card_id();
         let mut pump_spell = Card::new(pump_spell_id, "Giant Growth".to_string(), p1_id);
-        pump_spell.types.push(CardType::Instant);
+        pump_spell.add_type(CardType::Instant);
         pump_spell.mana_cost = ManaCost::from_string("G");
         // Target the creature we created
         pump_spell.effects.push(Effect::PumpCreature {
@@ -861,7 +861,7 @@ mod tests {
         // Create a 2/2 creature on battlefield
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
-        creature.types.push(CardType::Creature);
+        creature.add_type(CardType::Creature);
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;
@@ -909,7 +909,7 @@ mod tests {
         // P1: Create a 3/3 creature without first strike (attacker)
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Hill Giant".to_string(), p1_id);
-        attacker.types.push(CardType::Creature);
+        attacker.add_type(CardType::Creature);
         attacker.set_power(Some(3));
         attacker.set_toughness(Some(3));
         attacker.controller = p1_id;
@@ -920,7 +920,7 @@ mod tests {
         // P2: Create a 2/2 creature with First Strike (blocker)
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "First Strike Knight".to_string(), p2_id);
-        blocker.types.push(CardType::Creature);
+        blocker.add_type(CardType::Creature);
         blocker.set_power(Some(2));
         blocker.set_toughness(Some(2));
         blocker.controller = p2_id;

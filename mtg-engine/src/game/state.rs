@@ -1559,7 +1559,7 @@ mod tests {
         // Create and play a land
         let card_id = game.next_card_id();
         let mut card = Card::new(card_id, "Mountain", p1_id);
-        card.types.push(CardType::Land);
+        card.add_type(CardType::Land);
         game.cards.insert(card_id, card);
 
         if let Some(zones) = game.get_player_zones_mut(p1_id) {

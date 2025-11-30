@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     // Alice casts Lightning Bolt targeting Bob
     let bolt_id = game.next_card_id();
     let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), alice_id);
-    bolt.types.push(CardType::Instant);
+    bolt.add_type(CardType::Instant);
     bolt.mana_cost = ManaCost::from_string("R");
     bolt.effects.push(Effect::DealDamage {
         target: TargetRef::Player(bob_id),
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     println!("=== Bob responds with Counterspell ===");
     let counter_id = game.next_card_id();
     let mut counterspell = Card::new(counter_id, "Counterspell".to_string(), bob_id);
-    counterspell.types.push(CardType::Instant);
+    counterspell.add_type(CardType::Instant);
     counterspell.mana_cost = ManaCost::from_string("UU");
     // Target Lightning Bolt
     counterspell.effects.push(Effect::CounterSpell { target: bolt_id });

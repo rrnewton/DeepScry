@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     println!("=== Turn 1: Alice casts Llanowar Elves ===");
     let elves_id = game.next_card_id();
     let mut elves = Card::new(elves_id, "Llanowar Elves".to_string(), alice_id);
-    elves.types.push(CardType::Creature);
+    elves.add_type(CardType::Creature);
     elves.set_power(Some(1));
     elves.set_toughness(Some(1));
 
@@ -57,7 +57,7 @@ fn main() -> Result<()> {
     println!("=== Turn 1: Alice also casts Sol Ring ===");
     let sol_ring_id = game.next_card_id();
     let mut sol_ring = Card::new(sol_ring_id, "Sol Ring".to_string(), alice_id);
-    sol_ring.types.push(CardType::Artifact);
+    sol_ring.add_type(CardType::Artifact);
 
     // Add mana ability: {T}: Add {C}{C}
     let ability = ActivatedAbility::new(

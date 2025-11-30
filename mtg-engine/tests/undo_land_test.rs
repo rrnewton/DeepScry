@@ -20,7 +20,7 @@ fn test_undo_play_land_restores_turn_entered_battlefield() -> Result<()> {
     // Create a land card
     let card_id = game.next_card_id();
     let mut card = Card::new(card_id, "Mountain", p1_id);
-    card.types.push(CardType::Land);
+    card.add_type(CardType::Land);
     game.cards.insert(card_id, card);
 
     // Add to hand

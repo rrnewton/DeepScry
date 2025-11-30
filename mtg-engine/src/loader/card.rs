@@ -202,9 +202,10 @@ impl CardDefinition {
         card.set_toughness(self.toughness);
         card.text = self.oracle.clone();
 
-        // Initialize empty cache - will be populated after abilities are parsed
-        // (mana production is derived from parsed abilities, not text)
+        // Initialize cache with type flags (for O(1) is_land/is_creature/is_artifact checks)
+        // and empty mana production (will be populated after abilities are parsed)
         card.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
+        card.cache.update_from_types(&card.types);
 
         // Parse keywords
         card.keywords = self.parse_keywords();

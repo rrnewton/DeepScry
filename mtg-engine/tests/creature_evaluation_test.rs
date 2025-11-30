@@ -22,7 +22,7 @@ fn create_test_setup_with_keywords(
     // Create the creature card
     let card_id = CardId::new(100); // Use a consistent ID for testing
     let mut card = Card::new(card_id, name, player_id);
-    card.types.push(CardType::Creature);
+    card.add_type(CardType::Creature);
     card.set_power(Some(power));
     card.set_toughness(Some(toughness));
     // Set mana cost to generic mana for simplicity

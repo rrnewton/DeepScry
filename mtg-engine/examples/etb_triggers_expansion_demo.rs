@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Turn 1: Alice casts Soul's Attendant ===");
     let attendant_id = game.next_entity_id();
     let mut attendant = Card::new(attendant_id, "Soul's Attendant".to_string(), alice_id);
-    attendant.types.push(CardType::Creature);
+    attendant.add_type(CardType::Creature);
     attendant.set_power(Some(1));
     attendant.set_toughness(Some(1));
     attendant.mana_cost = ManaCost::from_string("W");
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Turn 2: Alice casts Elvish Visionary ===");
     let visionary_id = game.next_entity_id();
     let mut visionary = Card::new(visionary_id, "Elvish Visionary".to_string(), alice_id);
-    visionary.types.push(CardType::Creature);
+    visionary.add_type(CardType::Creature);
     visionary.set_power(Some(1));
     visionary.set_toughness(Some(1));
     visionary.mana_cost = ManaCost::from_string("1G");
@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Turn 3: Bob casts Grizzly Bears ===");
     let bears_id = game.next_entity_id();
     let mut bears = Card::new(bears_id, "Grizzly Bears".to_string(), bob_id);
-    bears.types.push(CardType::Creature);
+    bears.add_type(CardType::Creature);
     bears.set_power(Some(2));
     bears.set_toughness(Some(2));
     bears.mana_cost = ManaCost::from_string("1G");
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Turn 4: Alice casts Flametongue Kavu ===");
     let kavu_id = game.next_entity_id();
     let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), alice_id);
-    kavu.types.push(CardType::Creature);
+    kavu.add_type(CardType::Creature);
     kavu.set_power(Some(4));
     kavu.set_toughness(Some(2));
     kavu.mana_cost = ManaCost::from_string("3R");

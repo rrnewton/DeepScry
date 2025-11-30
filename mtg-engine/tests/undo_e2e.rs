@@ -468,7 +468,7 @@ async fn test_action_undo() -> Result<()> {
     // Test 2: Card movement undo
     let card_id = game.next_card_id();
     let mut card = Card::new(card_id, "Test Land", p1_id);
-    card.types.push(CardType::Land); // Must be a land for play_land
+    card.add_type(CardType::Land); // Must be a land for play_land
     game.cards.insert(card_id, card);
 
     if let Some(zones) = game.get_player_zones_mut(p1_id) {

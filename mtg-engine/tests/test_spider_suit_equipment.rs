@@ -32,7 +32,7 @@ use smallvec::SmallVec;
 fn create_spider_suit(id: CardId, owner: PlayerId) -> Card {
     let mut spider_suit = Card::new(id, CardName::from("Spider-Suit"), owner);
     spider_suit.mana_cost = ManaCost::from_string("1");
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
 
     // Add static ability: +2/+2 to equipped creature
@@ -57,7 +57,7 @@ fn test_spider_suit_enters_battlefield() {
     let spider_suit_id = game.cards.next_id();
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
     spider_suit.mana_cost = ManaCost::from_string("1");
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
@@ -137,7 +137,7 @@ fn test_spider_suit_full_cast_resolve_workflow() {
     let spider_suit_id = game.cards.next_id();
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
     spider_suit.mana_cost = ManaCost::from_string("1");
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
@@ -178,7 +178,7 @@ fn test_equipment_attachment() {
     // Create Spider-Suit (Equipment)
     let spider_suit_id = game.cards.next_id();
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
@@ -186,7 +186,7 @@ fn test_equipment_attachment() {
     // Create Spider-Punk (2/1 Creature)
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
-    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     spider_punk.set_power(Some(2));
     spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
@@ -267,14 +267,14 @@ fn test_multiple_equipment() {
     // Create two Equipment
     let equip1_id = game.cards.next_id();
     let mut equip1 = Card::new(equip1_id, CardName::from("Sword"), p1_id);
-    equip1.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    equip1.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     equip1.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
     equip1.controller = p1_id;
     game.cards.insert(equip1_id, equip1);
 
     let equip2_id = game.cards.next_id();
     let mut equip2 = Card::new(equip2_id, CardName::from("Shield"), p1_id);
-    equip2.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    equip2.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     equip2.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
     equip2.controller = p1_id;
     game.cards.insert(equip2_id, equip2);
@@ -282,7 +282,7 @@ fn test_multiple_equipment() {
     // Create creature
     let creature_id = game.cards.next_id();
     let mut creature = Card::new(creature_id, CardName::from("Bear"), p1_id);
-    creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+    creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     creature.set_power(Some(2));
     creature.set_toughness(Some(2));
     creature.controller = p1_id;
@@ -321,7 +321,7 @@ fn test_spider_suit_buff() {
     // Create Spider-Punk (2/1 Creature)
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
-    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     spider_punk.set_power(Some(2));
     spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
@@ -400,7 +400,7 @@ fn test_multiple_equipment_buffs() {
     // Create Bear (2/2 Creature)
     let bear_id = game.cards.next_id();
     let mut bear = Card::new(bear_id, CardName::from("Bear"), p1_id);
-    bear.types = SmallVec::from_vec(vec![CardType::Creature]);
+    bear.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     bear.set_power(Some(2));
     bear.set_toughness(Some(2));
     bear.controller = p1_id;
@@ -447,7 +447,7 @@ fn test_equipment_combat_damage_calculation() {
     // Create Spider-Punk (2/1 Creature)
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
-    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     spider_punk.set_power(Some(2));
     spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;
@@ -483,7 +483,7 @@ fn test_equipment_detaches_when_creature_dies() {
     // Create Spider-Suit (Equipment)
     let spider_suit_id = game.cards.next_id();
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
-    spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+    spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
@@ -491,7 +491,7 @@ fn test_equipment_detaches_when_creature_dies() {
     // Create Spider-Punk (2/1 Creature)
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
-    spider_punk.types = SmallVec::from_vec(vec![CardType::Creature]);
+    spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     spider_punk.set_power(Some(2));
     spider_punk.set_toughness(Some(1));
     spider_punk.controller = p1_id;

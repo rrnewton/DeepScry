@@ -28,6 +28,19 @@ pub enum CardType {
 /// where `AbilityManaPart.origProduced` stores the structured Produced$ value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardCache {
+    // ==== Precomputed type checks (eliminate Vec::contains overhead) ====
+    /// Precomputed: Is this card a land?
+    /// Derived from types.contains(&CardType::Land) for O(1) checks
+    pub is_land: bool,
+
+    /// Precomputed: Is this card a creature?
+    /// Derived from types.contains(&CardType::Creature) for O(1) checks
+    pub is_creature: bool,
+
+    /// Precomputed: Is this card an artifact?
+    /// Derived from types.contains(&CardType::Artifact) for O(1) checks
+    pub is_artifact: bool,
+
     // ==== Precomputed function results (eliminate runtime computation) ====
     /// Precomputed mana production (upper bound, OR semantics)
     /// - Default (empty Choice) = no mana production
@@ -61,17 +74,32 @@ impl CardCache {
     /// Create a new empty cache (default values)
     ///
     /// Call `update_from_abilities()` after parsing abilities to populate mana production.
-    /// This two-phase initialization is necessary because abilities are parsed after
+    /// Call `update_from_types()` after types are set to populate type flags.
+    /// This two-phase initialization is necessary because abilities/types are parsed after
     /// the Card struct is created.
     pub fn new(_text: &str, _name: &str) -> Self {
         // NOTE: text and name parameters are kept for API compatibility but no longer used.
         // Mana production is now derived from parsed abilities, not text.
         CardCache {
+            is_land: false,
+            is_creature: false,
+            is_artifact: false,
             mana_production: ManaProduction::default(),
             is_mana_source: false,
             requires_stack_target: false,
             land_evaluation_value: 0,
         }
+    }
+
+    /// Update cached type flags from the card's types vector
+    ///
+    /// Call this after types are set in the card loader. This pre-computes
+    /// type checks to avoid Vec::contains() overhead at runtime.
+    #[inline]
+    pub fn update_from_types(&mut self, types: &[CardType]) {
+        self.is_land = types.contains(&CardType::Land);
+        self.is_creature = types.contains(&CardType::Creature);
+        self.is_artifact = types.contains(&CardType::Artifact);
     }
 
     /// Update cache based on parsed activated abilities and card name
@@ -354,20 +382,62 @@ impl Card {
         self.types.contains(card_type)
     }
 
-    pub fn is_creature(&self) -> bool {
-        self.is_type(&CardType::Creature)
+    /// Refresh the type cache after modifying the types vector
+    ///
+    /// Call this after adding/removing types via `types.push()` or `types = ...`
+    /// to update the cached is_land/is_creature/is_artifact flags.
+    ///
+    /// Note: The card loader (CardDefinition::instantiate) calls this automatically.
+    /// Only manual Card creation (e.g., in tests) needs to call this explicitly.
+    #[inline]
+    pub fn refresh_type_cache(&mut self) {
+        self.cache.update_from_types(&self.types);
     }
 
+    /// Add a type to this card and update the cache
+    ///
+    /// Prefer this over `types.push()` to automatically maintain cache consistency.
+    #[inline]
+    pub fn add_type(&mut self, card_type: CardType) {
+        self.types.push(card_type);
+        // Update cache inline for commonly checked types
+        match card_type {
+            CardType::Land => self.cache.is_land = true,
+            CardType::Creature => self.cache.is_creature = true,
+            CardType::Artifact => self.cache.is_artifact = true,
+            _ => {}
+        }
+    }
+
+    /// Set the types of this card and update the cache
+    ///
+    /// Prefer this over `types = SmallVec::...` to automatically maintain cache consistency.
+    #[inline]
+    pub fn set_types(&mut self, new_types: SmallVec<[CardType; 2]>) {
+        self.types = new_types;
+        self.cache.update_from_types(&self.types);
+    }
+
+    /// Check if this card is a creature (uses cached value for O(1) lookup)
+    #[inline]
+    pub fn is_creature(&self) -> bool {
+        self.cache.is_creature
+    }
+
+    /// Check if this card is a land (uses cached value for O(1) lookup)
+    #[inline]
     pub fn is_land(&self) -> bool {
-        self.is_type(&CardType::Land)
+        self.cache.is_land
     }
 
     pub fn is_instant(&self) -> bool {
         self.is_type(&CardType::Instant)
     }
 
+    /// Check if this card is an artifact (uses cached value for O(1) lookup)
+    #[inline]
     pub fn is_artifact(&self) -> bool {
-        self.is_type(&CardType::Artifact)
+        self.cache.is_artifact
     }
 
     pub fn is_enchantment(&self) -> bool {

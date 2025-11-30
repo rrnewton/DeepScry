@@ -14,14 +14,14 @@ mod tests {
         let spider_suit_id = game.cards.next_id();
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
-        spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+        spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
         spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
         game.cards.insert(spider_suit_id, spider_suit);
 
         // Create a Mountain
         let mountain_id = game.cards.next_id();
         let mut mountain = Card::new(mountain_id, CardName::from("Mountain"), p1_id);
-        mountain.types = SmallVec::from_vec(vec![CardType::Land]);
+        mountain.set_types(SmallVec::from_vec(vec![CardType::Land]));
         mountain.subtypes = SmallVec::from_vec(vec![Subtype::from("Basic"), Subtype::from("Mountain")]);
         game.cards.insert(mountain_id, mountain);
 
@@ -57,7 +57,7 @@ mod tests {
         let spider_suit_id = game.cards.next_id();
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
-        spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+        spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
         spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
         game.cards.insert(spider_suit_id, spider_suit);
 
@@ -170,7 +170,7 @@ K:Equip:3
         let spider_suit_id = game.cards.next_id();
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
-        spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+        spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
         spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
         spider_suit.controller = p1_id;
 
@@ -192,14 +192,14 @@ K:Equip:3
         // Create P1's creature (valid target)
         let p1_creature_id = game.cards.next_id();
         let mut p1_creature = Card::new(p1_creature_id, CardName::from("Grizzly Bears"), p1_id);
-        p1_creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+        p1_creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
         p1_creature.controller = p1_id;
         game.cards.insert(p1_creature_id, p1_creature);
 
         // Create P2's creature (invalid target - opponent controls it)
         let p2_creature_id = game.cards.next_id();
         let mut p2_creature = Card::new(p2_creature_id, CardName::from("Savannah Lions"), p2_id);
-        p2_creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+        p2_creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
         p2_creature.controller = p2_id;
         game.cards.insert(p2_creature_id, p2_creature);
 
@@ -239,7 +239,7 @@ K:Equip:3
         let spider_suit_id = game.cards.next_id();
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
-        spider_suit.types = SmallVec::from_vec(vec![CardType::Artifact]);
+        spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
         spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
         spider_suit.controller = p1_id;
         game.cards.insert(spider_suit_id, spider_suit);
@@ -247,7 +247,7 @@ K:Equip:3
         // Create a Mountain
         let mountain_id = game.cards.next_id();
         let mut mountain = Card::new(mountain_id, CardName::from("Mountain"), p1_id);
-        mountain.types = SmallVec::from_vec(vec![CardType::Land]);
+        mountain.set_types(SmallVec::from_vec(vec![CardType::Land]));
         mountain.subtypes = SmallVec::from_vec(vec![Subtype::from("Basic"), Subtype::from("Mountain")]);
         mountain.controller = p1_id;
         game.cards.insert(mountain_id, mountain);
@@ -361,7 +361,7 @@ K:Equip:3
         // Create a 2/2 creature for P1
         let creature_id = game.cards.next_id();
         let mut creature = Card::new(creature_id, CardName::from("Grizzly Bears"), p1_id);
-        creature.types = SmallVec::from_vec(vec![CardType::Creature]);
+        creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
         creature.set_power(Some(2));
         creature.set_toughness(Some(2));
         creature.controller = p1_id;

@@ -77,7 +77,7 @@ fn main() {
     for i in 0..3 {
         let card_id = game.next_card_id();
         let mut card = Card::new(card_id, format!("Mountain {}", i + 1), alice);
-        card.types.push(CardType::Land);
+        card.add_type(CardType::Land);
         card.colors.push(Color::Red);
         game.cards.insert(card_id, card);
 
@@ -91,7 +91,7 @@ fn main() {
     for i in 0..2 {
         let card_id = game.next_card_id();
         let mut card = Card::new(card_id, format!("Lightning Bolt {}", i + 1), alice);
-        card.types.push(CardType::Instant);
+        card.add_type(CardType::Instant);
         card.mana_cost = ManaCost::from_string("R");
         card.colors.push(Color::Red);
         card.text = "Lightning Bolt deals 3 damage to any target.".to_string();
