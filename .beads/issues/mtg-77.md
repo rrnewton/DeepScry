@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-29T22:22:03.264796994+00:00
+updated_at: 2025-11-30T15:15:51.454478198+00:00
 ---
 
 # Description
@@ -35,6 +35,10 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Pump unblocked attackers for lethal damage
   - Reduce trample damage by pumping blocker toughness
   - Support both attacking and blocking creatures
+- ✅ **Damage assignment order optimization (2025-11-30_#993)**
+  - Intelligent blocker ordering to maximize kills
+  - Sort by creature evaluation, prioritize killable blockers
+  - Port of Java Forge's AiBlockController.orderBlockers()
 
 **What's Missing:**
 
@@ -54,18 +58,19 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 4. ~~**During-combat pump evaluation**~~ ✅ **COMPLETED 2025-11-29_#975**
 
-5. **GameStateEvaluator improvements:**
+5. ~~**Damage assignment order**~~ ✅ **COMPLETED 2025-11-30_#993**
+
+6. **GameStateEvaluator improvements:**
    - mtg-78: Port evalManaBase() - mana base quality scoring
    - mtg-79: Track summon sickness properly (COMPLETED 2025-10-26)
    - mtg-81: Complete land evaluation (detailed heuristics)
 
-6. **Mana tapping order** - ComputerUtilMana
+7. **Mana tapping order** - ComputerUtilMana
    - Leave up correct colors for instant responses
    - Optimize painland/fetchland usage
 
 ### Lower Priority:
 
-7. **Damage assignment order** - Kill blockers efficiently
 8. **Bluffing/deception** - Hold information when advantageous
 9. mtg-80: Improve enchantment evaluation
 10. **Static abilities** - "Must attack", "Can't be blocked by walls", etc.
@@ -79,4 +84,4 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 1. GameStateEvaluator improvements
 2. Mana tapping order
-3. Damage assignment order
+3. Enhanced pump activated abilities during combat

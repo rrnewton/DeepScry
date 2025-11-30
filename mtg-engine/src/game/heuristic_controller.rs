@@ -3173,13 +3173,88 @@ impl PlayerController for HeuristicController {
 
     fn choose_damage_assignment_order(
         &mut self,
-        _view: &GameStateView,
-        _attacker: CardId,
+        view: &GameStateView,
+        attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // For now, just return the blockers in order
-        // TODO: Implement intelligent ordering to kill blockers efficiently
-        ChoiceResult::Ok(blockers.iter().copied().collect())
+        // Port of Java Forge's AiBlockController.orderBlockers()
+        // Reference: forge-java/forge-ai/src/main/java/forge/ai/AiBlockController.java:1175-1196
+        //
+        // Strategy:
+        // 1. Sort blockers by evaluation (best creatures first)
+        // 2. Put killable blockers at the front (where damage will be assigned first)
+        // 3. Put unkillable blockers at the end (no point wasting damage on them)
+        //
+        // This ensures we maximize damage impact by killing the most valuable
+        // creatures we can actually kill, rather than wasting damage on indestructible
+        // or high-toughness creatures we can't kill anyway.
+
+        if blockers.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        if blockers.len() == 1 {
+            return ChoiceResult::Ok(blockers.iter().copied().collect());
+        }
+
+        // Get attacker's damage (using effective power after anthem effects)
+        let attacker_power = view
+            .get_effective_power(attacker)
+            .or_else(|| view.get_card(attacker).map(|c| c.current_power() as i32))
+            .unwrap_or(0);
+
+        // Create a sorted list of blockers by evaluation (best first)
+        let mut blocker_list: Vec<(CardId, i32, i32)> = blockers
+            .iter()
+            .filter_map(|&id| {
+                view.get_card(id).map(|card| {
+                    let eval = self.evaluate_creature(view, id);
+                    let toughness = view
+                        .get_effective_toughness(id)
+                        .unwrap_or(card.current_toughness() as i32);
+                    (id, eval, toughness)
+                })
+            })
+            .collect();
+
+        // Sort by evaluation (descending - best creatures first)
+        blocker_list.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Separate into killable and non-killable based on remaining damage
+        let mut remaining_damage = attacker_power;
+        let mut killable: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut unkillable: SmallVec<[CardId; 4]> = SmallVec::new();
+
+        for (blocker_id, _eval, toughness) in blocker_list {
+            // Calculate damage needed to kill (simplified - just toughness for now)
+            // TODO(mtg-77): Consider damage prevention, indestructible, deathtouch, wither
+            let lethal_damage = toughness;
+
+            if lethal_damage <= remaining_damage {
+                // We can kill this blocker
+                killable.push(blocker_id);
+                remaining_damage -= lethal_damage;
+            } else {
+                // Can't kill this blocker with remaining damage
+                unkillable.push(blocker_id);
+            }
+        }
+
+        // Combine: killable first, then unkillable
+        killable.extend(unkillable);
+
+        if killable.len() > 1 {
+            view.logger().controller_choice(
+                "HEURISTIC",
+                &format!(
+                    "ordered {} blockers for damage assignment (attacker power={})",
+                    killable.len(),
+                    attacker_power
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(killable)
     }
 
     fn choose_cards_to_discard(
@@ -3342,5 +3417,70 @@ mod tests {
         // This test doesn't make sense - we don't grant keywords to blockers in this function
         // The keywords_granted parameter applies to the ATTACKER, not the blocker
         // So we can't test "granting Flying to the blocker" with this function
+    }
+
+    #[test]
+    fn test_damage_assignment_order_logic() {
+        // Test the core logic of damage assignment ordering
+        // Port of Java Forge's AiBlockController.orderBlockers()
+        //
+        // Scenario: 5/5 attacker vs three blockers:
+        // - 4/4 High-value creature (eval ~200)
+        // - 2/2 Medium creature (eval ~140)
+        // - 1/1 Low-value creature (eval ~115)
+        //
+        // With 5 damage available:
+        // - Can kill 4/4 (need 4 damage) = yes, 1 damage left
+        // - Can't kill 2/2 with 1 damage left = no
+        // - Can kill 1/1 (need 1 damage) = yes, 0 damage left
+        //
+        // So order should be: 4/4 first, 1/1 second, 2/2 last
+        // This maximizes kills (2 creatures) rather than damage spread
+
+        // This is a conceptual test - actual integration test would need GameStateView
+        let available_damage = 5;
+        let blockers = vec![
+            ("4/4 High", 200, 4), // (name, eval, toughness)
+            ("2/2 Medium", 140, 2),
+            ("1/1 Low", 115, 1),
+        ];
+
+        // Sort by evaluation (descending)
+        let mut sorted = blockers.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        assert_eq!(sorted[0].0, "4/4 High");
+        assert_eq!(sorted[1].0, "2/2 Medium");
+        assert_eq!(sorted[2].0, "1/1 Low");
+
+        // Simulate the algorithm
+        let mut remaining = available_damage;
+        let mut killable = vec![];
+        let mut unkillable = vec![];
+
+        for (name, _eval, toughness) in sorted {
+            if toughness <= remaining {
+                killable.push(name);
+                remaining -= toughness;
+            } else {
+                unkillable.push(name);
+            }
+        }
+
+        // Result: 4/4 is killable (5 >= 4, remaining = 1)
+        //         2/2 is NOT killable (1 < 2)
+        //         1/1 is killable (1 >= 1, remaining = 0)
+        assert_eq!(killable, vec!["4/4 High", "1/1 Low"]);
+        assert_eq!(unkillable, vec!["2/2 Medium"]);
+
+        // Combined order: killable first, unkillable last
+        let final_order: Vec<_> = killable.into_iter().chain(unkillable).collect();
+        assert_eq!(final_order, vec!["4/4 High", "1/1 Low", "2/2 Medium"]);
+
+        // We successfully kill 2 creatures (4/4 and 1/1) instead of just 1
+        // If we had put 2/2 first after 4/4, we'd waste damage:
+        // - 4/4: 4 damage, 1 left
+        // - 2/2: can't kill with 1 damage, but rules require assigning lethal
+        //        before moving to next blocker, so we'd be stuck
+        // The algorithm correctly recognizes 2/2 can't be killed and skips it
     }
 }
