@@ -830,12 +830,83 @@ impl ManaEngine {
     ///
     /// This considers all mana sources (simple and complex) and determines
     /// whether there exists a way to tap them to produce the required mana.
+    ///
+    /// NOTE: This method does NOT consider mana already in the player's mana pool.
+    /// Use `can_pay_with_pool()` to include floating mana from rituals like Dark Ritual.
     pub fn can_pay(&self, cost: &ManaCost) -> bool {
         // Use the appropriate resolver based on source complexity
         if self.use_greedy_resolver {
             self.greedy_resolver.can_pay(cost, &self.mana_sources)
         } else {
             self.simple_resolver.can_pay(cost, &self.mana_sources)
+        }
+    }
+
+    /// Check if the player can pay for a mana cost, considering both the mana pool and mana sources
+    ///
+    /// This method considers:
+    /// 1. Mana already in the player's mana pool (floating mana from rituals like Dark Ritual)
+    /// 2. Mana that can be produced by tapping available mana sources
+    ///
+    /// The algorithm:
+    /// 1. First use mana from the pool to satisfy colored requirements
+    /// 2. Then check if remaining requirements can be satisfied by tapping sources
+    pub fn can_pay_with_pool(&self, cost: &ManaCost, pool: &crate::core::ManaPool) -> bool {
+        // If the pool alone can pay, return true immediately
+        if pool.can_pay(cost) {
+            return true;
+        }
+
+        // Calculate remaining cost after using pool mana
+        // First satisfy colored requirements from pool
+        let remaining_white = cost.white.saturating_sub(pool.white);
+        let remaining_blue = cost.blue.saturating_sub(pool.blue);
+        let remaining_black = cost.black.saturating_sub(pool.black);
+        let remaining_red = cost.red.saturating_sub(pool.red);
+        let remaining_green = cost.green.saturating_sub(pool.green);
+        let remaining_colorless = cost.colorless.saturating_sub(pool.colorless);
+
+        // Calculate how much pool mana was used for colored requirements
+        let used_white = cost.white.min(pool.white);
+        let used_blue = cost.blue.min(pool.blue);
+        let used_black = cost.black.min(pool.black);
+        let used_red = cost.red.min(pool.red);
+        let used_green = cost.green.min(pool.green);
+        let used_colorless = cost.colorless.min(pool.colorless);
+
+        // Calculate remaining pool mana that can be used for generic costs
+        let pool_for_generic = (pool.white.saturating_sub(used_white))
+            + (pool.blue.saturating_sub(used_blue))
+            + (pool.black.saturating_sub(used_black))
+            + (pool.red.saturating_sub(used_red))
+            + (pool.green.saturating_sub(used_green))
+            + (pool.colorless.saturating_sub(used_colorless));
+
+        // Calculate remaining generic cost after using pool's surplus
+        let remaining_generic = cost.generic.saturating_sub(pool_for_generic);
+
+        // Create a new cost with the remaining requirements
+        let remaining_cost = ManaCost {
+            generic: remaining_generic,
+            white: remaining_white,
+            blue: remaining_blue,
+            black: remaining_black,
+            red: remaining_red,
+            green: remaining_green,
+            colorless: remaining_colorless,
+            x_count: 0, // X costs are handled separately
+        };
+
+        // If there's nothing remaining to pay, we're done
+        if remaining_cost.cmc() == 0 {
+            return true;
+        }
+
+        // Check if mana sources can pay the remaining cost
+        if self.use_greedy_resolver {
+            self.greedy_resolver.can_pay(&remaining_cost, &self.mana_sources)
+        } else {
+            self.simple_resolver.can_pay(&remaining_cost, &self.mana_sources)
         }
     }
 
@@ -1254,5 +1325,142 @@ mod tests {
         // Verify max_mana_capacity includes colorless
         let capacity = engine.max_mana_capacity();
         assert_eq!(capacity.colorless, 1, "Should have 1 colorless mana available");
+    }
+
+    /// Test can_pay_with_pool - pool alone can pay
+    #[test]
+    fn test_can_pay_with_pool_pool_alone() {
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create engine with no mana sources
+        let mut engine = ManaEngine::new();
+        engine.update(&game, p1_id);
+
+        // Pool with BBB (like after Dark Ritual)
+        let pool = crate::core::ManaPool {
+            white: 0,
+            blue: 0,
+            black: 3,
+            red: 0,
+            green: 0,
+            colorless: 0,
+        };
+
+        // Should be able to pay BB (Black Knight cost)
+        let bb_cost = ManaCost::from_string("BB");
+        assert!(engine.can_pay_with_pool(&bb_cost, &pool));
+
+        // Should be able to pay 1BB (Hypnotic Specter cost)
+        let cost_1bb = ManaCost::from_string("1BB");
+        assert!(engine.can_pay_with_pool(&cost_1bb, &pool));
+
+        // Should NOT be able to pay 2BB (Juzam Djinn cost) - only 3 mana in pool
+        let cost_2bb = ManaCost::from_string("2BB");
+        assert!(!engine.can_pay_with_pool(&cost_2bb, &pool));
+    }
+
+    /// Test can_pay_with_pool - pool + sources combined
+    #[test]
+    fn test_can_pay_with_pool_combined() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Add one Swamp to battlefield
+        let swamp_id = game.next_card_id();
+        let mut swamp = Card::new(swamp_id, "Swamp".to_string(), p1_id);
+        swamp.types.push(CardType::Land);
+        swamp.controller = p1_id;
+        game.cards.insert(swamp_id, swamp);
+        game.battlefield.add(swamp_id);
+
+        let mut engine = ManaEngine::new();
+        engine.update_mut(&mut game, p1_id);
+
+        // Pool with BBB (like after Dark Ritual, land already tapped)
+        let pool = crate::core::ManaPool {
+            white: 0,
+            blue: 0,
+            black: 3,
+            red: 0,
+            green: 0,
+            colorless: 0,
+        };
+
+        // Should be able to pay 2BB - 3B from pool + 1B from tapping Swamp = 4 total
+        let cost_2bb = ManaCost::from_string("2BB");
+        assert!(engine.can_pay_with_pool(&cost_2bb, &pool));
+
+        // Should be able to pay 3BB - exactly 4 mana available (3 pool + 1 source)
+        let cost_3bb = ManaCost::from_string("3BB");
+        assert!(!engine.can_pay_with_pool(&cost_3bb, &pool)); // Need 5, have 4
+
+        // Pool has 3 black, sources have 1 black = 4 black total, but generic needs more
+    }
+
+    /// Test can_pay_with_pool - mixed colors
+    #[test]
+    fn test_can_pay_with_pool_mixed_colors() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Add one Mountain to battlefield
+        let mountain_id = game.next_card_id();
+        let mut mountain = Card::new(mountain_id, "Mountain".to_string(), p1_id);
+        mountain.types.push(CardType::Land);
+        mountain.controller = p1_id;
+        game.cards.insert(mountain_id, mountain);
+        game.battlefield.add(mountain_id);
+
+        let mut engine = ManaEngine::new();
+        engine.update_mut(&mut game, p1_id);
+
+        // Pool with BBB
+        let pool = crate::core::ManaPool {
+            white: 0,
+            blue: 0,
+            black: 3,
+            red: 0,
+            green: 0,
+            colorless: 0,
+        };
+
+        // Can pay 2BR - 2 generic + 1 black from pool, 1 red from Mountain
+        let cost_2br = ManaCost::from_string("2BR");
+        assert!(engine.can_pay_with_pool(&cost_2br, &pool));
+
+        // Can't pay RR - need 2 red, only have 1 Mountain
+        let cost_rr = ManaCost::from_string("RR");
+        assert!(!engine.can_pay_with_pool(&cost_rr, &pool));
+    }
+
+    /// Test can_pay_with_pool - empty pool falls back to sources only
+    #[test]
+    fn test_can_pay_with_pool_empty_pool() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Add two Swamps
+        for _ in 0..2 {
+            let swamp_id = game.next_card_id();
+            let mut swamp = Card::new(swamp_id, "Swamp".to_string(), p1_id);
+            swamp.types.push(CardType::Land);
+            swamp.controller = p1_id;
+            game.cards.insert(swamp_id, swamp);
+            game.battlefield.add(swamp_id);
+        }
+
+        let mut engine = ManaEngine::new();
+        engine.update_mut(&mut game, p1_id);
+
+        // Empty pool
+        let pool = crate::core::ManaPool::new();
+
+        // Can pay BB with just sources
+        let bb_cost = ManaCost::from_string("BB");
+        assert!(engine.can_pay_with_pool(&bb_cost, &pool));
+
+        // Equivalent to can_pay without pool
+        assert!(engine.can_pay(&bb_cost));
     }
 }

@@ -106,6 +106,9 @@ impl<'a> GameLoop<'a> {
         // Update the mana engine for this player
         self.mana_engine.update_mut(self.game, player_id);
 
+        // Get the player's mana pool for checking floating mana (from Dark Ritual, etc.)
+        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+
         // Check if this is the active player (only active player can cast sorceries)
         let is_active_player = self.game.turn.active_player == player_id;
 
@@ -136,7 +139,8 @@ impl<'a> GameLoop<'a> {
 
                         if can_cast_now {
                             // Check if we can pay for this spell's mana cost
-                            if self.mana_engine.can_pay(&card.mana_cost) {
+                            // Use can_pay_with_pool to consider floating mana from rituals like Dark Ritual
+                            if self.mana_engine.can_pay_with_pool(&card.mana_cost, &mana_pool) {
                                 // For Aura spells, check if there are valid targets
                                 // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
                                 if card.is_aura() {
@@ -181,6 +185,9 @@ impl<'a> GameLoop<'a> {
         // Update the mana engine for this player
         self.mana_engine.update_mut(self.game, player_id);
 
+        // Get the player's mana pool for checking floating mana (from Dark Ritual, etc.)
+        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+
         // Check all permanents controlled by this player
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
@@ -205,9 +212,9 @@ impl<'a> GameLoop<'a> {
                         can_activate = false;
                     }
 
-                    // Check mana cost
+                    // Check mana cost - use can_pay_with_pool to consider floating mana
                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
-                        if !self.mana_engine.can_pay(mana_cost) {
+                        if !self.mana_engine.can_pay_with_pool(mana_cost, &mana_pool) {
                             can_activate = false;
                         }
                     }

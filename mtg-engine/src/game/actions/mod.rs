@@ -620,14 +620,62 @@ impl GameState {
 
         // Step 6: Activate mana abilities
         // This is where mana gets tapped - AFTER the spell is on the stack
-        // Use the pre-computed ManaEngine to determine tap order
+        //
+        // IMPORTANT: Check if the player already has floating mana in their pool
+        // (e.g., from Dark Ritual). We should use that first, then tap sources
+        // only for the remaining cost.
+        use crate::core::ManaCost;
         use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+        // Get current mana pool to check for floating mana
+        let current_pool = self.get_player(player_id)?.mana_pool;
+
+        // Calculate the remaining cost after using pool mana
+        // First satisfy colored requirements from pool, then generic
+        let remaining_white = mana_cost.white.saturating_sub(current_pool.white);
+        let remaining_blue = mana_cost.blue.saturating_sub(current_pool.blue);
+        let remaining_black = mana_cost.black.saturating_sub(current_pool.black);
+        let remaining_red = mana_cost.red.saturating_sub(current_pool.red);
+        let remaining_green = mana_cost.green.saturating_sub(current_pool.green);
+        let remaining_colorless = mana_cost.colorless.saturating_sub(current_pool.colorless);
+
+        // Calculate pool mana used for colored requirements
+        let used_white = mana_cost.white.min(current_pool.white);
+        let used_blue = mana_cost.blue.min(current_pool.blue);
+        let used_black = mana_cost.black.min(current_pool.black);
+        let used_red = mana_cost.red.min(current_pool.red);
+        let used_green = mana_cost.green.min(current_pool.green);
+        let used_colorless = mana_cost.colorless.min(current_pool.colorless);
+
+        // Pool mana remaining after colored requirements can be used for generic
+        let pool_for_generic = (current_pool.white.saturating_sub(used_white))
+            + (current_pool.blue.saturating_sub(used_blue))
+            + (current_pool.black.saturating_sub(used_black))
+            + (current_pool.red.saturating_sub(used_red))
+            + (current_pool.green.saturating_sub(used_green))
+            + (current_pool.colorless.saturating_sub(used_colorless));
+
+        let remaining_generic = mana_cost.generic.saturating_sub(pool_for_generic);
+
+        // Create the remaining cost that must be paid by tapping sources
+        let remaining_cost = ManaCost {
+            generic: remaining_generic,
+            white: remaining_white,
+            blue: remaining_blue,
+            black: remaining_black,
+            red: remaining_red,
+            green: remaining_green,
+            colorless: remaining_colorless,
+            x_count: 0,
+        };
 
         let mana_sources = mana_engine.all_sources();
         let resolver = GreedyManaResolver::new();
         let mut sources_to_tap = Vec::new();
 
-        if !resolver.compute_tap_order(&mana_cost, mana_sources, &mut sources_to_tap) {
+        // Only compute tap order for the remaining cost (after pool mana is used)
+        // If remaining cost is zero, we don't need to tap any sources
+        if remaining_cost.cmc() > 0 && !resolver.compute_tap_order(&remaining_cost, mana_sources, &mut sources_to_tap) {
             // Cannot pay the cost - unwind the spell cast
             self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
             return Err(MtgError::InvalidAction(format!(
