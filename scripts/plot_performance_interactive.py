@@ -107,9 +107,17 @@ def detect_regressions(series, threshold=0.05):
     return regressions
 
 
-def create_metric_plot(df, metric_col, ylabel, title):
+def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=None):
     """
     Create an interactive Plotly figure for a single metric.
+
+    Args:
+        df: DataFrame with performance data
+        metric_col: Column name for the metric to plot
+        ylabel: Y-axis label
+        title: Plot title
+        min_depth: Minimum git depth to display (default: 100)
+        max_depth: Maximum git depth (auto-detected if None)
 
     Returns a Plotly figure object.
     """
@@ -118,6 +126,11 @@ def create_metric_plot(df, metric_col, ylabel, title):
     benchmarks = sorted(df['benchmark_name'].unique())
     trace_count = 0
     regression_trace_indices = []  # Track which traces are regressions
+
+    # Determine the full range of git depths for slider
+    if max_depth is None:
+        max_depth = int(df['git_depth'].max())
+    abs_min_depth = int(df['git_depth'].min())
 
     for benchmark in benchmarks:
         bench_df = df[df['benchmark_name'] == benchmark].copy()
@@ -204,7 +217,30 @@ def create_metric_plot(df, metric_col, ylabel, title):
     for idx in regression_trace_indices:
         hide_regressions[idx] = False
 
-    # Update layout with buttons to show/hide all traces and toggle regressions
+    # Create slider steps for git depth filtering
+    slider_steps = []
+    # Create steps from abs_min_depth to max_depth in increments
+    step_size = max(50, (max_depth - abs_min_depth) // 20)  # ~20 steps
+    active_step = 0
+    for i, depth in enumerate(range(abs_min_depth, max_depth + 1, step_size)):
+        slider_steps.append(dict(
+            method='relayout',
+            args=[{'xaxis.range': [depth, max_depth]}],
+            label=str(depth)
+        ))
+        # Find the step closest to min_depth for the default position
+        if depth <= min_depth:
+            active_step = i
+
+    # Add a final step for the exact max if needed
+    if slider_steps and slider_steps[-1]['label'] != str(max_depth):
+        slider_steps.append(dict(
+            method='relayout',
+            args=[{'xaxis.range': [max_depth, max_depth]}],
+            label=str(max_depth)
+        ))
+
+    # Update layout with buttons and slider
     fig.update_layout(
         title=dict(
             text=title,
@@ -212,6 +248,7 @@ def create_metric_plot(df, metric_col, ylabel, title):
         ),
         xaxis=dict(
             title='Git Depth (commit count)',
+            range=[min_depth, max_depth],  # Set initial range
             gridcolor='lightgray',
             showgrid=True
         ),
@@ -261,6 +298,18 @@ def create_metric_plot(df, metric_col, ylabel, title):
                 xanchor='left',
                 y=1.15,
                 yanchor='top'
+            )
+        ],
+        sliders=[
+            dict(
+                active=active_step,  # Start at the step corresponding to min_depth
+                currentvalue=dict(
+                    prefix='Min Git Depth: ',
+                    visible=True,
+                    xanchor='left'
+                ),
+                pad={'t': 50},
+                steps=slider_steps
             )
         ],
         template='plotly_white',
@@ -359,16 +408,24 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         f'        <div class="subtitle">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}</div>',
     ]
 
+    # Detect typical thread count for this machine from parallel benchmarks
+    cpu_threads = "unknown"
+    if 'num_threads' in df.columns:
+        # Get the thread count from parallel benchmarks
+        par_df = df[df['benchmark_name'].str.contains('par_', na=False)]
+        if not par_df.empty:
+            cpu_threads = str(int(par_df['num_threads'].mode().iloc[0]))
+
     # Add benchmark documentation
     benchmark_docs = {
-        'fresh_games': 'Fresh Games (Baseline) - Play complete games from start to finish without rewind. No logging overhead. Tests core game engine throughput.',
-        'mem_logging_rewind_play_again': 'Memory Logging + Rewind - Play to midpoint, rewind, play forward. Logs stored in memory. Tests undo system with realistic logging.',
-        'stdout_logging_rewind_play_again': 'Stdout Logging + Rewind - Same as memory logging but writes to stdout. Tests worst-case logging overhead.',
-        'snapshot_games': 'Snapshot Games - Like fresh games but uses Clone-based snapshots instead of undo log. Tests memory cloning overhead.',
-        'rewind': 'Rewind Only - Measures pure rewind speed by rewinding a completed game repeatedly. Tests undo system in isolation.',
-        'rewind_play_again': 'Rewind + Play Again (Sequential) - Rewind to midpoint then play forward. Sequential execution. Core rewind benchmark.',
-        'par_rewind_play_again': 'Rewind + Play Again (Parallel) - Same as sequential but uses Rayon parallel iterators. Tests multi-core scaling.',
-        'pinned_par_rewind_play_again': 'Rewind + Play Again (Pinned-Parallel) - Parallel execution with CPU affinity pinning. Tests NUMA-aware performance.',
+        'fresh_games': 'Fresh Games (Baseline) - Play complete games from start to finish without rewind. No logging overhead. Tests core game engine throughput. (1 thread)',
+        'mem_logging_rewind_play_again': 'Memory Logging + Rewind - Play to midpoint, rewind, play forward. Logs stored in memory. Tests undo system with realistic logging. (1 thread)',
+        'stdout_logging_rewind_play_again': 'Stdout Logging + Rewind - Same as memory logging but writes to stdout. Tests worst-case logging overhead. (1 thread)',
+        'snapshot_games': 'Snapshot Games - Like fresh games but uses Clone-based snapshots instead of undo log. Tests memory cloning overhead. (1 thread)',
+        'rewind': 'Rewind Only - Measures pure rewind speed by rewinding a completed game repeatedly. Tests undo system in isolation. (1 thread)',
+        'rewind_play_again': 'Rewind + Play Again (Sequential) - Rewind to midpoint then play forward. Sequential execution. Core rewind benchmark. (1 thread)',
+        'par_rewind_play_again': f'Rewind + Play Again (Parallel) - Same as sequential but uses Rayon parallel iterators. Tests multi-core scaling. ({cpu_threads} threads)',
+        'pinned_par_rewind_play_again': f'Rewind + Play Again (Pinned-Parallel) - Parallel execution with CPU affinity pinning. Tests NUMA-aware performance. ({cpu_threads} threads)',
     }
 
     deck_info = [
@@ -416,6 +473,7 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '        <p>',
         '        <strong>Interactive Controls:</strong>',
         '        <ul>',
+        '            <li><strong>Git Depth Slider:</strong> Filter data by minimum git depth (default: 900 for recent commits, slide left to see full history)</li>',
         '            <li><strong>Show/Hide All:</strong> Quickly toggle visibility of all benchmark series</li>',
         '            <li><strong>Hide/Show Regressions:</strong> Toggle regression markers on/off (red X markers)</li>',
         '            <li><strong>Single click legend:</strong> Show/hide individual benchmarks (regression markers follow their lines)</li>',
@@ -489,13 +547,16 @@ def create_dashboard(df, output_file, filter_benchmark=None):
     ])
 
     # Generate and embed each plot
+    # Default to showing only recent data (git depth >= 900)
+    default_min_depth = 900
+
     for metric_col, ylabel, plot_title in metrics:
         if metric_col not in df.columns:
             print(f"Warning: Metric '{metric_col}' not found in data", file=sys.stderr)
             continue
 
         print(f"Generating plot: {plot_title}")
-        fig = create_metric_plot(df, metric_col, ylabel, plot_title)
+        fig = create_metric_plot(df, metric_col, ylabel, plot_title, min_depth=default_min_depth)
 
         # Convert to HTML div
         plot_html = fig.to_html(

@@ -59,7 +59,7 @@ echo ""
 if [ ! -f "$HISTORY_FILE" ]; then
     echo "Creating new performance history file with header..."
     cat > "$HISTORY_FILE" << 'EOF'
-timestamp,git_commit,git_depth,git_branch,git_dirty,benchmark_name,seed,num_games,total_turns,total_actions,total_duration_ms,avg_turns_per_game,avg_actions_per_game,avg_duration_ms_per_game,games_per_sec,actions_per_sec,turns_per_sec,actions_per_turn,total_bytes_allocated,total_bytes_deallocated,net_bytes,avg_bytes_per_game,bytes_per_turn,bytes_per_sec
+timestamp,git_commit,git_depth,git_branch,git_dirty,benchmark_name,seed,num_threads,num_games,total_turns,total_actions,total_duration_ms,avg_turns_per_game,avg_actions_per_game,avg_duration_ms_per_game,games_per_sec,actions_per_sec,turns_per_sec,actions_per_turn,total_bytes_allocated,total_bytes_deallocated,net_bytes,avg_bytes_per_game,bytes_per_turn,bytes_per_sec
 EOF
 fi
 
@@ -141,10 +141,29 @@ parse_metrics() {
         # Normalize benchmark name to lowercase, remove "with" variations
         local norm_name=$(echo "$benchmark_name" | tr '[:upper:]' '[:lower:]' | sed 's/ /_/g')
 
-        echo "Found metrics: $benchmark_name (seed=$seed, games=$num_games)"
+        # Determine num_threads based on benchmark name and CPU
+        local num_threads=1
+        if [[ "$norm_name" =~ ^par_ || "$norm_name" =~ ^pinned_par_ ]]; then
+            # Parallel benchmarks use num_cpus::get_physical()
+            # AMD Ryzen Threadripper PRO 7975WX = 32 physical cores
+            # AMD Ryzen 7 9800X3D = 8 physical cores
+            if [[ "$CPU_NAME" == *"7975WX"* ]]; then
+                num_threads=32
+            elif [[ "$CPU_NAME" == *"9800X3D"* || "$CPU_NAME" == *"Ryzen_7"* ]]; then
+                num_threads=8
+            else
+                # Default to lscpu detection for unknown CPUs
+                num_threads=$(lscpu | grep "^Core(s) per socket:" | awk '{print $4}')
+                if [ -z "$num_threads" ]; then
+                    num_threads=1
+                fi
+            fi
+        fi
+
+        echo "Found metrics: $benchmark_name (seed=$seed, games=$num_games, threads=$num_threads)"
 
         # Write CSV row
-        echo "${TIMESTAMP},${GIT_COMMIT_SHORT},${GIT_DEPTH},${GIT_BRANCH},${GIT_DIRTY},${norm_name},${seed},${num_games},${total_turns},${total_actions},${total_duration_ms},${avg_turns_per_game},${avg_actions_per_game},${avg_duration_ms},${games_per_sec},${actions_per_sec},${turns_per_sec},${actions_per_turn},${total_bytes_allocated},${total_bytes_deallocated},${net_bytes},${avg_bytes_per_game},${bytes_per_turn},${bytes_per_sec}" >> "$csv_file"
+        echo "${TIMESTAMP},${GIT_COMMIT_SHORT},${GIT_DEPTH},${GIT_BRANCH},${GIT_DIRTY},${norm_name},${seed},${num_threads},${num_games},${total_turns},${total_actions},${total_duration_ms},${avg_turns_per_game},${avg_actions_per_game},${avg_duration_ms},${games_per_sec},${actions_per_sec},${turns_per_sec},${actions_per_turn},${total_bytes_allocated},${total_bytes_deallocated},${net_bytes},${avg_bytes_per_game},${bytes_per_turn},${bytes_per_sec}" >> "$csv_file"
     }
 
     while IFS= read -r line; do
