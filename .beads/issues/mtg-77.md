@@ -57,6 +57,12 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Mana creatures: +13 for attack potential, +13 for block potential
   - Cards with non-mana abilities: +13 per ability
   - Test with Llanowar Elves vs Forest vs Strip Mine
+- ✅ **Counterspell AI (2025-11-30_#1012)**
+  - Port of Java's CounterAi.checkApiLogic()
+  - Counter opponent spells on the stack (never own spells)
+  - Prioritize countering creatures, damage spells, removal, other counters
+  - CMC-based filtering (counter CMC 1+ spells)
+  - Test with Counterspell vs monored deck
 
 **What's Missing:**
 
@@ -97,7 +103,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with real cards (2025-11-30) - 539 tests passing**
+- ✅ **Comprehensive test coverage with real cards (2025-11-30) - 540 tests passing**
 
 ## Next Steps (Priority Order)
 

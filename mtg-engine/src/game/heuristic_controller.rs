@@ -2188,7 +2188,90 @@ impl HeuristicController {
             }
         }
 
+        // Check for counterspells
+        // Reference: CounterAi.java:32-226 (checkApiLogic)
+        let has_counter = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::CounterSpell { .. }));
+        if has_counter && self.should_counter_spell(view) {
+            return true;
+        }
+
         false
+    }
+
+    /// Evaluate whether to cast a counterspell now
+    ///
+    /// Reference: CounterAi.java:32-226 (checkApiLogic)
+    ///
+    /// Key logic from Java:
+    /// 1. Stack must not be empty (line 40-42)
+    /// 2. Target the topmost spell on stack (line 51)
+    /// 3. Don't counter friendly spells (line 52)
+    /// 4. Don't counter low CMC spells (lines 163-169, configurable)
+    /// 5. Prefer countering dangerous spells: creatures, damage, removal (lines 171-182)
+    ///
+    /// Simplified for now:
+    /// - Counter any opponent spell on the stack
+    /// - Prioritize creatures, damage spells, and removal
+    fn should_counter_spell(&self, view: &GameStateView) -> bool {
+        // Stack must have something to counter
+        if view.is_stack_empty() {
+            return false;
+        }
+
+        // Get the topmost spell on the stack (last entry)
+        let stack = view.stack();
+        let Some(&top_spell_id) = stack.last() else {
+            return false;
+        };
+
+        let Some(top_spell) = view.get_card(top_spell_id) else {
+            return false;
+        };
+
+        // Don't counter our own spells!
+        if top_spell.owner == self.player_id {
+            return false;
+        }
+
+        // Evaluate what type of spell it is
+        let is_creature = top_spell.is_creature();
+        let is_damage_spell = top_spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
+        let is_removal_spell = top_spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }));
+        let is_counter_spell = top_spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::CounterSpell { .. }));
+        let is_pump_spell = top_spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::PumpCreature { .. }));
+
+        // Always counter dangerous spell types
+        // Reference: CounterAi.java:151-182 (configurable countering preferences)
+        if is_creature || is_damage_spell || is_removal_spell || is_counter_spell || is_pump_spell {
+            return true;
+        }
+
+        // For other spells, check mana value (CMC)
+        // Don't waste counterspells on very cheap spells unless they're dangerous
+        let cmc = top_spell.mana_cost.cmc();
+        if cmc >= 2 {
+            // Counter anything CMC 2 or higher
+            return true;
+        }
+
+        // CMC 0-1 spells: counter with 50% chance (simplified from Java's configurable chance)
+        // In a real implementation, we'd check the RNG, but for now just counter CMC 1 spells
+        cmc >= 1
     }
 
     /// Choose the best creature to target with removal
@@ -3951,5 +4034,84 @@ mod tests {
         eprintln!("  Forest: {}", forest_score);
         eprintln!("  Strip Mine: {}", utility_score);
         eprintln!("  Llanowar Elves: {}", elves_score);
+    }
+
+    /// Test counterspell AI logic
+    ///
+    /// Port of Java's CounterAi.checkApiLogic()
+    /// Reference: CounterAi.java:32-226
+    ///
+    /// This tests that:
+    /// 1. AI counters opponent creature spells
+    /// 2. AI doesn't counter own spells
+    /// 3. AI doesn't try to counter when stack is empty
+    #[test]
+    fn test_counterspell_ai() {
+        use crate::core::{Card, CardType, Effect, TargetRef};
+
+        let player_id = EntityId::new(1);
+        let opponent_id = EntityId::new(2);
+        let controller = HeuristicController::new(player_id);
+
+        // Create game state with opponent creature on stack
+        let mut game = crate::game::state::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        // Create an opponent creature spell and put it on the stack
+        let creature_id = EntityId::new(100);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", opponent_id);
+        creature.add_type(CardType::Creature);
+        creature.set_power(Some(2));
+        creature.set_toughness(Some(2));
+        game.cards.insert(creature_id, creature);
+
+        // Put creature on the stack
+        game.stack.cards.push(creature_id);
+
+        let view = crate::game::controller::GameStateView::new(&game, player_id);
+
+        // Test: Should counter opponent's creature
+        assert!(
+            controller.should_counter_spell(&view),
+            "AI should want to counter opponent's creature spell"
+        );
+
+        // Test: Stack is empty - should not try to counter
+        game.stack.cards.pop();
+        let view_empty = crate::game::controller::GameStateView::new(&game, player_id);
+        assert!(
+            !controller.should_counter_spell(&view_empty),
+            "AI should not counter when stack is empty"
+        );
+
+        // Test: Own spell on stack - should not counter
+        let own_creature_id = EntityId::new(101);
+        let mut own_creature = Card::new(own_creature_id, "Our Bears", player_id);
+        own_creature.add_type(CardType::Creature);
+        game.cards.insert(own_creature_id, own_creature);
+        game.stack.cards.push(own_creature_id);
+
+        let view_own = crate::game::controller::GameStateView::new(&game, player_id);
+        assert!(
+            !controller.should_counter_spell(&view_own),
+            "AI should not counter own spell"
+        );
+
+        // Test: Counter opponent damage spell
+        game.stack.cards.pop();
+        let damage_spell_id = EntityId::new(102);
+        let mut damage_spell = Card::new(damage_spell_id, "Lightning Bolt", opponent_id);
+        damage_spell.add_type(CardType::Instant);
+        damage_spell.effects.push(Effect::DealDamage {
+            amount: 3,
+            target: TargetRef::Player(player_id),
+        });
+        game.cards.insert(damage_spell_id, damage_spell);
+        game.stack.cards.push(damage_spell_id);
+
+        let view_damage = crate::game::controller::GameStateView::new(&game, player_id);
+        assert!(
+            controller.should_counter_spell(&view_damage),
+            "AI should want to counter opponent's damage spell"
+        );
     }
 }
