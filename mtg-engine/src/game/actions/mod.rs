@@ -1009,6 +1009,10 @@ impl GameState {
                         // Put token onto the battlefield
                         self.battlefield.add(token_id);
 
+                        // Debug log token creation
+                        log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
+                            token_name, token_id.as_u32(), controller.as_u32());
+
                         // Log token creation
                         self.logger.normal(&format!(
                             "Created {} under {}'s control",

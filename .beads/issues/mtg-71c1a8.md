@@ -1,10 +1,11 @@
 ---
 title: 'Bug: Vibrant Cityscape tutor ability doesn''t search library (fizzles)'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2025-11-30T01:38:10.628973363+00:00
-updated_at: 2025-11-30T02:03:22.458879461+00:00
+updated_at: 2025-11-30T13:57:11.001975377+00:00
+closed_at: 2025-11-30T13:57:11.001975307+00:00
 ---
 
 # Description

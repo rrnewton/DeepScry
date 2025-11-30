@@ -93,6 +93,10 @@ CMD=(
     --seed=42  # Deterministic seed for reproducibility
 )
 
+# Preserve RUST_LOG environment variable if set (for debug logging)
+# Example: RUST_LOG=zone=debug,token=debug ./agentplay/start_game.sh ...
+export RUST_LOG="${RUST_LOG:-}"
+
 # Build reproducer command (without cargo run for cleaner output)
 REPRODUCER_CMD="mtg tui ${MTG_ARGS[*]} --p1=fixed --p2=fixed --p1-fixed-inputs=\"\" --p2-fixed-inputs=\"\" --stop-on-choice=1 --seed=42 --json --log-tail=100"
 

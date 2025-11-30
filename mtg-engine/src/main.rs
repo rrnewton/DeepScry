@@ -393,6 +393,12 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize logging (controlled by RUST_LOG environment variable)
+    env_logger::Builder::from_default_env()
+        .format_timestamp(None)
+        .format_target(true)
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {

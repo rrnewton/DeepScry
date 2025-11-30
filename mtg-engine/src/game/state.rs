@@ -409,6 +409,15 @@ impl GameState {
 
     /// Move a card from one zone to another
     pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
+        // Debug log card movement
+        if let Ok(card) = self.cards.get(card_id) {
+            log::debug!(target: "zone", "Moving card {} (id={}) from {:?} to {:?} (owner: player {})",
+                card.name, card_id.as_u32(), from, to, owner.as_u32());
+        } else {
+            log::debug!(target: "zone", "Moving unknown card (id={}) from {:?} to {:?} (owner: player {})",
+                card_id.as_u32(), from, to, owner.as_u32());
+        }
+
         // State-based action: If a creature is leaving the battlefield, detach all Equipment from it
         if from == Zone::Battlefield {
             if let Ok(card) = self.cards.get(card_id) {
