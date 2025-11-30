@@ -467,6 +467,9 @@ impl GreedyManaResolver {
     ///
     /// Internal tracking uses SmallVec to avoid heap allocation. When tap_order_out
     /// is provided, results are copied to it at the end.
+    ///
+    /// OPT-7: Reuses a single `candidates` buffer across all color iterations
+    /// to avoid repeated allocations (was creating 5 SmallVecs per payment).
     fn try_greedy_payment(
         &self,
         cost: &ManaCost,
@@ -477,64 +480,74 @@ impl GreedyManaResolver {
         // (up to 8 sources covers most spells: 2-3 colored + 4-5 generic)
         let mut tap_order: SmallVec<[CardId; 8]> = SmallVec::new();
 
+        // OPT-7: Reusable buffer for candidates - cleared and reused for each color
+        // instead of creating a new SmallVec 5 times per payment
+        let mut candidates: SmallVec<[(usize, u8); 8]> = SmallVec::new();
+
         let mut remaining_cost = *cost;
 
-        // Helper to tap sources for a specific color
-        let tap_for_color = |tap_order: &mut SmallVec<[CardId; 8]>, color: ManaColor, amount: u8| {
-            let mut tapped = 0u8;
-
-            // Create list of available sources that can produce this color
-            // Use SmallVec to avoid heap allocation for typical mana source counts (up to 8)
-            // Note: (usize, u8) is 16 bytes due to alignment, so 8 items = 128 bytes inline
-            let mut candidates: SmallVec<[(usize, u8); 8]> = sources
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| {
-                    !s.is_tapped
-                        && !s.has_summoning_sickness
-                        && !tap_order.contains(&s.card_id)
-                        && Self::can_produce_color(&s.production, color)
-                })
-                .map(|(idx, s)| (idx, Self::score_for_color(&s.production, color)))
-                .collect();
-
-            // Sort by score (lower = more specific = tap first)
-            candidates.sort_by_key(|(_, score)| *score);
-
-            // Tap sources in priority order
-            for (idx, _score) in candidates {
-                if tapped >= amount {
-                    break;
-                }
-                tap_order.push(sources[idx].card_id);
-                tapped += 1;
-            }
-
-            tapped >= amount
-        };
-
         // Pay specific color requirements first
-        if remaining_cost.white > 0 && !tap_for_color(&mut tap_order, ManaColor::White, remaining_cost.white) {
+        if remaining_cost.white > 0
+            && !Self::tap_for_color(
+                sources,
+                &mut tap_order,
+                &mut candidates,
+                ManaColor::White,
+                remaining_cost.white,
+            )
+        {
             return false;
         }
         remaining_cost.white = 0;
 
-        if remaining_cost.blue > 0 && !tap_for_color(&mut tap_order, ManaColor::Blue, remaining_cost.blue) {
+        if remaining_cost.blue > 0
+            && !Self::tap_for_color(
+                sources,
+                &mut tap_order,
+                &mut candidates,
+                ManaColor::Blue,
+                remaining_cost.blue,
+            )
+        {
             return false;
         }
         remaining_cost.blue = 0;
 
-        if remaining_cost.black > 0 && !tap_for_color(&mut tap_order, ManaColor::Black, remaining_cost.black) {
+        if remaining_cost.black > 0
+            && !Self::tap_for_color(
+                sources,
+                &mut tap_order,
+                &mut candidates,
+                ManaColor::Black,
+                remaining_cost.black,
+            )
+        {
             return false;
         }
         remaining_cost.black = 0;
 
-        if remaining_cost.red > 0 && !tap_for_color(&mut tap_order, ManaColor::Red, remaining_cost.red) {
+        if remaining_cost.red > 0
+            && !Self::tap_for_color(
+                sources,
+                &mut tap_order,
+                &mut candidates,
+                ManaColor::Red,
+                remaining_cost.red,
+            )
+        {
             return false;
         }
         remaining_cost.red = 0;
 
-        if remaining_cost.green > 0 && !tap_for_color(&mut tap_order, ManaColor::Green, remaining_cost.green) {
+        if remaining_cost.green > 0
+            && !Self::tap_for_color(
+                sources,
+                &mut tap_order,
+                &mut candidates,
+                ManaColor::Green,
+                remaining_cost.green,
+            )
+        {
             return false;
         }
         remaining_cost.green = 0;
@@ -585,6 +598,48 @@ impl GreedyManaResolver {
         }
 
         true
+    }
+
+    /// Helper to tap sources for a specific color
+    ///
+    /// OPT-7: Takes a reusable `candidates` buffer to avoid allocation per color.
+    /// The buffer is cleared at the start and reused.
+    #[inline]
+    fn tap_for_color(
+        sources: &[ManaSource],
+        tap_order: &mut SmallVec<[CardId; 8]>,
+        candidates: &mut SmallVec<[(usize, u8); 8]>,
+        color: ManaColor,
+        amount: u8,
+    ) -> bool {
+        // Clear and reuse the candidates buffer (retains capacity)
+        candidates.clear();
+
+        // Collect available sources that can produce this color
+        for (idx, source) in sources.iter().enumerate() {
+            if !source.is_tapped
+                && !source.has_summoning_sickness
+                && !tap_order.contains(&source.card_id)
+                && Self::can_produce_color(&source.production, color)
+            {
+                candidates.push((idx, Self::score_for_color(&source.production, color)));
+            }
+        }
+
+        // Sort by score (lower = more specific = tap first)
+        candidates.sort_by_key(|(_, score)| *score);
+
+        // Tap sources in priority order
+        let mut tapped = 0u8;
+        for &(idx, _score) in candidates.iter() {
+            if tapped >= amount {
+                break;
+            }
+            tap_order.push(sources[idx].card_id);
+            tapped += 1;
+        }
+
+        tapped >= amount
     }
 }
 
