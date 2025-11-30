@@ -937,7 +937,7 @@ async fn run_tui(
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-        ControllerType::Fixed | ControllerType::FancyFixed => {
+        ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
             if let Some(input) = &p1_fixed_inputs {
                 // CLI override - use provided script
@@ -1045,7 +1045,7 @@ async fn run_tui(
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-        ControllerType::Fixed | ControllerType::FancyFixed => {
+        ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
             if let Some(input) = &p2_fixed_inputs {
                 // CLI override - use provided script
@@ -1555,7 +1555,7 @@ async fn run_resume(
             mtg_forge_rs::game::ControllerType::Random => ControllerType::Random,
             mtg_forge_rs::game::ControllerType::Tui => ControllerType::Tui,
             mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
-            mtg_forge_rs::game::ControllerType::Fixed | mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::Fixed,
+            mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
             mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
         }
     });
@@ -1567,7 +1567,7 @@ async fn run_resume(
             mtg_forge_rs::game::ControllerType::Random => ControllerType::Random,
             mtg_forge_rs::game::ControllerType::Tui => ControllerType::Tui,
             mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
-            mtg_forge_rs::game::ControllerType::Fixed | mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::Fixed,
+            mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
             mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
         }
     });

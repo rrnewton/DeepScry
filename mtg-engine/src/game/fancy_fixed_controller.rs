@@ -37,25 +37,20 @@ impl FancyFixedController {
     /// * `player_id` - The player this controller manages
     /// * `script` - The fixed input script (parsed from --fixed-inputs)
     /// * `screenshot_dir` - Optional directory to save screenshots (not yet implemented)
-    pub fn new(
-        player_id: PlayerId,
-        script: Vec<String>,
-        screenshot_dir: Option<PathBuf>,
-    ) -> Result<Self, MtgError> {
+    pub fn new(player_id: PlayerId, script: Vec<String>, screenshot_dir: Option<PathBuf>) -> Result<Self, MtgError> {
         let fixed = RichInputController::new(player_id, script);
 
         // Create screenshot directory if specified
         if let Some(ref dir) = screenshot_dir {
-            std::fs::create_dir_all(dir).map_err(|e| {
-                MtgError::InvalidAction(format!("Failed to create screenshot directory: {}", e))
-            })?;
-            log::info!("Screenshot directory created (rendering not yet implemented): {}", dir.display());
+            std::fs::create_dir_all(dir)
+                .map_err(|e| MtgError::InvalidAction(format!("Failed to create screenshot directory: {}", e)))?;
+            log::info!(
+                "Screenshot directory created (rendering not yet implemented): {}",
+                dir.display()
+            );
         }
 
-        Ok(Self {
-            fixed,
-            screenshot_dir,
-        })
+        Ok(Self { fixed, screenshot_dir })
     }
 }
 
@@ -132,11 +127,7 @@ impl PlayerController for FancyFixedController {
         self.fixed.choose_cards_to_discard(view, hand, count)
     }
 
-    fn choose_from_library(
-        &mut self,
-        view: &GameStateView,
-        valid_cards: &[CardId],
-    ) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
         // TODO: Render TUI and capture screenshot
         self.fixed.choose_from_library(view, valid_cards)
     }

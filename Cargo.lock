@@ -1016,6 +1016,7 @@ dependencies = [
  "jwalk",
  "libc",
  "log",
+ "mimalloc",
  "nom",
  "num_cpus",
  "rand",
