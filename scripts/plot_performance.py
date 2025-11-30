@@ -144,8 +144,9 @@ def plot_metric(df, metric_col, ylabel, title, output_path, show=False):
     ax.set_xlabel('Git Depth (commit count)')
     ax.set_ylabel(ylabel)
     ax.set_title(title)
+    ax.set_yscale('log')  # Use logarithmic scale for Y axis
     ax.legend(loc='best')
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, which='both')  # Show grid for major and minor ticks
 
     plt.tight_layout()
 

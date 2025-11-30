@@ -1,0 +1,14 @@
+
+# All profiling output goes to ./<CPU_NAME>/*
+# We track the directory structure and CSV/log files, but not the plots subdirectory
+*/plots
+# Exception: Track benchmark log files in experiment_results
+# !./*/benchmark_log_*.log
+
+callgrind.out
+dhat-heap.json
+perf_record.log
+flamegraph.svg
+performance_dashboard.html
+
+

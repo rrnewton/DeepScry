@@ -14,12 +14,7 @@
 .session_title.txt
 
 # Benchmarking and Profiling:
-
-# All profiling output goes to experiment_results/<CPU_NAME>/
-# We track the directory structure and CSV/log files, but not the plots subdirectory
-experiment_results/*/plots
-# Exception: Track benchmark log files in experiment_results
-!experiment_results/*/benchmark_log_*.log
+# See experimental_results/.gitignore
 
 # Validation logs
 validate_logs/
@@ -66,5 +61,4 @@ benchmark_output.log
 agentplay/*.game/
 full_deck_list.txt
 *.log
-experiment_results/callgrind.out
 *.data
