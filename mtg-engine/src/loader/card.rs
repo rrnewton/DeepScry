@@ -1578,6 +1578,18 @@ impl CardDefinition {
     fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
         use crate::core::{AffectedSelector, StaticAbility};
 
+        /// Check if a string represents a known card type
+        fn is_card_type(s: &str) -> Option<CardType> {
+            match s {
+                "Artifact" => Some(CardType::Artifact),
+                "Land" => Some(CardType::Land),
+                "Legendary" => None, // Supertype, not card type
+                "Snow" => None,      // Supertype
+                "Tribal" => None,    // Special
+                _ => None,
+            }
+        }
+
         /// Parse tribal type selector patterns
         ///
         /// Handles patterns like:
@@ -1585,26 +1597,42 @@ impl CardDefinition {
         /// - "Goblin.Other+YouCtrl" → CreatureTypeOtherYouControl { Goblin }
         /// - "Creature.Goblin+YouCtrl" → CreatureTypeYouControl { Goblin }
         /// - "Creature.Goblin+Other+YouCtrl" → CreatureTypeOtherYouControl { Goblin }
+        /// - "Creature.Artifact+YouCtrl" → CreatureCardTypeYouControl { Artifact }
+        /// - "Creature.Artifact+Other+YouCtrl" → CreatureCardTypeOtherYouControl { Artifact }
         ///
-        /// Returns None if the pattern doesn't match a recognized tribal format.
+        /// Returns None if the pattern doesn't match a recognized format.
         fn parse_tribal_selector(value: &str) -> Option<AffectedSelector> {
-            // Pattern: Creature.TYPE+Other+YouCtrl (e.g., "Creature.Goblin+Other+YouCtrl")
-            // This is the most common format for tribal lords
+            // Pattern: Creature.TYPE+Other+YouCtrl (e.g., "Creature.Goblin+Other+YouCtrl" or "Creature.Artifact+Other+YouCtrl")
+            // This is the most common format for tribal lords / type-based lords
             if value.starts_with("Creature.") && value.ends_with("+Other+YouCtrl") {
                 let remainder = value.strip_prefix("Creature.")?;
-                let subtype = remainder.strip_suffix("+Other+YouCtrl")?;
+                let type_str = remainder.strip_suffix("+Other+YouCtrl")?;
+
+                // Check if it's a card type (like Artifact) vs a subtype (like Goblin)
+                if let Some(card_type) = is_card_type(type_str) {
+                    return Some(AffectedSelector::CreatureCardTypeOtherYouControl { card_type });
+                }
+
+                // Otherwise, treat as subtype (tribal)
                 return Some(AffectedSelector::CreatureTypeOtherYouControl {
-                    subtype: crate::core::Subtype::new(subtype),
+                    subtype: crate::core::Subtype::new(type_str),
                 });
             }
 
-            // Pattern: Creature.TYPE+YouCtrl (e.g., "Creature.Zombie+YouCtrl")
+            // Pattern: Creature.TYPE+YouCtrl (e.g., "Creature.Zombie+YouCtrl" or "Creature.Artifact+YouCtrl")
             // For cards that also buff themselves (no "Other")
             if value.starts_with("Creature.") && value.ends_with("+YouCtrl") && !value.contains("+Other") {
                 let remainder = value.strip_prefix("Creature.")?;
-                let subtype = remainder.strip_suffix("+YouCtrl")?;
+                let type_str = remainder.strip_suffix("+YouCtrl")?;
+
+                // Check if it's a card type (like Artifact) vs a subtype (like Goblin)
+                if let Some(card_type) = is_card_type(type_str) {
+                    return Some(AffectedSelector::CreatureCardTypeYouControl { card_type });
+                }
+
+                // Otherwise, treat as subtype (tribal)
                 return Some(AffectedSelector::CreatureTypeYouControl {
-                    subtype: crate::core::Subtype::new(subtype),
+                    subtype: crate::core::Subtype::new(type_str),
                 });
             }
 

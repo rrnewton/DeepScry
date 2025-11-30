@@ -380,6 +380,21 @@ pub enum AffectedSelector {
     /// The creature enchanted by this Aura
     /// Corresponds to: `Affected$ Creature.EnchantedBy`
     CreatureEnchantedBy,
+
+    /// Artifact creatures you control, excluding self
+    /// Corresponds to: `Affected$ Creature.Artifact+Other+YouCtrl`
+    /// Used by cards like Master of Etherium that buff artifact creatures
+    CreatureCardTypeOtherYouControl {
+        /// The card type (e.g., "Artifact")
+        card_type: crate::core::CardType,
+    },
+
+    /// Artifact creatures you control, including self
+    /// Corresponds to: `Affected$ Creature.Artifact+YouCtrl`
+    CreatureCardTypeYouControl {
+        /// The card type (e.g., "Artifact")
+        card_type: crate::core::CardType,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility
