@@ -23,19 +23,27 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-121: Fancy TUI enhancements and polish
 - mtg-143: Missing player choice opportunities tracking
 
-**Current status as of 2025-11-04_#686(7edf8de):**
-- Tests: 406 passing (nextest, all categories)
+**Current status as of 2025-11-30_#1036(34a3747):**
+- Tests: 541 passing (nextest, all categories)
 - Examples: 14/14 passing
-- Performance: ~3,842 games/sec (fresh mode), 16.56 actions/turn
-- Performance: ~9,177 games/sec (snapshot mode), ~332k rewinds/sec (rewind mode)
 - Cards: 31k+ supported from cardsfolder
-- Recent work: Mana payment refactoring (-114 LOC), closed mtg-101, mtg-118, duplicate issues
+- Recent work: Integrated prompt_table01 and bugfix-01 branches into main
 
-**Recent accomplishments (2025-11-04):**
-- Refactored mana payment system: eliminated 180+ lines of duplicate code
-- Closed mtg-118: Old School tournament errors (100% fixed, 0.0% error rate)
-- Closed mtg-101: monored.dck fully playable
-- Closed 6 duplicate/stale issues (mtg-93, mtg-94, mtg-115, mtg-116, mtg-117, mtg-119)
+**Recent accomplishments (2025-11-30):**
+- Integrated two feature branches into main:
+  - prompt_table01 (17 commits): mana fixes, triggers, AI improvements, optimizations
+  - bugfix-01 (9 commits): logging infrastructure, debug tools, SearchLibrary fix
+- Key features merged:
+  - Death triggers (Su-Chi "dies" ability)
+  - Upkeep trigger effects (Juzám Djinn fix)
+  - Counterspell AI for heuristic controller
+  - Intelligent mana tapping order (mtg-77)
+  - Land subtype caching optimization
+  - Shadow/Horsemanship evasion keywords
+  - Standard Rust logging infrastructure (log + env_logger)
+  - FancyFixed controller for scripted TUI debugging
+  - SearchLibrary player interaction fix
+- Archived branches as tags: prompt_table01.v1, bugfix-01.v1
 
 **Conventions:**
 - Tracking issues (priority 1) reference granular issues
@@ -45,4 +53,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-**Last updated: 2025-11-04_#686(7edf8de)**
+**Last updated: 2025-11-30_#1036(34a3747)**
