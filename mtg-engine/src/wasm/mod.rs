@@ -39,6 +39,9 @@
 //! - No threading (single-threaded game loop)
 //! - Token creation requires pre-loaded token definitions
 
+#[cfg(all(feature = "wasm-tui", target_arch = "wasm32"))]
+pub mod fancy_tui;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -97,8 +100,8 @@ pub fn is_ready() -> bool {
 /// Use the `mtg export-wasm` command to generate the data files.
 #[wasm_bindgen]
 pub struct WasmCardDatabase {
-    cards: HashMap<String, Arc<CardDefinition>>,
-    decks: HashMap<String, DeckList>,
+    pub(crate) cards: HashMap<String, Arc<CardDefinition>>,
+    pub(crate) decks: HashMap<String, DeckList>,
 }
 
 #[wasm_bindgen]

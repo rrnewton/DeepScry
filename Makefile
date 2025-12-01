@@ -412,7 +412,7 @@ wasm:
 		echo "Installing wasm-pack..."; \
 		cargo install wasm-pack; \
 	fi
-	@cd mtg-engine && wasm-pack build --target web --no-default-features --features wasm
+	@cd mtg-engine && wasm-pack build --target web --no-default-features --features wasm-tui
 	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""

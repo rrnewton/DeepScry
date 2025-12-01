@@ -50,11 +50,14 @@ rustc-hash = "1.1"
 # CLI argument parsing (native only)
 clap = { version = "4.5", features = ["derive"], optional = true }
 
-# TUI (native only)
-ratatui = { version = "0.28", optional = true }
+# TUI (ratatui shared between native and wasm, crossterm native-only)
+# Version 0.29 required for egui_ratatui 2.0 compatibility
+ratatui = { version = "0.29", default-features = false, optional = true }
 crossterm = { version = "0.28", optional = true }
 signal-hook = { version = "0.3", optional = true }
 libc = { version = "0.2", optional = true }  # For signal handling (raise)
+
+# WASM TUI (egui-based ratatui rendering) - see [target.'cfg(...)'.dependencies] section below
 
 # Async runtime (native only)
 tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "macros", "time", "sync"], optional = true }
@@ -75,13 +78,28 @@ glob = { version = "0.3", optional = true }
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", features = ["console"], optional = true }
+web-sys = { version = "0.3", features = [
+    "console",
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+], optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
 
 [dev-dependencies]
 dir-test = "0.4"
 similar-asserts = "1.5"
 tempfile = "3.10.1"
+
+# WASM-specific dependencies (only for wasm32 target)
+# Version alignment: egui_ratatui 2.0 uses egui 0.33, eframe 0.33 also uses egui 0.33
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+egui_ratatui = { version = "2.0", optional = true, default-features = false }
+# soft_ratatui 0.1.x with cosmic-text feature for font rendering
+soft_ratatui = { version = "0.1", optional = true, default-features = false, features = ["cosmic-text"] }
+eframe = { version = "0.33", optional = true, default-features = false, features = ["glow", "web_screen_reader"] }
+wasm-bindgen-futures = { version = "0.4", optional = true }
 
 [features]
 # Default builds include native features (CLI, TUI, async file loading)
@@ -94,16 +112,22 @@ verbose-logging = []
 # Native platform features (CLI, TUI, file I/O, threading)
 native = [
     "clap",
-    "ratatui",
-    "crossterm",
-    "signal-hook",
-    "libc",
+    "native-tui",
     "tokio",
     "jwalk",
     "rayon",
     "num_cpus",
     "mimalloc",
     "glob",
+]
+
+# Native TUI features (crossterm-based terminal)
+native-tui = [
+    "ratatui",
+    "ratatui/crossterm",  # Enable crossterm backend for native
+    "crossterm",
+    "signal-hook",
+    "libc",
 ]
 
 # WASM target features (browser-compatible, no threading)
@@ -114,3 +138,14 @@ wasm = [
     "getrandom",
     "verbose-logging",  # Enable game logging for browser display
 ]
+
+# WASM TUI features (fancy TUI in browser via egui)
+wasm-tui = [
+    "wasm",
+    "ratatui",
+    "egui_ratatui",
+    "soft_ratatui",
+    "eframe",
+    "wasm-bindgen-futures",
+]
+
