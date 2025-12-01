@@ -368,3 +368,167 @@ fn test_load_spider_ham_static_ability() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Card.EquippedBy selector is properly parsed
+/// Cranial Plating uses "Affected$ Card.EquippedBy" which should parse to CreatureEquippedBy
+/// (Card.EquippedBy and Creature.EquippedBy are semantically equivalent for Equipment)
+#[test]
+fn test_load_cranial_plating_card_equipped_by_selector() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId, Subtype};
+
+    let path = PathBuf::from("cardsfolder/c/cranial_plating.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Cranial Plating");
+    assert!(def.types.contains(&CardType::Artifact));
+
+    // Check that the S: ability line is in raw_abilities with Card.EquippedBy
+    let has_static_line = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Mode$ Continuous") && a.contains("Card.EquippedBy"));
+    assert!(
+        has_static_line,
+        "Cranial Plating should have a static ability line with Card.EquippedBy. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Note: Cranial Plating has "AddPower$ X" which doesn't parse to a numeric value
+    // The static ability may not be created because power = 0 after failed X parse
+    // This is expected - variable power/toughness (AddPower$ X) is a separate feature
+    // What matters is that Card.EquippedBy is recognized when it IS created
+
+    // Verify the card loads without errors and has Equipment subtype
+    assert!(
+        card.subtypes.contains(&Subtype::new("Equipment")),
+        "Cranial Plating should be Equipment"
+    );
+
+    Ok(())
+}
+
+/// Test that Demonmail Hauberk with Card.EquippedBy creates the correct static ability
+/// This is the key test for the Card.EquippedBy fix - it uses Card.EquippedBy with numeric values
+#[test]
+fn test_load_demonmail_hauberk_card_equipped_by_static_ability() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility, Subtype};
+
+    let path = PathBuf::from("cardsfolder/d/demonmail_hauberk.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Demonmail Hauberk");
+    assert!(def.types.contains(&CardType::Artifact));
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should be Equipment
+    assert!(
+        card.subtypes.contains(&Subtype::new("Equipment")),
+        "Should be Equipment"
+    );
+
+    // Should have exactly 1 static ability (the +4/+2 buff)
+    assert_eq!(
+        card.static_abilities.len(),
+        1,
+        "Demonmail Hauberk should have 1 static ability, got: {:?}",
+        card.static_abilities
+    );
+
+    // Verify the static ability is correctly parsed with CreatureEquippedBy selector
+    match &card.static_abilities[0] {
+        StaticAbility::ModifyPT {
+            affected,
+            power,
+            toughness,
+            description: _,
+        } => {
+            assert_eq!(*power, 4, "Power bonus should be 4");
+            assert_eq!(*toughness, 2, "Toughness bonus should be 2");
+            assert!(
+                matches!(affected, AffectedSelector::CreatureEquippedBy),
+                "Card.EquippedBy should parse to CreatureEquippedBy, got {:?}",
+                affected
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Test that Sword of Feast and Famine with Creature.EquippedBy parses correctly
+#[test]
+fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/s/sword_of_feast_and_famine.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Sword of Feast and Famine");
+    assert!(def.types.contains(&CardType::Artifact));
+
+    // Check that the S: ability line uses Creature.EquippedBy
+    let has_static_line = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Mode$ Continuous") && a.contains("Creature.EquippedBy"));
+    assert!(
+        has_static_line,
+        "Sword should have a static ability line with Creature.EquippedBy"
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have at least 1 static ability (the +2/+2 buff)
+    assert!(
+        !card.static_abilities.is_empty(),
+        "Sword should have static abilities, got: {:?}",
+        card.static_abilities
+    );
+
+    // Find the ModifyPT ability
+    let modify_pt = card
+        .static_abilities
+        .iter()
+        .find(|a| matches!(a, StaticAbility::ModifyPT { .. }));
+    assert!(modify_pt.is_some(), "Should have ModifyPT static ability");
+
+    match modify_pt.unwrap() {
+        StaticAbility::ModifyPT {
+            affected,
+            power,
+            toughness,
+            description: _,
+        } => {
+            assert_eq!(*power, 2, "Power bonus should be 2");
+            assert_eq!(*toughness, 2, "Toughness bonus should be 2");
+            assert!(
+                matches!(affected, AffectedSelector::CreatureEquippedBy),
+                "Expected CreatureEquippedBy selector, got {:?}",
+                affected
+            );
+        }
+    }
+
+    Ok(())
+}

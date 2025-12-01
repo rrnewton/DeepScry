@@ -1745,7 +1745,10 @@ impl CardDefinition {
                             } else {
                                 // Single selector - try exact match first, then pattern-based parsing
                                 affected = match value {
-                                    "Creature.EquippedBy" => AffectedSelector::CreatureEquippedBy,
+                                    // Equipment target selectors - both mean "creature equipped by this"
+                                    // Card.EquippedBy is semantically equivalent since Equipment
+                                    // can only be attached to creatures (CR 301.5, 702.6)
+                                    "Creature.EquippedBy" | "Card.EquippedBy" => AffectedSelector::CreatureEquippedBy,
                                     "Creature.EnchantedBy" => AffectedSelector::CreatureEnchantedBy,
                                     "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
                                     "Creature" => AffectedSelector::AllCreatures,
