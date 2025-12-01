@@ -47,12 +47,17 @@ BENCHMARK_PATCH = '''--- a/mtg-benchmarks/benches/game_benchmark.rs
      }
 '''
 
-UPDATED_GITDEPTH_TEMPLATE = '''#!/bin/bash
-# During backfill: return the pre-calculated depth (position in full history)
-# This overrides the normal git rev-list --count behavior to ensure
-# consistent depth values across all benchmark runs.
+UPDATED_GITDEPTH = '''#!/bin/bash
+# Count total commits (inclusive of all history)
+# Use --main-only flag to count only first-parent (main branch) commits
 
-echo {depth}
+if [ "$1" = "--main-only" ]; then
+    # Count only main-branch commits (linear history)
+    git rev-list --count --first-parent HEAD
+else
+    # Count all commits (default)
+    git rev-list --count HEAD
+fi
 '''
 
 
@@ -83,12 +88,21 @@ def get_main_branch_commits() -> Set[str]:
 
 
 def build_commit_map() -> Dict[int, CommitInfo]:
-    """Build map of depth -> CommitInfo for all commits."""
+    """Build map of depth -> CommitInfo for all commits.
+
+    The depth is the actual commit depth (git rev-list --count $hash),
+    not the position in the chronological list. This ensures depth values
+    are stable and match what gitdepth.sh returns.
+    """
     all_commits = get_all_commits()
     main_commits = get_main_branch_commits()
 
     commit_map = {}
-    for depth, commit_hash in enumerate(all_commits, start=1):
+    for commit_hash in all_commits:
+        # Get actual depth of this commit
+        result = run_cmd(['git', 'rev-list', '--count', commit_hash])
+        depth = int(result.stdout.strip())
+
         result = run_cmd(['git', 'log', '-1', '--oneline', commit_hash])
         message = result.stdout.strip()
 
@@ -277,11 +291,10 @@ def main():
                 continue
             logging.info(f"Checked out {commit.short_hash} successfully")
 
-            # Install gitdepth.sh that returns the position in full history
-            gitdepth_content = UPDATED_GITDEPTH_TEMPLATE.format(depth=commit.depth)
-            Path('scripts/gitdepth.sh').write_text(gitdepth_content)
+            # Install updated gitdepth.sh
+            Path('scripts/gitdepth.sh').write_text(UPDATED_GITDEPTH)
             Path('scripts/gitdepth.sh').chmod(0o755)
-            logging.info(f"Installed gitdepth.sh to report depth {commit.depth}")
+            logging.info(f"Installed updated gitdepth.sh")
 
             # Apply patch if needed
             if needs_patch(commit.hash):
