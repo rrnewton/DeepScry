@@ -263,7 +263,7 @@ impl WasmGame {
             .ok_or_else(|| JsValue::from_str(&format!("Deck '{}' not found", p2_deck_name)))?;
 
         // Create game state
-        let mut game = GameState::new_two_player(p1_deck_name.to_string(), p2_deck_name.to_string(), starting_life);
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), starting_life);
         game.seed_rng(seed);
 
         // Configure logger for WASM: capture to memory, enable normal verbosity
