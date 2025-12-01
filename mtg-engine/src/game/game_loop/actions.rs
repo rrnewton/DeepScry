@@ -164,6 +164,18 @@ impl<'a> GameLoop<'a> {
                                     if !self.game.stack.is_empty() {
                                         self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                     }
+                                } else if Self::spell_requires_battlefield_target(card) {
+                                    // For spells like Disenchant, Terror, Swords to Plowshares
+                                    // MTG Rule 601.2c: You can't begin casting a spell that targets
+                                    // unless there's at least one legal target
+                                    let has_valid_targets = self
+                                        .game
+                                        .get_valid_targets_for_spell(card_id)
+                                        .map(|targets| !targets.is_empty())
+                                        .unwrap_or(false);
+                                    if has_valid_targets {
+                                        self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
+                                    }
                                 } else {
                                     self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                 }
@@ -358,5 +370,30 @@ impl<'a> GameLoop<'a> {
         card.effects
             .iter()
             .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.as_u32() == 0))
+    }
+
+    /// Check if a spell requires a battlefield target (e.g., Disenchant, Terror)
+    ///
+    /// Returns true if the spell has effects that require targeting a permanent.
+    /// Per MTG Rule 601.2c: You can't begin casting a spell that targets unless
+    /// there's a legal target.
+    fn spell_requires_battlefield_target(card: &crate::core::Card) -> bool {
+        use crate::core::Effect;
+
+        card.effects.iter().any(|effect| {
+            match effect {
+                // DestroyPermanent with placeholder target (CardId(0))
+                Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 => true,
+                // PumpCreature with placeholder target
+                Effect::PumpCreature { target, .. } if target.as_u32() == 0 => true,
+                // TapPermanent with placeholder target
+                Effect::TapPermanent { target } if target.as_u32() == 0 => true,
+                // UntapPermanent with placeholder target
+                Effect::UntapPermanent { target } if target.as_u32() == 0 => true,
+                // ExilePermanent with placeholder target
+                Effect::ExilePermanent { target } if target.as_u32() == 0 => true,
+                _ => false,
+            }
+        })
     }
 }
