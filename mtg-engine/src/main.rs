@@ -168,6 +168,14 @@ enum Commands {
         #[arg(long, value_name = "CHOICES")]
         p2_fixed_inputs: Option<String>,
 
+        /// Terminal width for fancy-fixed controller screenshots (default: 240)
+        #[arg(long, default_value = "240")]
+        screenshot_width: u16,
+
+        /// Terminal height for fancy-fixed controller screenshots (default: 60)
+        #[arg(long, default_value = "60")]
+        screenshot_height: u16,
+
         /// Set random seed for deterministic testing (master seed for engine and controller defaults)
         /// Can be a number or "from_entropy" for non-deterministic behavior
         #[arg(long)]
@@ -439,6 +447,8 @@ async fn main() -> Result<()> {
             p2_name,
             p1_fixed_inputs,
             p2_fixed_inputs,
+            screenshot_width,
+            screenshot_height,
             seed,
             seed_p1,
             seed_p2,
@@ -475,6 +485,8 @@ async fn main() -> Result<()> {
                 p2_name,
                 p1_fixed_inputs,
                 p2_fixed_inputs,
+                screenshot_width,
+                screenshot_height,
                 seed,
                 seed_p1,
                 seed_p2,
@@ -632,6 +644,8 @@ async fn run_tui(
     p2_name: String,
     p1_fixed_inputs: Option<String>,
     p2_fixed_inputs: Option<String>,
+    screenshot_width: u16,
+    screenshot_height: u16,
     seed: Option<SeedArg>,
     seed_p1: Option<SeedArg>,
     seed_p2: Option<SeedArg>,
@@ -984,7 +998,13 @@ async fn run_tui(
                     None
                 };
 
-                Box::new(FancyFixedController::new(p1_id, script, screenshot_dir)?)
+                Box::new(FancyFixedController::with_size(
+                    p1_id,
+                    script,
+                    screenshot_dir,
+                    screenshot_width,
+                    screenshot_height,
+                )?)
             } else {
                 return Err(mtg_forge_rs::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --p1=fancy-fixed".to_string(),
@@ -1092,7 +1112,13 @@ async fn run_tui(
                     None
                 };
 
-                Box::new(FancyFixedController::new(p2_id, script, screenshot_dir)?)
+                Box::new(FancyFixedController::with_size(
+                    p2_id,
+                    script,
+                    screenshot_dir,
+                    screenshot_width,
+                    screenshot_height,
+                )?)
             } else {
                 return Err(mtg_forge_rs::MtgError::InvalidAction(
                     "--p2-fixed-inputs is required when --p2=fancy-fixed".to_string(),

@@ -238,7 +238,8 @@ impl FancyTuiController {
                                     .copied()
                                     .collect();
 
-                                if !player_cards.is_empty() && self.renderer.state().selected_card_in_your_bf.is_none() {
+                                if !player_cards.is_empty() && self.renderer.state().selected_card_in_your_bf.is_none()
+                                {
                                     let first_card = player_cards[0];
                                     self.renderer.state_mut().selected_card_in_your_bf = Some(first_card);
                                     self.renderer.state_mut().selected_card_id = Some(first_card);
@@ -253,14 +254,13 @@ impl FancyTuiController {
                                     let opp_cards: Vec<CardId> = battlefield
                                         .iter()
                                         .filter(|&&card_id| {
-                                            view.get_card(card_id)
-                                                .map(|c| c.controller == opp_id)
-                                                .unwrap_or(false)
+                                            view.get_card(card_id).map(|c| c.controller == opp_id).unwrap_or(false)
                                         })
                                         .copied()
                                         .collect();
 
-                                    if !opp_cards.is_empty() && self.renderer.state().selected_card_in_opp_bf.is_none() {
+                                    if !opp_cards.is_empty() && self.renderer.state().selected_card_in_opp_bf.is_none()
+                                    {
                                         let first_card = opp_cards[0];
                                         self.renderer.state_mut().selected_card_in_opp_bf = Some(first_card);
                                         self.renderer.state_mut().selected_card_id = Some(first_card);
@@ -511,10 +511,7 @@ impl PlayerController for FancyTuiController {
 
         let choices: Vec<String> = valid_targets
             .iter()
-            .map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            })
+            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id)))
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -560,10 +557,7 @@ impl PlayerController for FancyTuiController {
 
         let choices: Vec<String> = available_sources
             .iter()
-            .map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            })
+            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id)))
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -599,10 +593,11 @@ impl PlayerController for FancyTuiController {
         let prompt = "Choose attackers (or Pass to skip)".to_string();
 
         let choices: Vec<String> = std::iter::once("Done attacking".to_string())
-            .chain(available_creatures.iter().map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            }))
+            .chain(
+                available_creatures
+                    .iter()
+                    .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id))),
+            )
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -651,10 +646,11 @@ impl PlayerController for FancyTuiController {
         let prompt = "Choose blockers (or Pass to skip)".to_string();
 
         let choices: Vec<String> = std::iter::once("Done blocking".to_string())
-            .chain(available_blockers.iter().map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            }))
+            .chain(
+                available_blockers
+                    .iter()
+                    .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id))),
+            )
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -688,15 +684,14 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        let attacker_name = view.card_name(attacker).unwrap_or_else(|| format!("Card {:?}", attacker));
+        let attacker_name = view
+            .card_name(attacker)
+            .unwrap_or_else(|| format!("Card {:?}", attacker));
         let prompt = format!("Choose damage order for {} (blocking creatures)", attacker_name);
 
         let choices: Vec<String> = blockers
             .iter()
-            .map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            })
+            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id)))
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -723,10 +718,7 @@ impl PlayerController for FancyTuiController {
 
         let choices: Vec<String> = hand
             .iter()
-            .map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            })
+            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id)))
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -747,11 +739,7 @@ impl PlayerController for FancyTuiController {
         }
     }
 
-    fn choose_from_library(
-        &mut self,
-        view: &GameStateView,
-        valid_cards: &[CardId],
-    ) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
         if valid_cards.is_empty() {
             return ChoiceResult::Ok(None);
         }
@@ -759,10 +747,11 @@ impl PlayerController for FancyTuiController {
         let prompt = "Choose a card from library".to_string();
 
         let choices: Vec<String> = std::iter::once("Cancel".to_string())
-            .chain(valid_cards.iter().map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            }))
+            .chain(
+                valid_cards
+                    .iter()
+                    .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id))),
+            )
             .collect();
 
         match self.prompt_for_choice(view, &prompt, &choices) {

@@ -24,19 +24,48 @@ pub struct FancyFixedController {
     delegate: RichInputController,
     screenshot_counter: usize,
     screenshot_dir: PathBuf,
+    /// Terminal width for screenshots (default: 240)
+    terminal_width: u16,
+    /// Terminal height for screenshots (default: 60)
+    terminal_height: u16,
 }
 
 impl FancyFixedController {
+    /// Default terminal width for screenshots
+    pub const DEFAULT_WIDTH: u16 = 240;
+    /// Default terminal height for screenshots
+    pub const DEFAULT_HEIGHT: u16 = 60;
+
     /// Create a new FancyFixed controller
     ///
     /// # Arguments
     /// * `player_id` - The player this controller manages
     /// * `script` - The fixed input script (from RichInputController)
     /// * `screenshot_dir` - Optional directory to save screenshots
-    pub fn new(
+    pub fn new(player_id: PlayerId, script: Vec<String>, screenshot_dir: Option<PathBuf>) -> Result<Self, MtgError> {
+        Self::with_size(
+            player_id,
+            script,
+            screenshot_dir,
+            Self::DEFAULT_WIDTH,
+            Self::DEFAULT_HEIGHT,
+        )
+    }
+
+    /// Create a new FancyFixed controller with custom terminal size
+    ///
+    /// # Arguments
+    /// * `player_id` - The player this controller manages
+    /// * `script` - The fixed input script (from RichInputController)
+    /// * `screenshot_dir` - Optional directory to save screenshots
+    /// * `width` - Terminal width for screenshots
+    /// * `height` - Terminal height for screenshots
+    pub fn with_size(
         player_id: PlayerId,
         script: Vec<String>,
         screenshot_dir: Option<PathBuf>,
+        width: u16,
+        height: u16,
     ) -> Result<Self, MtgError> {
         let visual_stacks = true; // Use visual stacks by default for better TUI appearance
 
@@ -45,10 +74,9 @@ impl FancyFixedController {
         let dir = screenshot_dir
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| PathBuf::from("screenshots"));
-        std::fs::create_dir_all(&dir).map_err(|e| {
-            MtgError::InvalidAction(format!("Failed to create screenshot directory: {}", e))
-        })?;
-        eprintln!("Screenshots will be saved to: {}", dir.display());
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| MtgError::InvalidAction(format!("Failed to create screenshot directory: {}", e)))?;
+        eprintln!("Screenshots will be saved to: {} ({}x{})", dir.display(), width, height);
 
         Ok(FancyFixedController {
             player_id,
@@ -56,21 +84,17 @@ impl FancyFixedController {
             delegate: RichInputController::new(player_id, script),
             screenshot_counter: 0,
             screenshot_dir: dir,
+            terminal_width: width,
+            terminal_height: height,
         })
     }
 
     /// Capture a screenshot of the current game state before making a choice
-    fn capture_screenshot(
-        &mut self,
-        view: &GameStateView,
-        prompt: &str,
-        choices: &[String],
-    ) -> Result<(), MtgError> {
-        // Create a TestBackend with a reasonable terminal size
-        let backend = TestBackend::new(160, 40);
-        let mut terminal = Terminal::new(backend).map_err(|e| {
-            MtgError::InvalidAction(format!("Failed to create test terminal: {}", e))
-        })?;
+    fn capture_screenshot(&mut self, view: &GameStateView, prompt: &str, choices: &[String]) -> Result<(), MtgError> {
+        // Create a TestBackend with the configured terminal size
+        let backend = TestBackend::new(self.terminal_width, self.terminal_height);
+        let mut terminal = Terminal::new(backend)
+            .map_err(|e| MtgError::InvalidAction(format!("Failed to create test terminal: {}", e)))?;
 
         // Prepare choices for rendering (highlight the first one as a visual indicator)
         let choice_tuples: Vec<(String, bool)> = choices
@@ -120,9 +144,8 @@ impl FancyFixedController {
             .screenshot_dir
             .join(format!("{:04}_{}.txt", self.screenshot_counter, truncated_prompt));
 
-        let mut file = std::fs::File::create(&filename).map_err(|e| {
-            MtgError::InvalidAction(format!("Failed to create screenshot file: {}", e))
-        })?;
+        let mut file = std::fs::File::create(&filename)
+            .map_err(|e| MtgError::InvalidAction(format!("Failed to create screenshot file: {}", e)))?;
 
         // Write buffer content line by line
         let area = buffer.area();
@@ -134,9 +157,8 @@ impl FancyFixedController {
             }
             // Trim trailing whitespace
             let trimmed = line.trim_end();
-            writeln!(file, "{}", trimmed).map_err(|e| {
-                MtgError::InvalidAction(format!("Failed to write to screenshot: {}", e))
-            })?;
+            writeln!(file, "{}", trimmed)
+                .map_err(|e| MtgError::InvalidAction(format!("Failed to write to screenshot: {}", e)))?;
         }
 
         eprintln!("[SCREENSHOT] Saved: {}", filename.display());
@@ -219,10 +241,7 @@ impl PlayerController for FancyFixedController {
 
         let choices: Vec<String> = valid_targets
             .iter()
-            .map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            })
+            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id)))
             .collect();
 
         // Capture screenshot (even if valid_targets is empty)
@@ -266,10 +285,11 @@ impl PlayerController for FancyFixedController {
         let prompt = "Choose attackers (or Pass to skip)".to_string();
 
         let choices: Vec<String> = std::iter::once("Done attacking".to_string())
-            .chain(available_creatures.iter().map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            }))
+            .chain(
+                available_creatures
+                    .iter()
+                    .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id))),
+            )
             .collect();
 
         // Capture screenshot (even if available_creatures is empty)
@@ -303,10 +323,11 @@ impl PlayerController for FancyFixedController {
         let prompt = "Choose blockers (or Pass to skip)".to_string();
 
         let choices: Vec<String> = std::iter::once("Done blocking".to_string())
-            .chain(available_blockers.iter().map(|&card_id| {
-                view.card_name(card_id)
-                    .unwrap_or_else(|| format!("Card {:?}", card_id))
-            }))
+            .chain(
+                available_blockers
+                    .iter()
+                    .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id))),
+            )
             .collect();
 
         // Capture screenshot (even if available_blockers or attackers is empty)
@@ -347,11 +368,7 @@ impl PlayerController for FancyFixedController {
         self.delegate.choose_cards_to_discard(view, hand, count)
     }
 
-    fn choose_from_library(
-        &mut self,
-        view: &GameStateView,
-        valid_cards: &[CardId],
-    ) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
         // Skip screenshot for library choice
         self.delegate.choose_from_library(view, valid_cards)
     }

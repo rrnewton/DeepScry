@@ -573,10 +573,7 @@ impl TuiRenderer {
 
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(60),
-                Constraint::Percentage(40),
-            ])
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(main_chunks[0]);
 
         let right_chunks = Layout::default()
@@ -1190,6 +1187,20 @@ impl TuiRenderer {
             return 0;
         }
 
+        let entities = self.group_cards_into_entities(cards, view);
+
+        // Check if there's enough space for at least one row of cards
+        let remaining_height = area.height.saturating_sub(y_offset + 1); // -1 for label
+        let first_row_height = entities
+            .first()
+            .map(|e| Self::get_entity_dimensions(e, view, card_width, card_height).1)
+            .unwrap_or(card_height);
+
+        // If no space for cards, render compact text-only summary
+        if remaining_height < first_row_height {
+            return self.render_compact_card_group(f, area, y_offset, view, cards, label, color);
+        }
+
         let label_area = Rect {
             x: area.x,
             y: area.y + y_offset,
@@ -1203,8 +1214,6 @@ impl TuiRenderer {
         f.render_widget(Paragraph::new(label_text), label_area);
 
         let mut rendered_height = 1;
-
-        let entities = self.group_cards_into_entities(cards, view);
 
         let mut rows: Vec<Vec<(&Entity, u16, u16)>> = Vec::new();
         let mut current_row: Vec<(&Entity, u16, u16)> = Vec::new();
@@ -1270,13 +1279,70 @@ impl TuiRenderer {
         rendered_height
     }
 
-    fn render_visual_stack(
-        &mut self,
+    /// Render a compact text-only summary of cards when there's no space for card graphics
+    #[allow(clippy::too_many_arguments)]
+    fn render_compact_card_group(
+        &self,
         f: &mut Frame<'_>,
         area: Rect,
+        y_offset: u16,
         view: &GameStateView,
-        entity: &Entity,
-    ) {
+        cards: &[CardId],
+        label: &str,
+        color: Color,
+    ) -> u16 {
+        use std::collections::HashMap;
+
+        // Count cards by name
+        let mut card_counts: HashMap<String, usize> = HashMap::new();
+        for &card_id in cards {
+            let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+            *card_counts.entry(name).or_insert(0) += 1;
+        }
+
+        // Build compact summary: "Creatures: Spider-Ham x1, Bear x2"
+        let mut summary_parts: Vec<String> = card_counts
+            .iter()
+            .map(|(name, count)| {
+                // Truncate long names to fit
+                let short_name = if name.len() > 12 {
+                    format!("{}..", &name[..10])
+                } else {
+                    name.clone()
+                };
+                if *count > 1 {
+                    format!("{}x{}", short_name, count)
+                } else {
+                    short_name
+                }
+            })
+            .collect();
+        summary_parts.sort(); // Consistent ordering
+
+        let summary = summary_parts.join(", ");
+        let full_text = format!("{}: {}", label, summary);
+
+        // Truncate if too long for available width
+        let display_text = if full_text.len() > area.width as usize {
+            format!("{}...", &full_text[..area.width.saturating_sub(3) as usize])
+        } else {
+            full_text
+        };
+
+        let compact_area = Rect {
+            x: area.x,
+            y: area.y + y_offset,
+            width: area.width,
+            height: 1,
+        };
+
+        let text = Text::from(Span::styled(display_text, Style::default().fg(color)));
+        f.render_widget(Paragraph::new(text), compact_area);
+
+        1 // Only takes 1 line of height
+    }
+
+    fn render_visual_stack(&mut self, f: &mut Frame<'_>, area: Rect, view: &GameStateView, entity: &Entity) {
         let Entity::VisualStack {
             card_ids, tapped_count, ..
         } = entity

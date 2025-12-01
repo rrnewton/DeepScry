@@ -64,3 +64,4 @@ full_deck_list.txt
 *.data
 backfill_benchmarks.log
 experiment_results/**/perf_history.csv.backfill*
+screenshots/*.txt
