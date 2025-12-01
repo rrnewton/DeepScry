@@ -47,17 +47,12 @@ BENCHMARK_PATCH = '''--- a/mtg-benchmarks/benches/game_benchmark.rs
      }
 '''
 
-UPDATED_GITDEPTH = '''#!/bin/bash
-# Count total commits (inclusive of all history)
-# Use --main-only flag to count only first-parent (main branch) commits
+UPDATED_GITDEPTH_TEMPLATE = '''#!/bin/bash
+# During backfill: return the pre-calculated depth (position in full history)
+# This overrides the normal git rev-list --count behavior to ensure
+# consistent depth values across all benchmark runs.
 
-if [ "$1" = "--main-only" ]; then
-    # Count only main-branch commits (linear history)
-    git rev-list --count --first-parent HEAD
-else
-    # Count all commits (default)
-    git rev-list --count HEAD
-fi
+echo {depth}
 '''
 
 
@@ -282,10 +277,11 @@ def main():
                 continue
             logging.info(f"Checked out {commit.short_hash} successfully")
 
-            # Install updated gitdepth.sh
-            Path('scripts/gitdepth.sh').write_text(UPDATED_GITDEPTH)
+            # Install gitdepth.sh that returns the position in full history
+            gitdepth_content = UPDATED_GITDEPTH_TEMPLATE.format(depth=commit.depth)
+            Path('scripts/gitdepth.sh').write_text(gitdepth_content)
             Path('scripts/gitdepth.sh').chmod(0o755)
-            logging.info(f"Installed updated gitdepth.sh")
+            logging.info(f"Installed gitdepth.sh to report depth {commit.depth}")
 
             # Apply patch if needed
             if needs_patch(commit.hash):
