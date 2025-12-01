@@ -216,12 +216,12 @@ impl eframe::App for WasmFancyTuiApp {
             ctx.request_repaint();
         }
 
-        // Set up dark theme with visible colors
+        // Set up dark theme with black background
         let mut style = (*ctx.style()).clone();
-        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(40, 60, 100);
+        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(30, 30, 30);
         style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(60, 80, 140);
-        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(80, 100, 160);
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(50, 50, 50);
+        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(70, 70, 70);
         style.visuals.override_text_color = Some(egui::Color32::WHITE);
         ctx.set_style(style);
 
@@ -247,7 +247,7 @@ impl eframe::App for WasmFancyTuiApp {
 
             // Control bar at the top with visible buttons
             egui::Frame::none()
-                .fill(egui::Color32::from_rgb(20, 30, 50))
+                .fill(egui::Color32::from_rgb(20, 20, 20))
                 .inner_margin(egui::Margin::symmetric(8, 4))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {

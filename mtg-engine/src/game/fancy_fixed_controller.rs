@@ -1,6 +1,6 @@
 //! FancyFixed controller for scripted TUI debugging
 //!
-//! This controller uses the shared `TuiRenderer` with ratatui's `TestBackend`
+//! This controller uses the shared `FancyTuiRenderer` with ratatui's `TestBackend`
 //! to capture screenshots of the game state before each choice. It then delegates
 //! actual choice-making to the `RichInputController` for fully automated gameplay.
 //!
@@ -9,7 +9,7 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
-use crate::game::fancy_tui_renderer::{ChoiceContext, TuiRenderer};
+use crate::game::fancy_tui_renderer::{ChoiceContext, FancyTuiRenderer};
 use crate::game::snapshot::ControllerType;
 use crate::game::RichInputController;
 use crate::MtgError;
@@ -20,7 +20,7 @@ use std::path::PathBuf;
 /// A controller that renders TUI screenshots before delegating to RichInputController
 pub struct FancyFixedController {
     player_id: PlayerId,
-    renderer: TuiRenderer,
+    renderer: FancyTuiRenderer,
     delegate: RichInputController,
     screenshot_counter: usize,
     screenshot_dir: PathBuf,
@@ -80,7 +80,7 @@ impl FancyFixedController {
 
         Ok(FancyFixedController {
             player_id,
-            renderer: TuiRenderer::new(visual_stacks),
+            renderer: FancyTuiRenderer::new(player_id, visual_stacks),
             delegate: RichInputController::new(player_id, script),
             screenshot_counter: 0,
             screenshot_dir: dir,
@@ -178,8 +178,8 @@ impl PlayerController for FancyFixedController {
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
         // Set up renderer state for screenshot
-        self.renderer.state_mut().choice_context = ChoiceContext::PlayingSpell;
-        self.renderer.state_mut().valid_choices = available
+        self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
+        self.renderer.state.valid_choices = available
             .iter()
             .map(|ability| match ability {
                 SpellAbility::PlayLand { card_id } => *card_id,
@@ -214,8 +214,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up renderer state
-        self.renderer.state_mut().choice_context = ChoiceContext::None;
-        self.renderer.state_mut().valid_choices.clear();
+        self.renderer.state.choice_context = ChoiceContext::None;
+        self.renderer.state.valid_choices.clear();
 
         // Early return for empty available (after taking screenshot)
         if available.is_empty() {
@@ -233,8 +233,8 @@ impl PlayerController for FancyFixedController {
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Set up renderer state
-        self.renderer.state_mut().choice_context = ChoiceContext::TargetSelection;
-        self.renderer.state_mut().valid_choices = valid_targets.to_vec();
+        self.renderer.state.choice_context = ChoiceContext::TargetSelection;
+        self.renderer.state.valid_choices = valid_targets.to_vec();
 
         let spell_name = view.card_name(spell).unwrap_or_else(|| format!("Card {:?}", spell));
         let prompt = format!("Choose target for {}", spell_name);
@@ -250,8 +250,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up
-        self.renderer.state_mut().choice_context = ChoiceContext::None;
-        self.renderer.state_mut().valid_choices.clear();
+        self.renderer.state.choice_context = ChoiceContext::None;
+        self.renderer.state.valid_choices.clear();
 
         // Early return for empty targets (after taking screenshot)
         if valid_targets.is_empty() {
@@ -279,8 +279,8 @@ impl PlayerController for FancyFixedController {
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Set up renderer state
-        self.renderer.state_mut().choice_context = ChoiceContext::DeclareAttackers;
-        self.renderer.state_mut().valid_choices = available_creatures.to_vec();
+        self.renderer.state.choice_context = ChoiceContext::DeclareAttackers;
+        self.renderer.state.valid_choices = available_creatures.to_vec();
 
         let prompt = "Choose attackers (or Pass to skip)".to_string();
 
@@ -298,8 +298,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up
-        self.renderer.state_mut().choice_context = ChoiceContext::None;
-        self.renderer.state_mut().valid_choices.clear();
+        self.renderer.state.choice_context = ChoiceContext::None;
+        self.renderer.state.valid_choices.clear();
 
         // Early return for empty creatures (after taking screenshot)
         if available_creatures.is_empty() {
@@ -317,8 +317,8 @@ impl PlayerController for FancyFixedController {
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Set up renderer state
-        self.renderer.state_mut().choice_context = ChoiceContext::DeclareBlockers;
-        self.renderer.state_mut().valid_choices = available_blockers.to_vec();
+        self.renderer.state.choice_context = ChoiceContext::DeclareBlockers;
+        self.renderer.state.valid_choices = available_blockers.to_vec();
 
         let prompt = "Choose blockers (or Pass to skip)".to_string();
 
@@ -336,8 +336,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up
-        self.renderer.state_mut().choice_context = ChoiceContext::None;
-        self.renderer.state_mut().valid_choices.clear();
+        self.renderer.state.choice_context = ChoiceContext::None;
+        self.renderer.state.valid_choices.clear();
 
         // Early return for empty blockers or attackers (after taking screenshot)
         if available_blockers.is_empty() || attackers.is_empty() {

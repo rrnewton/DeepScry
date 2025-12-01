@@ -1142,6 +1142,38 @@ impl PlayerController for FancyTuiController {
         ChoiceResult::Ok(discards)
     }
 
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        if valid_cards.is_empty() {
+            return ChoiceResult::Ok(None);
+        }
+
+        let prompt = "Search library: Choose a card";
+        let choices: Vec<String> = std::iter::once("Fail to find".to_string())
+            .chain(
+                valid_cards
+                    .iter()
+                    .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id))),
+            )
+            .collect();
+
+        match self.prompt_for_choice(view, prompt, &choices) {
+            Ok(PromptResult::Undo) => ChoiceResult::UndoRequest(usize::MAX),
+            Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => {
+                view.logger().controller_choice("TUI", "Chose to fail to find");
+                ChoiceResult::Ok(None)
+            }
+            Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_cards.len() => {
+                let card_id = valid_cards[idx - 1];
+                let name = view.card_name(card_id).unwrap_or_default();
+                view.logger()
+                    .controller_choice("TUI", &format!("Chose {} from library", name));
+                ChoiceResult::Ok(Some(card_id))
+            }
+            Ok(PromptResult::Choice(_)) => ChoiceResult::Ok(None),
+            Err(e) => ChoiceResult::Error(format!("Failed to prompt for library choice: {}", e)),
+        }
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Logging is handled by the game logger, no local state tracking needed
     }
