@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-30T17:46:00.244517544+00:00
+updated_at: 2025-12-01T13:38:11.882582014+00:00
 ---
 
 # Description
@@ -67,6 +67,23 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Horsemanship: +power*10 (like flying, only blocked by horsemanship)
   - Shadow: +power*10 (only blocked by creatures with shadow)
   - Reference: CreatureEvaluator.java evasion keyword handling
+- ✅ **Extended keyword evaluation (2025-12-01_#1063(a3228a1))**
+  - Ward: +10 (harder to target)
+  - Protection (any color): +20 (combat/spell evasion)
+  - Flanking: +15 (weakens blockers)
+  - Exalted: +15 (attack bonus)
+  - Prowess: +5 (spell synergy)
+  - Melee: +18 (multi-opponent bonus)
+  - Outlast: +10 (counter generation)
+  - Annihilator: +50 (devastating attack trigger)
+  - Afflict: +5 (damage when blocked)
+  - Toxic: +5 (poison counter threat)
+  - Rampage: +5 (multi-blocker bonus)
+  - Bushido: +16 (combat stat boost)
+  - Absorb: +11 (damage prevention)
+  - Undying: +25 (returns larger)
+  - Persist: +20 (returns with -1/-1)
+  - Reference: CreatureEvaluator.java keyword handling
 
 **What's Missing:**
 
@@ -107,7 +124,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with real cards (2025-11-30) - 540 tests passing**
+- ✅ **Comprehensive test coverage with real cards (2025-12-01) - 555 tests passing**
 
 ## Next Steps (Priority Order)
 
