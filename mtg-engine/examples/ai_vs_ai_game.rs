@@ -129,7 +129,7 @@ fn setup_lightning_bolt_effects(game: &mut GameState, players: &[(mtg_forge_rs::
         .iter()
         .filter_map(|(id, card)| {
             if card.name.as_str().contains("Lightning Bolt") {
-                Some((*id, card.owner))
+                Some((id, card.owner))
             } else {
                 None
             }

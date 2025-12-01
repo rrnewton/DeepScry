@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-01T20:48:53.547094213+00:00
+updated_at: 2025-12-01T21:18:54.265564011+00:00
 ---
 
 # Description
@@ -29,20 +29,27 @@ Track performance optimization work for MTG Forge Rust.
 
 ---
 
-## Latest Optimization (2025-12-01_#1075)
+## Latest Optimization (2025-12-01_#1079)
 
+✅ **EntityStore HashMap → Vec optimization (1c6f23e)** - **7-22% speedup across benchmarks**
+- Replace FxHashMap<EntityId<T>, T> with Vec<Option<T>> for O(1) indexed lookups
+- Eliminates hash computation overhead in hot paths
+- Key results:
+  - robots_mirror/snapshot_games: **-21.6%**
+  - robots_mirror/rewind_play_again: **-17.1%**
+  - monoblack_thedeck/rewind: **-16.4%**
+  - Rewind: **-12.5%**
+  - Average improvement: ~10-15% across all benchmarks
+
+**Previous (2025-12-01_#1075):**
 ✅ **Cache additional type flags in CardCache (c9edb3e)** - **-17.9% snapshot_games**
 - Add is_instant, is_sorcery, is_enchantment, is_aura, is_equipment flags
 - Eliminates Vec::contains() and eq_ignore_ascii_case() in type checks
-- Add set_subtypes() method for cache-consistent subtype updates
-- Benchmark: robots_mirror/snapshot_games -17.9% execution time (p < 0.05)
-- Reference: OPT-NEW-3 from profiling roadmap (pre-compute castability flags)
 
 **Previous (2025-11-30_#1013):**
 ✅ **Cache land subtype flags in CardCache** - **~0.5-1.6% speedup**
 - Add has_plains/island/swamp/mountain/forest_subtype flags to CardCache
 - Eliminates eq_ignore_ascii_case() calls in tap_for_mana_for_cost hot path
-- Benchmark: simple_bolt/rewind_play_again -1.6% (p < 0.05)
 
 ---
 
@@ -85,14 +92,14 @@ Track performance optimization work for MTG Forge Rust.
 - ✅ GameLoop/ManaEngine pre-allocation (34caa0c, 2025-11-29_#965) - **11.1% speedup**
 - ✅ **Skip target validation for non-targeting abilities (49dcde6)** - **~2.3% speedup**
 - ✅ **Land subtype caching in CardCache (2025-11-30_#1013)** - **~0.5-1.6% speedup**
-- ✅ **Type flag caching (c9edb3e, 2025-12-01_#1075)** - **-17.9% snapshot_games** (is_instant, is_aura, etc.)
+- ✅ **Type flag caching (c9edb3e, 2025-12-01_#1075)** - **-17.9% snapshot_games**
+- ✅ **EntityStore Vec optimization (1c6f23e, 2025-12-01_#1079)** - **-7-22% across benchmarks**
 
 **Next high-priority optimizations:**
 1. Cache available actions (OPT-NEW-1) - invalidate on state change (5% potential)
-2. EntityStore Vec indices (OPT-NEW-2) - replace HashMap with Vec (3% potential)
 
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/reports/perf_cpu_profiling_2025-11-29.md for CPU hotspot analysis.
 
 ---
-**Updated 2025-12-01_#1075(c9edb3e)** - Type flag caching: -17.9% snapshot_games
+**Updated 2025-12-01_#1079(1c6f23e)** - EntityStore Vec optimization: -7-22% speedup
