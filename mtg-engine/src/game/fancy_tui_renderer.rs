@@ -270,6 +270,17 @@ impl FancyTuiRenderer {
     // Boosted left column percentage (20% increase)
     pub const BOOSTED_LEFT_COLUMN_PCT: u16 = 30; // 25 * 1.2 = 30
 
+    // Card size constants
+    // Default size maintains MTG card aspect ratio: width/height = 10/7 ≈ 1.43
+    // This accounts for terminal character aspect (~2:1) to create visually proportional cards
+    pub const DEFAULT_CARD_WIDTH: u16 = 10;
+    pub const DEFAULT_CARD_HEIGHT: u16 = 7;
+    pub const MIN_CARD_WIDTH: u16 = 5;
+    pub const MIN_CARD_HEIGHT: u16 = 4;
+    pub const MAX_CARD_HEIGHT: u16 = 15; // Prevent cards from getting too large
+    pub const CARD_SPACING: u16 = 1;
+    const DIAGONAL_OFFSET: u16 = 1; // chars per card in stack
+
     /// Create a new renderer for a player
     pub fn new(player_id: PlayerId, visual_stacks: bool) -> Self {
         FancyTuiRenderer {
@@ -426,6 +437,183 @@ impl FancyTuiRenderer {
         entities
     }
 
+    /// Compute card width from height while maintaining the default aspect ratio
+    /// This is the centralized function for all aspect ratio calculations
+    pub fn compute_width_from_height(height: u16) -> u16 {
+        ((height as f32 * Self::DEFAULT_CARD_WIDTH as f32) / Self::DEFAULT_CARD_HEIGHT as f32).round() as u16
+    }
+
+    /// Get card dimensions based on tapped state and base size
+    /// Tapped cards swap width and height to simulate 90-degree rotation
+    pub fn get_card_dimensions_with_size(
+        view: &GameStateView,
+        card_id: CardId,
+        base_width: u16,
+        base_height: u16,
+    ) -> (u16, u16) {
+        let is_tapped = view.is_tapped(card_id);
+        Self::get_dimensions_for_tapped_state(is_tapped, base_width, base_height)
+    }
+
+    /// Get dimensions based on tapped state
+    /// Tapped entities are rendered wider and shorter to simulate 90-degree rotation
+    pub fn get_dimensions_for_tapped_state(is_tapped: bool, base_width: u16, base_height: u16) -> (u16, u16) {
+        if is_tapped {
+            // Tapped cards should be WIDER and SHORTER to simulate horizontal rotation
+            // We exaggerate the dimensions to make the rotation effect clear
+            // width becomes roughly 1.5x the original dimensions, height becomes ~60%
+            let tapped_width = (base_width * 3 / 2).max(base_width);
+            let tapped_height = (base_height * 3 / 5).max(4); // Minimum height of 4
+            (tapped_width, tapped_height)
+        } else {
+            (base_width, base_height)
+        }
+    }
+
+    /// Get dimensions for an entity (handles visual stacking diagonal offsets)
+    pub fn get_entity_dimensions(
+        entity: &Entity,
+        view: &GameStateView,
+        base_width: u16,
+        base_height: u16,
+    ) -> (u16, u16) {
+        match entity {
+            Entity::SingleCard { .. } | Entity::SimpleStack { .. } => {
+                let is_tapped = entity.is_tapped(view);
+                Self::get_dimensions_for_tapped_state(is_tapped, base_width, base_height)
+            }
+            Entity::VisualStack {
+                card_ids, tapped_count, ..
+            } => {
+                // Visual stacks need extra space for diagonal offsets
+                let stack_depth = card_ids.len() as u16;
+                let offset_total = (stack_depth.saturating_sub(1)) * Self::DIAGONAL_OFFSET;
+
+                // Determine if we need tapped dimensions for the visible top cards
+                let any_tapped = *tapped_count > 0;
+                let (base_w, base_h) = Self::get_dimensions_for_tapped_state(any_tapped, base_width, base_height);
+
+                (base_w + offset_total, base_h + offset_total)
+            }
+        }
+    }
+
+    /// Test if all cards fit in the battlefield area with given card size
+    fn test_card_size_fits(
+        area: Rect,
+        card_groups: &[(Vec<CardId>, &str)], // (cards, label)
+        view: &GameStateView,
+        card_width: u16,
+        card_height: u16,
+    ) -> bool {
+        let mut y_offset = 0u16;
+
+        for (cards, _label) in card_groups {
+            if y_offset >= area.height {
+                return false;
+            }
+
+            // Account for label height
+            y_offset += 1;
+
+            // Simulate packing for this group
+            let mut current_x = 0u16;
+            let mut row_height = 0u16;
+
+            for &card_id in cards {
+                let (card_w, card_h) = Self::get_card_dimensions_with_size(view, card_id, card_width, card_height);
+
+                // Check if card fits on current row
+                if current_x + card_w > area.width && current_x > 0 {
+                    // Need to wrap to next row
+                    current_x = 0;
+                    y_offset += row_height + Self::CARD_SPACING;
+                    row_height = 0;
+
+                    // Check if we have vertical space for new row
+                    if y_offset >= area.height {
+                        return false;
+                    }
+                }
+
+                // Check if this card fits vertically
+                if y_offset + card_h > area.height {
+                    return false;
+                }
+
+                // Update position for next card
+                current_x += card_w + Self::CARD_SPACING;
+                row_height = row_height.max(card_h);
+            }
+
+            // Finalize this group's height
+            if current_x > 0 {
+                y_offset += row_height;
+            }
+        }
+
+        true
+    }
+
+    /// Calculate optimal card size for battlefield
+    /// Returns (width, height) that maximizes card size while fitting all cards
+    ///
+    /// This function uses a greedy algorithm that increments height and computes
+    /// width from height to maintain the correct aspect ratio. This ensures
+    /// consistent aspect ratios across all cards regardless of tapped state.
+    pub fn calculate_optimal_card_size(
+        area: Rect,
+        card_groups: &[(Vec<CardId>, &str)],
+        view: &GameStateView,
+    ) -> (u16, u16) {
+        // Try default size first
+        if Self::test_card_size_fits(
+            area,
+            card_groups,
+            view,
+            Self::DEFAULT_CARD_WIDTH,
+            Self::DEFAULT_CARD_HEIGHT,
+        ) {
+            // Default fits, try to increase size
+            let mut best_height = Self::DEFAULT_CARD_HEIGHT;
+
+            for h in (Self::DEFAULT_CARD_HEIGHT + 1)..=Self::MAX_CARD_HEIGHT {
+                let w = Self::compute_width_from_height(h);
+                if Self::test_card_size_fits(area, card_groups, view, w, h) {
+                    best_height = h;
+                } else {
+                    break;
+                }
+            }
+
+            let best_width = Self::compute_width_from_height(best_height);
+            return (best_width, best_height);
+        }
+
+        // Default doesn't fit, try to shrink
+        for h in (Self::MIN_CARD_HEIGHT..Self::DEFAULT_CARD_HEIGHT).rev() {
+            let w = Self::compute_width_from_height(h).max(Self::MIN_CARD_WIDTH);
+            if Self::test_card_size_fits(area, card_groups, view, w, h) {
+                return (w, h);
+            }
+        }
+
+        // Return minimum size as fallback
+        (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT)
+    }
+
+    /// Map card color to ratatui color
+    fn card_color_to_ratatui(color: &crate::core::Color) -> Color {
+        match color {
+            crate::core::Color::Red => Color::Red,
+            crate::core::Color::Green => Color::Green,
+            crate::core::Color::Blue => Color::Blue,
+            crate::core::Color::White => Color::White,
+            crate::core::Color::Black => Color::DarkGray,
+            crate::core::Color::Colorless => Color::Gray,
+        }
+    }
+
     /// Draw the complete UI with all panels
     ///
     /// This is the main rendering entry point. It draws all panels and updates
@@ -490,10 +678,16 @@ impl FancyTuiRenderer {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_chunks[0]);
 
-        // Middle column: Opponent battlefield on top, your battlefield on bottom
+        // Middle column: Player info bars + battlefields
+        // Layout: Opponent info bar, Opponent battlefield, Your battlefield, Your info bar
         let middle_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints([
+                Constraint::Min(3),         // Opponent info header
+                Constraint::Percentage(45), // Opponent battlefield
+                Constraint::Percentage(45), // Your battlefield
+                Constraint::Min(3),         // Your info footer
+            ])
             .split(main_chunks[1]);
 
         // Right column: Card details, Hand, Stack
@@ -514,11 +708,13 @@ impl FancyTuiRenderer {
         // Get opponent ID
         let opponent_id = view.opponents().next();
 
-        // Draw battlefields
+        // Draw battlefields with player info bars
         if let Some(opp_id) = opponent_id {
-            self.draw_battlefield(f, middle_chunks[0], view, opp_id, "Opponent");
+            self.draw_player_info(f, middle_chunks[0], view, opp_id);
+            self.draw_battlefield(f, middle_chunks[1], view, opp_id, "Opponent");
         }
-        self.draw_battlefield(f, middle_chunks[1], view, view.player_id(), "You");
+        self.draw_battlefield(f, middle_chunks[2], view, view.player_id(), "You");
+        self.draw_player_info(f, middle_chunks[3], view, view.player_id());
 
         // Draw right column
         self.draw_card_details(f, right_chunks[0], view);
@@ -829,101 +1025,279 @@ impl FancyTuiRenderer {
         f.render_widget(paragraph, inner_area);
     }
 
-    // NOTE: The remaining rendering methods (draw_battlefield, draw_card_details,
-    // draw_hand, draw_stack, render_entity, render_visual_stack, render_card_group)
-    // will be migrated from fancy_tui_controller.rs in subsequent updates.
-    // This is a partial extraction to establish the architecture.
+    /// Render a group of cards (lands, creatures, others) with dynamic packing
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_card_group(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        y_offset: u16,
+        view: &GameStateView,
+        cards: &[CardId],
+        label: &str,
+        color: Color,
+        card_width: u16,
+        card_height: u16,
+    ) -> u16 {
+        use ratatui::text::Text;
 
-    /// Draw a player's battlefield
-    fn draw_battlefield(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, title: &str) {
-        let is_yours = owner_id == view.player_id();
-        let is_focused = if is_yours {
+        if y_offset >= area.height {
+            return 0;
+        }
+
+        // Draw group label
+        let label_area = Rect {
+            x: area.x,
+            y: area.y + y_offset,
+            width: area.width,
+            height: 1,
+        };
+        let label_text = Text::from(Span::styled(
+            format!("{}:", label),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        f.render_widget(Paragraph::new(label_text), label_area);
+
+        let mut rendered_height = 1; // Start after label
+
+        // Group cards into entities
+        let entities = self.group_cards_into_entities(cards, view);
+
+        // Pre-calculate rows to enable centering
+        let mut rows: Vec<Vec<(&Entity, u16, u16)>> = Vec::new();
+        let mut current_row: Vec<(&Entity, u16, u16)> = Vec::new();
+        let mut current_row_width = 0u16;
+
+        for entity in &entities {
+            let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+
+            let entity_width_with_spacing = card_w + Self::CARD_SPACING;
+
+            // Check if entity fits on current row
+            if !current_row.is_empty() && current_row_width + card_w > area.width {
+                // Start new row
+                rows.push(current_row);
+                current_row = Vec::new();
+                current_row_width = 0;
+            }
+
+            current_row.push((entity, card_w, card_h));
+            current_row_width += entity_width_with_spacing;
+        }
+
+        // Add last row if not empty
+        if !current_row.is_empty() {
+            rows.push(current_row);
+        }
+
+        // Render rows with centering
+        let mut current_y = area.y + y_offset + rendered_height;
+
+        for row in &rows {
+            if row.is_empty() {
+                continue;
+            }
+
+            // Calculate total width of this row (without trailing spacing)
+            let row_width: u16 =
+                row.iter().map(|(_, w, _)| w).sum::<u16>() + (row.len().saturating_sub(1) as u16 * Self::CARD_SPACING);
+
+            // Calculate row height (max height in row)
+            let row_height: u16 = row.iter().map(|(_, _, h)| *h).max().unwrap_or(0);
+
+            // Check if we have vertical space
+            if current_y + row_height > area.y + area.height {
+                break; // No more vertical space
+            }
+
+            // Center the row
+            let x_offset = (area.width.saturating_sub(row_width)) / 2;
+            let mut current_x = area.x + x_offset;
+
+            // Render entities in this row
+            for (entity, card_w, card_h) in row {
+                let entity_area = Rect {
+                    x: current_x,
+                    y: current_y,
+                    width: *card_w,
+                    height: *card_h,
+                };
+                self.render_entity(f, entity_area, view, entity);
+
+                current_x += card_w + Self::CARD_SPACING;
+            }
+
+            current_y += row_height + Self::CARD_SPACING;
+        }
+
+        // Total height used by this group
+        if !rows.is_empty() {
+            rendered_height = current_y - (area.y + y_offset);
+        }
+
+        rendered_height
+    }
+
+    /// Draw a single battlefield with ASCII card boxes
+    fn draw_battlefield(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId, _title: &str) {
+        use ratatui::text::Text;
+
+        let battlefield = view.battlefield();
+        let player_cards: Vec<CardId> = battlefield
+            .iter()
+            .filter(|&&card_id| {
+                view.get_card(card_id)
+                    .map(|c| c.controller == owner_id)
+                    .unwrap_or(false)
+            })
+            .copied()
+            .collect();
+
+        // Group cards: lands, creatures, artifacts, enchantments
+        let (lands, creatures, artifacts, enchantments): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
+                if let Some(card) = view.get_card(card_id) {
+                    if card.is_land() {
+                        lands.push(card_id);
+                    } else if card.is_creature() {
+                        creatures.push(card_id);
+                    } else if card.is_artifact() {
+                        artifacts.push(card_id);
+                    } else if card.is_enchantment() {
+                        enchantments.push(card_id);
+                    }
+                }
+                (lands, creatures, artifacts, enchantments)
+            },
+        );
+
+        // Determine focus state
+        let is_player_bf = owner_id == view.player_id();
+        let is_focused = if is_player_bf {
             self.state.focused_pane == FocusedPane::YourBattlefield
         } else {
             self.state.focused_pane == FocusedPane::OpponentBattlefield
         };
+        let border_color = if is_focused { Color::White } else { Color::Gray };
 
-        let pane_key = if is_yours { "Y" } else { "O" };
-        let title_text = if is_focused {
-            format!(" {} ({}) [FOCUSED] ", title, pane_key)
+        // Create title with highlighted first letter
+        let title_line = if is_player_bf {
+            if is_focused {
+                Line::from(vec![
+                    Span::styled("(Y)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled("our Battlefield", Style::default().add_modifier(Modifier::BOLD)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("(Y)", Style::default().fg(Color::Yellow)),
+                    Span::raw("our Battlefield"),
+                ])
+            }
+        } else if is_focused {
+            Line::from(vec![
+                Span::styled("(O)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("pponent Battlefield", Style::default().add_modifier(Modifier::BOLD)),
+            ])
         } else {
-            format!(" {} ({}) ", title, pane_key)
+            Line::from(vec![
+                Span::styled("(O)", Style::default().fg(Color::Yellow)),
+                Span::raw("pponent Battlefield"),
+            ])
         };
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(title_text)
-            .border_style(if is_focused {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            });
-
+            .title(title_line)
+            .border_style(Style::default().fg(border_color));
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
-        // Get cards and group into entities
-        let cards = Self::get_battlefield_cards_in_order(view, owner_id);
-        let entities = self.group_cards_into_entities(&cards, view);
-
-        if entities.is_empty() {
-            let empty_msg = Paragraph::new("(empty)")
+        if player_cards.is_empty() {
+            let empty_text = Text::from("(Empty)");
+            let paragraph = Paragraph::new(empty_text)
                 .style(Style::default().fg(Color::DarkGray))
                 .alignment(Alignment::Center);
-            f.render_widget(empty_msg, inner_area);
+            f.render_widget(paragraph, inner_area);
             return;
         }
 
-        // Simple rendering: list entities vertically
-        let items: Vec<ListItem> = entities
-            .iter()
-            .map(|entity| {
-                let name = entity.display_name(view);
-                let is_valid_choice = entity.card_ids().iter().any(|id| self.state.valid_choices.contains(id));
-                let is_selected = if is_yours {
-                    self.state
-                        .selected_card_in_your_bf
-                        .is_some_and(|sel| entity.card_ids().contains(&sel))
-                } else {
-                    self.state
-                        .selected_card_in_opp_bf
-                        .is_some_and(|sel| entity.card_ids().contains(&sel))
-                };
-
-                let style = if is_selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else if is_valid_choice {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                } else if entity.is_tapped(view) {
-                    Style::default().fg(Color::DarkGray)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
-                let tapped_marker = if entity.is_tapped(view) { " [T]" } else { "" };
-                ListItem::new(Line::from(Span::styled(format!("{}{}", name, tapped_marker), style)))
-            })
-            .collect();
-
-        // Track entity positions for mouse hit testing
-        let list_area = inner_area;
-        for (i, entity) in entities.iter().enumerate() {
-            if (i as u16) < list_area.height {
-                let entity_area = Rect {
-                    x: list_area.x,
-                    y: list_area.y + i as u16,
-                    width: list_area.width,
-                    height: 1,
-                };
-                self.state.entity_positions.push(EntityPosition {
-                    entity: entity.clone(),
-                    area: entity_area,
-                });
-            }
+        // Build card groups for size calculation
+        let mut card_groups = Vec::new();
+        if !lands.is_empty() {
+            card_groups.push((lands.clone(), "Lands"));
+        }
+        if !creatures.is_empty() {
+            card_groups.push((creatures.clone(), "Creatures"));
+        }
+        if !artifacts.is_empty() {
+            card_groups.push((artifacts.clone(), "Artifacts"));
+        }
+        if !enchantments.is_empty() {
+            card_groups.push((enchantments.clone(), "Enchants"));
         }
 
-        let list = List::new(items);
-        f.render_widget(list, inner_area);
+        // Calculate optimal card size for this battlefield
+        let (card_width, card_height) = Self::calculate_optimal_card_size(inner_area, &card_groups, view);
+
+        // Render card groups with optimal size
+        let mut y_offset = 0;
+
+        if !lands.is_empty() {
+            y_offset += self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &lands,
+                "Lands",
+                Color::Green,
+                card_width,
+                card_height,
+            );
+        }
+
+        if !creatures.is_empty() {
+            y_offset += self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &creatures,
+                "Creatures",
+                Color::Red,
+                card_width,
+                card_height,
+            );
+        }
+
+        if !artifacts.is_empty() {
+            y_offset += self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &artifacts,
+                "Artifacts",
+                Color::Cyan,
+                card_width,
+                card_height,
+            );
+        }
+
+        if !enchantments.is_empty() {
+            self.render_card_group(
+                f,
+                inner_area,
+                y_offset,
+                view,
+                &enchantments,
+                "Enchants",
+                Color::Magenta,
+                card_width,
+                card_height,
+            );
+        }
     }
 
     /// Draw card details panel
@@ -1139,5 +1513,532 @@ impl FancyTuiRenderer {
 
         let list = List::new(items);
         f.render_widget(list, inner_area);
+    }
+
+    /// Draw player info bar (life, zones, etc.)
+    pub fn draw_player_info(&self, f: &mut Frame, area: Rect, view: &GameStateView, player_id: PlayerId) {
+        use ratatui::text::Text;
+
+        let life = view.player_life(player_id);
+        let hand_size = view.player_hand(player_id).len();
+        let graveyard_size = view.player_graveyard(player_id).len();
+        let library_size = view.player_library(player_id).len();
+
+        let player_label = if player_id == view.player_id() { "You" } else { "Opp" };
+
+        // Left side: player stats
+        let stats_text = format!(
+            "{}: {} life | Hand: {} | GY: {} | Lib: {}",
+            player_label, life, hand_size, graveyard_size, library_size
+        );
+
+        // Right side: turn and phase info
+        let turn_number = view.turn_number();
+        let current_step = view.current_step();
+        let active_player = view.active_player();
+        let is_active = player_id == active_player;
+
+        // Calculate player's turn number (P1 goes on odd turns, P2 on even)
+        let is_first_player = (active_player == player_id) == (turn_number % 2 == 1);
+        let player_turn = if is_first_player {
+            turn_number.div_ceil(2)
+        } else {
+            turn_number / 2
+        };
+
+        // All phases with current one underlined
+        let all_steps = [
+            Step::Untap,
+            Step::Upkeep,
+            Step::Draw,
+            Step::Main1,
+            Step::BeginCombat,
+            Step::DeclareAttackers,
+            Step::DeclareBlockers,
+            Step::CombatDamage,
+            Step::EndCombat,
+            Step::Main2,
+            Step::End,
+        ];
+
+        // Display player turn or "_" if inactive
+        let turn_display = if is_active {
+            player_turn.to_string()
+        } else {
+            "_".to_string()
+        };
+
+        let mut phase_spans = vec![Span::raw(format!("Turn: {} ({}) | ", turn_display, turn_number))];
+
+        for (i, step) in all_steps.iter().enumerate() {
+            let abbrev = Self::step_abbrev(*step);
+            // Only underline current step if this is the active player
+            let span = if is_active && *step == current_step {
+                Span::styled(abbrev, Style::default().add_modifier(Modifier::UNDERLINED))
+            } else {
+                Span::raw(abbrev)
+            };
+            phase_spans.push(span);
+
+            if i < all_steps.len() - 1 {
+                phase_spans.push(Span::raw(" "));
+            }
+        }
+
+        // Calculate spacing for right alignment
+        let inner_width = area.width.saturating_sub(4); // Account for borders and padding
+        let stats_len = stats_text.len() as u16;
+        // Phase text without underline formatting for length calc (use max width with turn number)
+        let phase_text_plain = format!(
+            "Turn: {} ({}) | UP UK DR M1 BC DA DB CD EC M2 ET",
+            turn_display, turn_number
+        );
+        let phase_len = phase_text_plain.len() as u16;
+
+        // Determine if we need to split into two lines
+        // Need at least a few spaces between stats and phase info
+        const MIN_SPACING: u16 = 3;
+        let fits_on_one_line = stats_len + phase_len + MIN_SPACING <= inner_width;
+
+        let text = if fits_on_one_line {
+            // Single line with spacing
+            let padding = inner_width.saturating_sub(stats_len + phase_len);
+            let mut line_spans = vec![Span::raw(stats_text)];
+            line_spans.push(Span::raw(" ".repeat(padding as usize)));
+            line_spans.extend(phase_spans);
+            Text::from(Line::from(line_spans))
+        } else {
+            // Two lines: stats on first line, turn info on second line
+            let stats_line = Line::from(Span::raw(stats_text));
+            let phase_line = Line::from(phase_spans);
+            Text::from(vec![stats_line, phase_line])
+        };
+
+        // Bold the entire text if this is the active player
+        let base_style = if is_active {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let paragraph = Paragraph::new(text).style(base_style).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Gray)),
+        );
+
+        f.render_widget(paragraph, area);
+    }
+
+    /// Render a visual stack with diagonal offsets
+    fn render_visual_stack(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, entity: &Entity) {
+        use ratatui::text::Text;
+
+        let Entity::VisualStack {
+            card_ids, tapped_count, ..
+        } = entity
+        else {
+            return;
+        };
+
+        let stack_depth = card_ids.len();
+        let card_id = card_ids[0]; // Representative card
+        let card = view.get_card(card_id);
+
+        // Check if this card is currently selected
+        let is_selected =
+            Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
+
+        // Determine border color from card colors
+        let border_color = if let Some(card) = card.as_ref() {
+            match card.colors.len() {
+                0 => Color::Gray,
+                1 => Self::card_color_to_ratatui(&card.colors[0]),
+                _ => Color::Yellow,
+            }
+        } else {
+            Color::Gray
+        };
+
+        // Render stacked cards from back to front (bottom-left to top-right)
+        for i in 0..stack_depth {
+            let offset = i as u16 * Self::DIAGONAL_OFFSET;
+
+            // Card area with diagonal offset
+            let card_area = Rect {
+                x: area.x + offset,
+                y: area.y + offset,
+                width: area
+                    .width
+                    .saturating_sub(offset + Self::DIAGONAL_OFFSET * (stack_depth - i - 1) as u16),
+                height: area
+                    .height
+                    .saturating_sub(offset + Self::DIAGONAL_OFFSET * (stack_depth - i - 1) as u16),
+            };
+
+            // For all but the topmost card, render only the border
+            if i < stack_depth - 1 {
+                let border_style = Style::default().fg(border_color);
+                let block = Block::default().borders(Borders::ALL).border_style(border_style);
+                f.render_widget(block, card_area);
+            } else {
+                // Render the top card with full content
+                // Determine if the top cards are tapped
+                let is_tapped = *tapped_count > 0;
+
+                let border_style = if is_selected {
+                    Style::default().fg(border_color).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(border_color)
+                };
+
+                let text_style = if is_tapped {
+                    Style::default().fg(Color::Gray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                // Build simple content for the top card
+                let name = entity.display_name(view);
+                let cost_str = card.as_ref().map(|c| c.mana_cost.to_string()).unwrap_or_default();
+
+                let content_width = card_area.width.saturating_sub(2) as usize;
+                let mut lines = Vec::new();
+
+                // Title line with count prefix
+                if !cost_str.is_empty() && name.len() + cost_str.len() < content_width {
+                    let padding = content_width.saturating_sub(name.len() + cost_str.len());
+                    lines.push(Line::from(vec![
+                        Span::styled(name.clone(), text_style),
+                        Span::raw(" ".repeat(padding)),
+                        Span::raw(cost_str),
+                    ]));
+                } else {
+                    lines.push(Line::from(Span::styled(name, text_style)));
+                }
+
+                let block = Block::default().borders(Borders::ALL).border_style(border_style);
+                let paragraph = Paragraph::new(Text::from(lines)).block(block);
+                f.render_widget(paragraph, card_area);
+            }
+        }
+    }
+
+    /// Render a single entity as a box with priority-based content layout
+    pub fn render_entity(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, entity: &Entity) {
+        use ratatui::text::Text;
+
+        // Track entity position for mouse hit testing
+        self.state.entity_positions.push(EntityPosition {
+            entity: entity.clone(),
+            area,
+        });
+
+        // Dispatch to visual stack renderer if applicable
+        if matches!(entity, Entity::VisualStack { .. }) {
+            self.render_visual_stack(f, area, view, entity);
+            return;
+        }
+
+        let card_id = entity.representative_card();
+        let name = entity.display_name(view);
+        let is_tapped = entity.is_tapped(view);
+        let card = view.get_card(card_id);
+
+        // Check if this card is currently selected
+        let is_selected =
+            Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
+
+        // Calculate available content dimensions (excluding borders)
+        let content_width = area.width.saturating_sub(2) as usize;
+        let content_height = area.height.saturating_sub(2);
+
+        // Determine border color and text style
+        let border_color = if let Some(card) = card.as_ref() {
+            match card.colors.len() {
+                0 => Color::Gray,
+                1 => Self::card_color_to_ratatui(&card.colors[0]),
+                _ => Color::Yellow,
+            }
+        } else {
+            Color::Gray
+        };
+
+        let border_style = if is_selected {
+            Style::default().fg(border_color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(border_color)
+        };
+
+        // Determine if card is in valid choices list
+        let is_valid_choice = self.state.valid_choices.contains(&card_id);
+        let has_choice_context = self.state.choice_context != ChoiceContext::None;
+
+        // Apply highlighting/dimming based on choice context
+        let text_style = if has_choice_context {
+            if is_valid_choice {
+                // Valid choice: bright/normal
+                Style::default().fg(Color::White)
+            } else {
+                // Invalid choice: dimmed
+                Style::default().fg(Color::DarkGray)
+            }
+        } else if is_tapped {
+            // No choice context: show tapped state as usual
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        // Build card content with priority-based layout
+        let mut lines = Vec::new();
+
+        // Priority 1: Title (always included, prefer full name over truncation)
+        let cost_str = card.as_ref().map(|c| c.mana_cost.to_string()).unwrap_or_default();
+        let cost_len = cost_str.len();
+
+        let title_style = if is_selected {
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+        };
+
+        // Check if name starts with multiplier (e.g., "3x Island")
+        // If so, split it and colorize the multiplier in cyan
+        let (multiplier_prefix, card_name_part) = if let Some(x_pos) = name.find("x ") {
+            let prefix = &name[..x_pos + 1]; // "3x"
+            let rest = &name[x_pos + 1..]; // " Island"
+                                           // Check if prefix is all digits followed by 'x'
+            if prefix.len() >= 2 && prefix[..prefix.len() - 1].chars().all(|c| c.is_ascii_digit()) {
+                (Some(prefix.to_string()), rest.to_string())
+            } else {
+                (None, name.clone())
+            }
+        } else {
+            (None, name.clone())
+        };
+
+        // Strategy: Try to fit name + cost on one line
+        // If name would be truncated and we have vertical space, use two lines instead
+        let name_and_cost_fit = name.len() + cost_len < content_width;
+        let name_fits_alone = name.len() <= content_width;
+        let have_vertical_space = content_height >= 3; // Need at least 3 lines (name, cost, something else)
+
+        if !cost_str.is_empty() && name_and_cost_fit {
+            // Both fit on one line - ideal case
+            let padding = content_width.saturating_sub(name.len() + cost_len);
+            let mut title_spans = vec![];
+            if let Some(mult) = multiplier_prefix.as_ref() {
+                title_spans.push(Span::styled(mult.clone(), Style::default().fg(Color::Cyan)));
+                title_spans.push(Span::styled(card_name_part.clone(), title_style));
+            } else {
+                title_spans.push(Span::styled(name.clone(), title_style));
+            }
+            title_spans.push(Span::raw(" ".repeat(padding)));
+            title_spans.push(Span::raw(cost_str.clone()));
+            lines.push(Line::from(title_spans));
+        } else if !cost_str.is_empty() && !name_fits_alone && have_vertical_space {
+            // Name would be truncated, but we have space for cost on separate line
+            // Truncate name minimally
+            let display_name = if name.len() > content_width {
+                if content_width <= 5 {
+                    name.chars().take(content_width).collect::<String>()
+                } else {
+                    format!(
+                        "{}..",
+                        name.chars().take(content_width.saturating_sub(2)).collect::<String>()
+                    )
+                }
+            } else {
+                name.clone()
+            };
+            if let Some(mult) = multiplier_prefix.as_ref() {
+                let card_name_truncated = if card_name_part.len() > content_width.saturating_sub(mult.len()) {
+                    if content_width.saturating_sub(mult.len()) <= 5 {
+                        card_name_part
+                            .chars()
+                            .take(content_width.saturating_sub(mult.len()))
+                            .collect::<String>()
+                    } else {
+                        format!(
+                            "{}..",
+                            card_name_part
+                                .chars()
+                                .take(content_width.saturating_sub(mult.len() + 2))
+                                .collect::<String>()
+                        )
+                    }
+                } else {
+                    card_name_part.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(mult.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name_truncated, title_style),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(display_name, title_style)));
+            }
+            lines.push(Line::from(cost_str.clone()));
+        } else if !cost_str.is_empty() && !name_and_cost_fit && name_fits_alone && have_vertical_space {
+            // Name fits, cost doesn't fit on same line, use two lines
+            if let Some(mult) = multiplier_prefix.as_ref() {
+                lines.push(Line::from(vec![
+                    Span::styled(mult.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name_part.clone(), title_style),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(name.clone(), title_style)));
+            }
+            lines.push(Line::from(cost_str.clone()));
+        } else {
+            // Fallback: Single line with truncation if needed
+            let display_name = if name.len() > content_width {
+                if content_width <= 5 {
+                    name.chars().take(content_width).collect::<String>()
+                } else {
+                    format!(
+                        "{}..",
+                        name.chars().take(content_width.saturating_sub(2)).collect::<String>()
+                    )
+                }
+            } else {
+                name.clone()
+            };
+            if let Some(mult) = multiplier_prefix {
+                let card_name_truncated = if card_name_part.len() > content_width.saturating_sub(mult.len()) {
+                    if content_width.saturating_sub(mult.len()) <= 5 {
+                        card_name_part
+                            .chars()
+                            .take(content_width.saturating_sub(mult.len()))
+                            .collect::<String>()
+                    } else {
+                        format!(
+                            "{}..",
+                            card_name_part
+                                .chars()
+                                .take(content_width.saturating_sub(mult.len() + 2))
+                                .collect::<String>()
+                        )
+                    }
+                } else {
+                    card_name_part
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(mult, Style::default().fg(Color::Cyan)),
+                    Span::styled(card_name_truncated, title_style),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(display_name, title_style)));
+            }
+        }
+
+        // Priority 2: Tapped indicator (only if tapped and room)
+        // Use compact "[T]" for narrow cards, full "[TAPPED]" only when we have plenty of space
+        if is_tapped && lines.len() < content_height as usize {
+            let tapped_text = if content_width >= 12 {
+                "[TAPPED]"
+            } else if content_width >= 3 {
+                "[T]"
+            } else {
+                "T" // Ultra-compact for very narrow cards
+            };
+            lines.push(Line::from(tapped_text));
+        }
+
+        // Determine if we need to reserve last line for P/T
+        let is_creature = card.as_ref().map(|c| c.is_creature()).unwrap_or(false);
+        let pt_str = if is_creature {
+            card.as_ref()
+                .map(|c| format!("{}/{}", c.current_power(), c.current_toughness()))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let reserve_last_line_for_pt = is_creature && !pt_str.is_empty() && pt_str.len() <= content_width;
+
+        // Calculate available lines for description/type
+        let max_total_lines = if reserve_last_line_for_pt {
+            content_height.saturating_sub(1) as usize
+        } else {
+            content_height as usize
+        };
+
+        // Priority 4: Description (fit as much as possible with "...")
+        if let Some(card) = card.as_ref() {
+            if !card.text.is_empty() && lines.len() < max_total_lines {
+                let available_lines = max_total_lines.saturating_sub(lines.len());
+                let desc_lines = card.text.split('\n').collect::<Vec<_>>();
+
+                for (i, desc_line) in desc_lines.iter().enumerate().take(available_lines) {
+                    if i == available_lines - 1 && (i < desc_lines.len() - 1 || desc_line.len() > content_width) {
+                        // Last line of available space - add elision if there's more
+                        let truncated = if desc_line.len() > content_width.saturating_sub(3) {
+                            format!(
+                                "{}...",
+                                desc_line
+                                    .chars()
+                                    .take(content_width.saturating_sub(3))
+                                    .collect::<String>()
+                            )
+                        } else if i < desc_lines.len() - 1 {
+                            format!("{}...", desc_line)
+                        } else {
+                            desc_line.to_string()
+                        };
+                        lines.push(Line::from(truncated));
+                    } else if desc_line.len() > content_width {
+                        // Line too long, truncate
+                        let truncated = format!(
+                            "{}...",
+                            desc_line
+                                .chars()
+                                .take(content_width.saturating_sub(3))
+                                .collect::<String>()
+                        );
+                        lines.push(Line::from(truncated));
+                    } else {
+                        lines.push(Line::from(*desc_line));
+                    }
+                }
+            }
+        }
+
+        // Priority 6: Type line (only if completely fits)
+        if let Some(card) = card.as_ref() {
+            if !card.types.is_empty() && lines.len() < max_total_lines {
+                let types_str = card
+                    .types
+                    .iter()
+                    .map(|t| format!("{:?}", t))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if types_str.len() <= content_width {
+                    lines.push(Line::from(types_str));
+                }
+            }
+        }
+
+        // Fill empty lines up to max_total_lines
+        while lines.len() < max_total_lines {
+            lines.push(Line::from(""));
+        }
+
+        // Priority 3: P/T (bottom right, only if room was reserved)
+        if reserve_last_line_for_pt {
+            let padding = content_width.saturating_sub(pt_str.len());
+            lines.push(Line::from(vec![Span::raw(" ".repeat(padding)), Span::raw(pt_str)]));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .style(text_style);
+
+        let text = Text::from(lines);
+        let paragraph = Paragraph::new(text).block(block);
+        f.render_widget(paragraph, area);
     }
 }
