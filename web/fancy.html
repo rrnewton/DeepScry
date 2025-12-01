@@ -90,11 +90,7 @@
         #mtg-fancy-tui-canvas {
             border: 2px solid #333;
             border-radius: 4px;
-            /* Fixed size to prevent DPI scaling feedback loop */
-            width: 800px !important;
-            height: 500px !important;
-            max-width: 800px !important;
-            max-height: 500px !important;
+            /* Size is set dynamically via JavaScript */
         }
         .loading {
             text-align: center;
@@ -269,14 +265,31 @@
             }
 
             try {
-                // Show canvas, hide setup
+                // Hide setup bar
                 document.getElementById('setup-bar').style.display = 'none';
+
+                // Calculate available space for the canvas
+                // Account for header (roughly 60px) and some padding
+                const container = document.querySelector('.canvas-container');
+                const headerHeight = document.querySelector('.header').offsetHeight;
+                const availWidth = window.innerWidth - 40;  // 20px padding on each side
+                const availHeight = window.innerHeight - headerHeight - 60;  // header + padding
+
+                // Clamp to reasonable bounds (min 600x400, max 1600x1000)
+                const canvasWidth = Math.max(600, Math.min(1600, availWidth));
+                const canvasHeight = Math.max(400, Math.min(1000, availHeight));
+
+                console.log(`Window: ${window.innerWidth}x${window.innerHeight}, Canvas: ${canvasWidth}x${canvasHeight}`);
+
+                // Show and size the canvas
                 const canvas = document.getElementById('mtg-fancy-tui-canvas');
                 canvas.style.display = 'block';
-                canvas.width = 800;
-                canvas.height = 500;
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                canvas.style.width = canvasWidth + 'px';
+                canvas.style.height = canvasHeight + 'px';
 
-                // Launch the fancy TUI
+                // Launch the fancy TUI with calculated dimensions
                 const seed = BigInt(Date.now());
                 launch_fancy_tui(
                     cardDb,
@@ -285,10 +298,12 @@
                     20,  // starting life
                     seed,
                     p1Controller,
-                    p2Controller
+                    p2Controller,
+                    canvasWidth,
+                    canvasHeight
                 );
 
-                console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
+                console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck} at ${canvasWidth}x${canvasHeight}`);
             } catch (error) {
                 alert(`Failed to launch TUI: ${error}`);
                 console.error('Failed to launch TUI:', error);

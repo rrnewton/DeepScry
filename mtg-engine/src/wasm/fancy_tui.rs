@@ -60,20 +60,42 @@ pub struct WasmFancyTuiApp {
     error_message: Option<String>,
     /// Auto-run mode (AI vs AI)
     auto_run: bool,
+    /// Canvas width in pixels (for rendering calculations)
+    canvas_width: u32,
+    /// Canvas height in pixels (for rendering calculations)
+    canvas_height: u32,
 }
+
+// Font metrics for 10pt Fira Mono (approximate)
+const FONT_SIZE: i32 = 10;
+const CHAR_WIDTH: u32 = 6;  // ~6px per character at 10pt
+const CHAR_HEIGHT: u32 = 14; // ~14px line height at 10pt
 
 impl WasmFancyTuiApp {
     /// Create a new WASM fancy TUI app from a GameState
+    ///
+    /// canvas_width and canvas_height are in CSS pixels
     pub fn new(
         game: GameState,
         p1_controller_type: WasmControllerType,
         p2_controller_type: WasmControllerType,
+        canvas_width: u32,
+        canvas_height: u32,
     ) -> Self {
+        // Calculate terminal dimensions based on canvas size
+        // Reserve some space for the egui control bar (~30px)
+        let usable_height = canvas_height.saturating_sub(40);
+
+        // Calculate columns and rows based on font metrics
+        let cols = ((canvas_width / CHAR_WIDTH) as u16).max(80).min(200);
+        let rows = ((usable_height / CHAR_HEIGHT) as u16).max(20).min(60);
+
+        web_sys::console::log_1(
+            &format!("Creating terminal: {}x{} chars for {}x{} canvas", cols, rows, canvas_width, canvas_height).into()
+        );
+
         // Create the soft_ratatui backend with CosmicText font rendering
-        // Using 100 columns x 40 rows with 10pt font to stay within WebGL texture limits
-        // (max texture size is typically 8192px, so we need cols*char_width < 8192)
-        // At 10pt, ~6px wide per char, 100*6=600px wide, 40*~12=480px tall - well under limit
-        let soft_backend = SoftBackend::<CosmicText>::new(100, 40, 10, FONT_DATA);
+        let soft_backend = SoftBackend::<CosmicText>::new(cols, rows, FONT_SIZE, FONT_DATA);
 
         // Wrap in RataguiBackend for egui integration
         let backend = RataguiBackend::new("mtg-tui", soft_backend);
@@ -94,6 +116,8 @@ impl WasmFancyTuiApp {
             game_over: false,
             error_message: None,
             auto_run: false,
+            canvas_width,
+            canvas_height,
         }
     }
 
@@ -207,10 +231,12 @@ impl eframe::App for WasmFancyTuiApp {
                 renderer.draw_ui(f, &view, prompt, &choices);
             });
 
-            // Display the terminal as an egui widget with fixed size
-            // The terminal is 100x40 chars at 10pt (~6px wide, ~12px tall per char)
-            // So approximately 600x480 pixels
-            let desired_size = egui::vec2(700.0, 450.0);
+            // Display the terminal as an egui widget
+            // Use the canvas dimensions minus some padding for controls
+            let desired_size = egui::vec2(
+                self.canvas_width as f32 - 16.0,  // Small margin
+                self.canvas_height as f32 - 50.0,  // Space for control bar + separator
+            );
 
             // Debug: log before adding widget
             unsafe {
@@ -240,6 +266,8 @@ impl eframe::App for WasmFancyTuiApp {
 ///
 /// This function creates and runs the eframe application.
 /// The canvas element with id "mtg-fancy-tui-canvas" must exist in the HTML.
+///
+/// canvas_width and canvas_height specify the desired canvas size in CSS pixels.
 #[wasm_bindgen]
 pub fn launch_fancy_tui(
     card_db: &WasmCardDatabase,
@@ -249,15 +277,17 @@ pub fn launch_fancy_tui(
     seed: u64,
     p1_controller: WasmControllerType,
     p2_controller: WasmControllerType,
+    canvas_width: u32,
+    canvas_height: u32,
 ) -> Result<(), JsValue> {
     // Create the game using the same logic as WasmGame::from_database
     let game = create_game_from_database(card_db, p1_deck_name, p2_deck_name, starting_life, seed)?;
 
-    let app = WasmFancyTuiApp::new(game, p1_controller, p2_controller);
+    let app = WasmFancyTuiApp::new(game, p1_controller, p2_controller, canvas_width, canvas_height);
 
     // Configure eframe options for WASM
     let mut options = eframe::WebOptions::default();
-    // Disable DPI scaling to prevent canvas size feedback loop
+    // Disable dithering (not related to size, but a reasonable default)
     options.dithering = false;
 
     // Get the canvas element from the DOM
@@ -269,6 +299,19 @@ pub fn launch_fancy_tui(
     let canvas: HtmlCanvasElement = canvas
         .dyn_into::<HtmlCanvasElement>()
         .map_err(|_| JsValue::from_str("Element is not a canvas"))?;
+
+    // Set the canvas size to match requested dimensions
+    canvas.set_width(canvas_width);
+    canvas.set_height(canvas_height);
+
+    // Also set CSS size to prevent scaling
+    let style = canvas.style();
+    let _ = style.set_property("width", &format!("{}px", canvas_width));
+    let _ = style.set_property("height", &format!("{}px", canvas_height));
+
+    web_sys::console::log_1(
+        &format!("Canvas configured: {}x{}", canvas_width, canvas_height).into()
+    );
 
     // Run the eframe app asynchronously
     wasm_bindgen_futures::spawn_local(async move {
