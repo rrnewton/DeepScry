@@ -835,3 +835,323 @@ fn test_e2e_shivan_dragon_classic() {
     // Base: 80 + Non-token: 20 + P(5)*15: 75 + T(5)*10: 50 + CMC(6)*5: 30 + Flying(5*10): 50 = 305
     assert_eq!(score, 305, "Shivan Dragon (5/5 Flying) should score 305");
 }
+
+// =========================================================================
+// ADDITIONAL KEYWORD EVALUATION TESTS
+// Tests for newly implemented keyword bonuses (mtg-77 parity work)
+// Reference: CreatureEvaluator.java:115-170
+// =========================================================================
+
+#[test]
+fn test_ward_creature() {
+    // Test creature with Ward (protection from targeting)
+    // Ward adds +10 bonus
+    //
+    // Expected score calculation for a 2/2 with Ward for 2:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Ward: +10
+    // Total: 80 + 20 + 30 + 20 + 10 + 10 = 170
+
+    // Ward is a complex keyword requiring insert_complex
+    let (game, card_id, player_id) = create_test_setup_with_complex_keywords(
+        "Ward Test",
+        2,
+        2,
+        2,
+        vec![KeywordArgs::Ward {
+            cost: mtg_forge_rs::core::ManaCost::from_string("2"),
+        }],
+    );
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 170, "2/2 with Ward should score 170");
+}
+
+#[test]
+fn test_protection_from_red_creature() {
+    // Test creature with Protection from Red
+    // Protection adds +20 bonus
+    //
+    // Expected score calculation for a 2/2 with Protection from Red for 2:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Protection: +20
+    // Total: 80 + 20 + 30 + 20 + 10 + 20 = 180
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Pro-Red Knight", 2, 2, 2, vec![Keyword::ProtectionFromRed]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 180, "2/2 with Protection from Red should score 180");
+}
+
+#[test]
+fn test_flanking_creature() {
+    // Test creature with Flanking (Mirage mechanic)
+    // Flanking adds +15 bonus
+    //
+    // Expected score calculation for a 2/2 with Flanking for 2:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Flanking: +15
+    // Total: 80 + 20 + 30 + 20 + 10 + 15 = 175
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Flanking Knight", 2, 2, 2, vec![Keyword::Flanking]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 175, "2/2 with Flanking should score 175");
+}
+
+#[test]
+fn test_exalted_creature() {
+    // Test creature with Exalted (Alara mechanic)
+    // Exalted adds +15 bonus
+    //
+    // Expected score calculation for a 1/1 with Exalted for 1:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (1): +15 (1 * 15)
+    // - Toughness (1): +10 (1 * 10)
+    // - CMC (1): +5 (1 * 5)
+    // - Exalted: +15
+    // Total: 80 + 20 + 15 + 10 + 5 + 15 = 145
+
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Exalted Noble", 1, 1, 1, vec![Keyword::Exalted]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 145, "1/1 with Exalted should score 145");
+}
+
+#[test]
+fn test_prowess_creature() {
+    // Test creature with Prowess (Khans mechanic)
+    // Prowess adds +5 bonus
+    //
+    // Expected score calculation for a 2/1 with Prowess for 2:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (1): +10 (1 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Prowess: +5
+    // Total: 80 + 20 + 30 + 10 + 10 + 5 = 155
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Monastery Swiftspear", 2, 1, 2, vec![Keyword::Prowess]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 155, "2/1 with Prowess should score 155");
+}
+
+#[test]
+fn test_melee_creature() {
+    // Test creature with Melee (Conspiracy mechanic)
+    // Melee adds +18 bonus
+    //
+    // Expected score calculation for a 3/2 with Melee for 3:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (3): +15 (3 * 5)
+    // - Melee: +18
+    // Total: 80 + 20 + 45 + 20 + 15 + 18 = 198
+
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Melee Warrior", 3, 2, 3, vec![Keyword::Melee]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 198, "3/2 with Melee should score 198");
+}
+
+#[test]
+fn test_annihilator_creature() {
+    // Test creature with Annihilator (Eldrazi threat)
+    // Annihilator adds +50 bonus (per level, assuming 1 for now)
+    //
+    // Expected score calculation for an 8/8 with Annihilator for 8:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (8): +120 (8 * 15)
+    // - Toughness (8): +80 (8 * 10)
+    // - CMC (8): +40 (8 * 5)
+    // - Annihilator: +50
+    // Total: 80 + 20 + 120 + 80 + 40 + 50 = 390
+
+    // Annihilator is a complex keyword requiring insert_complex
+    let (game, card_id, player_id) =
+        create_test_setup_with_complex_keywords("Eldrazi Test", 8, 8, 8, vec![KeywordArgs::Annihilator { amount: 2 }]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 390, "8/8 with Annihilator should score 390");
+}
+
+#[test]
+fn test_undying_creature() {
+    // Test creature with Undying (returns with +1/+1 counter)
+    // Undying adds +25 bonus
+    //
+    // Expected score calculation for a 4/3 with Undying for 3:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (4): +60 (4 * 15)
+    // - Toughness (3): +30 (3 * 10)
+    // - CMC (3): +15 (3 * 5)
+    // - Undying: +25
+    // Total: 80 + 20 + 60 + 30 + 15 + 25 = 230
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Geralf's Messenger", 4, 3, 3, vec![Keyword::Undying]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 230, "4/3 with Undying should score 230");
+}
+
+#[test]
+fn test_persist_creature() {
+    // Test creature with Persist (returns with -1/-1 counter)
+    // Persist adds +20 bonus
+    //
+    // Expected score calculation for a 3/2 with Persist for 3:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (3): +15 (3 * 5)
+    // - Persist: +20
+    // Total: 80 + 20 + 45 + 20 + 15 + 20 = 200
+
+    let (game, card_id, player_id) = create_test_setup_with_keywords("Kitchen Finks", 3, 2, 3, vec![Keyword::Persist]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 200, "3/2 with Persist should score 200");
+}
+
+#[test]
+fn test_bushido_creature() {
+    // Test creature with Bushido (Kamigawa combat bonus)
+    // Bushido adds +16 bonus (per level, assuming 1 for now)
+    //
+    // Expected score calculation for a 2/2 with Bushido for 2:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (2): +20 (2 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Bushido: +16
+    // Total: 80 + 20 + 30 + 20 + 10 + 16 = 176
+
+    // Bushido is a complex keyword requiring insert_complex
+    let (game, card_id, player_id) = create_test_setup_with_complex_keywords(
+        "Samurai of the Pale Curtain",
+        2,
+        2,
+        2,
+        vec![KeywordArgs::Bushido { amount: 1 }],
+    );
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 176, "2/2 with Bushido should score 176");
+}
+
+#[test]
+fn test_multiple_new_keywords() {
+    // Test creature with multiple new keywords: Prowess + Undying
+    // Prowess: +5, Undying: +25
+    //
+    // Expected score calculation for a 2/1 with Prowess + Undying for 2:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30 (2 * 15)
+    // - Toughness (1): +10 (1 * 10)
+    // - CMC (2): +10 (2 * 5)
+    // - Prowess: +5
+    // - Undying: +25
+    // Total: 80 + 20 + 30 + 10 + 10 + 5 + 25 = 180
+
+    let (game, card_id, player_id) =
+        create_test_setup_with_keywords("Prowess Undying", 2, 1, 2, vec![Keyword::Prowess, Keyword::Undying]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 180, "2/1 with Prowess + Undying should score 180");
+}
+
+#[test]
+fn test_toxic_creature() {
+    // Test creature with Toxic (poison mechanic)
+    // Toxic adds +5 bonus (per level, assuming 1 for now)
+    //
+    // Expected score calculation for a 1/1 with Toxic 1 for 1:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (1): +15 (1 * 15)
+    // - Toughness (1): +10 (1 * 10)
+    // - CMC (1): +5 (1 * 5)
+    // - Toxic: +5
+    // Total: 80 + 20 + 15 + 10 + 5 + 5 = 135
+
+    // Toxic is a complex keyword requiring insert_complex
+    let (game, card_id, player_id) =
+        create_test_setup_with_complex_keywords("Toxic Test", 1, 1, 1, vec![KeywordArgs::Toxic { amount: 1 }]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 135, "1/1 with Toxic should score 135");
+}
+
+#[test]
+fn test_afflict_creature() {
+    // Test creature with Afflict (damage when blocked)
+    // Afflict adds +5 bonus (per level, assuming 1 for now)
+    //
+    // Expected score calculation for a 3/3 with Afflict 2 for 3:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (3): +30 (3 * 10)
+    // - CMC (3): +15 (3 * 5)
+    // - Afflict: +5
+    // Total: 80 + 20 + 45 + 30 + 15 + 5 = 195
+
+    // Afflict is a complex keyword requiring insert_complex
+    let (game, card_id, player_id) =
+        create_test_setup_with_complex_keywords("Afflict Test", 3, 3, 3, vec![KeywordArgs::Afflict { amount: 2 }]);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 195, "3/3 with Afflict should score 195");
+}

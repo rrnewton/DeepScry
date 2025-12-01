@@ -278,6 +278,111 @@ impl HeuristicController {
             value += 30;
         }
 
+        // Ward: Makes creature harder to target (opponent must pay extra)
+        // Java: if (c.hasKeyword(Keyword.WARD)) { value += addValue(10, "ward"); }
+        if card.has_keyword(Keyword::Ward) {
+            value += 10;
+        }
+
+        // Protection (generic check - any protection is valuable)
+        // Java: if (c.hasKeyword(Keyword.PROTECTION)) { value += addValue(20, "protection"); }
+        // Note: We check for specific protection colors and the generic Protection keyword
+        if card.has_keyword(Keyword::Protection)
+            || card.has_keyword(Keyword::ProtectionFromRed)
+            || card.has_keyword(Keyword::ProtectionFromBlue)
+            || card.has_keyword(Keyword::ProtectionFromBlack)
+            || card.has_keyword(Keyword::ProtectionFromWhite)
+            || card.has_keyword(Keyword::ProtectionFromGreen)
+        {
+            value += 20;
+        }
+
+        // Combat enhancement keywords (magnitude-based bonuses from Java CreatureEvaluator)
+        // Reference: forge-java/forge-ai/src/main/java/forge/ai/CreatureEvaluator.java:115-131
+
+        // Flanking: +15 bonus per count (old combat keyword from Mirage)
+        // Java: value += addValue(c.getAmountOfKeyword(Keyword.FLANKING) * 15, "flanking");
+        if card.has_keyword(Keyword::Flanking) {
+            value += 15; // TODO: multiply by count when we track stacking
+        }
+
+        // Exalted: +15 bonus per count (Alara mechanic)
+        // Java: value += addValue(c.getAmountOfKeyword(Keyword.EXALTED) * 15, "exalted");
+        if card.has_keyword(Keyword::Exalted) {
+            value += 15; // TODO: multiply by count when we track stacking
+        }
+
+        // Prowess: +5 bonus per count (Khans mechanic)
+        // Java: value += addValue(c.getAmountOfKeyword(Keyword.PROWESS) * 5, "prowess");
+        if card.has_keyword(Keyword::Prowess) {
+            value += 5; // TODO: multiply by count when we track stacking
+        }
+
+        // Melee: +18 bonus per count (Conspiracy mechanic)
+        // Java: value += addValue(c.getAmountOfKeyword(Keyword.MELEE) * 18, "melee");
+        if card.has_keyword(Keyword::Melee) {
+            value += 18; // TODO: multiply by count when we track stacking
+        }
+
+        // Outlast: +10 bonus (can add +1/+1 counters)
+        // Java: if (c.hasKeyword(Keyword.OUTLAST)) { value += addValue(10, "outlast"); }
+        if card.has_keyword(Keyword::Outlast) {
+            value += 10;
+        }
+
+        // Magnitude-based threat keywords (per-level bonuses)
+
+        // Annihilator: Major threat, +50 per level (Eldrazi)
+        // Java: value += addValue(c.getKeywordMagnitude(Keyword.ANNIHILATOR) * 50, "annihilator");
+        if card.has_keyword(Keyword::Annihilator) {
+            // For now, assume base level 1 until we can read magnitude
+            value += 50; // TODO: multiply by magnitude
+        }
+
+        // Afflict: +5 per level (damage when blocked)
+        // Java: value += addValue(c.getKeywordMagnitude(Keyword.AFFLICT) * 5, "afflict");
+        if card.has_keyword(Keyword::Afflict) {
+            value += 5; // TODO: multiply by magnitude
+        }
+
+        // Toxic: +5 per level (poison counters)
+        // Java: value += addValue(c.getKeywordMagnitude(Keyword.TOXIC) * 5, "toxic");
+        if card.has_keyword(Keyword::Toxic) {
+            value += 5; // TODO: multiply by magnitude
+        }
+
+        // Rampage: Direct magnitude bonus
+        // Java: value += addValue(c.getKeywordMagnitude(Keyword.RAMPAGE), "rampage");
+        if card.has_keyword(Keyword::Rampage) {
+            value += 5; // TODO: use actual magnitude
+        }
+
+        // Bushido: +16 per level (old Kamigawa combat bonus)
+        // Java: value += addValue(c.getKeywordMagnitude(Keyword.BUSHIDO) * 16, "bushido");
+        if card.has_keyword(Keyword::Bushido) {
+            value += 16; // TODO: multiply by magnitude
+        }
+
+        // Absorb: +11 per level (damage prevention)
+        // Java: value += addValue(c.getKeywordMagnitude(Keyword.ABSORB) * 11, "absorb");
+        if card.has_keyword(Keyword::Absorb) {
+            value += 11; // TODO: multiply by magnitude
+        }
+
+        // Resurrection keywords (creature comes back)
+
+        // Undying: Creature returns with +1/+1 counter (very valuable)
+        // Java: if (c.hasKeyword(Keyword.UNDYING)) { value += addValue(25, "undying"); }
+        if card.has_keyword(Keyword::Undying) {
+            value += 25;
+        }
+
+        // Persist: Creature returns with -1/-1 counter (valuable but weaker return)
+        // Java: if (c.hasKeyword(Keyword.PERSIST)) { value += addValue(20, "persist"); }
+        if card.has_keyword(Keyword::Persist) {
+            value += 20;
+        }
+
         // Negative keywords
         // Java: if (c.hasKeyword(Keyword.DEFENDER)) { value -= power * 9 + 40; }
         if card.has_defender() {
