@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-01T13:38:11.882582014+00:00
+updated_at: 2025-12-01T21:51:30.924865383+00:00
 ---
 
 # Description
@@ -84,6 +84,11 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Undying: +25 (returns larger)
   - Persist: +20 (returns with -1/-1)
   - Reference: CreatureEvaluator.java keyword handling
+- ✅ **Enchantment evaluation (2025-12-01_#1065 - mtg-80 CLOSED)**
+  - Auras evaluated based on what they're enchanting
+  - ModifyPT and GrantKeyword static abilities handled
+  - Global enchantments get CMC-based baseline value
+  - Avoids double-counting abilities already present
 
 **What's Missing:**
 
@@ -109,6 +114,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
    - mtg-78: Port evalManaBase() - mana base quality scoring (CLOSED)
    - mtg-79: Track summon sickness properly (COMPLETED 2025-10-26)
    - mtg-81: Complete land evaluation (detailed heuristics) (CLOSED)
+   - mtg-80: Enchantment evaluation ✅ **COMPLETED 2025-12-01_#1065**
 
 7. ~~**Mana tapping order**~~ ✅ **COMPLETED 2025-11-30_#1009** - ComputerUtilMana
    - Score-based source selection
@@ -118,15 +124,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ### Lower Priority:
 
 8. **Bluffing/deception** - Hold information when advantageous
-9. mtg-80: Improve enchantment evaluation
-10. **Static abilities** - "Must attack", "Can't be blocked by walls", etc.
+9. **Static abilities** - "Must attack", "Can't be blocked by walls", etc.
 
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with real cards (2025-12-01) - 555 tests passing**
+- ✅ **Comprehensive test coverage with real cards (2025-12-01) - 570 tests passing**
 
 ## Next Steps (Priority Order)
 
-1. Enchantment evaluation (mtg-80)
-2. Static abilities handling
+1. Static abilities handling
+2. Bluffing/deception

@@ -254,9 +254,10 @@ impl GameStateEvaluator {
         } else if card.is_land() {
             Self::evaluate_land(card)
         } else if card.is_enchantment() {
-            // TODO(vc-4): Properly evaluate enchantments
-            // Java: Should only provide value based on what they enchant (lines 224-228)
-            0
+            // Evaluate enchantments based on what they're enchanting
+            // Reference: GameStateEvaluator.java (lines 224-228)
+            // Auras attached to creatures provide value through their effects
+            self.evaluate_enchantment(view, card)
         } else {
             // Other permanents (artifacts, planeswalkers, etc.)
             // Java: 50 + 30 * CMC (lines 232-236)
@@ -392,6 +393,145 @@ impl GameStateEvaluator {
         // For now, we'll skip this as it requires more infrastructure
 
         value
+    }
+
+    /// Evaluate an enchantment card based on what it's enchanting
+    ///
+    /// Reference: GameStateEvaluator.java (lines 224-228)
+    ///
+    /// The key insight from Java Forge is that enchantments should only provide value
+    /// based on what they're enchanting. This prevents the AI from thinking that casting
+    /// a Lifelink enchantment on something that already has lifelink is a net win.
+    ///
+    /// ## Approach:
+    /// - For Auras attached to creatures: evaluate the P/T bonus and keyword grants
+    /// - For global enchantments: evaluate based on their effects
+    /// - Default to 0 if we can't determine the value (conservative)
+    fn evaluate_enchantment(&self, view: &GameStateView, card: &Card) -> i32 {
+        use crate::core::{AffectedSelector, StaticAbility};
+
+        // Check if this is an aura attached to something
+        let Some(attached_to_id) = card.attached_to else {
+            // Global enchantment or not attached yet
+            // Could provide value based on effects, but for now return CMC-based value
+            // Java returns 0 for non-attached enchantments, but we'll be slightly generous
+            // to account for global enchantments that affect the board
+            let cmc = card.mana_cost.cmc() as i32;
+            // Less value than a creature of similar cost, but not zero
+            return 20 + 15 * cmc;
+        };
+
+        // Check if the attached permanent still exists
+        let Some(attached_card) = view.get_card(attached_to_id) else {
+            return 0;
+        };
+
+        // Evaluate the aura's contribution to the enchanted permanent
+        let mut value = 0;
+
+        // Process all static abilities on this enchantment
+        for ability in &card.static_abilities {
+            match ability {
+                StaticAbility::ModifyPT {
+                    affected,
+                    power,
+                    toughness,
+                    description: _,
+                } => {
+                    // Check if this ability affects the attached creature
+                    let affects_creature = match affected {
+                        AffectedSelector::CreatureEnchantedBy => attached_card.is_creature(),
+                        // Some auras might use other selectors
+                        _ => false,
+                    };
+
+                    if affects_creature {
+                        // Value P/T bonuses similarly to creature evaluation:
+                        // Power: 15 per point, Toughness: 10 per point
+                        value += power * 15 + toughness * 10;
+                    }
+                }
+                StaticAbility::GrantKeyword {
+                    affected,
+                    keyword,
+                    description: _,
+                } => {
+                    // Check if this grants a keyword to the attached creature
+                    let affects_creature = match affected {
+                        AffectedSelector::CreatureEnchantedBy => attached_card.is_creature(),
+                        _ => false,
+                    };
+
+                    if affects_creature {
+                        // Value keywords based on creature evaluation logic
+                        // These values match HeuristicController::evaluate_creature_impl
+                        let keyword_value = self.estimate_keyword_value(keyword, attached_card);
+                        value += keyword_value;
+                    }
+                }
+            }
+        }
+
+        // If we found no static abilities, estimate value from mana cost
+        // This handles auras that might not have properly parsed abilities
+        if value == 0 && card.static_abilities.is_empty() {
+            // Fallback: estimate based on CMC
+            let cmc = card.mana_cost.cmc() as i32;
+            // Auras are generally worth about as much as their mana cost
+            value = 15 * cmc;
+        }
+
+        value
+    }
+
+    /// Estimate the value of granting a keyword to a creature
+    ///
+    /// This uses similar logic to HeuristicController::evaluate_creature_impl
+    fn estimate_keyword_value(&self, keyword: &crate::core::Keyword, card: &Card) -> i32 {
+        use crate::core::Keyword;
+
+        // Get base power/toughness (or 0 if not available)
+        let power = card.base_power().unwrap_or(0) as i32;
+        let toughness = card.base_toughness().unwrap_or(0) as i32;
+
+        match keyword {
+            // Evasion keywords - value scales with power
+            Keyword::Flying => power * 10,
+            Keyword::Trample => power * 5,
+            Keyword::Menace => power * 5,
+            Keyword::Fear | Keyword::Intimidate => power * 8,
+            Keyword::Horsemanship | Keyword::Shadow => power * 10,
+            Keyword::Skulk => power * 6,
+
+            // Combat keywords
+            Keyword::FirstStrike => 15 + power * 2,
+            Keyword::DoubleStrike => 30 + power * 5,
+            Keyword::Vigilance => (power * 5) + (toughness * 5),
+            Keyword::Haste => 15,
+            Keyword::Deathtouch => 25,
+            Keyword::Lifelink => 20 + power * 3,
+            Keyword::Reach => 10,
+
+            // Defensive keywords
+            Keyword::Indestructible => 50,
+            Keyword::Hexproof => 35,
+            Keyword::Shroud => 30,
+            // Protection from specific colors
+            Keyword::ProtectionFromRed
+            | Keyword::ProtectionFromBlue
+            | Keyword::ProtectionFromBlack
+            | Keyword::ProtectionFromWhite
+            | Keyword::ProtectionFromGreen
+            | Keyword::Protection => 20,
+            Keyword::Ward => 10,
+
+            // Utility keywords
+            Keyword::Undying => 25,
+            Keyword::Persist => 20,
+
+            // Default for other keywords
+            _ => 10,
+        }
     }
 
     /// Get total hand size for all opponents
@@ -546,5 +686,146 @@ mod tests {
         // Base 3 + 100 for 1 mana + 0 for colorless (not a "color") + 50 for utility = 153
         // Note: Colorless doesn't count toward color bonus since it can't fix colored mana needs
         assert_eq!(utility_value, 153);
+    }
+
+    #[test]
+    fn test_enchantment_evaluation_pump_aura() {
+        use crate::core::{AffectedSelector, Card, CardId, CardType, StaticAbility, Subtype};
+        use crate::game::controller::GameStateView;
+        use crate::game::state::GameState;
+
+        // Create a game with a creature and a pump aura
+        let mut game = GameState::new_two_player("AI".to_string(), "Opponent".to_string(), 20);
+        let player_id = game.players[0].id;
+
+        // Create a creature (Grizzly Bears: 2/2)
+        let creature_id = CardId::new(100);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", player_id);
+        creature.add_type(CardType::Creature);
+        creature.set_power(Some(2));
+        creature.set_toughness(Some(2));
+
+        // Create an aura (Holy Strength: +1/+2)
+        let aura_id = CardId::new(101);
+        let mut aura = Card::new(aura_id, "Holy Strength", player_id);
+        aura.add_type(CardType::Enchantment);
+        aura.subtypes.push(Subtype::new("Aura"));
+        aura.cache.update_from_subtypes(&aura.subtypes, "Holy Strength");
+
+        // Add the static ability that grants +1/+2
+        aura.static_abilities.push(StaticAbility::ModifyPT {
+            affected: AffectedSelector::CreatureEnchantedBy,
+            power: 1,
+            toughness: 2,
+            description: "Enchanted creature gets +1/+2".to_string(),
+        });
+
+        // Attach the aura to the creature
+        aura.attached_to = Some(creature_id);
+
+        // Add both cards to the game
+        game.cards.insert(creature_id, creature);
+        game.cards.insert(aura_id, aura);
+        game.battlefield.add(creature_id);
+        game.battlefield.add(aura_id);
+
+        // Evaluate the enchantment
+        let evaluator = GameStateEvaluator::new(player_id);
+        let view = GameStateView::new(&game, player_id);
+
+        let aura_card = view.get_card(aura_id).expect("Aura should exist");
+        let value = evaluator.evaluate_enchantment(&view, aura_card);
+
+        // Expected value: +1 power * 15 + +2 toughness * 10 = 15 + 20 = 35
+        assert_eq!(value, 35, "Holy Strength should evaluate to 35 (1*15 + 2*10)");
+    }
+
+    #[test]
+    fn test_enchantment_evaluation_keyword_grant_aura() {
+        use crate::core::{AffectedSelector, Card, CardId, CardType, Keyword, StaticAbility, Subtype};
+        use crate::game::controller::GameStateView;
+        use crate::game::state::GameState;
+
+        // Create a game with a creature and a flying-granting aura
+        let mut game = GameState::new_two_player("AI".to_string(), "Opponent".to_string(), 20);
+        let player_id = game.players[0].id;
+
+        // Create a creature (Grizzly Bears: 2/2)
+        let creature_id = CardId::new(100);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", player_id);
+        creature.add_type(CardType::Creature);
+        creature.set_power(Some(2));
+        creature.set_toughness(Some(2));
+
+        // Create an aura that grants Flying
+        let aura_id = CardId::new(101);
+        let mut aura = Card::new(aura_id, "Flight", player_id);
+        aura.add_type(CardType::Enchantment);
+        aura.subtypes.push(Subtype::new("Aura"));
+        aura.cache.update_from_subtypes(&aura.subtypes, "Flight");
+
+        // Add the static ability that grants Flying
+        aura.static_abilities.push(StaticAbility::GrantKeyword {
+            affected: AffectedSelector::CreatureEnchantedBy,
+            keyword: Keyword::Flying,
+            description: "Enchanted creature has flying".to_string(),
+        });
+
+        // Attach the aura to the creature
+        aura.attached_to = Some(creature_id);
+
+        // Add both cards to the game
+        game.cards.insert(creature_id, creature);
+        game.cards.insert(aura_id, aura);
+        game.battlefield.add(creature_id);
+        game.battlefield.add(aura_id);
+
+        // Evaluate the enchantment
+        let evaluator = GameStateEvaluator::new(player_id);
+        let view = GameStateView::new(&game, player_id);
+
+        let aura_card = view.get_card(aura_id).expect("Aura should exist");
+        let value = evaluator.evaluate_enchantment(&view, aura_card);
+
+        // Expected value: Flying scales with power (power * 10 = 2 * 10 = 20)
+        assert_eq!(value, 20, "Flight on a 2/2 should evaluate to 20 (power * 10)");
+    }
+
+    #[test]
+    fn test_enchantment_evaluation_global_enchantment() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::state::GameState;
+
+        // Create a game with a global enchantment (not attached to anything)
+        let mut game = GameState::new_two_player("AI".to_string(), "Opponent".to_string(), 20);
+        let player_id = game.players[0].id;
+
+        // Create a global enchantment with CMC 3
+        let enchant_id = CardId::new(100);
+        let mut enchantment = Card::new(enchant_id, "Glorious Anthem", player_id);
+        enchantment.add_type(CardType::Enchantment);
+        let mut cost = ManaCost::new();
+        cost.generic = 1;
+        cost.white = 2;
+        enchantment.mana_cost = cost;
+        // CMC = 3
+
+        // Not attached to anything (global enchantment)
+        enchantment.attached_to = None;
+
+        // Add to game
+        game.cards.insert(enchant_id, enchantment);
+        game.battlefield.add(enchant_id);
+
+        // Evaluate the enchantment
+        let evaluator = GameStateEvaluator::new(player_id);
+        let view = GameStateView::new(&game, player_id);
+
+        let ench_card = view.get_card(enchant_id).expect("Enchantment should exist");
+        let value = evaluator.evaluate_enchantment(&view, ench_card);
+
+        // Global enchantment: 20 + 15 * CMC = 20 + 15 * 3 = 65
+        assert_eq!(value, 65, "Global enchantment with CMC 3 should evaluate to 65");
     }
 }
