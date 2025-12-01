@@ -112,4 +112,5 @@ wasm = [
     "js-sys",
     "web-sys",
     "getrandom",
+    "verbose-logging",  # Enable game logging for browser display
 ]

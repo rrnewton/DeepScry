@@ -44,6 +44,7 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use crate::core::PlayerId;
+use crate::game::logger::OutputMode;
 use crate::game::{
     GameLoop, GameState, HeuristicController, PlayerController, RandomController, VerbosityLevel, ZeroController,
 };
@@ -222,7 +223,11 @@ impl WasmGame {
     /// * `starting_life` - Starting life total for both players
     #[wasm_bindgen(constructor)]
     pub fn new(p1_name: &str, p2_name: &str, starting_life: i32) -> WasmGame {
-        let game = GameState::new_two_player(p1_name.to_string(), p2_name.to_string(), starting_life);
+        let mut game = GameState::new_two_player(p1_name.to_string(), p2_name.to_string(), starting_life);
+
+        // Configure logger for WASM: capture to memory, enable normal verbosity
+        game.logger.set_output_mode(OutputMode::Memory);
+        game.logger.set_verbosity(VerbosityLevel::Normal);
 
         WasmGame {
             game,
@@ -260,6 +265,10 @@ impl WasmGame {
         // Create game state
         let mut game = GameState::new_two_player(p1_deck_name.to_string(), p2_deck_name.to_string(), starting_life);
         game.seed_rng(seed);
+
+        // Configure logger for WASM: capture to memory, enable normal verbosity
+        game.logger.set_output_mode(OutputMode::Memory);
+        game.logger.set_verbosity(VerbosityLevel::Normal);
 
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
@@ -412,7 +421,7 @@ impl WasmGame {
         };
 
         let mut game_loop = GameLoop::new(&mut self.game)
-            .with_verbosity(VerbosityLevel::Silent)
+            .with_verbosity(VerbosityLevel::Normal)
             .with_max_turns(max_turns);
 
         let result = game_loop.run_game(controller1.as_mut(), controller2.as_mut());
@@ -451,7 +460,7 @@ impl WasmGame {
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         };
 
-        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Silent);
+        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
 
         match game_loop.run_turns(controller1.as_mut(), controller2.as_mut(), 1) {
             Ok(result) => result.winner.is_none(),
