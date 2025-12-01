@@ -425,6 +425,26 @@ pub enum AffectedSelector {
         /// The creature subtype to exclude (e.g., "Human")
         excluded_subtype: crate::core::Subtype,
     },
+
+    /// This card itself when equipped
+    /// Corresponds to: `Affected$ Card.Self+equipped`
+    /// Used by cards like Leonin Lightbringer, Kitesail Apprentice
+    SelfWhenEquipped,
+
+    /// This card itself when enchanted
+    /// Corresponds to: `Affected$ Card.Self+enchanted`
+    /// Used by cards like Thran Golem, Flaring Flame-Kin
+    SelfWhenEnchanted,
+
+    /// Creatures you control that are equipped
+    /// Corresponds to: `Affected$ Creature.YouCtrl+equipped`
+    /// Used by cards like Kemba, Kha Enduring
+    EquippedCreaturesYouControl,
+
+    /// Creatures you control that are enchanted
+    /// Corresponds to: `Affected$ Creature.YouCtrl+enchanted`
+    /// Used by cards like Sphere of Safety
+    EnchantedCreaturesYouControl,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

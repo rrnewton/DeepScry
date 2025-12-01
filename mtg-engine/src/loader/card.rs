@@ -1751,6 +1751,11 @@ impl CardDefinition {
                                     "Creature" => AffectedSelector::AllCreatures,
                                     "Card.Self" => AffectedSelector::Self_,
                                     "Land.AttachedBy" => AffectedSelector::LandAttachedBy,
+                                    // State-based selectors: equipped/enchanted
+                                    "Card.Self+equipped" => AffectedSelector::SelfWhenEquipped,
+                                    "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,
+                                    "Creature.YouCtrl+equipped" => AffectedSelector::EquippedCreaturesYouControl,
+                                    "Creature.YouCtrl+enchanted" => AffectedSelector::EnchantedCreaturesYouControl,
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {

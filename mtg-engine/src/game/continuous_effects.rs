@@ -480,6 +480,82 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            AffectedSelector::SelfWhenEquipped => {
+                                // Check if this affects the creature:
+                                // 1. Must be the source card itself
+                                // 2. Must have at least one equipment attached
+                                // Example: Leonin Lightbringer - "As long as ~ is equipped, it gets +1/+1"
+
+                                // Only affects the source itself
+                                if creature_id != source_id {
+                                    continue;
+                                }
+
+                                // Check if the creature is equipped (any equipment attached to it)
+                                let attached_equipment = self.get_attached_equipment(creature_id);
+                                if !attached_equipment.is_empty() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::SelfWhenEnchanted => {
+                                // Check if this affects the creature:
+                                // 1. Must be the source card itself
+                                // 2. Must have at least one aura attached
+                                // Example: Thran Golem - "As long as ~ is enchanted, it gets +2/+2"
+
+                                // Only affects the source itself
+                                if creature_id != source_id {
+                                    continue;
+                                }
+
+                                // Check if the creature is enchanted (any aura attached to it)
+                                let attached_auras = self.get_attached_auras(creature_id);
+                                if !attached_auras.is_empty() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::EquippedCreaturesYouControl => {
+                                // Check if this affects the creature:
+                                // 1. Creature must be controlled by the source's controller
+                                // 2. Creature must have at least one equipment attached
+                                // Example: Kemba, Kha Enduring - "Equipped creatures you control get +1/+1"
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if the creature is equipped
+                                let attached_equipment = self.get_attached_equipment(creature_id);
+                                if !attached_equipment.is_empty() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::EnchantedCreaturesYouControl => {
+                                // Check if this affects the creature:
+                                // 1. Creature must be controlled by the source's controller
+                                // 2. Creature must have at least one aura attached
+                                // Example: Similar to EquippedCreaturesYouControl but for auras
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if the creature is enchanted
+                                let attached_auras = self.get_attached_auras(creature_id);
+                                if !attached_auras.is_empty() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                 }

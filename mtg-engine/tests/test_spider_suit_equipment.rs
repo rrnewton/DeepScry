@@ -543,3 +543,374 @@ fn test_equipment_detaches_when_creature_dies() {
         "Creature should be in graveyard"
     );
 }
+
+// =========================================================================
+// STATE-BASED SELECTOR TESTS
+// Tests for Card.Self+equipped, Card.Self+enchanted, Creature.YouCtrl+equipped
+// Related to mtg-147: Affected$ selector parsing
+// =========================================================================
+
+/// Helper to create a creature with SelfWhenEquipped static ability
+/// Simulates cards like Leonin Lightbringer ("As long as ~ is equipped, it gets +1/+1")
+fn create_self_when_equipped_creature(id: CardId, owner: PlayerId) -> Card {
+    let mut creature = Card::new(id, CardName::from("Leonin Lightbringer"), owner);
+    creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    creature.set_power(Some(2));
+    creature.set_toughness(Some(2));
+    creature.controller = owner;
+
+    // Add static ability: +1/+1 when equipped
+    // Corresponds to: S:Mode$ Continuous | Affected$ Card.Self+equipped | AddPower$ 1 | AddToughness$ 1
+    creature.static_abilities.push(StaticAbility::ModifyPT {
+        affected: AffectedSelector::SelfWhenEquipped,
+        power: 1,
+        toughness: 1,
+        description: "As long as ~ is equipped, it gets +1/+1".to_string(),
+    });
+
+    creature
+}
+
+/// Test Card.Self+equipped selector - creature gets buff when equipped
+#[test]
+fn test_self_when_equipped_selector() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Leonin Lightbringer (2/2, gets +1/+1 when equipped)
+    let creature_id = game.cards.next_id();
+    let creature = create_self_when_equipped_creature(creature_id, p1_id);
+    game.cards.insert(creature_id, creature);
+
+    // Create simple Equipment (no static ability for simplicity)
+    let equip_id = game.cards.next_id();
+    let mut equipment = Card::new(equip_id, CardName::from("Simple Sword"), p1_id);
+    equipment.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
+    equipment.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equipment.controller = p1_id;
+    game.cards.insert(equip_id, equipment);
+
+    // Put both on battlefield
+    game.battlefield.add(creature_id);
+    game.battlefield.add(equip_id);
+
+    // Check stats WITHOUT equipment (should be base 2/2)
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        2,
+        "Power without equipment should be 2"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        2,
+        "Toughness without equipment should be 2"
+    );
+
+    // Attach Equipment
+    game.attach_equipment(equip_id, creature_id)
+        .expect("Should attach Equipment");
+
+    // Check stats WITH equipment (should be 3/3: base 2/2 + 1/1 from SelfWhenEquipped)
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        3,
+        "Power with equipment should be 3 (2 base + 1 from self-buff)"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        3,
+        "Toughness with equipment should be 3 (2 base + 1 from self-buff)"
+    );
+
+    // Detach Equipment
+    game.detach_equipment(equip_id).expect("Should detach Equipment");
+
+    // Check stats return to base
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        2,
+        "Power after detachment should return to 2"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        2,
+        "Toughness after detachment should return to 2"
+    );
+}
+
+/// Test Card.Self+equipped stacks with Equipment buff
+/// When a creature has "gets +1/+1 when equipped" AND the equipment gives +2/+2
+#[test]
+fn test_self_when_equipped_stacks_with_equipment_buff() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Leonin Lightbringer (2/2, gets +1/+1 when equipped)
+    let creature_id = game.cards.next_id();
+    let creature = create_self_when_equipped_creature(creature_id, p1_id);
+    game.cards.insert(creature_id, creature);
+
+    // Create Spider-Suit (Equipment with +2/+2)
+    let spider_suit_id = game.cards.next_id();
+    let mut spider_suit = create_spider_suit(spider_suit_id, p1_id);
+    spider_suit.controller = p1_id;
+    game.cards.insert(spider_suit_id, spider_suit);
+
+    // Put both on battlefield
+    game.battlefield.add(creature_id);
+    game.battlefield.add(spider_suit_id);
+
+    // Check base stats
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        2,
+        "Power without equipment should be 2"
+    );
+
+    // Attach Spider-Suit
+    game.attach_equipment(spider_suit_id, creature_id)
+        .expect("Should attach Spider-Suit");
+
+    // Check stacked stats:
+    // Base: 2/2
+    // From SelfWhenEquipped: +1/+1
+    // From Spider-Suit: +2/+2
+    // Total: 5/5
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        5,
+        "Power should be 5 (2 base + 1 self-buff + 2 equipment)"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        5,
+        "Toughness should be 5 (2 base + 1 self-buff + 2 equipment)"
+    );
+}
+
+/// Helper to create an enchantment (Aura) that can be attached
+#[allow(dead_code)]
+fn create_test_aura(id: CardId, owner: PlayerId, power_buff: i32, toughness_buff: i32) -> Card {
+    let mut aura = Card::new(id, CardName::from("Test Aura"), owner);
+    aura.set_types(SmallVec::from_vec(vec![CardType::Enchantment]));
+    aura.subtypes = SmallVec::from_vec(vec![Subtype::from("Aura")]);
+    aura.controller = owner;
+
+    // Add static ability: +P/+T to enchanted creature
+    aura.static_abilities.push(StaticAbility::ModifyPT {
+        affected: AffectedSelector::CreatureEnchantedBy,
+        power: power_buff,
+        toughness: toughness_buff,
+        description: format!("Enchanted creature gets +{}/+{}", power_buff, toughness_buff),
+    });
+
+    aura
+}
+
+/// Helper to create a creature with SelfWhenEnchanted static ability
+/// Simulates cards like Thran Golem ("As long as ~ is enchanted, it gets +2/+2")
+fn create_self_when_enchanted_creature(id: CardId, owner: PlayerId) -> Card {
+    let mut creature = Card::new(id, CardName::from("Thran Golem"), owner);
+    creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    creature.set_power(Some(3));
+    creature.set_toughness(Some(3));
+    creature.controller = owner;
+
+    // Add static ability: +2/+2 when enchanted
+    // Corresponds to: S:Mode$ Continuous | Affected$ Card.Self+enchanted | AddPower$ 2 | AddToughness$ 2
+    creature.static_abilities.push(StaticAbility::ModifyPT {
+        affected: AffectedSelector::SelfWhenEnchanted,
+        power: 2,
+        toughness: 2,
+        description: "As long as ~ is enchanted, it gets +2/+2".to_string(),
+    });
+
+    creature
+}
+
+/// Test Card.Self+enchanted selector - creature gets buff when enchanted
+#[test]
+fn test_self_when_enchanted_selector() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Thran Golem (3/3, gets +2/+2 when enchanted)
+    let creature_id = game.cards.next_id();
+    let creature = create_self_when_enchanted_creature(creature_id, p1_id);
+    game.cards.insert(creature_id, creature);
+
+    // Create simple Aura (no buff of its own)
+    let aura_id = game.cards.next_id();
+    let mut aura = Card::new(aura_id, CardName::from("Flight"), p1_id);
+    aura.set_types(SmallVec::from_vec(vec![CardType::Enchantment]));
+    aura.subtypes = SmallVec::from_vec(vec![Subtype::from("Aura")]);
+    aura.controller = p1_id;
+    game.cards.insert(aura_id, aura);
+
+    // Put both on battlefield
+    game.battlefield.add(creature_id);
+    game.battlefield.add(aura_id);
+
+    // Check stats WITHOUT aura (should be base 3/3)
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        3,
+        "Power without aura should be 3"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        3,
+        "Toughness without aura should be 3"
+    );
+
+    // Attach Aura (uses same attach function as Equipment)
+    game.attach_equipment(aura_id, creature_id).expect("Should attach Aura");
+
+    // Check stats WITH aura (should be 5/5: base 3/3 + 2/2 from SelfWhenEnchanted)
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        5,
+        "Power with aura should be 5 (3 base + 2 from self-buff)"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        5,
+        "Toughness with aura should be 5 (3 base + 2 from self-buff)"
+    );
+
+    // Detach Aura (uses same detach function as Equipment)
+    game.detach_equipment(aura_id).expect("Should detach Aura");
+
+    // Check stats return to base
+    assert_eq!(
+        game.get_effective_power(creature_id).unwrap(),
+        3,
+        "Power after detachment should return to 3"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature_id).unwrap(),
+        3,
+        "Toughness after detachment should return to 3"
+    );
+}
+
+/// Helper to create a creature with EquippedCreaturesYouControl buff
+/// Simulates cards like Kemba, Kha Enduring ("Equipped creatures you control get +1/+1")
+fn create_equipped_creatures_lord(id: CardId, owner: PlayerId) -> Card {
+    let mut lord = Card::new(id, CardName::from("Kemba, Kha Enduring"), owner);
+    lord.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    lord.subtypes = SmallVec::from_vec(vec![Subtype::from("Cat"), Subtype::from("Cleric")]);
+    lord.set_power(Some(2));
+    lord.set_toughness(Some(4));
+    lord.controller = owner;
+
+    // Add static ability: Equipped creatures you control get +1/+1
+    // Corresponds to: S:Mode$ Continuous | Affected$ Creature.YouCtrl+equipped | AddPower$ 1 | AddToughness$ 1
+    lord.static_abilities.push(StaticAbility::ModifyPT {
+        affected: AffectedSelector::EquippedCreaturesYouControl,
+        power: 1,
+        toughness: 1,
+        description: "Equipped creatures you control get +1/+1".to_string(),
+    });
+
+    lord
+}
+
+/// Test Creature.YouCtrl+equipped selector - only equipped creatures get buff
+#[test]
+fn test_equipped_creatures_you_control_selector() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Kemba, Kha Enduring (lord that buffs equipped creatures)
+    let lord_id = game.cards.next_id();
+    let lord = create_equipped_creatures_lord(lord_id, p1_id);
+    game.cards.insert(lord_id, lord);
+
+    // Create two creatures: one will be equipped, one won't
+    let creature1_id = game.cards.next_id();
+    let mut creature1 = Card::new(creature1_id, CardName::from("Bear"), p1_id);
+    creature1.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    creature1.set_power(Some(2));
+    creature1.set_toughness(Some(2));
+    creature1.controller = p1_id;
+    game.cards.insert(creature1_id, creature1);
+
+    let creature2_id = game.cards.next_id();
+    let mut creature2 = Card::new(creature2_id, CardName::from("Wolf"), p1_id);
+    creature2.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    creature2.set_power(Some(2));
+    creature2.set_toughness(Some(2));
+    creature2.controller = p1_id;
+    game.cards.insert(creature2_id, creature2);
+
+    // Create Equipment
+    let equip_id = game.cards.next_id();
+    let mut equipment = Card::new(equip_id, CardName::from("Short Sword"), p1_id);
+    equipment.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
+    equipment.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equipment.controller = p1_id;
+    game.cards.insert(equip_id, equipment);
+
+    // Put all on battlefield
+    game.battlefield.add(lord_id);
+    game.battlefield.add(creature1_id);
+    game.battlefield.add(creature2_id);
+    game.battlefield.add(equip_id);
+
+    // Check stats before equipping (both creatures should be 2/2)
+    assert_eq!(
+        game.get_effective_power(creature1_id).unwrap(),
+        2,
+        "Bear power without equipment should be 2"
+    );
+    assert_eq!(
+        game.get_effective_power(creature2_id).unwrap(),
+        2,
+        "Wolf power without equipment should be 2"
+    );
+    // Lord itself is not equipped, so shouldn't get the buff
+    assert_eq!(
+        game.get_effective_power(lord_id).unwrap(),
+        2,
+        "Lord power without equipment should be 2"
+    );
+
+    // Attach Equipment to Bear only
+    game.attach_equipment(equip_id, creature1_id)
+        .expect("Should attach Equipment to Bear");
+
+    // Now Bear should get +1/+1 from the lord, Wolf should not
+    assert_eq!(
+        game.get_effective_power(creature1_id).unwrap(),
+        3,
+        "Bear power with equipment should be 3 (2 base + 1 from lord)"
+    );
+    assert_eq!(
+        game.get_effective_toughness(creature1_id).unwrap(),
+        3,
+        "Bear toughness with equipment should be 3 (2 base + 1 from lord)"
+    );
+    assert_eq!(
+        game.get_effective_power(creature2_id).unwrap(),
+        2,
+        "Wolf power should still be 2 (not equipped)"
+    );
+
+    // Move equipment from Bear to Wolf
+    game.detach_equipment(equip_id).expect("Should detach");
+    game.attach_equipment(equip_id, creature2_id)
+        .expect("Should attach to Wolf");
+
+    // Now Wolf should get the buff, Bear should not
+    assert_eq!(
+        game.get_effective_power(creature1_id).unwrap(),
+        2,
+        "Bear power after losing equipment should be 2"
+    );
+    assert_eq!(
+        game.get_effective_power(creature2_id).unwrap(),
+        3,
+        "Wolf power with equipment should be 3 (2 base + 1 from lord)"
+    );
+}
