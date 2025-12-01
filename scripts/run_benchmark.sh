@@ -32,7 +32,7 @@ mkdir -p "$RESULTS_DIR"
 # Get git metadata
 GIT_COMMIT=$(git rev-parse HEAD)
 GIT_COMMIT_SHORT=$(git rev-parse --short HEAD)
-GIT_DEPTH=$(git rev-list --count HEAD)
+GIT_DEPTH=$("$SCRIPT_DIR/gitdepth.sh")
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 GIT_DIRTY=""
 if ! git diff-index --quiet HEAD --; then

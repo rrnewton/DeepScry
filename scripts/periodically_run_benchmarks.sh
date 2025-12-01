@@ -18,7 +18,7 @@ CSV_FILE="experiment_results/$CPU_NAME/perf_history.csv"
 MIN_DEPTH_DELTA=5
 
 # Get current git depth
-current_depth=$(git rev-list --count HEAD)
+current_depth=$("$SCRIPT_DIR/gitdepth.sh")
 
 # Get last recorded git depth from CSV (0 if file doesn't exist)
 if [ -f "$CSV_FILE" ]; then
