@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-30T17:59:14.982278592+00:00
+updated_at: 2025-12-01T20:48:53.547094213+00:00
 ---
 
 # Description
@@ -29,21 +29,20 @@ Track performance optimization work for MTG Forge Rust.
 
 ---
 
-## Latest Optimization (2025-11-30_#1013)
+## Latest Optimization (2025-12-01_#1075)
 
+✅ **Cache additional type flags in CardCache (c9edb3e)** - **-17.9% snapshot_games**
+- Add is_instant, is_sorcery, is_enchantment, is_aura, is_equipment flags
+- Eliminates Vec::contains() and eq_ignore_ascii_case() in type checks
+- Add set_subtypes() method for cache-consistent subtype updates
+- Benchmark: robots_mirror/snapshot_games -17.9% execution time (p < 0.05)
+- Reference: OPT-NEW-3 from profiling roadmap (pre-compute castability flags)
+
+**Previous (2025-11-30_#1013):**
 ✅ **Cache land subtype flags in CardCache** - **~0.5-1.6% speedup**
 - Add has_plains/island/swamp/mountain/forest_subtype flags to CardCache
 - Eliminates eq_ignore_ascii_case() calls in tap_for_mana_for_cost hot path
-- Eliminates card_name.to_lowercase() allocation on every mana tap
 - Benchmark: simple_bolt/rewind_play_again -1.6% (p < 0.05)
-- Reference: String operations were 8.89% of CPU (perf profiling)
-
-**Previous (2025-11-30_#1011):**
-✅ **Skip target validation for non-targeting abilities (49dcde6)** - **~2.3% speedup**
-- Check requires_target flag BEFORE calling get_valid_targets_for_ability()
-- Non-targeting abilities (firebreathing, regeneration) now skip expensive check
-- Benchmark: robots_mirror/rewind_play_again -2.3% execution time (p < 0.05)
-- Reference: push_activatable_abilities was 3.16% of CPU (perf profiling)
 
 ---
 
@@ -84,16 +83,16 @@ Track performance optimization work for MTG Forge Rust.
 - ✅ EntityStore::try_get() optimization (7f53776c, 2025-11-28_#957) - **10-13% CPU speedup**
 - ✅ abilities_buffer reuse optimization (576e6a95, 2025-11-28_#959) - **8% total allocation reduction**
 - ✅ GameLoop/ManaEngine pre-allocation (34caa0c, 2025-11-29_#965) - **11.1% speedup**
-- ✅ **Skip target validation for non-targeting abilities (49dcde6, 2025-11-30_#1011)** - **~2.3% speedup**
-- ✅ **Land subtype caching in CardCache (2025-11-30_#1013)** - **~0.5-1.6% speedup** (eliminates string ops in mana tap)
+- ✅ **Skip target validation for non-targeting abilities (49dcde6)** - **~2.3% speedup**
+- ✅ **Land subtype caching in CardCache (2025-11-30_#1013)** - **~0.5-1.6% speedup**
+- ✅ **Type flag caching (c9edb3e, 2025-12-01_#1075)** - **-17.9% snapshot_games** (is_instant, is_aura, etc.)
 
 **Next high-priority optimizations:**
 1. Cache available actions (OPT-NEW-1) - invalidate on state change (5% potential)
 2. EntityStore Vec indices (OPT-NEW-2) - replace HashMap with Vec (3% potential)
-3. Pre-compute castability flags (OPT-NEW-3) - additional caching (2% potential)
 
 See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/reports/perf_cpu_profiling_2025-11-29.md for CPU hotspot analysis.
 
 ---
-**Updated 2025-11-30_#1011(49dcde6)** - Skip target validation: ~2.3% speedup
+**Updated 2025-12-01_#1075(c9edb3e)** - Type flag caching: -17.9% snapshot_games
