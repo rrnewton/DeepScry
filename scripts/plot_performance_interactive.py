@@ -107,6 +107,45 @@ def detect_regressions(series, threshold=0.05):
     return regressions
 
 
+def parse_deck_variant(benchmark_name):
+    """
+    Parse benchmark name into deck and variant components.
+
+    Args:
+        benchmark_name: String like "robots_mirror/rewind_play_again" or "rewind"
+
+    Returns:
+        Tuple of (deck, variant)
+    """
+    if '/' in benchmark_name:
+        parts = benchmark_name.split('/', 1)
+        return (parts[0], parts[1])
+    else:
+        # Edge case: "rewind" has no '/'
+        return (benchmark_name, "(standalone)")
+
+
+def extract_decks_variants(df):
+    """
+    Extract sorted lists of unique decks and variants from benchmark names.
+
+    Args:
+        df: DataFrame with 'benchmark_name' column
+
+    Returns:
+        Tuple of (sorted list of decks, sorted list of variants)
+    """
+    decks = set()
+    variants = set()
+
+    for benchmark_name in df['benchmark_name'].unique():
+        deck, variant = parse_deck_variant(benchmark_name)
+        decks.add(deck)
+        variants.add(variant)
+
+    return sorted(decks), sorted(variants)
+
+
 def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=None):
     """
     Create an interactive Plotly figure for a single metric.
@@ -142,12 +181,17 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
         if bench_df[metric_col].isna().all():
             continue
 
+        # Parse deck and variant for filtering
+        deck, variant = parse_deck_variant(benchmark)
+
         # Add main line trace
         trace_count += 1
         hover_text = []
         for _, row in bench_df.iterrows():
             hover_text.append(
                 f"<b>{benchmark}</b><br>"
+                f"Deck: {deck}<br>"
+                f"Variant: {variant}<br>"
                 f"Git Depth: {row['git_depth']}<br>"
                 f"Commit: {row['git_commit'][:8]}<br>"
                 f"Branch: {row.get('git_branch', 'N/A')}<br>"
@@ -166,7 +210,8 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
             line=dict(width=2),
             marker=dict(size=6),
             visible=True,  # Explicitly set visibility
-            legendgroup=benchmark  # Group with regression markers
+            legendgroup=benchmark,  # Group with regression markers
+            customdata=[[deck, variant]] * len(bench_df)  # Add deck/variant metadata
         ))
 
         # Detect and mark regressions
@@ -203,7 +248,8 @@ def create_metric_plot(df, metric_col, ylabel, title, min_depth=100, max_depth=N
                 hoverinfo='text',
                 showlegend=False,
                 visible=True,
-                legendgroup=benchmark  # Link to parent benchmark trace
+                legendgroup=benchmark,  # Link to parent benchmark trace
+                customdata=[[deck, variant]] * len(reg_depths)  # Add deck/variant metadata
             ))
 
     # Determine if log scale is appropriate (need positive values)
@@ -420,6 +466,90 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '            background-color: #1e3a4a;',
         '            border-left: 4px solid #4a9eff;',
         '        }',
+        '        .filter-section {',
+        '            display: grid;',
+        '            grid-template-columns: 1fr 1fr;',
+        '            gap: 20px;',
+        '            margin-top: 20px;',
+        '        }',
+        '        .filter-column {',
+        '            background-color: #f8f9fa;',
+        '            padding: 15px;',
+        '            border-radius: 6px;',
+        '            border-left: 4px solid #28a745;',
+        '        }',
+        '        body.dark-mode .filter-column {',
+        '            background-color: #3d3d3d;',
+        '        }',
+        '        .filter-column h4 {',
+        '            margin-top: 0;',
+        '            margin-bottom: 10px;',
+        '        }',
+        '        .checkbox-group {',
+        '            display: flex;',
+        '            flex-direction: column;',
+        '            gap: 8px;',
+        '            margin-top: 10px;',
+        '            max-height: 300px;',
+        '            overflow-y: auto;',
+        '        }',
+        '        .checkbox-label {',
+        '            display: flex;',
+        '            align-items: center;',
+        '            cursor: pointer;',
+        '            padding: 5px;',
+        '            border-radius: 4px;',
+        '            transition: background-color 0.2s;',
+        '        }',
+        '        .checkbox-label:hover {',
+        '            background-color: rgba(0, 123, 255, 0.1);',
+        '        }',
+        '        .checkbox-label input {',
+        '            margin-right: 8px;',
+        '            cursor: pointer;',
+        '            width: 18px;',
+        '            height: 18px;',
+        '        }',
+        '        .filter-buttons {',
+        '            display: flex;',
+        '            gap: 10px;',
+        '            margin-top: 10px;',
+        '        }',
+        '        .filter-btn {',
+        '            padding: 8px 16px;',
+        '            border: none;',
+        '            border-radius: 4px;',
+        '            cursor: pointer;',
+        '            font-size: 12px;',
+        '            font-weight: 500;',
+        '            background-color: #28a745;',
+        '            color: white;',
+        '            transition: all 0.2s;',
+        '        }',
+        '        .filter-btn:hover {',
+        '            background-color: #218838;',
+        '            transform: translateY(-1px);',
+        '        }',
+        '        .filter-btn.deselect {',
+        '            background-color: #dc3545;',
+        '        }',
+        '        .filter-btn.deselect:hover {',
+        '            background-color: #c82333;',
+        '        }',
+        '        .warning-message {',
+        '            background-color: #fff3cd;',
+        '            border: 1px solid #ffc107;',
+        '            border-radius: 6px;',
+        '            padding: 12px;',
+        '            margin-top: 15px;',
+        '            color: #856404;',
+        '            display: none;',
+        '        }',
+        '        body.dark-mode .warning-message {',
+        '            background-color: #664d03;',
+        '            border-color: #ffc107;',
+        '            color: #ffecb5;',
+        '        }',
         '    </style>',
         '</head>',
         '<body class="dark-mode">',  # Start in dark mode
@@ -505,13 +635,14 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '        <p>',
         '        <strong>Interactive Controls:</strong>',
         '        <ul>',
+        '            <li><strong>🎯 Deck/Variant Filters:</strong> Checkboxes to filter which benchmark traces appear on plots. Filter by deck (left column) AND variant (right column). All checked by default. Use "Select All" / "Deselect All" buttons for quick control.</li>',
         '            <li><strong>🌙 Dark/Light Mode Toggle:</strong> Global button switches all plots between dark and light themes. Defaults to dark mode.</li>',
         '            <li><strong>Hide/Show Regressions:</strong> Global button toggles red X regression markers across all plots. Independent from line visibility.</li>',
         '            <li><strong>Global Git Depth Slider:</strong> Single slider controls all plots simultaneously. Default is 900 (recent commits). Slide left to see full history.</li>',
         '            <li><strong>Show/Hide All Lines:</strong> Per-plot buttons to quickly toggle visibility of all benchmark series</li>',
         '            <li><strong>Single click legend:</strong> Show/hide individual benchmarks (regression markers linked to their lines)</li>',
         '            <li><strong>Double click legend:</strong> Isolate a single benchmark (hides all others)</li>',
-        '            <li><strong>Hover over points:</strong> See detailed information (commit, date, exact values)</li>',
+        '            <li><strong>Hover over points:</strong> See detailed information (deck, variant, commit, date, exact values)</li>',
         '            <li><strong>Toolbar:</strong> Zoom, pan, box select, reset axes, download plot as PNG</li>',
         '        </ul>',
         '        </p>',
@@ -608,6 +739,71 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         )
 
         plot_htmls.append((metric_col, plot_html))
+
+    # Extract decks and variants for filter UI
+    decks, variants = extract_decks_variants(df)
+
+    # Add deck/variant filter controls before plots
+    html_parts.extend([
+        '    <div class="plot-container">',
+        '        <h3 style="margin-top: 0;">🎯 Deck/Variant Filters</h3>',
+        '        <p style="margin-bottom: 15px;">',
+        '            Filter which benchmark traces appear on the plots. All traces are shown by default.',
+        '        </p>',
+        '        <div class="filter-section">',
+        '            <!-- Deck filters -->',
+        '            <div class="filter-column">',
+        '                <h4>📦 Decks</h4>',
+        '                <div class="filter-buttons">',
+        '                    <button id="selectAllDecks" class="filter-btn">Select All</button>',
+        '                    <button id="deselectAllDecks" class="filter-btn deselect">Deselect All</button>',
+        '                </div>',
+        '                <div class="checkbox-group" id="deckCheckboxes">',
+    ])
+
+    # Add deck checkboxes
+    for deck in decks:
+        deck_id = deck.replace('_', '-').replace('/', '-')
+        html_parts.extend([
+            f'                    <label class="checkbox-label">',
+            f'                        <input type="checkbox" class="deck-checkbox" data-deck="{deck}" checked>',
+            f'                        <span>{deck}</span>',
+            f'                    </label>',
+        ])
+
+    html_parts.extend([
+        '                </div>',
+        '            </div>',
+        '            <!-- Variant filters -->',
+        '            <div class="filter-column">',
+        '                <h4>🔧 Variants</h4>',
+        '                <div class="filter-buttons">',
+        '                    <button id="selectAllVariants" class="filter-btn">Select All</button>',
+        '                    <button id="deselectAllVariants" class="filter-btn deselect">Deselect All</button>',
+        '                </div>',
+        '                <div class="checkbox-group" id="variantCheckboxes">',
+    ])
+
+    # Add variant checkboxes
+    for variant in variants:
+        variant_id = variant.replace('_', '-').replace('/', '-').replace('(', '').replace(')', '')
+        html_parts.extend([
+            f'                    <label class="checkbox-label">',
+            f'                        <input type="checkbox" class="variant-checkbox" data-variant="{variant}" checked>',
+            f'                        <span>{variant}</span>',
+            f'                    </label>',
+        ])
+
+    html_parts.extend([
+        '                </div>',
+        '            </div>',
+        '        </div>',
+        '        <div id="filterWarning" class="warning-message">',
+        '            ⚠️ Warning: No decks or variants selected. All traces are hidden.',
+        '        </div>',
+        '    </div>',
+        '',
+    ])
 
     # Add global slider control before plots
     if plot_metadata:
@@ -734,6 +930,101 @@ def create_dashboard(df, output_file, filter_benchmark=None):
         '                }',
         '            });',
         '        });',
+        '    })();',
+        '    ',
+        '    // Deck/Variant filter control',
+        '    (function() {',
+        f'        const plotIds = {[f"plot_{m[0]}" for m in metrics]};',
+        '        ',
+        '        // Get all checkboxes',
+        '        const deckCheckboxes = document.querySelectorAll(".deck-checkbox");',
+        '        const variantCheckboxes = document.querySelectorAll(".variant-checkbox");',
+        '        const warningDiv = document.getElementById("filterWarning");',
+        '        ',
+        '        // Select/Deselect All buttons',
+        '        document.getElementById("selectAllDecks").addEventListener("click", function() {',
+        '            deckCheckboxes.forEach(cb => cb.checked = true);',
+        '            applyFilters();',
+        '        });',
+        '        ',
+        '        document.getElementById("deselectAllDecks").addEventListener("click", function() {',
+        '            deckCheckboxes.forEach(cb => cb.checked = false);',
+        '            applyFilters();',
+        '        });',
+        '        ',
+        '        document.getElementById("selectAllVariants").addEventListener("click", function() {',
+        '            variantCheckboxes.forEach(cb => cb.checked = true);',
+        '            applyFilters();',
+        '        });',
+        '        ',
+        '        document.getElementById("deselectAllVariants").addEventListener("click", function() {',
+        '            variantCheckboxes.forEach(cb => cb.checked = false);',
+        '            applyFilters();',
+        '        });',
+        '        ',
+        '        // Apply filters when checkboxes change',
+        '        deckCheckboxes.forEach(cb => {',
+        '            cb.addEventListener("change", applyFilters);',
+        '        });',
+        '        ',
+        '        variantCheckboxes.forEach(cb => {',
+        '            cb.addEventListener("change", applyFilters);',
+        '        });',
+        '        ',
+        '        function applyFilters() {',
+        '            // Get selected decks and variants',
+        '            const selectedDecks = new Set();',
+        '            deckCheckboxes.forEach(cb => {',
+        '                if (cb.checked) {',
+        '                    selectedDecks.add(cb.dataset.deck);',
+        '                }',
+        '            });',
+        '            ',
+        '            const selectedVariants = new Set();',
+        '            variantCheckboxes.forEach(cb => {',
+        '                if (cb.checked) {',
+        '                    selectedVariants.add(cb.dataset.variant);',
+        '                }',
+        '            });',
+        '            ',
+        '            // Show warning if no decks or variants selected',
+        '            if (selectedDecks.size === 0 || selectedVariants.size === 0) {',
+        '                warningDiv.style.display = "block";',
+        '            } else {',
+        '                warningDiv.style.display = "none";',
+        '            }',
+        '            ',
+        '            // Update all plots',
+        '            plotIds.forEach(plotId => {',
+        '                const plotDiv = document.getElementById(plotId);',
+        '                if (plotDiv && plotDiv.data) {',
+        '                    // Build visibility array for each trace',
+        '                    const visibilityArray = plotDiv.data.map((trace, idx) => {',
+        '                        // Extract deck and variant from customdata',
+        '                        if (trace.customdata && trace.customdata.length > 0) {',
+        '                            const deck = trace.customdata[0][0];',
+        '                            const variant = trace.customdata[0][1];',
+        '                            ',
+        '                            // Check if both deck and variant match',
+        '                            const deckMatch = selectedDecks.has(deck);',
+        '                            const variantMatch = selectedVariants.has(variant);',
+        '                            ',
+        '                            if (deckMatch && variantMatch) {',
+        '                                // Check if trace was set to legendonly by user',
+        '                                return trace.visible === "legendonly" ? "legendonly" : true;',
+        '                            } else {',
+        '                                return false;',
+        '                            }',
+        '                        }',
+        '                        ',
+        '                        // Keep trace as-is if no customdata (shouldn\'t happen)',
+        '                        return trace.visible === "legendonly" ? "legendonly" : true;',
+        '                    });',
+        '                    ',
+        '                    Plotly.restyle(plotId, {visible: visibilityArray});',
+        '                }',
+        '            });',
+        '        }',
         '    })();',
         '    </script>',
     ])
