@@ -230,8 +230,8 @@ impl WasmFancyTuiApp {
                     let rel_y = char_y.saturating_sub(hand_area.y + 1); // +1 for border
                     let card_index = rel_y as usize;
                     if card_index < zones.hand.len() {
-                        if let Some(&card_id) = zones.hand.iter().nth(card_index) {
-                            let name = self.game.cards.get(&card_id).map(|c| c.name.as_str()).unwrap_or("?");
+                        if let Some(&card_id) = zones.hand.cards.iter().nth(card_index) {
+                            let name = self.game.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("?");
                             web_sys::console::log_1(&format!("Selected card in hand: {}", name).into());
                             self.renderer.state.selected_card_id = Some(card_id);
                             self.renderer.state.selected_card_in_hand = Some(card_index);
@@ -267,11 +267,11 @@ impl WasmFancyTuiApp {
 
         for (area, card_id) in entity_positions {
             if char_x >= area.x && char_x < area.x + area.width && char_y >= area.y && char_y < area.y + area.height {
-                let name = self.game.cards.get(&card_id).map(|c| c.name.as_str()).unwrap_or("?");
+                let name = self.game.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("?");
                 web_sys::console::log_1(&format!("Clicked on battlefield entity: {}", name).into());
 
                 // Determine if this is your battlefield or opponent's
-                if let Some(card) = self.game.cards.get(&card_id) {
+                if let Ok(card) = self.game.cards.get(card_id) {
                     if card.controller == player_id {
                         self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
                         self.renderer.state.selected_card_in_your_bf = Some(card_id);
