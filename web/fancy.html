@@ -82,15 +82,16 @@
         .canvas-container {
             flex: 1;
             display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
+            justify-content: stretch;
+            align-items: stretch;
+            padding: 0;
             background: #0a0a1a;
+            overflow: hidden;
         }
         #mtg-fancy-tui-canvas {
-            border: 2px solid #333;
-            border-radius: 4px;
-            /* Size is set dynamically via JavaScript */
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
         }
         .loading {
             text-align: center;
@@ -253,6 +254,18 @@
             }
         }
 
+        let tuiLaunched = false;
+
+        function getCanvasDimensions() {
+            const container = document.querySelector('.canvas-container');
+            const headerHeight = document.querySelector('.header').offsetHeight;
+            // Use full container dimensions
+            return {
+                width: container.clientWidth || window.innerWidth,
+                height: container.clientHeight || (window.innerHeight - headerHeight)
+            };
+        }
+
         function launchTui() {
             const p1Deck = document.getElementById('p1-deck').value;
             const p2Deck = document.getElementById('p2-deck').value;
@@ -268,26 +281,19 @@
                 // Hide setup bar
                 document.getElementById('setup-bar').style.display = 'none';
 
-                // Calculate available space for the canvas
-                // Account for header (roughly 60px) and some padding
-                const container = document.querySelector('.canvas-container');
-                const headerHeight = document.querySelector('.header').offsetHeight;
-                const availWidth = window.innerWidth - 40;  // 20px padding on each side
-                const availHeight = window.innerHeight - headerHeight - 60;  // header + padding
+                // Get full container dimensions
+                const dims = getCanvasDimensions();
+                const canvasWidth = dims.width;
+                const canvasHeight = dims.height;
 
-                // Clamp to reasonable bounds (min 600x400, max 1600x1000)
-                const canvasWidth = Math.max(600, Math.min(1600, availWidth));
-                const canvasHeight = Math.max(400, Math.min(1000, availHeight));
+                console.log(`Container size: ${canvasWidth}x${canvasHeight}`);
 
-                console.log(`Window: ${window.innerWidth}x${window.innerHeight}, Canvas: ${canvasWidth}x${canvasHeight}`);
-
-                // Show and size the canvas
+                // Show the canvas - CSS will make it fill the container
                 const canvas = document.getElementById('mtg-fancy-tui-canvas');
                 canvas.style.display = 'block';
+                // Set internal resolution to match display size for sharp rendering
                 canvas.width = canvasWidth;
                 canvas.height = canvasHeight;
-                canvas.style.width = canvasWidth + 'px';
-                canvas.style.height = canvasHeight + 'px';
 
                 // Launch the fancy TUI with calculated dimensions
                 const seed = BigInt(Date.now());
@@ -303,12 +309,28 @@
                     canvasHeight
                 );
 
+                tuiLaunched = true;
                 console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck} at ${canvasWidth}x${canvasHeight}`);
             } catch (error) {
                 alert(`Failed to launch TUI: ${error}`);
                 console.error('Failed to launch TUI:', error);
             }
         }
+
+        // Expose exit function globally for WASM to call
+        window.exitFancyTui = function() {
+            tuiLaunched = false;
+            // Hide canvas and show setup bar
+            document.getElementById('mtg-fancy-tui-canvas').style.display = 'none';
+            document.getElementById('setup-bar').style.display = 'flex';
+            // Clear the canvas context to free resources
+            const canvas = document.getElementById('mtg-fancy-tui-canvas');
+            const ctx = canvas.getContext('webgl2') || canvas.getContext('webgl');
+            if (ctx && ctx.getExtension) {
+                // WebGL context - will be recreated on next launch
+            }
+            console.log('Exited fancy TUI - ready to launch new game');
+        };
 
         main();
     </script>

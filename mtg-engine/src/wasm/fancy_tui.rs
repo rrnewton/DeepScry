@@ -12,6 +12,7 @@
 
 use crate::core::PlayerId;
 use crate::game::controller::GameStateView;
+use crate::game::fancy_tui_renderer::{BattlefieldEntity, FocusedPane};
 use crate::game::logger::OutputMode;
 use crate::game::{FancyTuiRenderer, GameLoop, GameState, VerbosityLevel};
 use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
@@ -68,6 +69,8 @@ pub struct WasmFancyTuiApp {
     term_cols: u16,
     /// Current terminal rows
     term_rows: u16,
+    /// Request to exit the game (return to menu)
+    exit_requested: bool,
 }
 
 // Font metrics for 10pt Fira Mono (approximate)
@@ -128,6 +131,7 @@ impl WasmFancyTuiApp {
             canvas_height,
             term_cols: cols,
             term_rows: rows,
+            exit_requested: false,
         }
     }
 
@@ -197,10 +201,129 @@ impl WasmFancyTuiApp {
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
         }
     }
+
+    /// Handle a mouse click on the terminal area
+    ///
+    /// This determines which pane was clicked and updates the focused pane
+    /// and/or selected card accordingly.
+    fn handle_terminal_click(&mut self, char_x: u16, char_y: u16, view: &GameStateView) {
+        // Get the layout areas from the renderer state
+        let state = &self.renderer.state;
+
+        // Check if click is in the hand pane
+        if let Some(hand_area) = state.hand_pane_area {
+            if char_x >= hand_area.x
+                && char_x < hand_area.x + hand_area.width
+                && char_y >= hand_area.y
+                && char_y < hand_area.y + hand_area.height
+            {
+                web_sys::console::log_1(&"Clicked on Hand pane".into());
+                self.renderer.state.focused_pane = FocusedPane::Hand;
+
+                // Try to find which card was clicked based on position in the hand list
+                let player_zones = view.get_player_zones(self.renderer.player_id);
+                if let Some(zones) = player_zones {
+                    // Cards are listed vertically in the hand pane
+                    // Each card takes roughly 1 row, starting after the title
+                    let rel_y = char_y.saturating_sub(hand_area.y + 1); // +1 for border
+                    let card_index = rel_y as usize;
+                    if card_index < zones.hand.len() {
+                        let card_id = zones.hand.iter().nth(card_index).copied();
+                        if let Some(card_id) = card_id {
+                            let name = view.card_name(card_id).unwrap_or_default();
+                            web_sys::console::log_1(&format!("Selected card in hand: {}", name).into());
+                            self.renderer.state.selected_card_id = Some(card_id);
+                            self.renderer.state.selected_card_in_hand = Some(card_index);
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        // Check if click is in the actions pane
+        if let Some(actions_area) = state.actions_pane_area {
+            if char_x >= actions_area.x
+                && char_x < actions_area.x + actions_area.width
+                && char_y >= actions_area.y
+                && char_y < actions_area.y + actions_area.height
+            {
+                web_sys::console::log_1(&"Clicked on Actions pane".into());
+                self.renderer.state.focused_pane = FocusedPane::Actions;
+                return;
+            }
+        }
+
+        // Check entity positions for battlefield clicks
+        for entity_pos in &state.entity_positions {
+            let area = entity_pos.area;
+            if char_x >= area.x && char_x < area.x + area.width && char_y >= area.y && char_y < area.y + area.height {
+                let card_id = entity_pos.entity.representative_card();
+                let name = view.card_name(card_id).unwrap_or_default();
+                web_sys::console::log_1(&format!("Clicked on battlefield entity: {}", name).into());
+
+                // Determine if this is your battlefield or opponent's
+                if let Some(card) = view.get_card(card_id) {
+                    if card.controller == self.renderer.player_id {
+                        self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
+                        self.renderer.state.selected_card_in_your_bf = Some(card_id);
+                    } else {
+                        self.renderer.state.focused_pane = FocusedPane::OpponentBattlefield;
+                        self.renderer.state.selected_card_in_opp_bf = Some(card_id);
+                    }
+                }
+                self.renderer.state.selected_card_id = Some(card_id);
+                return;
+            }
+        }
+
+        // Default: try to determine pane from rough position
+        // The layout is roughly: [Left Column 25%] [Middle 50%] [Right Column 25%]
+        let pane_width_estimate = self.term_cols / 4;
+        if char_x < pane_width_estimate {
+            // Left column: Info (top) or Actions (bottom)
+            if char_y < self.term_rows / 2 {
+                web_sys::console::log_1(&"Clicked on Info pane (estimate)".into());
+                self.renderer.state.focused_pane = FocusedPane::Info;
+            } else {
+                web_sys::console::log_1(&"Clicked on Actions pane (estimate)".into());
+                self.renderer.state.focused_pane = FocusedPane::Actions;
+            }
+        } else if char_x >= self.term_cols - pane_width_estimate {
+            // Right column: Card Details (top), Hand (middle), Stack (bottom)
+            let third = self.term_rows / 3;
+            if char_y < third {
+                // Card details - no pane change, just info display
+                web_sys::console::log_1(&"Clicked on Card Details pane".into());
+            } else if char_y < 2 * third {
+                web_sys::console::log_1(&"Clicked on Hand pane (estimate)".into());
+                self.renderer.state.focused_pane = FocusedPane::Hand;
+            } else {
+                web_sys::console::log_1(&"Clicked on Stack pane (estimate)".into());
+                self.renderer.state.focused_pane = FocusedPane::Stack;
+            }
+        } else {
+            // Middle column: Battlefields
+            if char_y < self.term_rows / 2 {
+                web_sys::console::log_1(&"Clicked on Opponent Battlefield (estimate)".into());
+                self.renderer.state.focused_pane = FocusedPane::OpponentBattlefield;
+            } else {
+                web_sys::console::log_1(&"Clicked on Your Battlefield (estimate)".into());
+                self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
+            }
+        }
+    }
 }
 
 impl eframe::App for WasmFancyTuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check if exit was requested
+        if self.exit_requested {
+            // Call JavaScript to return to the menu
+            let _ = js_sys::eval("window.exitFancyTui && window.exitFancyTui()");
+            return;
+        }
+
         // Debug: log frame updates
         static mut FRAME_COUNT: u32 = 0;
         unsafe {
@@ -223,117 +346,143 @@ impl eframe::App for WasmFancyTuiApp {
         style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(50, 50, 50);
         style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(70, 70, 70);
         style.visuals.override_text_color = Some(egui::Color32::WHITE);
+        // Remove all margins and spacing at the panel level
+        style.spacing.window_margin = egui::Margin::ZERO;
         ctx.set_style(style);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Check for resize - use available size from egui
-            let avail = ui.available_size();
-            let new_width = avail.x as u32;
-            let new_height = avail.y as u32;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(egui::Color32::BLACK))
+            .show(ctx, |ui| {
+                // Check for resize - use available size from egui
+                let avail = ui.available_size();
+                let new_width = avail.x as u32;
+                let new_height = avail.y as u32;
 
-            // Resize terminal if window size changed significantly (>10px difference)
-            if new_width.abs_diff(self.canvas_width) > 10 || new_height.abs_diff(self.canvas_height) > 10 {
-                self.resize_terminal_if_needed(new_width, new_height);
-            }
-
-            // Debug: log available size
-            unsafe {
-                if FRAME_COUNT <= 5 {
-                    web_sys::console::log_1(
-                        &format!("Frame {}: available size = {}x{}", FRAME_COUNT, avail.x, avail.y).into(),
-                    );
+                // Resize terminal if window size changed significantly (>10px difference)
+                if new_width.abs_diff(self.canvas_width) > 10 || new_height.abs_diff(self.canvas_height) > 10 {
+                    self.resize_terminal_if_needed(new_width, new_height);
                 }
-            }
 
-            // Control bar at the top with visible buttons
-            egui::Frame::none()
-                .fill(egui::Color32::from_rgb(20, 20, 20))
-                .inner_margin(egui::Margin::symmetric(8, 4))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
+                // Debug: log available size
+                unsafe {
+                    if FRAME_COUNT <= 5 {
+                        web_sys::console::log_1(
+                            &format!("Frame {}: available size = {}x{}", FRAME_COUNT, avail.x, avail.y).into(),
+                        );
+                    }
+                }
 
-                        if ui.button("Run 1 Turn").clicked() {
-                            self.run_one_turn();
-                        }
+                // Control bar at the top with visible buttons
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(20, 20, 20))
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
 
-                        let auto_label = if self.auto_run { "Stop Auto" } else { "Auto Run" };
-                        if ui.button(auto_label).clicked() {
-                            self.auto_run = !self.auto_run;
-                        }
-
-                        ui.add_space(20.0);
-
-                        if self.game_over {
-                            ui.colored_label(egui::Color32::YELLOW, "Game Over!");
-                            let p1_life = self.game.players[0].life;
-                            let p2_life = self.game.players[1].life;
-                            if p1_life <= 0 {
-                                ui.colored_label(egui::Color32::GREEN, "Player 2 wins!");
-                            } else if p2_life <= 0 {
-                                ui.colored_label(egui::Color32::GREEN, "Player 1 wins!");
+                            // Exit button (red-ish to stand out)
+                            let exit_btn = egui::Button::new("Exit Game").fill(egui::Color32::from_rgb(100, 30, 30));
+                            if ui.add(exit_btn).clicked() {
+                                self.exit_requested = true;
                             }
-                        }
 
-                        if let Some(ref err) = self.error_message {
-                            ui.colored_label(egui::Color32::RED, err);
-                        }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("Turn {}", self.game.turn.turn_number));
+                            if ui.button("Run 1 Turn").clicked() {
+                                self.run_one_turn();
+                            }
+
+                            let auto_label = if self.auto_run { "Stop Auto" } else { "Auto Run" };
+                            if ui.button(auto_label).clicked() {
+                                self.auto_run = !self.auto_run;
+                            }
+
+                            ui.add_space(20.0);
+
+                            if self.game_over {
+                                ui.colored_label(egui::Color32::YELLOW, "Game Over!");
+                                let p1_life = self.game.players[0].life;
+                                let p2_life = self.game.players[1].life;
+                                if p1_life <= 0 {
+                                    ui.colored_label(egui::Color32::GREEN, "Player 2 wins!");
+                                } else if p2_life <= 0 {
+                                    ui.colored_label(egui::Color32::GREEN, "Player 1 wins!");
+                                }
+                            }
+
+                            if let Some(ref err) = self.error_message {
+                                ui.colored_label(egui::Color32::RED, err);
+                            }
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(format!("Turn {}", self.game.turn.turn_number));
+                            });
                         });
                     });
+
+                // Render the TUI to the terminal
+                let view = GameStateView::new(&self.game, self.renderer.player_id);
+                let prompt = self.current_prompt.as_deref();
+                let choices: Vec<(String, bool)> = self.current_choices.clone();
+
+                // Clear and draw to ratatui terminal
+                let _ = self.terminal.clear();
+                let renderer = &mut self.renderer;
+                let _ = self.terminal.draw(|f| {
+                    renderer.draw_ui(f, &view, prompt, &choices);
                 });
 
-            ui.add_space(4.0);
+                // Display the terminal as an egui widget - fill all remaining space
+                let remaining = ui.available_size();
 
-            // Render the TUI to the terminal
-            let view = GameStateView::new(&self.game, self.renderer.player_id);
-            let prompt = self.current_prompt.as_deref();
-            let choices: Vec<(String, bool)> = self.current_choices.clone();
+                // Debug: log before adding widget
+                unsafe {
+                    if FRAME_COUNT <= 5 {
+                        web_sys::console::log_1(
+                            &format!(
+                                "Frame {}: adding terminal widget, remaining={}x{}",
+                                FRAME_COUNT, remaining.x, remaining.y
+                            )
+                            .into(),
+                        );
+                    }
+                }
 
-            // Clear and draw to ratatui terminal
-            let _ = self.terminal.clear();
-            let renderer = &mut self.renderer;
-            let _ = self.terminal.draw(|f| {
-                renderer.draw_ui(f, &view, prompt, &choices);
+                // Allocate all remaining space for the terminal widget with click sensing
+                let (rect, response) = ui.allocate_exact_size(remaining, egui::Sense::click());
+
+                // Handle mouse clicks on the terminal area
+                if response.clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        // Convert pixel position to terminal character position
+                        let rel_x = pos.x - rect.left();
+                        let rel_y = pos.y - rect.top();
+                        let char_x = (rel_x / CHAR_WIDTH as f32) as u16;
+                        let char_y = (rel_y / CHAR_HEIGHT as f32) as u16;
+
+                        web_sys::console::log_1(
+                            &format!("Click at pixel ({}, {}) -> char ({}, {})", rel_x, rel_y, char_x, char_y).into(),
+                        );
+
+                        // Try to determine which pane was clicked based on character position
+                        // and update the renderer's focused pane / selected card
+                        self.handle_terminal_click(char_x, char_y, &view);
+                    }
+                }
+
+                // Create a child UI constrained to this exact rect
+                let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                child_ui.add(self.terminal.backend_mut());
+
+                // Debug: log after frame completes
+                unsafe {
+                    if FRAME_COUNT <= 5 {
+                        web_sys::console::log_1(&format!("Frame {}: frame complete", FRAME_COUNT).into());
+                    }
+                }
             });
-
-            // Display the terminal as an egui widget
-            // Use available space from ui, leaving room for margins
-            let remaining = ui.available_size();
-            let desired_size = egui::vec2(
-                remaining.x - 8.0, // Small margin
-                remaining.y - 8.0, // Small margin
-            );
-
-            // Debug: log before adding widget
-            unsafe {
-                if FRAME_COUNT <= 5 {
-                    web_sys::console::log_1(
-                        &format!(
-                            "Frame {}: adding terminal widget, desired_size={}x{}",
-                            FRAME_COUNT, desired_size.x, desired_size.y
-                        )
-                        .into(),
-                    );
-                }
-            }
-
-            // Use allocate_exact_size to prevent the widget from requesting more space
-            let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-
-            // Create a child UI constrained to this exact rect
-            let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-            child_ui.add(self.terminal.backend_mut());
-
-            // Debug: log after frame completes
-            unsafe {
-                if FRAME_COUNT <= 5 {
-                    web_sys::console::log_1(&format!("Frame {}: frame complete", FRAME_COUNT).into());
-                }
-            }
-        });
     }
 }
 
