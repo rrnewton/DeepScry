@@ -29,8 +29,15 @@ Track performance optimization work for MTG Forge Rust.
 
 ---
 
-## Latest Optimization (2025-12-01_#1079)
+## Latest Optimization (2025-12-01_#1080)
 
+✅ **ManaEngine::read_from_cache zero-allocation refactor** - **45.7% allocation reduction, -21.7% runtime**
+- Eliminated temporary Vec allocations in read_from_cache() by pushing directly to self vectors
+- Before: 2.0 MB in 39,916 blocks, After: 1.1 MB in 20,860 blocks
+- Benchmark: robots_mirror/snapshot_games -21.7% execution time (p < 0.05)
+- DHAT profiling showed this was the #1 allocation hotspot (22.8% of total)
+
+**Previous (2025-12-01_#1079):**
 ✅ **EntityStore HashMap → Vec optimization (1c6f23e)** - **7-22% speedup across benchmarks**
 - Replace FxHashMap<EntityId<T>, T> with Vec<Option<T>> for O(1) indexed lookups
 - Eliminates hash computation overhead in hot paths
@@ -94,6 +101,7 @@ Track performance optimization work for MTG Forge Rust.
 - ✅ **Land subtype caching in CardCache (2025-11-30_#1013)** - **~0.5-1.6% speedup**
 - ✅ **Type flag caching (c9edb3e, 2025-12-01_#1075)** - **-17.9% snapshot_games**
 - ✅ **EntityStore Vec optimization (1c6f23e, 2025-12-01_#1079)** - **-7-22% across benchmarks**
+- ✅ **ManaEngine::read_from_cache zero-allocation (2025-12-01_#1080)** - **45.7% alloc reduction, -21.7% runtime**
 
 **Next high-priority optimizations:**
 1. Cache available actions (OPT-NEW-1) - invalidate on state change (5% potential)
@@ -102,4 +110,4 @@ See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/reports/perf_cpu_profiling_2025-11-29.md for CPU hotspot analysis.
 
 ---
-**Updated 2025-12-01_#1079(1c6f23e)** - EntityStore Vec optimization: -7-22% speedup
+**Updated 2025-12-01_#1080** - ManaEngine::read_from_cache zero-allocation: 45.7% alloc reduction, -21.7% runtime
