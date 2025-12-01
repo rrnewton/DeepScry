@@ -1315,6 +1315,30 @@ impl GameState {
                             amount: *amount,
                         };
                     }
+                    Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                        // Find a valid target (opponent's nonland permanent)
+                        // Web Up and similar cards: "exile target nonland permanent an opponent controls"
+                        let controller = self.cards.get(trigger_source)?.controller;
+                        if let Some(target_id) = self
+                            .battlefield
+                            .cards
+                            .iter()
+                            .find(|&card_id| {
+                                if let Ok(card) = self.cards.get(*card_id) {
+                                    // Target nonland permanents controlled by opponents
+                                    !card.is_land()
+                                        && card.controller != controller
+                                        && !card.has_hexproof()
+                                        && !card.has_shroud()
+                                } else {
+                                    false
+                                }
+                            })
+                            .copied()
+                        {
+                            effect = Effect::ExilePermanent { target: target_id };
+                        }
+                    }
                     _ => {}
                 }
 

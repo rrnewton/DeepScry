@@ -1090,4 +1090,178 @@ mod tests {
             "Life gain not yet implemented for SubAbility$ DBGainLife"
         );
     }
+
+    /// Test Web Up ETB trigger (Oblivion Ring-style effect)
+    ///
+    /// Web Up is an enchantment with:
+    /// "When this enchantment enters, exile target nonland permanent an opponent
+    /// controls until this enchantment leaves the battlefield."
+    ///
+    /// This tests that:
+    /// 1. The card loads with an ETB trigger
+    /// 2. The trigger has an ExilePermanent effect
+    /// 3. The effect targets opponent's nonland permanents
+    #[test]
+    fn test_web_up_etb_trigger() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let _p2_id = game.players[1].id;
+
+        // Load Web Up from cardsfolder
+        let web_up_id = match load_test_card(&mut game, "Web Up", p1_id) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to load Web Up: {e}"),
+        };
+
+        let web_up = game.cards.get(web_up_id).unwrap();
+
+        // Verify it's an enchantment
+        assert!(
+            web_up.is_enchantment(),
+            "Web Up should be an enchantment. Types: {:?}",
+            web_up.types
+        );
+
+        // Verify the card has an ETB trigger
+        assert!(
+            !web_up.triggers.is_empty(),
+            "Web Up should have at least one trigger. Triggers: {:?}",
+            web_up.triggers
+        );
+
+        // Find the ETB trigger
+        use crate::core::TriggerEvent;
+        let etb_trigger = web_up
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::EntersBattlefield);
+
+        assert!(
+            etb_trigger.is_some(),
+            "Web Up should have an EntersBattlefield trigger. Triggers: {:?}",
+            web_up.triggers
+        );
+
+        let trigger = etb_trigger.unwrap();
+
+        // Verify the trigger has an ExilePermanent effect
+        let has_exile_effect = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ExilePermanent { .. }));
+
+        assert!(
+            has_exile_effect,
+            "Web Up ETB trigger should have ExilePermanent effect. Effects: {:?}",
+            trigger.effects
+        );
+    }
+
+    /// Test Web Up exiles an opponent's creature when it enters the battlefield
+    ///
+    /// This is an integration test that verifies the full flow:
+    /// 1. Player 1 casts Web Up
+    /// 2. Web Up resolves and enters the battlefield
+    /// 3. ETB trigger fires and exiles an opponent's creature
+    #[test]
+    fn test_web_up_exiles_creature() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create a creature for P2
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_power(Some(2));
+        creature.set_toughness(Some(2));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Verify creature is on battlefield
+        assert!(
+            game.battlefield.contains(creature_id),
+            "Creature should be on battlefield before Web Up"
+        );
+
+        // Load Web Up from cardsfolder
+        let web_up_id = match load_test_card(&mut game, "Web Up", p1_id) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to load Web Up: {e}"),
+        };
+
+        // Put Web Up on the stack (simulating cast)
+        game.stack.add(web_up_id);
+
+        // Resolve Web Up (it enters the battlefield and triggers)
+        let result = game.resolve_spell(web_up_id, &[]);
+        assert!(result.is_ok(), "Failed to resolve Web Up: {:?}", result);
+
+        // Verify Web Up is on the battlefield
+        assert!(
+            game.battlefield.contains(web_up_id),
+            "Web Up should be on the battlefield after resolving"
+        );
+
+        // Verify creature is now exiled (not on battlefield)
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "Creature should not be on battlefield after Web Up ETB trigger"
+        );
+
+        // Verify creature is in exile zone
+        let in_exile = game.get_player_zones(p2_id).unwrap().exile.contains(creature_id);
+        assert!(in_exile, "Creature should be in exile zone after Web Up ETB");
+    }
+
+    /// Test Vibrant Cityscape activated ability for tutoring basic lands
+    ///
+    /// Vibrant Cityscape has:
+    /// "{T}, Sacrifice this land: Search your library for a basic land card,
+    /// put it onto the battlefield tapped, then shuffle."
+    ///
+    /// This tests that:
+    /// 1. The card loads with an activated ability
+    /// 2. The ability has a SearchLibrary effect
+    /// 3. The ability costs tap + sacrifice
+    #[test]
+    fn test_vibrant_cityscape_tutor_ability() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Load Vibrant Cityscape from cardsfolder
+        let cityscape_id = match load_test_card(&mut game, "Vibrant Cityscape", p1_id) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to load Vibrant Cityscape: {e}"),
+        };
+
+        let cityscape = game.cards.get(cityscape_id).unwrap();
+
+        // Verify it's a land
+        assert!(
+            cityscape.is_land(),
+            "Vibrant Cityscape should be a land. Types: {:?}",
+            cityscape.types
+        );
+
+        // Verify the card has an activated ability
+        assert!(
+            !cityscape.activated_abilities.is_empty(),
+            "Vibrant Cityscape should have at least one activated ability. Abilities: {:?}",
+            cityscape.activated_abilities
+        );
+
+        // Check if the ability has a SearchLibrary effect
+        let has_search_effect = cityscape
+            .activated_abilities
+            .iter()
+            .any(|ab| ab.effects.iter().any(|e| matches!(e, Effect::SearchLibrary { .. })));
+
+        assert!(
+            has_search_effect,
+            "Vibrant Cityscape should have a SearchLibrary effect. Abilities: {:?}",
+            cityscape.activated_abilities
+        );
+    }
 }

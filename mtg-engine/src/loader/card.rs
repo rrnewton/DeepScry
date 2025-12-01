@@ -1300,6 +1300,35 @@ impl CardDefinition {
                                         });
                                     }
                                 }
+
+                                // Parse DB$ ChangeZone effects (exile, bounce, etc.)
+                                // Example: "DB$ ChangeZone | Origin$ Battlefield | Destination$ Exile | ValidTgts$ Permanent.nonLand+OppCtrl"
+                                // This is used by cards like Web Up (Oblivion Ring-style effects)
+                                if body.contains("DB$ ChangeZone") {
+                                    let mut origin = String::new();
+                                    let mut destination = String::new();
+
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+
+                                            match key {
+                                                "Origin" => origin = value.to_string(),
+                                                "Destination" => destination = value.to_string(),
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    // Handle exile effects: Origin$ Battlefield + Destination$ Exile
+                                    if origin == "Battlefield" && destination == "Exile" {
+                                        effects.push(Effect::ExilePermanent {
+                                            target: CardId::new(0), // Placeholder - filled at trigger time
+                                        });
+                                    }
+                                }
                             }
                             break;
                         }
