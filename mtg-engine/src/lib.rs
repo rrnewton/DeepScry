@@ -14,7 +14,6 @@
 pub mod core;
 pub mod error;
 pub mod game;
-#[cfg(feature = "native")]
 pub mod loader;
 pub mod puzzle;
 #[cfg(feature = "native")]

@@ -40,16 +40,16 @@ async function runTest() {
         });
 
         // Navigate to the test page
-        console.log('Loading WASM module...');
+        console.log('Loading WASM module and card database...');
         await page.goto('http://localhost:8765/index.html', {
             waitUntil: 'networkidle',
-            timeout: 30000
+            timeout: 60000
         });
 
-        // Wait for WASM to initialize
+        // Wait for WASM and data to initialize
         await page.waitForFunction(() => {
             return document.getElementById('wasm-status')?.textContent === 'Ready';
-        }, { timeout: 10000 });
+        }, { timeout: 30000 });
 
         console.log('\n=== WASM Module Loaded Successfully ===\n');
 
@@ -58,6 +58,22 @@ async function runTest() {
             return document.getElementById('wasm-version')?.textContent;
         });
         console.log(`WASM Version: ${version}`);
+
+        // Check database stats
+        const dbStats = await page.evaluate(() => {
+            return document.getElementById('db-stats')?.textContent;
+        });
+        console.log(`Database: ${dbStats}`);
+
+        // Check available decks
+        const deckCount = await page.evaluate(() => {
+            return document.getElementById('p1-deck')?.options.length || 0;
+        });
+        console.log(`Available decks: ${deckCount}`);
+
+        if (deckCount === 0) {
+            throw new Error('No decks loaded! Make sure to run "mtg export-wasm" first.');
+        }
 
         // Click "New Game" button
         console.log('\nCreating new game...');
@@ -69,10 +85,14 @@ async function runTest() {
             return {
                 turnInfo: document.getElementById('turn-info')?.textContent,
                 p1Life: document.getElementById('p1-life')?.textContent,
-                p2Life: document.getElementById('p2-life')?.textContent
+                p2Life: document.getElementById('p2-life')?.textContent,
+                p1Deck: document.getElementById('p1-deck-name')?.textContent,
+                p2Deck: document.getElementById('p2-deck-name')?.textContent
             };
         });
-        console.log(`Initial state: Turn info="${initialState.turnInfo}", P1 Life=${initialState.p1Life}, P2 Life=${initialState.p2Life}`);
+        console.log(`Initial state: ${initialState.turnInfo}`);
+        console.log(`  ${initialState.p1Deck} (Life: ${initialState.p1Life})`);
+        console.log(`  ${initialState.p2Deck} (Life: ${initialState.p2Life})`);
 
         // Run one turn
         console.log('\nRunning one turn...');
@@ -86,7 +106,8 @@ async function runTest() {
                 p2Life: document.getElementById('p2-life')?.textContent
             };
         });
-        console.log(`After 1 turn: Turn info="${afterOneTurn.turnInfo}", P1 Life=${afterOneTurn.p1Life}, P2 Life=${afterOneTurn.p2Life}`);
+        console.log(`After 1 turn: ${afterOneTurn.turnInfo}`);
+        console.log(`  P1 Life: ${afterOneTurn.p1Life}, P2 Life: ${afterOneTurn.p2Life}`);
 
         // Create a new game and run full game
         console.log('\nCreating new game for full run...');
@@ -95,7 +116,7 @@ async function runTest() {
 
         console.log('Running full AI game (max 100 turns)...');
         await page.click('#btn-run-game');
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(5000); // Games with real cards take longer
 
         // Get final result
         const finalState = await page.evaluate(() => {
@@ -109,14 +130,14 @@ async function runTest() {
         });
 
         console.log(`\n=== Game Result ===`);
-        console.log(`Final turn: ${finalState.turnInfo}`);
+        console.log(`Final state: ${finalState.turnInfo}`);
         console.log(`P1 Life: ${finalState.p1Life}`);
         console.log(`P2 Life: ${finalState.p2Life}`);
         if (finalState.resultVisible) {
             console.log(`Result: ${finalState.result}`);
         }
 
-        // Get logs
+        // Get logs (first 10 lines)
         const gameLogs = await page.evaluate(() => {
             return document.getElementById('logs')?.textContent?.split('\n').slice(0, 10).join('\n');
         });

@@ -8,7 +8,9 @@ use crate::core::{
 };
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
+#[cfg(feature = "native")]
 use std::fs;
+#[cfg(feature = "native")]
 use std::path::Path;
 
 /// Card loader for .txt files
@@ -16,6 +18,7 @@ pub struct CardLoader;
 
 impl CardLoader {
     /// Load a card from a .txt file
+    #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<CardDefinition> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
         Self::parse(&content).map_err(|e| {
@@ -141,7 +144,7 @@ impl CardLoader {
 }
 
 /// Card definition (not yet instantiated in a game)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CardDefinition {
     pub name: CardName,
     pub mana_cost: ManaCost,

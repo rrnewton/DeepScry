@@ -1,7 +1,9 @@
 //! Deck file loader (.dck format)
 
 use crate::{MtgError, Result};
+#[cfg(feature = "native")]
 use std::fs;
+#[cfg(feature = "native")]
 use std::path::Path;
 
 /// Deck loader for .dck files
@@ -9,6 +11,7 @@ pub struct DeckLoader;
 
 impl DeckLoader {
     /// Load a deck from a .dck file
+    #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<DeckList> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
         Self::parse(&content)
@@ -66,14 +69,14 @@ impl DeckLoader {
 }
 
 /// Represents a deck entry (card name and count)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeckEntry {
     pub card_name: String,
     pub count: u8,
 }
 
 /// Represents a complete deck list
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeckList {
     pub main_deck: Vec<DeckEntry>,
     pub sideboard: Vec<DeckEntry>,

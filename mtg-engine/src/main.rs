@@ -399,6 +399,17 @@ enum Commands {
 
     /// Print statistics about the card database
     Stats {},
+
+    /// Export card database and decks for WASM (browser) builds
+    ExportWasm {
+        /// Output directory for exported data (default: web/data)
+        #[arg(long, short = 'o', default_value = "web/data")]
+        output: PathBuf,
+
+        /// Glob pattern(s) for deck files to include (default: decks/old_school*/*.dck)
+        #[arg(long, short = 'd', default_value = "decks/old_school*/*.dck")]
+        deck_glob: String,
+    },
 }
 
 #[tokio::main]
@@ -606,6 +617,7 @@ async fn main() -> Result<()> {
             .await?
         }
         Commands::Stats {} => run_stats().await?,
+        Commands::ExportWasm { output, deck_glob } => run_export_wasm(output, deck_glob).await?,
     }
 
     Ok(())
@@ -2409,6 +2421,150 @@ async fn run_stats() -> Result<()> {
             log::info!("  CMC 8+:                    {:6}", count);
         }
     }
+
+    Ok(())
+}
+
+/// Export card database and decks for WASM browser builds
+///
+/// Creates bincode-serialized files for:
+/// - All card definitions from cardsfolder
+/// - Selected deck files matching the glob pattern
+///
+/// These files can be loaded by the WASM module in the browser.
+async fn run_export_wasm(output: PathBuf, deck_glob: String) -> Result<()> {
+    use mtg_forge_rs::loader::CardLoader;
+    use std::collections::HashMap;
+    use std::fs;
+
+    println!("=== MTG Forge Rust - WASM Export ===\n");
+
+    // Create output directory if it doesn't exist
+    fs::create_dir_all(&output).map_err(|e| {
+        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+            "Failed to create output directory {}: {}",
+            output.display(),
+            e
+        )))
+    })?;
+
+    // Find cardsfolder
+    let cardsfolder = find_cardsfolder();
+    println!("Loading card definitions from {}...", cardsfolder.display());
+
+    // Load all card files directly from cardsfolder (using glob)
+    let mut card_definitions: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+    let mut load_errors = 0;
+
+    let card_pattern = format!("{}/**/*.txt", cardsfolder.display());
+    for entry in glob::glob(&card_pattern)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Invalid glob pattern: {}", e)))?
+    {
+        match entry {
+            Ok(path) => {
+                if path.is_file() {
+                    match CardLoader::load_from_file(&path) {
+                        Ok(def) => {
+                            let card_name = def.name.as_str().to_string();
+                            card_definitions.insert(card_name, def);
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: Failed to load {}: {}", path.display(), e);
+                            load_errors += 1;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  Warning: Glob error: {}", e);
+            }
+        }
+    }
+
+    println!(
+        "Loaded {} card definitions ({} errors)",
+        card_definitions.len(),
+        load_errors
+    );
+
+    // Serialize cards to bincode
+    let cards_path = output.join("cards.bin");
+    let cards_data = bincode::serialize(&card_definitions)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize cards: {}", e)))?;
+    fs::write(&cards_path, &cards_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+    println!(
+        "\nExported {} cards to {} ({} bytes)",
+        card_definitions.len(),
+        cards_path.display(),
+        cards_data.len()
+    );
+
+    // Find and load deck files matching the glob pattern
+    println!("\nSearching for decks matching: {}", deck_glob);
+    let mut decks: HashMap<String, mtg_forge_rs::loader::DeckList> = HashMap::new();
+
+    // Use glob to find matching deck files
+    for entry in glob::glob(&deck_glob)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Invalid glob pattern: {}", e)))?
+    {
+        match entry {
+            Ok(path) => {
+                if path.is_file() {
+                    match DeckLoader::load_from_file(&path) {
+                        Ok(deck) => {
+                            // Use filename without extension as deck name
+                            let deck_name = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            println!("  Loaded deck: {} ({} cards)", deck_name, deck.total_cards());
+                            decks.insert(deck_name, deck);
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: Failed to load deck {}: {}", path.display(), e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  Warning: Glob error: {}", e);
+            }
+        }
+    }
+
+    if decks.is_empty() {
+        eprintln!("Warning: No decks found matching pattern '{}'", deck_glob);
+    }
+
+    // Serialize decks to bincode
+    let decks_path = output.join("decks.bin");
+    let decks_data = bincode::serialize(&decks)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Failed to serialize decks: {}", e)))?;
+    fs::write(&decks_path, &decks_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+    println!(
+        "\nExported {} decks to {} ({} bytes)",
+        decks.len(),
+        decks_path.display(),
+        decks_data.len()
+    );
+
+    // Generate deck index (names and sizes for UI)
+    let deck_index: Vec<(String, usize)> = decks
+        .iter()
+        .map(|(name, deck)| (name.clone(), deck.total_cards()))
+        .collect();
+    let index_path = output.join("deck_index.json");
+    let index_json = serde_json::to_string_pretty(&deck_index)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Failed to serialize deck index: {}", e)))?;
+    fs::write(&index_path, &index_json).map_err(mtg_forge_rs::MtgError::IoError)?;
+    println!("Exported deck index to {}", index_path.display());
+
+    println!("\n=== Export Complete ===");
+    println!("Files created in {}:", output.display());
+    println!("  cards.bin    - {} card definitions", card_definitions.len());
+    println!("  decks.bin    - {} decks", decks.len());
+    println!("  deck_index.json - deck names and sizes");
 
     Ok(())
 }

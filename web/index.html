@@ -64,6 +64,15 @@
             gap: 10px;
             margin-bottom: 15px;
         }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .control-group label {
+            color: #888;
+            font-size: 12px;
+        }
         select {
             background: #0f3460;
             color: white;
@@ -71,6 +80,7 @@
             padding: 10px;
             border-radius: 6px;
             font-size: 14px;
+            min-width: 200px;
         }
         .game-state {
             display: grid;
@@ -94,6 +104,11 @@
         .stats {
             color: #888;
             font-size: 14px;
+        }
+        .deck-name {
+            color: #4cc9f0;
+            font-size: 12px;
+            margin-top: 5px;
         }
         #logs {
             background: #0a0a1a;
@@ -126,12 +141,21 @@
             padding: 50px;
             color: #888;
         }
+        .loading-progress {
+            margin-top: 10px;
+            font-size: 14px;
+        }
         .error {
             background: #4a1010;
             color: #ff6b6b;
             padding: 15px;
             border-radius: 8px;
             margin: 10px 0;
+        }
+        .db-stats {
+            color: #888;
+            font-size: 12px;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -140,23 +164,38 @@
     <p class="subtitle">Game engine running in your browser via Rust + WASM</p>
 
     <div id="loading" class="loading">
-        Loading WebAssembly module...
+        <div>Loading WebAssembly module...</div>
+        <div id="loading-progress" class="loading-progress"></div>
     </div>
 
     <div id="app" style="display: none;">
         <div class="card">
             <h2>Game Setup</h2>
             <div class="controls">
-                <div>
-                    <label>P1 Controller:</label>
+                <div class="control-group">
+                    <label>Player 1 Deck</label>
+                    <select id="p1-deck">
+                        <option value="">Loading decks...</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>Player 2 Deck</label>
+                    <select id="p2-deck">
+                        <option value="">Loading decks...</option>
+                    </select>
+                </div>
+            </div>
+            <div class="controls">
+                <div class="control-group">
+                    <label>P1 Controller</label>
                     <select id="p1-controller">
                         <option value="heuristic">Heuristic AI</option>
                         <option value="random">Random</option>
                         <option value="zero">Zero (Pass)</option>
                     </select>
                 </div>
-                <div>
-                    <label>P2 Controller:</label>
+                <div class="control-group">
+                    <label>P2 Controller</label>
                     <select id="p2-controller">
                         <option value="heuristic">Heuristic AI</option>
                         <option value="random">Random</option>
@@ -165,10 +204,11 @@
                 </div>
             </div>
             <div class="controls">
-                <button id="btn-new-game">New Game</button>
+                <button id="btn-new-game" disabled>New Game</button>
                 <button id="btn-run-turn" disabled>Run 1 Turn</button>
                 <button id="btn-run-game" disabled>Run Full Game</button>
             </div>
+            <div id="db-stats" class="db-stats"></div>
         </div>
 
         <div class="card">
@@ -179,11 +219,13 @@
                     <h3>Player 1</h3>
                     <div class="life" id="p1-life">20</div>
                     <div class="stats" id="p1-stats">-</div>
+                    <div class="deck-name" id="p1-deck-name"></div>
                 </div>
                 <div class="player">
                     <h3>Player 2</h3>
                     <div class="life" id="p2-life">20</div>
                     <div class="stats" id="p2-stats">-</div>
+                    <div class="deck-name" id="p2-deck-name"></div>
                 </div>
             </div>
             <div id="result" class="result" style="display: none;"></div>
@@ -209,22 +251,87 @@
             version,
             is_ready,
             WasmGame,
+            WasmCardDatabase,
             WasmControllerType
         } from './pkg/mtg_forge_rs.js';
 
         let game = null;
+        let cardDb = null;
+        let deckNames = [];
 
         async function main() {
             try {
+                const progress = document.getElementById('loading-progress');
+
+                // Initialize WASM
+                progress.textContent = 'Initializing WASM module...';
                 await init();
 
                 // Update status
                 document.getElementById('wasm-version').textContent = version();
                 document.getElementById('wasm-status').textContent = is_ready() ? 'Ready' : 'Error';
 
+                // Create card database
+                progress.textContent = 'Loading card database...';
+                cardDb = new WasmCardDatabase();
+
+                // Load cards
+                const cardsResp = await fetch('./data/cards.bin');
+                if (!cardsResp.ok) {
+                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}. Run 'mtg export-wasm' first.`);
+                }
+                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
+                const cardCount = cardDb.load_cards(cardsData);
+                progress.textContent = `Loaded ${cardCount} cards. Loading decks...`;
+
+                // Load decks
+                const decksResp = await fetch('./data/decks.bin');
+                if (!decksResp.ok) {
+                    throw new Error(`Failed to load decks.bin: ${decksResp.status}. Run 'mtg export-wasm' first.`);
+                }
+                const decksData = new Uint8Array(await decksResp.arrayBuffer());
+                const deckCount = cardDb.load_decks(decksData);
+
+                // Get deck names
+                deckNames = JSON.parse(cardDb.get_deck_names_json());
+                deckNames.sort();
+
+                // Populate deck selectors
+                const p1DeckSelect = document.getElementById('p1-deck');
+                const p2DeckSelect = document.getElementById('p2-deck');
+                p1DeckSelect.innerHTML = '';
+                p2DeckSelect.innerHTML = '';
+
+                for (const name of deckNames) {
+                    const info = JSON.parse(cardDb.get_deck_info_json(name));
+                    const optionText = `${name} (${info.main_deck_count} cards)`;
+
+                    const opt1 = document.createElement('option');
+                    opt1.value = name;
+                    opt1.textContent = optionText;
+                    p1DeckSelect.appendChild(opt1);
+
+                    const opt2 = document.createElement('option');
+                    opt2.value = name;
+                    opt2.textContent = optionText;
+                    p2DeckSelect.appendChild(opt2);
+                }
+
+                // Select different decks by default if we have at least 2
+                if (deckNames.length >= 2) {
+                    p2DeckSelect.selectedIndex = 1;
+                }
+
+                // Update DB stats
+                document.getElementById('db-stats').textContent =
+                    `Database: ${cardCount} cards, ${deckCount} decks`;
+
                 // Hide loading, show app
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('app').style.display = 'block';
+
+                // Enable new game button
+                document.getElementById('btn-new-game').disabled = false;
 
                 // Set up event handlers
                 document.getElementById('btn-new-game').addEventListener('click', newGame);
@@ -232,17 +339,19 @@
                 document.getElementById('btn-run-game').addEventListener('click', runFullGame);
                 document.getElementById('btn-clear-logs').addEventListener('click', clearLogs);
 
-                console.log('MTG Forge WASM initialized successfully!');
+                console.log(`MTG Forge WASM initialized: ${cardCount} cards, ${deckCount} decks`);
             } catch (error) {
                 document.getElementById('loading').innerHTML = `
                     <div class="error">
-                        <strong>Failed to load WASM module:</strong><br>
+                        <strong>Failed to load:</strong><br>
                         ${error.message}<br><br>
-                        Make sure you've built the WASM module with:<br>
-                        <code>wasm-pack build --target web --no-default-features --features wasm</code>
+                        Make sure you've:<br>
+                        1. Built the WASM module: <code>wasm-pack build ...</code><br>
+                        2. Exported card data: <code>cargo run --bin mtg -- export-wasm</code><br>
+                        3. Started a web server: <code>python -m http.server 8765</code>
                     </div>
                 `;
-                console.error('Failed to initialize WASM:', error);
+                console.error('Failed to initialize:', error);
             }
         }
 
@@ -256,22 +365,40 @@
         }
 
         function newGame() {
+            const p1Deck = document.getElementById('p1-deck').value;
+            const p2Deck = document.getElementById('p2-deck').value;
             const p1Controller = document.getElementById('p1-controller').value;
             const p2Controller = document.getElementById('p2-controller').value;
 
-            game = new WasmGame("Player 1", "Player 2", 20);
-            game.set_p1_controller(getControllerType(p1Controller));
-            game.set_p2_controller(getControllerType(p2Controller));
-            game.set_seed(BigInt(Date.now()));
+            if (!p1Deck || !p2Deck) {
+                alert('Please select decks for both players');
+                return;
+            }
 
-            document.getElementById('btn-run-turn').disabled = false;
-            document.getElementById('btn-run-game').disabled = false;
-            document.getElementById('result').style.display = 'none';
+            try {
+                // Create game with decks from database
+                const seed = BigInt(Date.now());
+                game = WasmGame.from_database(cardDb, p1Deck, p2Deck, 20, seed);
 
-            updateGameState();
-            document.getElementById('logs').textContent = 'Game started!\n';
+                game.set_p1_controller(getControllerType(p1Controller));
+                game.set_p2_controller(getControllerType(p2Controller));
 
-            console.log('New game created');
+                document.getElementById('btn-run-turn').disabled = false;
+                document.getElementById('btn-run-game').disabled = false;
+                document.getElementById('result').style.display = 'none';
+
+                // Show deck names
+                document.getElementById('p1-deck-name').textContent = `Deck: ${p1Deck}`;
+                document.getElementById('p2-deck-name').textContent = `Deck: ${p2Deck}`;
+
+                updateGameState();
+                document.getElementById('logs').textContent = `Game started!\n${p1Deck} vs ${p2Deck}\n\n`;
+
+                console.log(`New game: ${p1Deck} vs ${p2Deck}`);
+            } catch (error) {
+                alert(`Failed to create game: ${error}`);
+                console.error('Failed to create game:', error);
+            }
         }
 
         function updateGameState() {
@@ -284,11 +411,11 @@
 
             document.getElementById('p1-life').textContent = state.players[0].life;
             document.getElementById('p1-stats').textContent =
-                `Lands played: ${state.players[0].lands_played}`;
+                `Lands played: ${state.players[0].lands_played} | Battlefield: ${state.battlefield_count}`;
 
             document.getElementById('p2-life').textContent = state.players[1].life;
             document.getElementById('p2-stats').textContent =
-                `Lands played: ${state.players[1].lands_played}`;
+                `Lands played: ${state.players[1].lands_played} | Stack: ${state.stack_count}`;
 
             // Update logs
             const logs = JSON.parse(game.get_logs_json());
@@ -330,7 +457,10 @@
             if (result && result.error) {
                 resultDiv.textContent = `Error: ${result.error}`;
             } else if (result && result.winner !== null) {
-                resultDiv.textContent = `Player ${result.winner + 1} wins! (${result.end_reason} after ${result.turns_played} turns)`;
+                const p1Deck = document.getElementById('p1-deck').value;
+                const p2Deck = document.getElementById('p2-deck').value;
+                const winnerDeck = result.winner === 0 ? p1Deck : p2Deck;
+                resultDiv.textContent = `${winnerDeck} wins! (${result.end_reason} after ${result.turns_played} turns)`;
             } else if (game.is_game_over()) {
                 const p1Life = game.get_player_life(0);
                 const p2Life = game.get_player_life(1);

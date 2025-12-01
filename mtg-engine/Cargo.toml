@@ -69,6 +69,9 @@ num_cpus = { version = "1.16", optional = true }
 # High-performance allocator (native only)
 mimalloc = { version = "0.1", optional = true }
 
+# File globbing (native only, for export command)
+glob = { version = "0.3", optional = true }
+
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
@@ -100,6 +103,7 @@ native = [
     "rayon",
     "num_cpus",
     "mimalloc",
+    "glob",
 ]
 
 # WASM target features (browser-compatible, no threading)
