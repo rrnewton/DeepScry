@@ -298,3 +298,73 @@ fn test_load_mishras_factory_colorless_mana() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Spider-Ham, Peter Porker's static ability is correctly parsed
+/// The card has a multi-type buff: "Other Spiders, Boars, Bears, ... get +1/+1"
+#[test]
+fn test_load_spider_ham_static_ability() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/s/spider_ham_peter_porker.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Spider-Ham, Peter Porker");
+    assert!(def.types.contains(&CardType::Creature));
+    assert_eq!(def.power, Some(2));
+    assert_eq!(def.toughness, Some(2));
+
+    // Check that the S: ability line is in raw_abilities
+    let has_static_line = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Mode$ Continuous") && a.contains("AddPower$ 1"));
+    assert!(
+        has_static_line,
+        "Spider-Ham should have a static ability line with Mode$ Continuous"
+    );
+
+    // Check that static_abilities contains the parsed ModifyPT ability
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have exactly 1 static ability
+    assert_eq!(
+        card.static_abilities.len(),
+        1,
+        "Spider-Ham should have 1 static ability, got: {:?}",
+        card.static_abilities
+    );
+
+    // Verify it's a CreatureTypesOtherYouControl with multiple types
+    match &card.static_abilities[0] {
+        StaticAbility::ModifyPT {
+            affected,
+            power,
+            toughness,
+            description: _,
+        } => {
+            assert_eq!(*power, 1, "Power bonus should be 1");
+            assert_eq!(*toughness, 1, "Toughness bonus should be 1");
+
+            match affected {
+                AffectedSelector::CreatureTypesOtherYouControl { types } => {
+                    // Should include Spider, Boar, Bear among others
+                    assert!(
+                        types.iter().any(|t| t.as_str() == "Spider"),
+                        "Should include Spider type"
+                    );
+                    assert!(types.iter().any(|t| t.as_str() == "Boar"), "Should include Boar type");
+                    assert!(types.iter().any(|t| t.as_str() == "Bear"), "Should include Bear type");
+                    assert!(types.len() >= 15, "Should have many animal types, got {}", types.len());
+                }
+                _ => panic!("Expected CreatureTypesOtherYouControl, got {:?}", affected),
+            }
+        }
+    }
+
+    Ok(())
+}

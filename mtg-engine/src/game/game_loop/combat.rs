@@ -114,9 +114,16 @@ impl<'a> GameLoop<'a> {
                         .unwrap_or("Unknown");
 
                     // Get power/toughness for more detail
+                    // Use get_effective_power/toughness to include all continuous effects
                     if let Ok(card) = self.game.cards.get(*attacker_id) {
-                        let power = card.current_power();
-                        let toughness = card.current_toughness();
+                        let power = self
+                            .game
+                            .get_effective_power(*attacker_id)
+                            .unwrap_or(card.current_power() as i32);
+                        let toughness = self
+                            .game
+                            .get_effective_toughness(*attacker_id)
+                            .unwrap_or(card.current_toughness() as i32);
                         let message = format!(
                             "{} declares {} ({}) ({}/{}) as attacker",
                             self.get_player_name(active_player),
@@ -345,7 +352,11 @@ impl<'a> GameLoop<'a> {
                     continue;
                 }
 
-                let power = attacker.current_power();
+                // Use effective power for accurate display (includes anthem/equipment effects)
+                let power = self
+                    .game
+                    .get_effective_power(*attacker_id)
+                    .unwrap_or(attacker.current_power() as i32);
                 let attacker_name = &attacker.name;
 
                 if self.game.combat.is_blocked(*attacker_id) {
@@ -365,7 +376,10 @@ impl<'a> GameLoop<'a> {
                                 continue;
                             }
 
-                            let blocker_power = blocker.current_power();
+                            let blocker_power = self
+                                .game
+                                .get_effective_power(*blocker_id)
+                                .unwrap_or(blocker.current_power() as i32);
                             let blocker_name = &blocker.name;
                             let message = format!(
                                 "Combat: {attacker_name} ({attacker_id}) ({power} damage) ↔ {blocker_name} ({blocker_id}) ({blocker_power} damage)"

@@ -126,8 +126,16 @@ impl<'a> GameLoop<'a> {
 
                     // Format card display based on type
                     if card.is_creature() {
-                        let power = card.current_power() + card.power_bonus as i8;
-                        let toughness = card.current_toughness() + card.toughness_bonus as i8;
+                        // Use get_effective_power/toughness to include all continuous effects
+                        // (anthems, equipment, auras, counters) via CR 613 layer system
+                        let power = self
+                            .game
+                            .get_effective_power(card_id)
+                            .unwrap_or(card.current_power() as i32);
+                        let toughness = self
+                            .game
+                            .get_effective_toughness(card_id)
+                            .unwrap_or(card.current_toughness() as i32);
                         println!(
                             "    {} ({}) - {}/{}{}{}",
                             card.name, card_id, power, toughness, tap_status, sickness_status
