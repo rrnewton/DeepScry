@@ -184,14 +184,28 @@ class BackfillManager:
             print("Error detected - restoring CSV from backup")
             shutil.copy(self.csv_backup, self.csv_path)
 
+        # Save final CSV before git checkout (to avoid conflicts)
+        csv_final = Path('/tmp/backfill_final_csv.csv')
+        if self.csv_path.exists():
+            import shutil
+            shutil.copy(self.csv_path, csv_final)
+
         # Restore git state
         if self.original_branch:
             run_command(['git', 'checkout', self.original_branch], check=False, capture_output=False)
         else:
             run_command(['git', 'checkout', self.original_head], check=False, capture_output=False)
 
+        # Restore final CSV after git checkout
+        if csv_final.exists():
+            import shutil
+            shutil.copy(csv_final, self.csv_path)
+            csv_final.unlink()
+
         # Cleanup temp files
-        for temp_file in [self.csv_backup, self.patch_file]:
+        for temp_file in [self.csv_backup, self.patch_file,
+                         Path('/tmp/backfill_csv_current.csv'),
+                         Path('/tmp/gitdepth.sh.backup')]:
             if temp_file.exists():
                 temp_file.unlink()
 
@@ -201,11 +215,27 @@ class BackfillManager:
         print(commit.message)
         print()
 
+        # Save CSV to temp location before checkout (so git doesn't complain)
+        csv_temp = Path('/tmp/backfill_csv_current.csv')
+        if self.csv_path.exists():
+            import shutil
+            shutil.copy(self.csv_path, csv_temp)
+
         # Checkout commit
         result = run_command(['git', 'checkout', commit.hash], check=False, capture_output=False)
         if result.returncode != 0:
             print(f"✗ Failed to checkout {commit.short_hash}")
+            # Restore CSV if needed
+            if csv_temp.exists():
+                shutil.copy(csv_temp, self.csv_path)
+                csv_temp.unlink()
             return False
+
+        # Restore CSV after checkout
+        if csv_temp.exists():
+            import shutil
+            shutil.copy(csv_temp, self.csv_path)
+            csv_temp.unlink()
 
         # Verify depth matches expectation
         if not verify_depth(commit.depth):
@@ -215,6 +245,23 @@ class BackfillManager:
             return False
 
         print(f"✓ Checked out commit at depth {commit.depth}")
+
+        # Install updated gitdepth.sh so benchmarks record correct depth
+        # Save original first
+        gitdepth_backup = Path('/tmp/gitdepth.sh.backup')
+        gitdepth_path = Path('scripts/gitdepth.sh')
+        import shutil
+        if gitdepth_path.exists():
+            shutil.copy(gitdepth_path, gitdepth_backup)
+
+        # Write updated version
+        gitdepth_path.write_text('''#!/bin/bash
+# Count commits in first-parent (main branch) history only
+# This matches what users see in `git log --oneline --first-parent`
+git rev-list --count --first-parent HEAD
+''')
+        gitdepth_path.chmod(0o755)
+        print(f"✓ Installed updated gitdepth.sh for consistent depth recording")
 
         # Apply patch if needed (only for commits older than patch introduction)
         needs_patch = commit.depth < PATCH_INTRODUCED_DEPTH
@@ -250,10 +297,16 @@ class BackfillManager:
                 shutil.copy(csv_pre_bench, self.csv_path)
                 csv_pre_bench.unlink()
 
-        # Restore patched file
+        # Restore modified files
         if needs_patch:
             run_command(['git', 'checkout', 'mtg-benchmarks/benches/game_benchmark.rs'],
                        check=False, capture_output=True)
+
+        # Restore original gitdepth.sh
+        if gitdepth_backup.exists():
+            import shutil
+            shutil.copy(gitdepth_backup, gitdepth_path)
+            gitdepth_backup.unlink()
 
         return success
 
