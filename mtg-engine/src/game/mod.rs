@@ -4,6 +4,7 @@ pub mod actions;
 pub mod combat;
 pub mod continuous_effects;
 pub mod controller;
+#[cfg(feature = "native-tui")]
 pub mod fancy_fixed_controller;
 #[cfg(feature = "native-tui")]
 pub mod fancy_tui_controller;
@@ -43,6 +44,7 @@ mod test_spider_suit;
 pub use combat::CombatState;
 pub use continuous_effects::PTBreakdown;
 pub use controller::{format_choice_menu, GameStateView, PlayerController};
+#[cfg(feature = "native-tui")]
 pub use fancy_fixed_controller::FancyFixedController;
 #[cfg(feature = "native-tui")]
 pub use fancy_tui_controller::FancyTuiController;
