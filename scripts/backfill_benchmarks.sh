@@ -111,15 +111,29 @@ echo ""
 
 # Function to restore original state
 restore_state() {
+    local exit_code=$?
     echo ""
     echo "=== Restoring original state ==="
-    if [[ "$ORIGINAL_BRANCH" == "detached" ]]; then
-        git checkout "$ORIGINAL_HEAD" 2>/dev/null || true
-    else
-        git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+
+    # If there was an error and we have a backup, restore it
+    if [[ $exit_code -ne 0 && -f "${CSV_FILE}.backfill_backup" ]]; then
+        echo "Error detected - restoring CSV from backup"
+        cp "${CSV_FILE}.backfill_backup" "$CSV_FILE"
     fi
-    # Clean up patch file
+
+    # Restore git state (suppress submodule warnings)
+    if [[ "$ORIGINAL_BRANCH" == "detached" ]]; then
+        git checkout "$ORIGINAL_HEAD" 2>&1 | grep -v "Submodule" || true
+    else
+        git checkout "$ORIGINAL_BRANCH" 2>&1 | grep -v "Submodule" || true
+    fi
+
+    # Clean up patch file and backups
     rm -f "$PATCH_FILE"
+    rm -f "${CSV_FILE}.backfill_backup"
+    rm -f "${CSV_FILE}.pre_bench"
+
+    exit $exit_code
 }
 
 # Trap to ensure we restore state on exit
@@ -211,6 +225,14 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "Next step (without --dry-run): Clean CSV and benchmark missing commits"
     exit 0
 fi
+
+# Save backup of CSV before we start
+CSV_BACKUP="${CSV_FILE}.backfill_backup"
+if [ -f "$CSV_FILE" ]; then
+    cp "$CSV_FILE" "$CSV_BACKUP"
+    echo "Created CSV backup: $CSV_BACKUP"
+fi
+echo ""
 
 # Use Python to clean CSV based on reuse policy
 echo "=== Cleaning CSV based on reuse policy ==="
@@ -312,8 +334,8 @@ for item in "${COMMITS_TO_BENCHMARK[@]}"; do
     git log -1 --oneline "$hash"
     echo ""
 
-    # Checkout the commit
-    git checkout "$hash" 2>/dev/null
+    # Checkout the commit (suppress submodule warnings)
+    git checkout "$hash" 2>&1 | grep -v "Submodule" || true
 
     # Apply benchmark naming patch
     echo "Applying benchmark naming patch..."
@@ -333,20 +355,34 @@ for item in "${COMMITS_TO_BENCHMARK[@]}"; do
     # Clean any previous build artifacts to ensure fresh build
     cargo clean -q 2>/dev/null || true
 
+    # Save CSV before benchmarking (in case benchmark fails partway)
+    CSV_PRE_BENCH="${CSV_FILE}.pre_bench"
+    cp "$CSV_FILE" "$CSV_PRE_BENCH"
+
     # Run benchmark (which appends to CSV)
     if ! ./scripts/run_benchmark.sh; then
         echo "Error: Benchmark failed for depth $depth"
+        # Restore CSV to pre-benchmark state
+        echo "Restoring CSV to pre-benchmark state"
+        cp "$CSV_PRE_BENCH" "$CSV_FILE"
+        rm -f "$CSV_PRE_BENCH"
         # Restore clean state before continuing
         git checkout mtg-benchmarks/benches/game_benchmark.rs 2>/dev/null || true
         echo "Continuing with next commit..."
         continue
     fi
 
+    # Benchmark succeeded - remove pre-benchmark backup
+    rm -f "$CSV_PRE_BENCH"
+
     # Restore game_benchmark.rs to original state (undo patch)
     git checkout mtg-benchmarks/benches/game_benchmark.rs 2>/dev/null || true
 
     echo "✓ Benchmarked depth $depth"
 done
+
+# Success! Remove backup before restoring state
+rm -f "${CSV_FILE}.backfill_backup"
 
 # Restore to original state
 restore_state
