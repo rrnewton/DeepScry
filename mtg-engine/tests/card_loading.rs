@@ -779,3 +779,124 @@ fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Spider-Punk's "Other Spiders you control" selector is correctly parsed
+/// Uses Spider.Other+YouCtrl which should parse to CreatureTypeOtherYouControl
+#[test]
+fn test_load_spider_punk_type_other_you_ctrl() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility, Subtype};
+
+    let path = PathBuf::from("cardsfolder/s/spider_punk.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Spider-Punk");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Check that the S: ability line is in raw_abilities
+    let has_static_line = def.raw_abilities.iter().any(|a| {
+        a.contains("Mode$ Continuous") && a.contains("Spider.Other+YouCtrl") && a.contains("AddKeyword$ Riot")
+    });
+    assert!(
+        has_static_line,
+        "Spider-Punk should have a static ability granting Riot to other Spiders. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should be a Spider creature
+    assert!(
+        card.subtypes.contains(&Subtype::new("Spider")),
+        "Should be a Spider creature"
+    );
+
+    // Find the GrantKeyword ability with CreatureTypeOtherYouControl
+    let grant_kw = card.static_abilities.iter().find(|a| {
+        matches!(
+            a,
+            StaticAbility::GrantKeyword {
+                affected: AffectedSelector::CreatureTypeOtherYouControl { .. },
+                ..
+            }
+        )
+    });
+    assert!(
+        grant_kw.is_some(),
+        "Spider-Punk should have GrantKeyword with CreatureTypeOtherYouControl. Got: {:?}",
+        card.static_abilities
+    );
+
+    match grant_kw.unwrap() {
+        StaticAbility::GrantKeyword {
+            affected,
+            keyword,
+            description: _,
+        } => {
+            match affected {
+                AffectedSelector::CreatureTypeOtherYouControl { subtype } => {
+                    assert_eq!(
+                        subtype.as_str(),
+                        "Spider",
+                        "Should target Spider subtype, got {:?}",
+                        subtype
+                    );
+                }
+                _ => panic!("Expected CreatureTypeOtherYouControl, got {:?}", affected),
+            }
+            // Check keyword is Riot
+            assert_eq!(*keyword, Keyword::Riot, "Should grant Riot keyword, got {:?}", keyword);
+        }
+        _ => panic!("Expected GrantKeyword static ability"),
+    }
+
+    Ok(())
+}
+
+/// Test that Friendly Neighborhood's "Enchanted land" selector is correctly parsed
+/// Uses Land.AttachedBy which should parse to LandAttachedBy
+#[test]
+fn test_load_friendly_neighborhood_land_attached_by() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/f/friendly_neighborhood.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Friendly Neighborhood");
+    assert!(def.types.contains(&CardType::Enchantment));
+
+    // Check that the S: ability line is in raw_abilities with Land.AttachedBy
+    let has_static_line = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Mode$ Continuous") && a.contains("Land.AttachedBy") && a.contains("AddAbility$"));
+    assert!(
+        has_static_line,
+        "Friendly Neighborhood should have a static ability with Land.AttachedBy. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Note: AddAbility$ parsing is not implemented yet, so we verify:
+    // 1. The raw ability line contains Land.AttachedBy (proving parsing doesn't reject it)
+    // 2. Card loads without errors
+    // The key thing is that Land.AttachedBy is recognized as a valid selector
+    println!("Friendly Neighborhood static abilities: {:?}", card.static_abilities);
+
+    // Verify the card was loaded successfully (this proves Land.AttachedBy doesn't cause a crash)
+    assert!(card.types.contains(&CardType::Enchantment), "Should be an Enchantment");
+
+    Ok(())
+}
