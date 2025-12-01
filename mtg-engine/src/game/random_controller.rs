@@ -75,33 +75,38 @@ impl PlayerController for RandomController {
         // This allows actions to be taken most of the time while still preventing infinite loops
         if available.is_empty() || self.rng.gen_bool(0.3) {
             // Pass priority = choice 0
-            let player_name = view.player_name();
-            view.logger()
-                .controller_choice("RANDOM", &format!("{} chose 'p' (pass priority)", player_name));
+            // Only format expensive strings if logging is actually active
+            if view.logger().is_choice_logging_active() {
+                let player_name = view.player_name();
+                view.logger()
+                    .controller_choice("RANDOM", &format!("{} chose 'p' (pass priority)", player_name));
+            }
             return ChoiceResult::Ok(None);
         }
 
         // Randomly choose one of the available spell abilities
         let ability_index = self.rng.gen_range(0..available.len());
 
-        // Display which choice was made
-        let choice_description = match &available[ability_index] {
-            SpellAbility::PlayLand { card_id } => {
-                format!("Play land: {}", view.card_name(*card_id).unwrap_or_default())
-            }
-            SpellAbility::CastSpell { card_id } => {
-                format!("Cast spell: {}", view.card_name(*card_id).unwrap_or_default())
-            }
-            SpellAbility::ActivateAbility { card_id, .. } => {
-                format!("Activate ability: {}", view.card_name(*card_id).unwrap_or_default())
-            }
-        };
+        // Only format expensive log strings if logging is actually active
+        if view.logger().is_choice_logging_active() {
+            let choice_description = match &available[ability_index] {
+                SpellAbility::PlayLand { card_id } => {
+                    format!("Play land: {}", view.card_name(*card_id).unwrap_or_default())
+                }
+                SpellAbility::CastSpell { card_id } => {
+                    format!("Cast spell: {}", view.card_name(*card_id).unwrap_or_default())
+                }
+                SpellAbility::ActivateAbility { card_id, .. } => {
+                    format!("Activate ability: {}", view.card_name(*card_id).unwrap_or_default())
+                }
+            };
 
-        let player_name = view.player_name();
-        view.logger().controller_choice(
-            "RANDOM",
-            &format!("{} chose {} - {}", player_name, ability_index, choice_description),
-        );
+            let player_name = view.player_name();
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!("{} chose {} - {}", player_name, ability_index, choice_description),
+            );
+        }
         ChoiceResult::Ok(Some(available[ability_index].clone()))
     }
 
@@ -115,8 +120,10 @@ impl PlayerController for RandomController {
         // TODO: Improve targeting logic based on spell requirements
         let result = if valid_targets.is_empty() {
             // Only log when there are no targets (could be meaningful)
-            view.logger()
-                .controller_choice("RANDOM", "Chose no targets (none available)");
+            if view.logger().is_choice_logging_active() {
+                view.logger()
+                    .controller_choice("RANDOM", "Chose no targets (none available)");
+            }
             SmallVec::new()
         } else if valid_targets.len() == 1 {
             // Only one target available - no choice to make, don't log
@@ -126,10 +133,12 @@ impl PlayerController for RandomController {
         } else {
             // Multiple targets - this is a real choice
             let index = self.rng.gen_range(0..valid_targets.len());
-            view.logger().controller_choice(
-                "RANDOM",
-                &format!("Chose target {} out of choices 0-{}", index, valid_targets.len() - 1),
-            );
+            if view.logger().is_choice_logging_active() {
+                view.logger().controller_choice(
+                    "RANDOM",
+                    &format!("Chose target {} out of choices 0-{}", index, valid_targets.len() - 1),
+                );
+            }
             let mut targets = SmallVec::new();
             targets.push(valid_targets[index]);
             targets
@@ -153,8 +162,8 @@ impl PlayerController for RandomController {
         let mut shuffled: SmallVec<[CardId; 8]> = available_sources.iter().copied().collect();
         shuffled.shuffle(&mut self.rng);
 
-        // Only log if there's a real choice (more sources than needed)
-        if available_sources.len() > needed {
+        // Only log if there's a real choice (more sources than needed) AND logging is active
+        if available_sources.len() > needed && view.logger().is_choice_logging_active() {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!(
@@ -179,23 +188,26 @@ impl PlayerController for RandomController {
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Randomly decide whether each creature attacks
         let mut attackers = SmallVec::new();
+        let log_active = view.logger().is_choice_logging_active();
 
         for (idx, &creature_id) in available_creatures.iter().enumerate() {
             // 50% chance each creature attacks
             if self.rng.gen_bool(0.5) {
-                view.logger().controller_choice(
-                    "RANDOM",
-                    &format!(
-                        "Chose creature {} to attack (50% probability) out of {} available creatures",
-                        idx,
-                        available_creatures.len()
-                    ),
-                );
+                if log_active {
+                    view.logger().controller_choice(
+                        "RANDOM",
+                        &format!(
+                            "Chose creature {} to attack (50% probability) out of {} available creatures",
+                            idx,
+                            available_creatures.len()
+                        ),
+                    );
+                }
                 attackers.push(creature_id);
             }
         }
 
-        if attackers.is_empty() && !available_creatures.is_empty() {
+        if attackers.is_empty() && !available_creatures.is_empty() && log_active {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!(
@@ -216,10 +228,13 @@ impl PlayerController for RandomController {
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Randomly assign blockers to attackers
         let mut blocks = SmallVec::new();
+        let log_active = view.logger().is_choice_logging_active();
 
         if attackers.is_empty() {
-            view.logger()
-                .controller_choice("RANDOM", "Chose no blockers (no attackers to block)");
+            if log_active {
+                view.logger()
+                    .controller_choice("RANDOM", "Chose no blockers (no attackers to block)");
+            }
             return ChoiceResult::Ok(blocks);
         }
 
@@ -228,20 +243,22 @@ impl PlayerController for RandomController {
             if self.rng.gen_bool(0.5) {
                 // Pick a random attacker to block
                 let attacker_idx = self.rng.gen_range(0..attackers.len());
-                view.logger().controller_choice(
-                    "RANDOM",
-                    &format!(
-                        "Chose blocker {} (50% probability) to block attacker {} out of {} attackers",
-                        blocker_idx,
-                        attacker_idx,
-                        attackers.len()
-                    ),
-                );
+                if log_active {
+                    view.logger().controller_choice(
+                        "RANDOM",
+                        &format!(
+                            "Chose blocker {} (50% probability) to block attacker {} out of {} attackers",
+                            blocker_idx,
+                            attacker_idx,
+                            attackers.len()
+                        ),
+                    );
+                }
                 blocks.push((blocker_id, attackers[attacker_idx]));
             }
         }
 
-        if blocks.is_empty() && !available_blockers.is_empty() {
+        if blocks.is_empty() && !available_blockers.is_empty() && log_active {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!("Chose no blockers from {} available blockers", available_blockers.len()),
@@ -262,8 +279,8 @@ impl PlayerController for RandomController {
         let mut ordered_blockers: SmallVec<[CardId; 4]> = blockers.iter().copied().collect();
         ordered_blockers.shuffle(&mut self.rng);
 
-        // Only log if there's a real choice (2+ blockers to order)
-        if blockers.len() >= 2 {
+        // Only log if there's a real choice (2+ blockers to order) AND logging is active
+        if blockers.len() >= 2 && view.logger().is_choice_logging_active() {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!("Chose damage assignment order (shuffled {} blockers)", blockers.len()),
@@ -286,8 +303,8 @@ impl PlayerController for RandomController {
 
         let num_discarding = count.min(hand.len());
 
-        // Only log if there's a real choice (more cards than we need to discard)
-        if hand.len() > count {
+        // Only log if there's a real choice (more cards than we need to discard) AND logging is active
+        if hand.len() > count && view.logger().is_choice_logging_active() {
             view.logger().controller_choice(
                 "RANDOM",
                 &format!(
@@ -303,10 +320,14 @@ impl PlayerController for RandomController {
 
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
         // Randomly choose a card from the library, or decline to find
+        let log_active = view.logger().is_choice_logging_active();
+
         if valid_cards.is_empty() {
             // No valid cards - must fail to find
-            view.logger()
-                .controller_choice("RANDOM", "Library search: fail to find (no valid cards)");
+            if log_active {
+                view.logger()
+                    .controller_choice("RANDOM", "Library search: fail to find (no valid cards)");
+            }
             return ChoiceResult::Ok(None);
         }
 
@@ -318,17 +339,21 @@ impl PlayerController for RandomController {
             let choice = valid_cards.choose(&mut self.rng).copied();
 
             if let Some(card_id) = choice {
-                // Log the choice with card name if available
-                let card_name = view.get_card_name(card_id).unwrap_or("Unknown".to_string());
-                view.logger()
-                    .controller_choice("RANDOM", &format!("Library search: found {}", card_name));
+                // Log the choice with card name if available (only if logging active)
+                if log_active {
+                    let card_name = view.get_card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
+                    view.logger()
+                        .controller_choice("RANDOM", &format!("Library search: found {}", card_name));
+                }
             }
 
             ChoiceResult::Ok(choice)
         } else {
             // Randomly decide to fail to find
-            view.logger()
-                .controller_choice("RANDOM", "Library search: fail to find (declined)");
+            if log_active {
+                view.logger()
+                    .controller_choice("RANDOM", "Library search: fail to find (declined)");
+            }
             ChoiceResult::Ok(None)
         }
     }

@@ -162,6 +162,25 @@ impl GameLogger {
         matches!(self.output_mode, OutputMode::Memory | OutputMode::Both)
     }
 
+    /// Check if controller_choice logging is active
+    ///
+    /// Returns true if calls to `controller_choice()` will actually produce output.
+    /// Use this before expensive string formatting to avoid allocation overhead
+    /// when logging is disabled.
+    ///
+    /// # Example
+    /// ```ignore
+    /// if logger.is_choice_logging_active() {
+    ///     logger.controller_choice("RANDOM", &format!("expensive: {}", data));
+    /// }
+    /// ```
+    #[inline]
+    pub fn is_choice_logging_active(&self) -> bool {
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+        let should_log = self.numeric_choices || self.verbosity >= VerbosityLevel::Normal;
+        should_log || should_capture || self.debug_state_hash
+    }
+
     /// Flush buffered logs to stdout, respecting verbosity and format settings
     ///
     /// This prints all buffered logs and then clears the buffer.
