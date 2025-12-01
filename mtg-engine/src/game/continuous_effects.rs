@@ -695,6 +695,7 @@ impl GameState {
     ///     // Spider has Riot from Spider-Punk
     /// }
     /// ```
+    #[inline]
     pub fn has_keyword_with_effects(&self, creature_id: CardId, keyword: crate::core::Keyword) -> bool {
         // First check the card's static keywords (fast path)
         if let Ok(card) = self.cards.get(creature_id) {
@@ -841,5 +842,75 @@ mod tests {
         // Unswitched: 1+0 / 3+1 = 1/4
         // Switched: 4/1
         assert_eq!(breakdown.final_pt(), (4, 1));
+    }
+
+    #[test]
+    fn test_creature_has_keyword_inherent() {
+        use crate::core::{Card, CardId, CardType, Keyword};
+
+        // Create a simple game state
+        let mut game = crate::game::GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let player_id = game.players[0].id;
+
+        // Create a creature with flying
+        let creature_id: CardId = game.next_id();
+        let mut creature = Card::new(creature_id, "Bird", player_id);
+        creature.add_type(CardType::Creature);
+        creature.set_power(Some(1));
+        creature.set_toughness(Some(1));
+        creature.keywords.insert(Keyword::Flying);
+
+        game.cards.insert(creature_id, creature);
+
+        // Test inherent keyword detection
+        assert!(game.has_keyword_with_effects(creature_id, Keyword::Flying));
+        assert!(!game.has_keyword_with_effects(creature_id, Keyword::Haste));
+    }
+
+    #[test]
+    fn test_creature_has_keyword_granted() {
+        use crate::core::effects::AffectedSelector;
+        use crate::core::StaticAbility;
+        use crate::core::{Card, CardId, CardType, Keyword};
+
+        // Create a simple game state
+        let mut game = crate::game::GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let player_id = game.players[0].id;
+
+        // Create a creature without haste
+        let creature_id: CardId = game.next_id();
+        let mut creature = Card::new(creature_id, "Spider", player_id);
+        creature.add_type(CardType::Creature);
+        creature.subtypes.push("Spider".into());
+        creature.set_power(Some(2));
+        creature.set_toughness(Some(2));
+        creature.controller = player_id;
+        game.cards.insert(creature_id, creature);
+
+        // Create a lord that grants haste to other Spiders (like Spider-Punk)
+        let lord_id: CardId = game.next_id();
+        let mut lord = Card::new(lord_id, "Spider Lord", player_id);
+        lord.add_type(CardType::Creature);
+        lord.subtypes.push("Spider".into());
+        lord.controller = player_id;
+        lord.static_abilities.push(StaticAbility::GrantKeyword {
+            affected: AffectedSelector::CreatureTypeOtherYouControl {
+                subtype: "Spider".into(),
+            },
+            keyword: Keyword::Haste,
+            description: "Other Spiders you control have haste".into(),
+        });
+        game.cards.insert(lord_id, lord);
+
+        // Add both to battlefield
+        game.battlefield.add(creature_id);
+        game.battlefield.add(lord_id);
+
+        // The creature should have haste from the lord's grant
+        assert!(!game.cards.get(creature_id).unwrap().has_keyword(Keyword::Haste)); // Inherent: no
+        assert!(game.has_keyword_with_effects(creature_id, Keyword::Haste)); // With grants: yes
+
+        // The lord itself should NOT have haste (ability says "other")
+        assert!(!game.has_keyword_with_effects(lord_id, Keyword::Haste));
     }
 }
