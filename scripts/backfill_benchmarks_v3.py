@@ -274,12 +274,13 @@ def main():
                 logging.error(f"✗ Checkout failed for {commit.short_hash}")
                 continue
 
-            # Verify depth using inclusive counting
-            result = run_cmd(['git', 'rev-list', '--count', 'HEAD'])
-            actual_depth = int(result.stdout.strip())
-            if actual_depth != commit.depth:
-                logging.error(f"✗ Depth mismatch: expected {commit.depth}, got {actual_depth}")
+            # Verify we checked out the right commit
+            result = run_cmd(['git', 'rev-parse', 'HEAD'])
+            actual_hash = result.stdout.strip()
+            if actual_hash != commit.hash:
+                logging.error(f"✗ Checkout mismatch: expected {commit.hash}, got {actual_hash}")
                 continue
+            logging.info(f"Checked out {commit.short_hash} successfully")
 
             # Install updated gitdepth.sh
             Path('scripts/gitdepth.sh').write_text(UPDATED_GITDEPTH)
