@@ -1,4 +1,5 @@
 #!/bin/bash
-# git log --pretty=oneline | wc -l
-git rev-list --count HEAD
+# Count commits in first-parent (main branch) history only
+# This matches what users see in `git log --oneline --first-parent`
+git rev-list --count --first-parent HEAD
 
