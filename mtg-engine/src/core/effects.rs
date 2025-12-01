@@ -412,6 +412,19 @@ pub enum AffectedSelector {
         /// The card type (e.g., "Artifact")
         card_type: crate::core::CardType,
     },
+
+    /// Land creatures you control
+    /// Corresponds to: `Affected$ Creature.Land+YouCtrl`
+    /// Used by cards that grant abilities to animated lands
+    LandCreaturesYouControl,
+
+    /// Non-human creatures you control, excluding self
+    /// Corresponds to: `Affected$ Creature.nonHuman+Other+YouCtrl`
+    /// Used by cards like Mikaeus, the Unhallowed
+    CreatureNonTypeOtherYouControl {
+        /// The creature subtype to exclude (e.g., "Human")
+        excluded_subtype: crate::core::Subtype,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility

@@ -1599,9 +1599,27 @@ impl CardDefinition {
         /// - "Creature.Goblin+Other+YouCtrl" → CreatureTypeOtherYouControl { Goblin }
         /// - "Creature.Artifact+YouCtrl" → CreatureCardTypeYouControl { Artifact }
         /// - "Creature.Artifact+Other+YouCtrl" → CreatureCardTypeOtherYouControl { Artifact }
+        /// - "Creature.Land+YouCtrl" → LandCreaturesYouControl
+        /// - "Creature.nonHuman+Other+YouCtrl" → CreatureNonTypeOtherYouControl { Human }
         ///
         /// Returns None if the pattern doesn't match a recognized format.
         fn parse_tribal_selector(value: &str) -> Option<AffectedSelector> {
+            // Pattern: Creature.nonTYPE+Other+YouCtrl (e.g., "Creature.nonHuman+Other+YouCtrl")
+            // For cards like Mikaeus, the Unhallowed that buff non-Human creatures
+            if value.starts_with("Creature.non") && value.ends_with("+Other+YouCtrl") {
+                let remainder = value.strip_prefix("Creature.non")?;
+                let excluded_type = remainder.strip_suffix("+Other+YouCtrl")?;
+                return Some(AffectedSelector::CreatureNonTypeOtherYouControl {
+                    excluded_subtype: crate::core::Subtype::new(excluded_type),
+                });
+            }
+
+            // Pattern: Creature.Land+YouCtrl (land creatures you control)
+            // For cards that grant abilities to animated lands
+            if value == "Creature.Land+YouCtrl" {
+                return Some(AffectedSelector::LandCreaturesYouControl);
+            }
+
             // Pattern: Creature.TYPE+Other+YouCtrl (e.g., "Creature.Goblin+Other+YouCtrl" or "Creature.Artifact+Other+YouCtrl")
             // This is the most common format for tribal lords / type-based lords
             if value.starts_with("Creature.") && value.ends_with("+Other+YouCtrl") {

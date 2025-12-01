@@ -435,6 +435,51 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            AffectedSelector::LandCreaturesYouControl => {
+                                // Check if this affects the creature:
+                                // 1. Creature must be a Land (type Creature + type Land)
+                                // 2. Creature must be controlled by the source's controller
+                                // Example: "Land creatures you control have trample"
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if creature is both a Creature and a Land
+                                // (animated lands like Dryad Arbor or man-lands)
+                                if creature.is_creature() && creature.cache.is_land {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::CreatureNonTypeOtherYouControl { excluded_subtype } => {
+                                // Check if this affects the creature:
+                                // 1. Creature must NOT have the specified subtype (e.g., not Human)
+                                // 2. Creature must be controlled by the source's controller
+                                // 3. Creature must NOT be the source itself (Other qualifier)
+                                // Example: Mikaeus, the Unhallowed - "Other non-Human creatures you control get +1/+1"
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "Other" - exclude the source card itself
+                                if creature_id == source_id {
+                                    continue;
+                                }
+
+                                // Check "YouCtrl" - creature must be controlled by source's controller
+                                if creature.controller != source.controller {
+                                    continue;
+                                }
+
+                                // Check if creature does NOT have the excluded subtype
+                                if !creature.subtypes.contains(excluded_subtype) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                 }
