@@ -224,47 +224,81 @@ impl CardDefinition {
         // Parse static abilities (continuous effects)
         card.static_abilities = self.parse_static_abilities();
 
-        // Add implicit mana ability for basic lands
-        // Basic lands (Plains, Island, Swamp, Mountain, Forest) have an implicit "{T}: Add {color}"
-        // ability that's not written in the card file
-        if card.is_land()
-            && self.subtypes.iter().any(|st| {
-                let st_str = st.as_str();
-                st_str == "Plains"
-                    || st_str == "Island"
-                    || st_str == "Swamp"
-                    || st_str == "Mountain"
-                    || st_str == "Forest"
-            })
-        {
-            // Determine which color to produce based on subtype
-            let mana_to_produce = if self.subtypes.iter().any(|st| st.as_str() == "Plains") {
-                ManaCost::from_string("W")
-            } else if self.subtypes.iter().any(|st| st.as_str() == "Island") {
-                ManaCost::from_string("U")
-            } else if self.subtypes.iter().any(|st| st.as_str() == "Swamp") {
-                ManaCost::from_string("B")
-            } else if self.subtypes.iter().any(|st| st.as_str() == "Mountain") {
-                ManaCost::from_string("R")
-            } else if self.subtypes.iter().any(|st| st.as_str() == "Forest") {
-                ManaCost::from_string("G")
-            } else {
-                ManaCost::new() // Shouldn't happen
-            };
+        // Add implicit mana abilities for lands with basic land types (CR 305.6)
+        // Plains, Island, Swamp, Mountain, Forest have intrinsic "{T}: Add {color}" abilities.
+        // Dual lands like Volcanic Island (Island Mountain) get BOTH abilities.
+        if card.is_land() && !card.activated_abilities.iter().any(|ab| ab.is_mana_ability) {
+            use crate::core::{ActivatedAbility, Cost, Effect, PlayerId};
 
-            // Only add if we don't already have a mana ability
-            // (in case the card file explicitly defines one)
-            if !card.activated_abilities.iter().any(|ab| ab.is_mana_ability) {
-                use crate::core::{ActivatedAbility, Cost, Effect, PlayerId};
+            // Check each basic land type and add corresponding mana ability
+            let has_plains = self.subtypes.iter().any(|st| st.as_str() == "Plains");
+            let has_island = self.subtypes.iter().any(|st| st.as_str() == "Island");
+            let has_swamp = self.subtypes.iter().any(|st| st.as_str() == "Swamp");
+            let has_mountain = self.subtypes.iter().any(|st| st.as_str() == "Mountain");
+            let has_forest = self.subtypes.iter().any(|st| st.as_str() == "Forest");
 
+            if has_plains {
+                let mana = ManaCost::from_string("W");
                 let ability = ActivatedAbility::new(
                     Cost::Tap,
                     vec![Effect::AddMana {
-                        player: PlayerId::new(0), // Placeholder - will be filled when activated
-                        mana: mana_to_produce,
+                        player: PlayerId::new(0),
+                        mana,
                     }],
-                    format!("Add {mana_to_produce}"),
-                    true, // This IS a mana ability
+                    "Add {W}".to_string(),
+                    true,
+                );
+                card.activated_abilities.push(ability);
+            }
+            if has_island {
+                let mana = ManaCost::from_string("U");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                    }],
+                    "Add {U}".to_string(),
+                    true,
+                );
+                card.activated_abilities.push(ability);
+            }
+            if has_swamp {
+                let mana = ManaCost::from_string("B");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                    }],
+                    "Add {B}".to_string(),
+                    true,
+                );
+                card.activated_abilities.push(ability);
+            }
+            if has_mountain {
+                let mana = ManaCost::from_string("R");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                    }],
+                    "Add {R}".to_string(),
+                    true,
+                );
+                card.activated_abilities.push(ability);
+            }
+            if has_forest {
+                let mana = ManaCost::from_string("G");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                    }],
+                    "Add {G}".to_string(),
+                    true,
                 );
                 card.activated_abilities.push(ability);
             }

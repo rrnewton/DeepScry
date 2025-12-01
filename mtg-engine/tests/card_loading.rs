@@ -532,3 +532,68 @@ fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Volcanic Island correctly has Mountain and Island subtypes
+/// This is critical for dual lands to produce the correct mana colors
+#[test]
+fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId, Subtype};
+
+    let path = PathBuf::from("cardsfolder/v/volcanic_island.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Volcanic Island");
+    assert!(def.types.contains(&CardType::Land), "Should be a Land");
+
+    // Check subtypes
+    assert!(
+        def.subtypes.contains(&Subtype::new("Island")),
+        "Should have Island subtype. Subtypes: {:?}",
+        def.subtypes
+    );
+    assert!(
+        def.subtypes.contains(&Subtype::new("Mountain")),
+        "Should have Mountain subtype. Subtypes: {:?}",
+        def.subtypes
+    );
+
+    // Instantiate and check cache flags
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    assert!(
+        card.cache.has_island_subtype,
+        "Cache should have has_island_subtype=true"
+    );
+    assert!(
+        card.cache.has_mountain_subtype,
+        "Cache should have has_mountain_subtype=true for red mana production"
+    );
+    assert!(card.cache.is_land, "Cache should have is_land=true");
+
+    // Critical test: mana production should be Choice (dual land) not just Blue
+    use mtg_forge_rs::core::ManaProductionKind;
+    assert!(card.cache.is_mana_source, "Volcanic Island should be a mana source");
+
+    // Check that mana production is Choice (can produce either Blue or Red)
+    match &card.cache.mana_production.kind {
+        ManaProductionKind::Choice(colors) => {
+            assert!(
+                colors.contains(mtg_forge_rs::core::ManaColor::Blue),
+                "Should produce Blue"
+            );
+            assert!(
+                colors.contains(mtg_forge_rs::core::ManaColor::Red),
+                "Should produce Red"
+            );
+            assert_eq!(colors.len(), 2, "Should produce exactly 2 colors");
+        }
+        other => panic!("Expected ManaProductionKind::Choice for dual land, got {:?}", other),
+    }
+
+    Ok(())
+}

@@ -220,20 +220,77 @@ impl CardCache {
         self.is_mana_source = self.mana_production.produces_mana();
     }
 
-    /// Update cache based on abilities, with fallback to land name detection
+    /// Update cache based on abilities, with fallback to subtype detection
     ///
     /// This is the primary entry point for card loading. It:
     /// 1. Tries to derive mana production from parsed abilities
-    /// 2. Falls back to basic land name detection for test cards
+    /// 2. Falls back to land subtype-based detection (uses has_X_subtype flags)
+    /// 3. Falls back to basic land name detection for test cards
+    ///
+    /// IMPORTANT: Call update_from_subtypes() BEFORE this method to ensure
+    /// the subtype flags are set correctly for dual land detection.
     pub fn update_from_abilities_with_name(&mut self, abilities: &[crate::core::ActivatedAbility], name: &str) {
         self.mana_production = Self::derive_mana_production_from_abilities(abilities);
 
-        // Fallback for test cards that create basic lands without explicit abilities
+        // Fallback for lands without explicit mana abilities (basic lands, dual lands)
+        // Per MTG rules 305.6, lands with basic land types have intrinsic mana abilities
+        if !self.mana_production.produces_mana() {
+            // First try subtype-based detection (correctly handles dual lands like Volcanic Island)
+            // This uses the has_X_subtype flags set by update_from_subtypes()
+            self.mana_production = self.derive_mana_production_from_subtypes();
+        }
+
+        // Final fallback for test cards (e.g., Card::new(..., "Mountain", ...) without subtypes)
         if !self.mana_production.produces_mana() {
             self.mana_production = Self::derive_mana_production_from_name(name);
         }
 
         self.is_mana_source = self.mana_production.produces_mana();
+    }
+
+    /// Derive mana production from land subtype flags
+    ///
+    /// Uses the has_X_subtype flags set by update_from_subtypes() to determine
+    /// what colors this land can produce. Correctly handles dual lands.
+    ///
+    /// Per MTG rules 305.6, lands with basic land types have intrinsic mana abilities:
+    /// - Plains produces {W}
+    /// - Island produces {U}
+    /// - Swamp produces {B}
+    /// - Mountain produces {R}
+    /// - Forest produces {G}
+    fn derive_mana_production_from_subtypes(&self) -> ManaProduction {
+        use crate::core::{ManaColor, ManaProductionKind};
+        use crate::game::mana_colors::ManaColors;
+
+        let mut colors = ManaColors::new();
+
+        if self.has_plains_subtype {
+            colors.insert(ManaColor::White);
+        }
+        if self.has_island_subtype {
+            colors.insert(ManaColor::Blue);
+        }
+        if self.has_swamp_subtype {
+            colors.insert(ManaColor::Black);
+        }
+        if self.has_mountain_subtype {
+            colors.insert(ManaColor::Red);
+        }
+        if self.has_forest_subtype {
+            colors.insert(ManaColor::Green);
+        }
+
+        let count = colors.len();
+        if count == 0 {
+            ManaProduction::default()
+        } else if count == 1 {
+            // Single color - use Fixed
+            ManaProduction::free(ManaProductionKind::Fixed(colors.iter().next().unwrap()))
+        } else {
+            // Multiple colors - use Choice (for dual lands like Volcanic Island)
+            ManaProduction::free(ManaProductionKind::Choice(colors))
+        }
     }
 
     /// Derive mana production from basic land names (fallback for tests)
