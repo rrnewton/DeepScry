@@ -64,11 +64,15 @@ pub struct WasmFancyTuiApp {
     canvas_width: u32,
     /// Canvas height in pixels (for rendering calculations)
     canvas_height: u32,
+    /// Current terminal columns
+    term_cols: u16,
+    /// Current terminal rows
+    term_rows: u16,
 }
 
 // Font metrics for 10pt Fira Mono (approximate)
 const FONT_SIZE: i32 = 10;
-const CHAR_WIDTH: u32 = 6;  // ~6px per character at 10pt
+const CHAR_WIDTH: u32 = 6; // ~6px per character at 10pt
 const CHAR_HEIGHT: u32 = 14; // ~14px line height at 10pt
 
 impl WasmFancyTuiApp {
@@ -91,7 +95,11 @@ impl WasmFancyTuiApp {
         let rows = ((usable_height / CHAR_HEIGHT) as u16).max(20).min(60);
 
         web_sys::console::log_1(
-            &format!("Creating terminal: {}x{} chars for {}x{} canvas", cols, rows, canvas_width, canvas_height).into()
+            &format!(
+                "Creating terminal: {}x{} chars for {}x{} canvas",
+                cols, rows, canvas_width, canvas_height
+            )
+            .into(),
         );
 
         // Create the soft_ratatui backend with CosmicText font rendering
@@ -111,13 +119,44 @@ impl WasmFancyTuiApp {
             terminal,
             p1_controller_type,
             p2_controller_type,
-            current_prompt: Some("Game ready. Click 'Run 1 Turn' to advance.".to_string()),
+            current_prompt: Some("Game ready. Use buttons above to advance.".to_string()),
             current_choices: Vec::new(),
             game_over: false,
             error_message: None,
             auto_run: false,
             canvas_width,
             canvas_height,
+            term_cols: cols,
+            term_rows: rows,
+        }
+    }
+
+    /// Resize the terminal if needed based on new dimensions
+    fn resize_terminal_if_needed(&mut self, new_width: u32, new_height: u32) {
+        // Calculate new terminal dimensions
+        let usable_height = new_height.saturating_sub(60); // More space for control bar
+        let new_cols = ((new_width / CHAR_WIDTH) as u16).max(80).min(200);
+        let new_rows = ((usable_height / CHAR_HEIGHT) as u16).max(20).min(60);
+
+        // Only resize if dimensions actually changed
+        if new_cols != self.term_cols || new_rows != self.term_rows {
+            web_sys::console::log_1(
+                &format!(
+                    "Resizing terminal: {}x{} -> {}x{}",
+                    self.term_cols, self.term_rows, new_cols, new_rows
+                )
+                .into(),
+            );
+
+            // Create new backend and terminal
+            let soft_backend = SoftBackend::<CosmicText>::new(new_cols, new_rows, FONT_SIZE, FONT_DATA);
+            let backend = RataguiBackend::new("mtg-tui", soft_backend);
+            self.terminal = Terminal::new(backend).expect("Failed to create terminal");
+
+            self.canvas_width = new_width;
+            self.canvas_height = new_height;
+            self.term_cols = new_cols;
+            self.term_rows = new_rows;
         }
     }
 
@@ -177,47 +216,76 @@ impl eframe::App for WasmFancyTuiApp {
             ctx.request_repaint();
         }
 
+        // Set up dark theme with visible colors
+        let mut style = (*ctx.style()).clone();
+        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(40, 60, 100);
+        style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(60, 80, 140);
+        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(80, 100, 160);
+        style.visuals.override_text_color = Some(egui::Color32::WHITE);
+        ctx.set_style(style);
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Debug: log available size
+            // Check for resize - use available size from egui
             let avail = ui.available_size();
+            let new_width = avail.x as u32;
+            let new_height = avail.y as u32;
+
+            // Resize terminal if window size changed significantly (>10px difference)
+            if new_width.abs_diff(self.canvas_width) > 10 || new_height.abs_diff(self.canvas_height) > 10 {
+                self.resize_terminal_if_needed(new_width, new_height);
+            }
+
+            // Debug: log available size
             unsafe {
                 if FRAME_COUNT <= 5 {
-                    web_sys::console::log_1(&format!("Frame {}: available size = {}x{}", FRAME_COUNT, avail.x, avail.y).into());
+                    web_sys::console::log_1(
+                        &format!("Frame {}: available size = {}x{}", FRAME_COUNT, avail.x, avail.y).into(),
+                    );
                 }
             }
-            // Control bar at the top
-            ui.horizontal(|ui| {
-                if ui.button("Run 1 Turn").clicked() {
-                    self.run_one_turn();
-                }
 
-                let auto_label = if self.auto_run { "Stop Auto" } else { "Auto Run" };
-                if ui.button(auto_label).clicked() {
-                    self.auto_run = !self.auto_run;
-                }
+            // Control bar at the top with visible buttons
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgb(20, 30, 50))
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
 
-                if self.game_over {
-                    ui.label("Game Over!");
-                    // Show winner based on life totals
-                    let p1_life = self.game.players[0].life;
-                    let p2_life = self.game.players[1].life;
-                    if p1_life <= 0 {
-                        ui.label("Player 2 wins!");
-                    } else if p2_life <= 0 {
-                        ui.label("Player 1 wins!");
-                    }
-                }
+                        if ui.button("Run 1 Turn").clicked() {
+                            self.run_one_turn();
+                        }
 
-                if let Some(ref err) = self.error_message {
-                    ui.colored_label(egui::Color32::RED, err);
-                }
+                        let auto_label = if self.auto_run { "Stop Auto" } else { "Auto Run" };
+                        if ui.button(auto_label).clicked() {
+                            self.auto_run = !self.auto_run;
+                        }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format!("Turn {}", self.game.turn.turn_number));
+                        ui.add_space(20.0);
+
+                        if self.game_over {
+                            ui.colored_label(egui::Color32::YELLOW, "Game Over!");
+                            let p1_life = self.game.players[0].life;
+                            let p2_life = self.game.players[1].life;
+                            if p1_life <= 0 {
+                                ui.colored_label(egui::Color32::GREEN, "Player 2 wins!");
+                            } else if p2_life <= 0 {
+                                ui.colored_label(egui::Color32::GREEN, "Player 1 wins!");
+                            }
+                        }
+
+                        if let Some(ref err) = self.error_message {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("Turn {}", self.game.turn.turn_number));
+                        });
+                    });
                 });
-            });
 
-            ui.separator();
+            ui.add_space(4.0);
 
             // Render the TUI to the terminal
             let view = GameStateView::new(&self.game, self.renderer.player_id);
@@ -232,16 +300,23 @@ impl eframe::App for WasmFancyTuiApp {
             });
 
             // Display the terminal as an egui widget
-            // Use the canvas dimensions minus some padding for controls
+            // Use available space from ui, leaving room for margins
+            let remaining = ui.available_size();
             let desired_size = egui::vec2(
-                self.canvas_width as f32 - 16.0,  // Small margin
-                self.canvas_height as f32 - 50.0,  // Space for control bar + separator
+                remaining.x - 8.0, // Small margin
+                remaining.y - 8.0, // Small margin
             );
 
             // Debug: log before adding widget
             unsafe {
                 if FRAME_COUNT <= 5 {
-                    web_sys::console::log_1(&format!("Frame {}: adding terminal widget, desired_size={}x{}", FRAME_COUNT, desired_size.x, desired_size.y).into());
+                    web_sys::console::log_1(
+                        &format!(
+                            "Frame {}: adding terminal widget, desired_size={}x{}",
+                            FRAME_COUNT, desired_size.x, desired_size.y
+                        )
+                        .into(),
+                    );
                 }
             }
 
@@ -309,9 +384,7 @@ pub fn launch_fancy_tui(
     let _ = style.set_property("width", &format!("{}px", canvas_width));
     let _ = style.set_property("height", &format!("{}px", canvas_height));
 
-    web_sys::console::log_1(
-        &format!("Canvas configured: {}x{}", canvas_width, canvas_height).into()
-    );
+    web_sys::console::log_1(&format!("Canvas configured: {}x{}", canvas_width, canvas_height).into());
 
     // Run the eframe app asynchronously
     wasm_bindgen_futures::spawn_local(async move {

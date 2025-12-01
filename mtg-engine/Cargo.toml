@@ -98,7 +98,7 @@ tempfile = "3.10.1"
 egui_ratatui = { version = "2.0", optional = true, default-features = false }
 # soft_ratatui 0.1.x with cosmic-text feature for font rendering
 soft_ratatui = { version = "0.1", optional = true, default-features = false, features = ["cosmic-text"] }
-eframe = { version = "0.33", optional = true, default-features = false, features = ["glow", "web_screen_reader"] }
+eframe = { version = "0.33", optional = true, default-features = false, features = ["glow", "web_screen_reader", "default_fonts"] }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 
 [features]
