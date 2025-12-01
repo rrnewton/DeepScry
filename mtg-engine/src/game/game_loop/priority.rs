@@ -98,6 +98,13 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
+                    Effect::ExilePermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                        let replaced = Effect::ExilePermanent {
+                            target: targets[target_index],
+                        };
+                        target_index += 1;
+                        replaced
+                    }
                     _ => effect.clone(),
                 };
 
