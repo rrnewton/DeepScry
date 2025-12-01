@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-30T14:51:46.958157234+00:00
+updated_at: 2025-12-01T11:30:19.830362978+00:00
 ---
 
 # Description
@@ -29,6 +29,11 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - Variable buffs (AddPower$ X) not yet supported
 
 ## Completed Work
+
+**Trigger Self-Only Fix (2025-12-01_#1057(6d87c69)):**
+- ✅ ETB triggers now correctly only fire for Card.Self triggers
+- ✅ Added trigger_self_only field to Trigger struct
+- ✅ Spider-Ham and similar cards with ETB triggers no longer incorrectly fire when other copies enter
 
 **Death Triggers (2025-11, commit 6b4ff21):**
 - ✅ Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)

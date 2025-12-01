@@ -276,15 +276,32 @@ pub struct Trigger {
 
     /// Description of the trigger (for logging)
     pub description: String,
+
+    /// If true, this trigger only fires when the source card itself triggers the event
+    /// (e.g., "When this creature enters" only fires for this specific creature)
+    /// If false, triggers for any card matching the event (e.g., "When any creature enters")
+    pub trigger_self_only: bool,
 }
 
 impl Trigger {
-    /// Create a new trigger
+    /// Create a new trigger with trigger_self_only defaulting to true
+    /// Most ETB/LTB triggers only fire for the card itself
     pub fn new(event: TriggerEvent, effects: Vec<Effect>, description: String) -> Self {
         Trigger {
             event,
             effects,
             description,
+            trigger_self_only: true, // Default: only fire for this card
+        }
+    }
+
+    /// Create a new trigger that fires for any card matching the event
+    pub fn new_any(event: TriggerEvent, effects: Vec<Effect>, description: String) -> Self {
+        Trigger {
+            event,
+            effects,
+            description,
+            trigger_self_only: false,
         }
     }
 }

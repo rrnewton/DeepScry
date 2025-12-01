@@ -1144,10 +1144,13 @@ impl GameState {
             .filter_map(|&card_id| {
                 if let Ok(card) = self.cards.get(card_id) {
                     // Find triggers matching this event
+                    // For trigger_self_only triggers, only fire if this card is the source
                     let matching_triggers: Vec<Effect> = card
                         .triggers
                         .iter()
-                        .filter(|trigger| trigger.event == event)
+                        .filter(|trigger| {
+                            trigger.event == event && (!trigger.trigger_self_only || card_id == source_card_id)
+                        })
                         .flat_map(|trigger| trigger.effects.clone())
                         .collect();
 
