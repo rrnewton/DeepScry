@@ -67,8 +67,9 @@ impl GameState {
 
         // Check for summoning sickness
         // Creatures can't attack the turn they entered the battlefield unless they have haste
+        // Uses has_keyword_with_effects to account for granted haste (e.g., from Spider-Punk)
         if let Some(entered_turn) = card.turn_entered_battlefield {
-            if entered_turn == self.turn.turn_number && !card.has_keyword(Keyword::Haste) {
+            if entered_turn == self.turn.turn_number && !self.has_keyword_with_effects(card_id, Keyword::Haste) {
                 return Err(MtgError::InvalidAction(
                     "Creature has summoning sickness and can't attack this turn".to_string(),
                 ));
@@ -87,7 +88,8 @@ impl GameState {
         self.combat.declare_attacker(card_id, defending_player);
 
         // Tap the creature (unless it has vigilance)
-        let has_vigilance = self.cards.get(card_id)?.has_keyword(Keyword::Vigilance);
+        // Uses has_keyword_with_effects to account for granted vigilance
+        let has_vigilance = self.has_keyword_with_effects(card_id, Keyword::Vigilance);
         if !has_vigilance {
             // Use helper that handles tap + undo log + mana version
             self.tap_permanent(card_id)?;
@@ -150,12 +152,12 @@ impl GameState {
 
         // Check Flying/Reach restrictions (MTG rule 702.9)
         // A creature with Flying can only be blocked by creatures with Flying or Reach
-        let blocker_has_flying = blocker.has_keyword(Keyword::Flying);
-        let blocker_has_reach = blocker.has_keyword(Keyword::Reach);
+        // Uses has_keyword_with_effects to account for granted flying/reach
+        let blocker_has_flying = self.has_keyword_with_effects(blocker_id, Keyword::Flying);
+        let blocker_has_reach = self.has_keyword_with_effects(blocker_id, Keyword::Reach);
 
         for &attacker_id in &attackers {
-            let attacker = self.cards.get(attacker_id)?;
-            let attacker_has_flying = attacker.has_keyword(Keyword::Flying);
+            let attacker_has_flying = self.has_keyword_with_effects(attacker_id, Keyword::Flying);
 
             if attacker_has_flying && !blocker_has_flying && !blocker_has_reach {
                 return Err(MtgError::InvalidAction(
@@ -291,10 +293,13 @@ impl GameState {
             // Check if this creature deals damage in this step
             // First strike step: only first strike or double strike creatures
             // Normal step: only creatures without first strike, plus double strike creatures
+            // Uses has_keyword_with_effects to account for granted keywords
+            let has_first_strike = self.has_keyword_with_effects(attacker_id, Keyword::FirstStrike);
+            let has_double_strike = self.has_keyword_with_effects(attacker_id, Keyword::DoubleStrike);
             let deals_damage_this_step = if first_strike_step {
-                attacker.has_first_strike() || attacker.has_double_strike()
+                has_first_strike || has_double_strike
             } else {
-                attacker.has_normal_strike()
+                has_double_strike || !has_first_strike // has_normal_strike logic
             };
 
             if !deals_damage_this_step {
@@ -326,7 +331,8 @@ impl GameState {
                 // - If multiple creatures are blocking: assign at least lethal to each
                 //   before assigning to the next (can assign more)
                 // Note: Current implementation doesn't track damage, so lethal = toughness
-                let has_trample = attacker.has_trample();
+                // Uses has_keyword_with_effects to account for granted trample
+                let has_trample = self.has_keyword_with_effects(attacker_id, Keyword::Trample);
                 for blocker_id in &ordered_blockers {
                     if remaining_power <= 0 {
                         break;
@@ -338,7 +344,8 @@ impl GameState {
                     // Lethal damage is the creature's toughness
                     // MTG Rules 702.2c: If attacker has deathtouch, any nonzero damage is lethal
                     // (In full MTG, this would be toughness minus damage already marked)
-                    let has_deathtouch = attacker.has_deathtouch();
+                    // Uses has_keyword_with_effects to account for granted deathtouch
+                    let has_deathtouch = self.has_keyword_with_effects(attacker_id, Keyword::Deathtouch);
                     let lethal_damage = if has_deathtouch && blocker_toughness > 0 {
                         1 // Any nonzero damage from deathtouch is lethal
                     } else {
@@ -371,7 +378,7 @@ impl GameState {
                 // Trample: If attacker has trample and there's remaining damage after
                 // assigning lethal to all blockers, assign remaining to defending player
                 // MTG Rules 702.19
-                if attacker.has_trample() && remaining_power > 0 {
+                if has_trample && remaining_power > 0 {
                     if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
                         *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                         // Track damage for lifelink
@@ -390,10 +397,13 @@ impl GameState {
                     let blocker = self.cards.get(*blocker_id)?;
 
                     // Check if blocker deals damage in this step
+                    // Uses has_keyword_with_effects to account for granted keywords
+                    let blocker_has_first_strike = self.has_keyword_with_effects(*blocker_id, Keyword::FirstStrike);
+                    let blocker_has_double_strike = self.has_keyword_with_effects(*blocker_id, Keyword::DoubleStrike);
                     let blocker_deals_damage = if first_strike_step {
-                        blocker.has_first_strike() || blocker.has_double_strike()
+                        blocker_has_first_strike || blocker_has_double_strike
                     } else {
-                        blocker.has_normal_strike()
+                        blocker_has_double_strike || !blocker_has_first_strike
                     };
 
                     if !blocker_deals_damage {
@@ -409,7 +419,8 @@ impl GameState {
                         // Track damage for lifelink
                         *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
                         // Track deathtouch damage from blocker (MTG Rules 702.2b)
-                        if blocker.has_deathtouch() {
+                        // Uses has_keyword_with_effects to account for granted deathtouch
+                        if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
                             deathtouch_damaged_creatures.insert(attacker_id);
                         }
                     }
@@ -428,8 +439,9 @@ impl GameState {
         // MTG Rules 702.15: Damage dealt by a source with lifelink also causes
         // its controller to gain that much life
         for (creature_id, total_damage) in &damage_dealt_by_creature {
-            if let Ok(creature) = self.cards.get(*creature_id) {
-                if creature.has_lifelink() {
+            // Uses has_keyword_with_effects to account for granted lifelink
+            if self.has_keyword_with_effects(*creature_id, Keyword::Lifelink) {
+                if let Ok(creature) = self.cards.get(*creature_id) {
                     let controller = creature.controller;
                     if let Ok(player) = self.get_player_mut(controller) {
                         player.gain_life(*total_damage);
@@ -454,7 +466,8 @@ impl GameState {
         for (creature_id, damage) in damage_to_creatures {
             if self.battlefield.contains(creature_id) {
                 if let Ok(creature) = self.cards.get(creature_id) {
-                    if creature.is_creature() && !creature.has_indestructible() {
+                    // Uses has_keyword_with_effects to account for granted indestructible
+                    if creature.is_creature() && !self.has_keyword_with_effects(creature_id, Keyword::Indestructible) {
                         // Lethal damage: damage >= toughness
                         if damage >= creature.current_toughness() as i32 {
                             creatures_to_destroy.insert(creature_id);
@@ -470,7 +483,11 @@ impl GameState {
             if self.battlefield.contains(creature_id) {
                 if let Ok(creature) = self.cards.get(creature_id) {
                     // Only destroy if it's a creature with toughness > 0 and doesn't have indestructible
-                    if creature.is_creature() && creature.current_toughness() > 0 && !creature.has_indestructible() {
+                    // Uses has_keyword_with_effects to account for granted indestructible
+                    if creature.is_creature()
+                        && creature.current_toughness() > 0
+                        && !self.has_keyword_with_effects(creature_id, Keyword::Indestructible)
+                    {
                         creatures_to_destroy.insert(creature_id);
                     }
                 }

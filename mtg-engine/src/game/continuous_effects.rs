@@ -675,6 +675,37 @@ impl GameState {
 
         granted
     }
+
+    /// Check if a creature has a keyword, including granted keywords from continuous effects.
+    ///
+    /// This method should be used when checking keywords for gameplay purposes (combat,
+    /// ability resolution, etc.) as it accounts for keywords granted by static abilities
+    /// from other permanents.
+    ///
+    /// ## CR 613 Layer 6
+    ///
+    /// Per the layer system, abilities are granted before combat-related effects are resolved.
+    ///
+    /// ## Example
+    ///
+    /// Spider-Punk grants Riot to other Spiders:
+    /// ```ignore
+    /// let creature_id = spider_token;
+    /// if game.has_keyword_with_effects(creature_id, Keyword::Riot) {
+    ///     // Spider has Riot from Spider-Punk
+    /// }
+    /// ```
+    pub fn has_keyword_with_effects(&self, creature_id: CardId, keyword: crate::core::Keyword) -> bool {
+        // First check the card's static keywords (fast path)
+        if let Ok(card) = self.cards.get(creature_id) {
+            if card.has_keyword(keyword) {
+                return true;
+            }
+        }
+
+        // Then check for granted keywords from continuous effects
+        self.get_granted_keywords(creature_id).contains(keyword)
+    }
 }
 
 #[cfg(test)]
