@@ -132,6 +132,8 @@ restore_state() {
     rm -f "$PATCH_FILE"
     rm -f "${CSV_FILE}.backfill_backup"
     rm -f "${CSV_FILE}.pre_bench"
+    rm -f "/tmp/cleaned_perf_history.csv"
+    rm -f "/tmp/backfill_final.csv"
 
     exit $exit_code
 }
@@ -228,13 +230,14 @@ fi
 
 # Save backup of CSV before we start
 CSV_BACKUP="${CSV_FILE}.backfill_backup"
+CSV_CLEANED="/tmp/cleaned_perf_history.csv"
 if [ -f "$CSV_FILE" ]; then
     cp "$CSV_FILE" "$CSV_BACKUP"
     echo "Created CSV backup: $CSV_BACKUP"
 fi
 echo ""
 
-# Use Python to clean CSV based on reuse policy
+# Use Python to clean CSV based on reuse policy (write to temp file)
 echo "=== Cleaning CSV based on reuse policy ==="
 python3 << PYTHON_SCRIPT
 import csv
@@ -242,6 +245,7 @@ import sys
 import subprocess
 
 csv_file = "$CSV_FILE"
+cleaned_csv = "$CSV_CLEANED"
 start_depth = $START_DEPTH
 end_depth = $END_DEPTH
 
@@ -303,8 +307,8 @@ for row in rows:
             print(f"  Existing: {existing_hash[:8]}, Actual: {actual_hash[:8]}", file=sys.stderr)
             removed_count += 1
 
-# Write cleaned CSV
-with open(csv_file, 'w', newline='') as f:
+# Write cleaned CSV to temp file
+with open(cleaned_csv, 'w', newline='') as f:
     if header:
         writer = csv.DictWriter(f, fieldnames=header)
         writer.writeheader()
@@ -313,6 +317,7 @@ with open(csv_file, 'w', newline='') as f:
 print(f"Removed {removed_count} rows, kept {len(kept_rows)} rows", file=sys.stderr)
 PYTHON_SCRIPT
 
+# Keep cleaned CSV for later use
 echo ""
 
 # Now benchmark missing commits
@@ -324,7 +329,7 @@ for item in "${COMMITS_TO_BENCHMARK[@]}"; do
     BENCHMARK_COUNT=$((BENCHMARK_COUNT + 1))
 
     # Check if we already have a result for this depth after cleaning
-    if grep -q "^[^,]*,[^,]*,$depth," "$CSV_FILE" 2>/dev/null; then
+    if grep -q "^[^,]*,[^,]*,$depth," "$CSV_CLEANED" 2>/dev/null; then
         echo "[$BENCHMARK_COUNT/$TOTAL_BENCHMARKS] Skip depth $depth ($short) - already benchmarked"
         continue
     fi
@@ -336,6 +341,9 @@ for item in "${COMMITS_TO_BENCHMARK[@]}"; do
 
     # Checkout the commit (suppress submodule warnings)
     git checkout "$hash" 2>&1 | grep -v "Submodule" || true
+
+    # Now install the cleaned CSV (CSV_FILE at this commit may be different)
+    cp "$CSV_CLEANED" "$CSV_FILE"
 
     # Apply benchmark naming patch
     echo "Applying benchmark naming patch..."
@@ -381,11 +389,18 @@ for item in "${COMMITS_TO_BENCHMARK[@]}"; do
     echo "✓ Benchmarked depth $depth"
 done
 
-# Success! Remove backup before restoring state
+# Success! Copy final CSV to a safe location before restoring
+FINAL_CSV="/tmp/backfill_final.csv"
+cp "$CSV_FILE" "$FINAL_CSV"
 rm -f "${CSV_FILE}.backfill_backup"
+rm -f "$CSV_CLEANED"
 
 # Restore to original state
 restore_state
+
+# Copy the final CSV back
+cp "$FINAL_CSV" "$CSV_FILE"
+rm -f "$FINAL_CSV"
 
 echo ""
 echo "=== Backfill complete ==="
