@@ -206,12 +206,14 @@ impl WasmFancyTuiApp {
     ///
     /// This determines which pane was clicked and updates the focused pane
     /// and/or selected card accordingly.
-    fn handle_terminal_click(&mut self, char_x: u16, char_y: u16, view: &GameStateView) {
-        // Get the layout areas from the renderer state
-        let state = &self.renderer.state;
+    fn handle_terminal_click(&mut self, char_x: u16, char_y: u16) {
+        // Get the layout areas from the renderer state (copy what we need to avoid borrow issues)
+        let hand_area = self.renderer.state.hand_pane_area;
+        let actions_area = self.renderer.state.actions_pane_area;
+        let player_id = self.renderer.player_id;
 
         // Check if click is in the hand pane
-        if let Some(hand_area) = state.hand_pane_area {
+        if let Some(hand_area) = hand_area {
             if char_x >= hand_area.x
                 && char_x < hand_area.x + hand_area.width
                 && char_y >= hand_area.y
@@ -221,16 +223,15 @@ impl WasmFancyTuiApp {
                 self.renderer.state.focused_pane = FocusedPane::Hand;
 
                 // Try to find which card was clicked based on position in the hand list
-                let player_zones = view.get_player_zones(self.renderer.player_id);
-                if let Some(zones) = player_zones {
+                // Get hand from game state directly
+                if let Some(zones) = self.game.get_player_zones(player_id) {
                     // Cards are listed vertically in the hand pane
                     // Each card takes roughly 1 row, starting after the title
                     let rel_y = char_y.saturating_sub(hand_area.y + 1); // +1 for border
                     let card_index = rel_y as usize;
                     if card_index < zones.hand.len() {
-                        let card_id = zones.hand.iter().nth(card_index).copied();
-                        if let Some(card_id) = card_id {
-                            let name = view.card_name(card_id).unwrap_or_default();
+                        if let Some(&card_id) = zones.hand.iter().nth(card_index) {
+                            let name = self.game.cards.get(&card_id).map(|c| c.name.as_str()).unwrap_or("?");
                             web_sys::console::log_1(&format!("Selected card in hand: {}", name).into());
                             self.renderer.state.selected_card_id = Some(card_id);
                             self.renderer.state.selected_card_in_hand = Some(card_index);
@@ -242,7 +243,7 @@ impl WasmFancyTuiApp {
         }
 
         // Check if click is in the actions pane
-        if let Some(actions_area) = state.actions_pane_area {
+        if let Some(actions_area) = actions_area {
             if char_x >= actions_area.x
                 && char_x < actions_area.x + actions_area.width
                 && char_y >= actions_area.y
@@ -255,16 +256,23 @@ impl WasmFancyTuiApp {
         }
 
         // Check entity positions for battlefield clicks
-        for entity_pos in &state.entity_positions {
-            let area = entity_pos.area;
+        // Clone the entity positions to avoid borrow issues
+        let entity_positions: Vec<_> = self
+            .renderer
+            .state
+            .entity_positions
+            .iter()
+            .map(|ep| (ep.area, ep.entity.representative_card()))
+            .collect();
+
+        for (area, card_id) in entity_positions {
             if char_x >= area.x && char_x < area.x + area.width && char_y >= area.y && char_y < area.y + area.height {
-                let card_id = entity_pos.entity.representative_card();
-                let name = view.card_name(card_id).unwrap_or_default();
+                let name = self.game.cards.get(&card_id).map(|c| c.name.as_str()).unwrap_or("?");
                 web_sys::console::log_1(&format!("Clicked on battlefield entity: {}", name).into());
 
                 // Determine if this is your battlefield or opponent's
-                if let Some(card) = view.get_card(card_id) {
-                    if card.controller == self.renderer.player_id {
+                if let Some(card) = self.game.cards.get(&card_id) {
+                    if card.controller == player_id {
                         self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
                         self.renderer.state.selected_card_in_your_bf = Some(card_id);
                     } else {
@@ -351,7 +359,7 @@ impl eframe::App for WasmFancyTuiApp {
         ctx.set_style(style);
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(egui::Color32::BLACK))
+            .frame(egui::Frame::new().fill(egui::Color32::BLACK))
             .show(ctx, |ui| {
                 // Check for resize - use available size from egui
                 let avail = ui.available_size();
@@ -373,7 +381,7 @@ impl eframe::App for WasmFancyTuiApp {
                 }
 
                 // Control bar at the top with visible buttons
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(egui::Color32::from_rgb(20, 20, 20))
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
@@ -468,7 +476,7 @@ impl eframe::App for WasmFancyTuiApp {
 
                         // Try to determine which pane was clicked based on character position
                         // and update the renderer's focused pane / selected card
-                        self.handle_terminal_click(char_x, char_y, &view);
+                        self.handle_terminal_click(char_x, char_y);
                     }
                 }
 
