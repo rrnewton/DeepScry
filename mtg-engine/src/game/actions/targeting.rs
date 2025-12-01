@@ -50,19 +50,24 @@ impl GameState {
     pub fn get_valid_targets_for_spell(&self, spell_card_id: CardId) -> Result<SmallVec<[CardId; 8]>> {
         let mut valid_targets = SmallVec::new();
 
-        // Get the spell's owner, effects, and targeting restrictions from cache
-        let spell_card = self.cards.get(spell_card_id)?;
-        let spell_owner = spell_card.owner;
-        let effects = spell_card.effects.clone(); // Clone to avoid borrow issues
-
-        // Get cached targeting restrictions (parsed from oracle text at card load time)
-        // Example: "Destroy target land" sets spell_targets_land = true
-        let targets_land = spell_card.cache.spell_targets_land;
-        let targets_creature = spell_card.cache.spell_targets_creature;
-        let targets_any = spell_card.cache.spell_targets_any;
+        // Get the spell's owner, effects count, and targeting restrictions from cache
+        // Extract primitives first to avoid holding a borrow while iterating
+        let (spell_owner, num_effects, targets_land, targets_creature, targets_any) = {
+            let spell_card = self.cards.get(spell_card_id)?;
+            (
+                spell_card.owner,
+                spell_card.effects.len(),
+                spell_card.cache.spell_targets_land,
+                spell_card.cache.spell_targets_creature,
+                spell_card.cache.spell_targets_any,
+            )
+        };
 
         // For each effect, determine what targets are valid
-        for effect in &effects {
+        // Use index-based iteration to avoid cloning the effects Vec
+        for effect_idx in 0..num_effects {
+            // Re-fetch effect each iteration - this is just a Vec index lookup
+            let effect = &self.cards.get(spell_card_id)?.effects[effect_idx];
             match effect {
                 Effect::DealDamage {
                     target: TargetRef::None,
