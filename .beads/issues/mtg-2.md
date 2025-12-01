@@ -29,8 +29,19 @@ Track performance optimization work for MTG Forge Rust.
 
 ---
 
-## Latest Optimization (2025-12-01_#1080)
+## Latest Optimization (2025-12-01_#1085(46851f3))
 
+✅ **Skip string formatting when logging disabled** - **26-81% allocation reduction, 34-70% speedup**
+- Add is_choice_logging_active() check to GameLogger
+- Skip expensive format!() calls in RandomController when logging disabled
+- DHAT showed this was #2 allocation hotspot: 355KB (9.6%) in string formatting
+- Results:
+  - DHAT: 26.2% fewer bytes, 37.9% fewer allocation calls
+  - robots_mirror: 81.6% allocation reduction, 38% speedup
+  - simple_bolt: 79.1% allocation reduction, 70% speedup
+  - Criterion: -34.5% execution time (p < 0.05)
+
+**Previous (2025-12-01_#1080):**
 ✅ **ManaEngine::read_from_cache zero-allocation refactor** - **45.7% allocation reduction, -21.7% runtime**
 - Eliminated temporary Vec allocations in read_from_cache() by pushing directly to self vectors
 - Before: 2.0 MB in 39,916 blocks, After: 1.1 MB in 20,860 blocks
@@ -102,6 +113,7 @@ Track performance optimization work for MTG Forge Rust.
 - ✅ **Type flag caching (c9edb3e, 2025-12-01_#1075)** - **-17.9% snapshot_games**
 - ✅ **EntityStore Vec optimization (1c6f23e, 2025-12-01_#1079)** - **-7-22% across benchmarks**
 - ✅ **ManaEngine::read_from_cache zero-allocation (2025-12-01_#1080)** - **45.7% alloc reduction, -21.7% runtime**
+- ✅ **Skip string formatting when logging disabled (46851f3, 2025-12-01_#1085)** - **26-81% alloc reduction, 34-70% speedup**
 
 **Next high-priority optimizations:**
 1. Cache available actions (OPT-NEW-1) - invalidate on state change (5% potential)
@@ -110,4 +122,4 @@ See OPTIMIZATION.md for detailed patterns and profiling methodology.
 See experiment_results/reports/perf_cpu_profiling_2025-11-29.md for CPU hotspot analysis.
 
 ---
-**Updated 2025-12-01_#1080** - ManaEngine::read_from_cache zero-allocation: 45.7% alloc reduction, -21.7% runtime
+**Updated 2025-12-01_#1085** - Skip string formatting when logging disabled: 26-81% alloc reduction, 34-70% speedup
