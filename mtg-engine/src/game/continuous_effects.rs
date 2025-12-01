@@ -558,6 +558,10 @@ impl GameState {
                             }
                         }
                     }
+                    StaticAbility::GrantKeyword { .. } => {
+                        // GrantKeyword abilities don't affect P/T
+                        // They are handled in get_granted_keywords() instead
+                    }
                 }
             }
         }
@@ -596,6 +600,80 @@ impl GameState {
         let toughness_bonus = plus_counters - minus_counters;
 
         Ok((power_bonus, toughness_bonus))
+    }
+
+    /// Get all keywords granted to a creature by static abilities (Layer 6).
+    ///
+    /// ## CR 613 Layer 6: Ability Adding or Removing Effects
+    ///
+    /// This calculates keywords granted by continuous effects from other permanents.
+    /// For example, Spider-Punk granting Riot to other Spiders.
+    ///
+    /// ## Returns
+    ///
+    /// A KeywordSet containing all keywords granted to the creature by static abilities.
+    pub fn get_granted_keywords(&self, creature_id: CardId) -> crate::core::KeywordSet {
+        use crate::core::effects::AffectedSelector;
+        use crate::core::KeywordSet;
+
+        let mut granted = KeywordSet::new();
+
+        // Get the target creature
+        let creature = match self.cards.get(creature_id) {
+            Ok(c) => c,
+            Err(_) => return granted,
+        };
+
+        // Check all permanents on the battlefield for GrantKeyword abilities
+        for &source_id in &self.battlefield.cards {
+            let source = match self.cards.get(source_id) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Process GrantKeyword abilities
+            for ability in &source.static_abilities {
+                if let crate::core::StaticAbility::GrantKeyword {
+                    affected,
+                    keyword,
+                    description: _,
+                } = ability
+                {
+                    // Check if this ability affects the target creature
+                    let affects_creature = match affected {
+                        AffectedSelector::CreatureTypeOtherYouControl { subtype } => {
+                            // Creature must: match subtype, be controlled by source controller, not be source
+                            creature_id != source_id
+                                && creature.controller == source.controller
+                                && creature.subtypes.contains(subtype)
+                        }
+                        AffectedSelector::CreatureTypesOtherYouControl { types } => {
+                            // Creature must: match any type, be controlled by source controller, not be source
+                            creature_id != source_id
+                                && creature.controller == source.controller
+                                && types.iter().any(|t| creature.subtypes.contains(t))
+                        }
+                        AffectedSelector::CreaturesYouControl => creature.controller == source.controller,
+                        AffectedSelector::CreatureEquippedBy => {
+                            // Grant keyword to equipped creature
+                            self.get_attached_equipment(creature_id).contains(&source_id)
+                        }
+                        AffectedSelector::CreatureEnchantedBy => {
+                            // Grant keyword to enchanted creature
+                            self.get_attached_auras(creature_id).contains(&source_id)
+                        }
+                        AffectedSelector::AllCreatures => creature.is_creature(),
+                        _ => false, // Other selectors not yet supported for keywords
+                    };
+
+                    if affects_creature {
+                        granted.insert(*keyword);
+                    }
+                }
+            }
+        }
+
+        granted
     }
 }
 

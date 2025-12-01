@@ -275,6 +275,75 @@ pub enum Keyword {
 }
 
 impl Keyword {
+    /// Parse a keyword from its string representation
+    ///
+    /// Returns None if the keyword name is not recognized.
+    /// This handles common evergreen and non-evergreen keywords.
+    ///
+    /// # Example
+    /// ```
+    /// use mtg_engine::core::Keyword;
+    /// assert_eq!(Keyword::from_string("Flying"), Some(Keyword::Flying));
+    /// assert_eq!(Keyword::from_string("Riot"), Some(Keyword::Riot));
+    /// assert_eq!(Keyword::from_string("Unknown"), None);
+    /// ```
+    pub fn from_string(s: &str) -> Option<Keyword> {
+        match s {
+            // Evergreen keywords
+            "Flying" => Some(Keyword::Flying),
+            "First Strike" => Some(Keyword::FirstStrike),
+            "Double Strike" => Some(Keyword::DoubleStrike),
+            "Deathtouch" => Some(Keyword::Deathtouch),
+            "Haste" => Some(Keyword::Haste),
+            "Hexproof" => Some(Keyword::Hexproof),
+            "Indestructible" => Some(Keyword::Indestructible),
+            "Lifelink" => Some(Keyword::Lifelink),
+            "Menace" => Some(Keyword::Menace),
+            "Reach" => Some(Keyword::Reach),
+            "Trample" => Some(Keyword::Trample),
+            "Vigilance" => Some(Keyword::Vigilance),
+            "Defender" => Some(Keyword::Defender),
+            "Shroud" => Some(Keyword::Shroud),
+            "Flash" => Some(Keyword::Flash),
+            "Fear" => Some(Keyword::Fear),
+            "Intimidate" => Some(Keyword::Intimidate),
+            "Horsemanship" => Some(Keyword::Horsemanship),
+            "Shadow" => Some(Keyword::Shadow),
+            "Skulk" => Some(Keyword::Skulk),
+            "Banding" => Some(Keyword::Banding),
+            "Flanking" => Some(Keyword::Flanking),
+            "Wither" => Some(Keyword::Wither),
+            "Infect" => Some(Keyword::Infect),
+            "Undying" => Some(Keyword::Undying),
+            "Persist" => Some(Keyword::Persist),
+            "Changeling" => Some(Keyword::Changeling),
+            "Prowess" => Some(Keyword::Prowess),
+            "Exalted" => Some(Keyword::Exalted),
+
+            // Combat-related keywords
+            "Riot" => Some(Keyword::Riot),
+            "Renown" => Some(Keyword::Renown),
+            "Annihilator" => Some(Keyword::Annihilator),
+
+            // Protection from colors
+            "Protection from red" => Some(Keyword::ProtectionFromRed),
+            "Protection from blue" => Some(Keyword::ProtectionFromBlue),
+            "Protection from black" => Some(Keyword::ProtectionFromBlack),
+            "Protection from white" => Some(Keyword::ProtectionFromWhite),
+            "Protection from green" => Some(Keyword::ProtectionFromGreen),
+
+            // Other common keywords
+            "Devoid" => Some(Keyword::Devoid),
+            "Convoke" => Some(Keyword::Convoke),
+            "Phasing" => Some(Keyword::Phasing),
+            "Absorb" => Some(Keyword::Absorb),
+            "Bushido" => Some(Keyword::Bushido),
+            "Soulbond" => Some(Keyword::Soulbond),
+
+            _ => None, // Unknown keyword
+        }
+    }
+
     /// Returns true if this keyword requires arguments (is complex)
     pub fn is_complex(&self) -> bool {
         matches!(

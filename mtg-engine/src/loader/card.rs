@@ -1729,6 +1729,7 @@ impl CardDefinition {
             let mut affected = AffectedSelector::Self_;
             let mut power = 0;
             let mut toughness = 0;
+            let mut keyword: Option<Keyword> = None;
             let mut description = String::new();
 
             // Split by | and parse each parameter
@@ -1827,17 +1828,43 @@ impl CardDefinition {
                         "Description" => {
                             description = value.to_string();
                         }
-                        _ => {} // Ignore other parameters (e.g., AddType$)
+                        "AddKeyword" => {
+                            // Parse keyword name to Keyword enum
+                            // Handle both single keywords and &-separated keywords
+                            // (e.g., "Flying" or "Flying & Vigilance")
+                            let keyword_str = value.split('&').next().unwrap_or(value).trim();
+                            match Keyword::from_string(keyword_str) {
+                                Some(k) => keyword = Some(k),
+                                None => {
+                                    // Some keywords may not be implemented yet
+                                    if !keyword_str.is_empty() {
+                                        // Only warn for non-empty keywords
+                                        // Note: Many cards use AddKeyword$ with complex values we don't support yet
+                                    }
+                                }
+                            }
+                        }
+                        _ => {} // Ignore other parameters (e.g., AddType$, AddAbility$)
                     }
                 }
             }
 
-            // Only create the ability if we have a power or toughness bonus
+            // Create the ability based on what was parsed
             if power != 0 || toughness != 0 {
+                // P/T modification ability
                 abilities.push(StaticAbility::ModifyPT {
-                    affected,
+                    affected: affected.clone(),
                     power,
                     toughness,
+                    description: description.clone(),
+                });
+            }
+
+            if let Some(kw) = keyword {
+                // Keyword grant ability
+                abilities.push(StaticAbility::GrantKeyword {
+                    affected,
+                    keyword: kw,
                     description,
                 });
             }

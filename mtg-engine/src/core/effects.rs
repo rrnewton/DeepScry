@@ -341,6 +341,24 @@ pub enum StaticAbility {
         /// Description for logging
         description: String,
     },
+
+    /// Continuous effect that grants a keyword ability
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | AddKeyword$ Keyword`
+    /// Applied in CR 613 Layer 6 (Abilities)
+    ///
+    /// Example: Spider-Punk grants Riot to other Spiders:
+    /// `S:Mode$ Continuous | Affected$ Spider.Other+YouCtrl | AddKeyword$ Riot`
+    GrantKeyword {
+        /// Selector for which cards are affected
+        affected: AffectedSelector,
+
+        /// The keyword to grant
+        keyword: crate::core::Keyword,
+
+        /// Description for logging
+        description: String,
+    },
 }
 
 /// Selector for which cards are affected by a static ability

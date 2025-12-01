@@ -364,6 +364,7 @@ fn test_load_spider_ham_static_ability() -> Result<()> {
                 _ => panic!("Expected CreatureTypesOtherYouControl, got {:?}", affected),
             }
         }
+        _ => panic!("Expected ModifyPT static ability"),
     }
 
     Ok(())
@@ -465,6 +466,7 @@ fn test_load_demonmail_hauberk_card_equipped_by_static_ability() -> Result<()> {
                 affected
             );
         }
+        _ => panic!("Expected ModifyPT static ability"),
     }
 
     Ok(())
@@ -528,6 +530,7 @@ fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
                 affected
             );
         }
+        _ => panic!("Expected ModifyPT static ability"),
     }
 
     Ok(())
