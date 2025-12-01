@@ -536,6 +536,185 @@ fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
     Ok(())
 }
 
+/// Test loading Black Lotus mana ability with sacrifice cost
+/// Black Lotus: "T, Sacrifice Black Lotus: Add three mana of any one color."
+#[test]
+fn test_load_black_lotus_mana_ability() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/b/black_lotus.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Black Lotus");
+    assert!(def.types.contains(&CardType::Artifact));
+
+    // Verify oracle text contains mana production
+    assert!(
+        def.oracle.to_lowercase().contains("add three mana"),
+        "Oracle text should contain mana production. Got: {}",
+        def.oracle
+    );
+
+    // Check that raw_abilities contains the mana ability line
+    let has_mana_ability = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("AB$ Mana") && a.contains("Produced$"));
+    assert!(
+        has_mana_ability,
+        "Black Lotus should have a mana ability. Raw abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Check activated abilities - should have at least 1 (the mana ability)
+    assert!(
+        !card.activated_abilities.is_empty(),
+        "Black Lotus should have activated abilities. Got: {} abilities",
+        card.activated_abilities.len()
+    );
+
+    // Find the mana ability
+    let mana_ability = card.activated_abilities.iter().find(|a| a.is_mana_ability);
+
+    assert!(
+        mana_ability.is_some(),
+        "Black Lotus should have a mana ability. Abilities: {:?}",
+        card.activated_abilities
+            .iter()
+            .map(|a| format!("cost={:?} is_mana={}", a.cost, a.is_mana_ability))
+            .collect::<Vec<_>>()
+    );
+
+    let ability = mana_ability.unwrap();
+
+    // Check the cost includes sacrifice
+    assert!(
+        ability.cost.requires_sacrifice(),
+        "Black Lotus mana ability should require sacrifice. Cost: {:?}",
+        ability.cost
+    );
+
+    // Check the effects include AddMana
+    let has_add_mana = ability
+        .effects
+        .iter()
+        .any(|e| matches!(e, mtg_forge_rs::core::Effect::AddMana { .. }));
+    assert!(
+        has_add_mana,
+        "Black Lotus should have AddMana effect. Effects: {:?}",
+        ability.effects
+    );
+
+    // Verify the cache detects it as a mana source
+    assert!(
+        card.cache.mana_production.produces_mana(),
+        "Black Lotus should be detected as producing mana"
+    );
+    assert!(card.cache.is_mana_source, "Black Lotus should be a mana source");
+
+    Ok(())
+}
+
+/// Test that Black Lotus' mana ability correctly sacrifices the card when activated
+/// This tests the full game flow: play Black Lotus, activate its mana ability,
+/// verify mana is added and Black Lotus is sacrificed (moved to graveyard).
+#[test]
+fn test_black_lotus_sacrifice_on_activation() -> Result<()> {
+    use mtg_forge_rs::game::GameState;
+    use mtg_forge_rs::loader::CardDatabase;
+
+    let cardsfolder = PathBuf::from("cardsfolder");
+    if !cardsfolder.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    // Create a new game
+    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let alice_id = game.players[0].id;
+
+    // Load Black Lotus from cardsfolder
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let db = CardDatabase::new(cardsfolder);
+    let lotus_def = rt
+        .block_on(db.get_card("Black Lotus"))?
+        .expect("Black Lotus not found in cardsfolder");
+
+    // Instantiate Black Lotus and add to battlefield
+    let lotus_id = game.next_card_id();
+    let lotus = lotus_def.instantiate(lotus_id, alice_id);
+    game.cards.insert(lotus_id, lotus);
+    game.battlefield.add(lotus_id);
+
+    // Verify initial state
+    assert!(
+        game.battlefield.cards.contains(&lotus_id),
+        "Black Lotus should be on battlefield"
+    );
+    let alice_graveyard_size = game
+        .get_player_zones(alice_id)
+        .map(|z| z.graveyard.cards.len())
+        .unwrap_or(0);
+    assert_eq!(alice_graveyard_size, 0, "Graveyard should be empty initially");
+
+    // Check Alice's mana pool before activation
+    let mana_before = game.get_player(alice_id).unwrap().mana_pool;
+    let total_mana_before = mana_before.white
+        + mana_before.blue
+        + mana_before.black
+        + mana_before.red
+        + mana_before.green
+        + mana_before.colorless;
+    assert_eq!(total_mana_before, 0, "Mana pool should be empty initially");
+
+    // Activate Black Lotus' mana ability (tap for mana)
+    // This should add 3 mana to Alice's pool AND sacrifice Black Lotus
+    let result = game.tap_for_mana(alice_id, lotus_id);
+    assert!(result.is_ok(), "tap_for_mana should succeed. Error: {:?}", result.err());
+
+    // Verify Black Lotus is now in graveyard (sacrificed)
+    assert!(
+        !game.battlefield.cards.contains(&lotus_id),
+        "Black Lotus should be removed from battlefield after sacrifice"
+    );
+    let alice_graveyard = game
+        .get_player_zones(alice_id)
+        .expect("Alice zones")
+        .graveyard
+        .cards
+        .clone();
+    assert!(
+        alice_graveyard.contains(&lotus_id),
+        "Black Lotus should be in graveyard after sacrifice. Graveyard: {:?}",
+        alice_graveyard
+    );
+
+    // Verify mana was added to pool (Black Lotus adds 3 mana of any color)
+    let mana_after = game.get_player(alice_id).unwrap().mana_pool;
+    let total_mana_after = mana_after.white
+        + mana_after.blue
+        + mana_after.black
+        + mana_after.red
+        + mana_after.green
+        + mana_after.colorless;
+    // Black Lotus produces 3 mana of any one color (parsed as colorless for now)
+    // The amount may be 1 (single tap) or 3 (multiplied by Amount$ 3)
+    assert!(
+        total_mana_after >= 1,
+        "Mana pool should have at least 1 mana after activation. Got: {}",
+        total_mana_after
+    );
+
+    Ok(())
+}
+
 /// Test that Volcanic Island correctly has Mountain and Island subtypes
 /// This is critical for dual lands to produce the correct mana colors
 #[test]

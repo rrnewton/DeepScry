@@ -1574,7 +1574,10 @@ impl GameState {
     ///
     /// This method handles both:
     /// - Lands with implicit mana abilities (based on subtypes)
-    /// - Creatures/artifacts with explicit mana abilities (e.g., "Guy in the Chair")
+    /// - Creatures/artifacts with explicit mana abilities (e.g., "Guy in the Chair", Black Lotus)
+    ///
+    /// For mana abilities with sacrifice costs (e.g., Black Lotus), this will also
+    /// sacrifice the permanent after activating the mana ability.
     pub fn tap_for_mana_for_cost(
         &mut self,
         player_id: PlayerId,
@@ -1596,24 +1599,28 @@ impl GameState {
             return Err(MtgError::InvalidAction("Permanent cannot produce mana".to_string()));
         }
 
-        // Check for explicit mana ability before tapping
-        let explicit_mana = if !is_land && has_mana_ability {
+        // Check for explicit mana ability and its cost before tapping
+        // We need both the mana production and the full cost (for sacrifice, etc.)
+        let (explicit_mana, mana_ability_cost) = if !is_land && has_mana_ability {
             // For non-lands (creatures, artifacts) with mana abilities,
             // extract the mana from the activated ability's AddMana effect
+            // and also capture the full cost for non-tap costs (like sacrifice)
             card.activated_abilities
                 .iter()
                 .find(|ab| ab.is_mana_ability)
-                .and_then(|ab| {
-                    ab.effects.iter().find_map(|effect| {
+                .map(|ab| {
+                    let mana = ab.effects.iter().find_map(|effect| {
                         if let crate::core::Effect::AddMana { mana, .. } = effect {
                             Some(*mana)
                         } else {
                             None
                         }
-                    })
+                    });
+                    (mana, Some(ab.cost.clone()))
                 })
+                .unwrap_or((None, None))
         } else {
-            None
+            (None, None)
         };
 
         // Capture log size before tap
@@ -1747,6 +1754,32 @@ impl GameState {
                     let name = card.map(|c| c.name.as_str()).unwrap_or("Unknown");
                     let message = format!("Tap {} for mana", name);
                     self.logger.normal(&message);
+                }
+            }
+
+            // Pay any additional costs from the mana ability (e.g., sacrifice for Black Lotus)
+            // For non-land mana sources, handle sacrifice costs before returning
+            if let Some(cost) = mana_ability_cost {
+                use crate::core::Cost;
+                match cost {
+                    Cost::Tap => {
+                        // Already handled above
+                    }
+                    Cost::SacrificePattern { .. } | Cost::Sacrifice { .. } => {
+                        // Pay the sacrifice cost (moves permanent to graveyard)
+                        self.pay_ability_cost(player_id, card_id, &cost)?;
+                    }
+                    Cost::Composite(costs) => {
+                        // For composite costs, pay everything except tap (already paid)
+                        for sub_cost in costs {
+                            if !matches!(sub_cost, Cost::Tap) {
+                                self.pay_ability_cost(player_id, card_id, &sub_cost)?;
+                            }
+                        }
+                    }
+                    _ => {
+                        // Other costs not handled yet (mana, life, etc.)
+                    }
                 }
             }
 
@@ -1886,6 +1919,10 @@ impl GameState {
                 self.logger.normal(&message);
             }
         }
+
+        // Note: For lands, mana_ability_cost is None (set at line 1623), so no additional
+        // costs need to be paid. Non-land mana sources with sacrifice costs are handled
+        // in the explicit_mana path above (lines 1760-1784), which returns early.
 
         Ok(())
     }
