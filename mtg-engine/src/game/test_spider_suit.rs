@@ -15,14 +15,17 @@ mod tests {
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
         spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-        spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+        spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
         game.cards.insert(spider_suit_id, spider_suit);
 
         // Create a Mountain
         let mountain_id = game.cards.next_id();
         let mut mountain = Card::new(mountain_id, CardName::from("Mountain"), p1_id);
         mountain.set_types(SmallVec::from_vec(vec![CardType::Land]));
-        mountain.subtypes = SmallVec::from_vec(vec![Subtype::from("Basic"), Subtype::from("Mountain")]);
+        mountain.set_subtypes(SmallVec::from_vec(vec![
+            Subtype::from("Basic"),
+            Subtype::from("Mountain"),
+        ]));
         game.cards.insert(mountain_id, mountain);
 
         // Put Spider-Suit in hand and Mountain on battlefield
@@ -58,7 +61,7 @@ mod tests {
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
         spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-        spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+        spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
         game.cards.insert(spider_suit_id, spider_suit);
 
         // Put Spider-Suit on the stack (simulating a cast)
@@ -171,7 +174,7 @@ K:Equip:3
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
         spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-        spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+        spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
         spider_suit.controller = p1_id;
 
         // Add the Equip activated ability manually (normally added by instantiate)
@@ -240,7 +243,7 @@ K:Equip:3
         let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
         spider_suit.mana_cost = ManaCost::from_string("1");
         spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-        spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+        spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
         spider_suit.controller = p1_id;
         game.cards.insert(spider_suit_id, spider_suit);
 
@@ -248,7 +251,10 @@ K:Equip:3
         let mountain_id = game.cards.next_id();
         let mut mountain = Card::new(mountain_id, CardName::from("Mountain"), p1_id);
         mountain.set_types(SmallVec::from_vec(vec![CardType::Land]));
-        mountain.subtypes = SmallVec::from_vec(vec![Subtype::from("Basic"), Subtype::from("Mountain")]);
+        mountain.set_subtypes(SmallVec::from_vec(vec![
+            Subtype::from("Basic"),
+            Subtype::from("Mountain"),
+        ]));
         mountain.controller = p1_id;
         game.cards.insert(mountain_id, mountain);
 

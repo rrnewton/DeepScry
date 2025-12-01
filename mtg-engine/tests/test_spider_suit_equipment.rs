@@ -33,7 +33,7 @@ fn create_spider_suit(id: CardId, owner: PlayerId) -> Card {
     let mut spider_suit = Card::new(id, CardName::from("Spider-Suit"), owner);
     spider_suit.mana_cost = ManaCost::from_string("1");
     spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
 
     // Add static ability: +2/+2 to equipped creature
     // Corresponds to: S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 2 | AddToughness$ 2
@@ -58,7 +58,7 @@ fn test_spider_suit_enters_battlefield() {
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
     spider_suit.mana_cost = ManaCost::from_string("1");
     spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
 
@@ -138,7 +138,7 @@ fn test_spider_suit_full_cast_resolve_workflow() {
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
     spider_suit.mana_cost = ManaCost::from_string("1");
     spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
 
@@ -179,7 +179,7 @@ fn test_equipment_attachment() {
     let spider_suit_id = game.cards.next_id();
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
     spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
 
@@ -268,14 +268,14 @@ fn test_multiple_equipment() {
     let equip1_id = game.cards.next_id();
     let mut equip1 = Card::new(equip1_id, CardName::from("Sword"), p1_id);
     equip1.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    equip1.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equip1.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     equip1.controller = p1_id;
     game.cards.insert(equip1_id, equip1);
 
     let equip2_id = game.cards.next_id();
     let mut equip2 = Card::new(equip2_id, CardName::from("Shield"), p1_id);
     equip2.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    equip2.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equip2.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     equip2.controller = p1_id;
     game.cards.insert(equip2_id, equip2);
 
@@ -484,7 +484,7 @@ fn test_equipment_detaches_when_creature_dies() {
     let spider_suit_id = game.cards.next_id();
     let mut spider_suit = Card::new(spider_suit_id, CardName::from("Spider-Suit"), p1_id);
     spider_suit.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    spider_suit.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    spider_suit.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     spider_suit.controller = p1_id;
     game.cards.insert(spider_suit_id, spider_suit);
 
@@ -586,7 +586,7 @@ fn test_self_when_equipped_selector() {
     let equip_id = game.cards.next_id();
     let mut equipment = Card::new(equip_id, CardName::from("Simple Sword"), p1_id);
     equipment.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    equipment.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equipment.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     equipment.controller = p1_id;
     game.cards.insert(equip_id, equipment);
 
@@ -693,7 +693,7 @@ fn test_self_when_equipped_stacks_with_equipment_buff() {
 fn create_test_aura(id: CardId, owner: PlayerId, power_buff: i32, toughness_buff: i32) -> Card {
     let mut aura = Card::new(id, CardName::from("Test Aura"), owner);
     aura.set_types(SmallVec::from_vec(vec![CardType::Enchantment]));
-    aura.subtypes = SmallVec::from_vec(vec![Subtype::from("Aura")]);
+    aura.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Aura")]));
     aura.controller = owner;
 
     // Add static ability: +P/+T to enchanted creature
@@ -743,7 +743,7 @@ fn test_self_when_enchanted_selector() {
     let aura_id = game.cards.next_id();
     let mut aura = Card::new(aura_id, CardName::from("Flight"), p1_id);
     aura.set_types(SmallVec::from_vec(vec![CardType::Enchantment]));
-    aura.subtypes = SmallVec::from_vec(vec![Subtype::from("Aura")]);
+    aura.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Aura")]));
     aura.controller = p1_id;
     game.cards.insert(aura_id, aura);
 
@@ -799,7 +799,7 @@ fn test_self_when_enchanted_selector() {
 fn create_equipped_creatures_lord(id: CardId, owner: PlayerId) -> Card {
     let mut lord = Card::new(id, CardName::from("Kemba, Kha Enduring"), owner);
     lord.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    lord.subtypes = SmallVec::from_vec(vec![Subtype::from("Cat"), Subtype::from("Cleric")]);
+    lord.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Cat"), Subtype::from("Cleric")]));
     lord.set_power(Some(2));
     lord.set_toughness(Some(4));
     lord.controller = owner;
@@ -848,7 +848,7 @@ fn test_equipped_creatures_you_control_selector() {
     let equip_id = game.cards.next_id();
     let mut equipment = Card::new(equip_id, CardName::from("Short Sword"), p1_id);
     equipment.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
-    equipment.subtypes = SmallVec::from_vec(vec![Subtype::from("Equipment")]);
+    equipment.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     equipment.controller = p1_id;
     game.cards.insert(equip_id, equipment);
 

@@ -41,6 +41,26 @@ pub struct CardCache {
     /// Derived from types.contains(&CardType::Artifact) for O(1) checks
     pub is_artifact: bool,
 
+    /// Precomputed: Is this card an instant?
+    /// Derived from types.contains(&CardType::Instant) for O(1) checks
+    pub is_instant: bool,
+
+    /// Precomputed: Is this card a sorcery?
+    /// Derived from types.contains(&CardType::Sorcery) for O(1) checks
+    pub is_sorcery: bool,
+
+    /// Precomputed: Is this card an enchantment?
+    /// Derived from types.contains(&CardType::Enchantment) for O(1) checks
+    pub is_enchantment: bool,
+
+    /// Precomputed: Is this card an Aura (enchantment with Aura subtype)?
+    /// Eliminates subtype iteration and eq_ignore_ascii_case in hot path
+    pub is_aura: bool,
+
+    /// Precomputed: Is this card an Equipment (artifact with Equipment subtype)?
+    /// Eliminates subtype iteration and eq_ignore_ascii_case in hot path
+    pub is_equipment: bool,
+
     // ==== Precomputed function results (eliminate runtime computation) ====
     /// Precomputed mana production (upper bound, OR semantics)
     /// - Default (empty Choice) = no mana production
@@ -118,6 +138,11 @@ impl CardCache {
             is_land: false,
             is_creature: false,
             is_artifact: false,
+            is_instant: false,
+            is_sorcery: false,
+            is_enchantment: false,
+            is_aura: false,
+            is_equipment: false,
             mana_production: ManaProduction::default(),
             is_mana_source: false,
             requires_stack_target: false,
@@ -158,6 +183,9 @@ impl CardCache {
         self.is_land = types.contains(&CardType::Land);
         self.is_creature = types.contains(&CardType::Creature);
         self.is_artifact = types.contains(&CardType::Artifact);
+        self.is_instant = types.contains(&CardType::Instant);
+        self.is_sorcery = types.contains(&CardType::Sorcery);
+        self.is_enchantment = types.contains(&CardType::Enchantment);
     }
 
     /// Update cached land subtype flags from the card's subtypes and name
@@ -166,7 +194,8 @@ impl CardCache {
     /// land subtype checks to avoid eq_ignore_ascii_case() overhead at runtime.
     /// These flags are used in tap_for_mana_for_cost to determine mana colors.
     ///
-    /// Also checks the card name as fallback for basic lands without explicit subtypes.
+    /// Also checks for Aura/Equipment subtypes to cache is_aura/is_equipment.
+    /// And checks the card name as fallback for basic lands without explicit subtypes.
     #[inline]
     pub fn update_from_subtypes(&mut self, subtypes: &[crate::core::Subtype], card_name: &str) {
         // First check explicit subtypes
@@ -182,6 +211,13 @@ impl CardCache {
                 self.has_mountain_subtype = true;
             } else if s.eq_ignore_ascii_case("forest") {
                 self.has_forest_subtype = true;
+            } else if s.eq_ignore_ascii_case("aura") {
+                // is_aura requires is_enchantment (set by update_from_types)
+                // so is_aura will be true only if both conditions are met after both updates
+                self.is_aura = self.is_enchantment;
+            } else if s.eq_ignore_ascii_case("equipment") {
+                // is_equipment requires is_artifact (set by update_from_types)
+                self.is_equipment = self.is_artifact;
             }
         }
 
@@ -584,6 +620,16 @@ impl Card {
         self.cache.update_from_types(&self.types);
     }
 
+    /// Set the subtypes of this card and update the cache
+    ///
+    /// Prefer this over `subtypes = SmallVec::...` to automatically maintain cache consistency.
+    /// Note: Call set_types() before set_subtypes() since is_aura/is_equipment depend on type flags.
+    #[inline]
+    pub fn set_subtypes(&mut self, new_subtypes: SmallVec<[Subtype; 3]>) {
+        self.subtypes = new_subtypes;
+        self.cache.update_from_subtypes(&self.subtypes, self.name.as_str());
+    }
+
     /// Check if this card is a creature (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_creature(&self) -> bool {
@@ -596,8 +642,16 @@ impl Card {
         self.cache.is_land
     }
 
+    /// Check if this card is an instant (uses cached value for O(1) lookup)
+    #[inline]
     pub fn is_instant(&self) -> bool {
-        self.is_type(&CardType::Instant)
+        self.cache.is_instant
+    }
+
+    /// Check if this card is a sorcery (uses cached value for O(1) lookup)
+    #[inline]
+    pub fn is_sorcery(&self) -> bool {
+        self.cache.is_sorcery
     }
 
     /// Check if this card is an artifact (uses cached value for O(1) lookup)
@@ -606,24 +660,26 @@ impl Card {
         self.cache.is_artifact
     }
 
+    /// Check if this card is an enchantment (uses cached value for O(1) lookup)
+    #[inline]
     pub fn is_enchantment(&self) -> bool {
-        self.is_type(&CardType::Enchantment)
+        self.cache.is_enchantment
     }
 
     pub fn is_planeswalker(&self) -> bool {
         self.is_type(&CardType::Planeswalker)
     }
 
+    /// Check if this card is an Aura (uses cached value for O(1) lookup)
+    #[inline]
     pub fn is_aura(&self) -> bool {
-        self.is_enchantment() && self.subtypes.iter().any(|s| s.as_str().eq_ignore_ascii_case("aura"))
+        self.cache.is_aura
     }
 
+    /// Check if this card is Equipment (uses cached value for O(1) lookup)
+    #[inline]
     pub fn is_equipment(&self) -> bool {
-        self.is_artifact()
-            && self
-                .subtypes
-                .iter()
-                .any(|s| s.as_str().eq_ignore_ascii_case("equipment"))
+        self.cache.is_equipment
     }
 
     /// Check if this Equipment/Aura is currently attached to something
