@@ -152,6 +152,8 @@ You may push after validation and can check CI status with github MCP. Don't for
 
 We merge feature branches into main when they're completed and validating. ARCHIVE completed feature braches. Upon merging a feature branch X, archive it as tag `X.v1` or `X.(N+1)` if that tag is taken.
 
+**CRITICAL**: NEVER use `git clean` commands (`git clean -f`, `git clean -fd`, `git clean -fxd`, etc.) in this repository. The `.devcontainer/` directory contains valuable container home directory configuration that must not be deleted. To clean working directory, use ONLY `git reset --hard HEAD` which resets tracked files without removing untracked files/directories.
+
 Commit message documents relationship to original Java version
 --------------------------------------------------------------
 

@@ -2,11 +2,17 @@
 """
 Backfill benchmark results for historical commits.
 
+NEW APPROACH (v3):
+- Create .backfill_results/ directory for temporary results
+- During benchmarking: checkout commit, run benchmark to real CSV, extract new rows to temp file, clean working directory
+- After all benchmarks: consolidate all temp results into real CSV
+- Never leave dirty files that block git checkout
+
 Strategy:
 - Use inclusive commit counting (all commits, not just first-parent)
 - Build map of all commits with their depths
 - Only benchmark commits on main branch (first-parent history)
-- Keep CSV outside git tree during backfill to avoid conflicts
+- Keep results in .backfill_results/ during backfill to avoid conflicts
 """
 
 import argparse
@@ -34,7 +40,7 @@ PATCH_COMMIT_HASH = '72d86871'
 
 BENCHMARK_PATCH = '''--- a/mtg-benchmarks/benches/game_benchmark.rs
 +++ b/mtg-benchmarks/benches/game_benchmark.rs
-@@ -150,7 +150,9 @@ fn bench_rewind_play_again<B, C, F, P>(
+@@ -150,7 +150,9 @@ fn bench_rewind_play_again<B, C, F>(
          let total_games = bench.total_games();
          if total_games > 0 {
              let aggregated_metrics = bench.get_metrics();
@@ -160,6 +166,24 @@ def needs_patch(commit_hash: str) -> bool:
     return True
 
 
+def clean_working_directory():
+    """Clean working directory to ensure git checkout succeeds.
+
+    Only resets tracked files - never removes untracked files/directories
+    as this would destroy .devcontainer/ and other valuable configuration.
+    """
+    # Reset any modified tracked files
+    run_cmd(['git', 'reset', '--hard', 'HEAD'], check=False)
+
+
+def extract_csv_header(csv_file: Path) -> str:
+    """Extract header line from CSV file."""
+    if csv_file.exists():
+        with open(csv_file, 'r') as f:
+            return f.readline()
+    return 'timestamp,git_commit,git_depth,git_branch,git_dirty,benchmark_name,seed,num_games,total_turns,total_actions,total_duration_ms,avg_turns_per_game,avg_actions_per_game,avg_duration_ms_per_game,games_per_sec,actions_per_sec,turns_per_sec,actions_per_turn,total_bytes_allocated,total_bytes_deallocated,net_bytes,avg_bytes_per_game,bytes_per_turn,bytes_per_sec\n'
+
+
 def main():
     parser = argparse.ArgumentParser(description='Backfill benchmark results')
     group = parser.add_mutually_exclusive_group(required=True)
@@ -200,7 +224,7 @@ def main():
     # Setup paths
     cpu_name = get_cpu_name()
     csv_in_tree = Path(f'experiment_results/{cpu_name}/perf_history.csv')
-    csv_backup = csv_in_tree.with_suffix('.csv.backfill_backup')
+    results_dir = Path('.backfill_results')
     patch_file = Path('/tmp/benchmark_naming_fix.patch')
 
     logging.info("")
@@ -210,11 +234,11 @@ def main():
     logging.info(f"Cadence: every {args.cadence}")
     logging.info(f"Patch commit: {PATCH_COMMIT_HASH}")
     logging.info(f"Log file: {log_file.absolute()}")
-    logging.info(f"CSV backup location: {csv_backup.absolute()}")
+    logging.info(f"Results directory: {results_dir.absolute()}")
     logging.info("")
 
     # Get already-benchmarked commits for idempotency
-    benchmarked_commits = get_benchmarked_commits(csv_backup if csv_backup.exists() else csv_in_tree)
+    benchmarked_commits = get_benchmarked_commits(csv_in_tree)
     logging.info(f"Already benchmarked commits: {len(benchmarked_commits)}")
 
     # Analyze commits
@@ -257,30 +281,34 @@ def main():
     logging.info(f"Original branch: {original_branch or 'detached'}")
     logging.info(f"Original HEAD: {original_head}")
 
-    # Move CSV to persistent backup location
-    import shutil
-    if csv_in_tree.exists():
-        shutil.copy(csv_in_tree, csv_backup)
-        logging.info(f"\nCopied CSV to persistent backup: {csv_backup}")
-        logging.info(f"IMPORTANT: If script fails, CSV data can be recovered from: {csv_backup}")
-        # Reset CSV in tree to clean state for git operations
-        run_cmd(['git', 'checkout', 'HEAD', '--', str(csv_in_tree)], check=False)
-    else:
-        csv_backup.write_text('timestamp,git_commit,git_depth,git_branch,git_dirty,benchmark_name,seed,num_games,total_turns,total_actions,total_duration_ms,avg_turns_per_game,avg_actions_per_game,avg_duration_ms_per_game,games_per_sec,actions_per_sec,turns_per_sec,actions_per_turn,total_bytes_allocated,total_bytes_deallocated,net_bytes,avg_bytes_per_game,bytes_per_turn,bytes_per_sec\n')
-        logging.info(f"Created new CSV backup: {csv_backup}")
+    # Create results directory
+    results_dir.mkdir(exist_ok=True)
+    logging.info(f"\nCreated results directory: {results_dir}")
 
-    # Write files
+    # Get CSV header
+    csv_header = extract_csv_header(csv_in_tree)
+    logging.info(f"CSV header: {csv_header.strip()}")
+
+    # Write patch file
     patch_file.write_text(BENCHMARK_PATCH)
+
+    # Track benchmarking progress
+    successful_benchmarks = []
+    failed_benchmarks = []
 
     try:
         # Benchmark each commit
         for i, commit in enumerate(commits_to_bench, 1):
             logging.info(f"\n[{i}/{len(commits_to_bench)}] Benchmarking depth {commit.depth} ({commit.short_hash})")
 
+            # Clean working directory before checkout
+            clean_working_directory()
+
             # Checkout
             result = run_cmd(['git', 'checkout', commit.hash], check=False)
             if result.returncode != 0:
-                logging.error(f"✗ Checkout failed for {commit.short_hash}")
+                logging.error(f"✗ Checkout failed for {commit.short_hash}: {result.stderr}")
+                failed_benchmarks.append((commit.depth, commit.short_hash, "checkout failed"))
                 continue
 
             # Verify we checked out the right commit
@@ -288,65 +316,125 @@ def main():
             actual_hash = result.stdout.strip()
             if actual_hash != commit.hash:
                 logging.error(f"✗ Checkout mismatch: expected {commit.hash}, got {actual_hash}")
+                failed_benchmarks.append((commit.depth, commit.short_hash, "checkout mismatch"))
                 continue
-            logging.info(f"Checked out {commit.short_hash} successfully")
+            logging.info(f"✓ Checked out {commit.short_hash}")
 
             # Install updated gitdepth.sh
             Path('scripts/gitdepth.sh').write_text(UPDATED_GITDEPTH)
             Path('scripts/gitdepth.sh').chmod(0o755)
-            logging.info(f"Installed updated gitdepth.sh")
+            logging.info(f"✓ Installed updated gitdepth.sh")
 
             # Apply patch if needed
             if needs_patch(commit.hash):
-                run_cmd(['patch', '-p1'], input=BENCHMARK_PATCH, check=False)
-                logging.info(f"Applied benchmark naming patch")
+                result = run_cmd(['patch', '-p1'], input=BENCHMARK_PATCH, check=False)
+                if result.returncode != 0:
+                    logging.warning(f"⚠ Patch failed (may already be applied): {result.stderr}")
+                else:
+                    logging.info(f"✓ Applied benchmark naming patch")
 
-            # Copy backup CSV into tree so benchmarks can append to it
-            shutil.copy(csv_backup, csv_in_tree)
+            # Get baseline line count of CSV
+            csv_in_tree.parent.mkdir(parents=True, exist_ok=True)
+            if not csv_in_tree.exists():
+                csv_in_tree.write_text(csv_header)
             before_lines = len(open(csv_in_tree).readlines())
 
             # Run benchmarks
+            logging.info(f"Running cargo clean...")
             run_cmd(['cargo', 'clean'], check=False)
-            result = run_cmd(['./scripts/run_benchmark.sh'], check=False)
+            logging.info(f"Running benchmarks...")
+            result = run_cmd(['./scripts/run_benchmark.sh'], check=False, timeout=600)
 
-            # Copy updated CSV back to backup location
-            shutil.copy(csv_in_tree, csv_backup)
-            after_lines = len(open(csv_backup).readlines())
-            added_lines = after_lines - before_lines
+            if result.returncode != 0:
+                logging.error(f"✗ Benchmark failed for depth {commit.depth}: {result.stderr[-500:]}")
+                failed_benchmarks.append((commit.depth, commit.short_hash, "benchmark failed"))
+                clean_working_directory()
+                continue
 
-            if result.returncode == 0:
-                logging.info(f"✓ Benchmarked depth {commit.depth} - added {added_lines} CSV rows")
+            # Extract new rows from CSV
+            if csv_in_tree.exists():
+                with open(csv_in_tree, 'r') as f:
+                    all_lines = f.readlines()
+                new_lines = all_lines[before_lines:]
+                added_lines = len(new_lines)
+
+                if added_lines > 0:
+                    # Save new rows to results directory
+                    result_file = results_dir / f"depth_{commit.depth}.csv"
+                    with open(result_file, 'w') as f:
+                        f.write(csv_header)
+                        f.writelines(new_lines)
+                    logging.info(f"✓ Benchmarked depth {commit.depth} - saved {added_lines} rows to {result_file.name}")
+                    successful_benchmarks.append((commit.depth, commit.short_hash, added_lines))
+                else:
+                    logging.warning(f"⚠ No new rows added for depth {commit.depth}")
+                    failed_benchmarks.append((commit.depth, commit.short_hash, "no rows"))
             else:
-                logging.error(f"✗ Benchmark failed for depth {commit.depth}")
+                logging.error(f"✗ CSV file not found after benchmarking")
+                failed_benchmarks.append((commit.depth, commit.short_hash, "csv missing"))
 
-            # Cleanup - restore files to original state
-            if needs_patch(commit.hash):
-                run_cmd(['git', 'checkout', 'mtg-benchmarks/benches/game_benchmark.rs'], check=False)
-            run_cmd(['git', 'checkout', 'scripts/gitdepth.sh'], check=False)
-            run_cmd(['git', 'checkout', str(csv_in_tree)], check=False)  # Restore CSV to clean state
+            # Clean working directory for next iteration
+            clean_working_directory()
 
     finally:
         # Restore git state
         logging.info("\n=== Restoring original state ===")
-
-        # Checkout original (CSV should already be clean from last iteration)
+        clean_working_directory()
         if original_branch:
             run_cmd(['git', 'checkout', original_branch], check=False)
         else:
             run_cmd(['git', 'checkout', original_head], check=False)
+        logging.info(f"✓ Restored to original state")
 
-        # Copy final CSV back into tree
-        if csv_backup.exists():
-            shutil.copy(csv_backup, csv_in_tree)
-            logging.info(f"✓ Restored CSV to git tree from: {csv_backup}")
-
-        # Cleanup temp files (but keep backup!)
+        # Cleanup temp files
         patch_file.unlink(missing_ok=True)
 
-    lines = len(open(csv_in_tree).readlines())
-    logging.info(f"\n✓ Complete! CSV has {lines} lines")
-    logging.info(f"✓ Backup preserved at: {csv_backup.absolute()}")
-    logging.info(f"✓ To commit: git add {csv_in_tree} && git commit -m 'perf: Backfill depths {start_depth}-{end_depth}'")
+    # Consolidate results
+    logging.info("\n=== Consolidating results ===")
+    result_files = sorted(results_dir.glob("depth_*.csv"), key=lambda p: int(p.stem.split('_')[1]))
+
+    if result_files:
+        # Read existing CSV
+        existing_lines = []
+        if csv_in_tree.exists():
+            with open(csv_in_tree, 'r') as f:
+                existing_lines = f.readlines()
+        else:
+            existing_lines = [csv_header]
+
+        # Collect all new rows
+        new_rows = []
+        for result_file in result_files:
+            with open(result_file, 'r') as f:
+                lines = f.readlines()
+                # Skip header
+                new_rows.extend(lines[1:])
+
+        # Write consolidated CSV
+        with open(csv_in_tree, 'w') as f:
+            f.writelines(existing_lines)
+            f.writelines(new_rows)
+
+        total_rows = len(new_rows)
+        logging.info(f"✓ Added {total_rows} rows to {csv_in_tree}")
+        logging.info(f"✓ CSV now has {len(existing_lines) + total_rows - 1} data rows (plus header)")
+
+    # Summary
+    logging.info("\n=== Summary ===")
+    logging.info(f"Successful benchmarks: {len(successful_benchmarks)}")
+    for depth, short_hash, rows in successful_benchmarks:
+        logging.info(f"  ✓ depth {depth} ({short_hash}): {rows} rows")
+
+    if failed_benchmarks:
+        logging.info(f"\nFailed benchmarks: {len(failed_benchmarks)}")
+        for depth, short_hash, reason in failed_benchmarks:
+            logging.info(f"  ✗ depth {depth} ({short_hash}): {reason}")
+
+    logging.info(f"\n✓ Complete!")
+    logging.info(f"✓ Results directory: {results_dir.absolute()}")
+    if result_files:
+        logging.info(f"✓ To commit: git add {csv_in_tree} && git commit -m 'perf: Backfill depths {start_depth}-{end_depth}'")
+
     return 0
 
 
