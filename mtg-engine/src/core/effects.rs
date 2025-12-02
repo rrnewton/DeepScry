@@ -374,6 +374,11 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Creature.YouCtrl`
     CreaturesYouControl,
 
+    /// Other creatures you control (excluding self)
+    /// Corresponds to: `Affected$ Creature.YouCtrl+Other`
+    /// Used by cards like Elesh Norn that grant bonuses to "other creatures you control"
+    CreaturesYouControlOther,
+
     /// All creatures
     /// Corresponds to: `Affected$ Creature`
     AllCreatures,

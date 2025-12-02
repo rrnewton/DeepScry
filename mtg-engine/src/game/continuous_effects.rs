@@ -281,12 +281,31 @@ impl GameState {
                                 }
                             }
                             AffectedSelector::CreaturesYouControl => {
-                                // TODO: Check if creature_id is controlled by equipment's owner
-                                // For now, skip these (anthems are not Equipment-specific)
+                                // Check if creature is controlled by the source's owner
+                                // Example: Glorious Anthem giving +1/+1 to creatures you control
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.controller == source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::CreaturesYouControlOther => {
+                                // Check if creature is controlled by source's owner AND not the source
+                                // Example: Elesh Norn giving +2/+2 to other creatures you control
+                                let creature = self.cards.get(creature_id)?;
+                                if creature_id != source_id && creature.controller == source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                             AffectedSelector::AllCreatures => {
-                                // TODO: Apply to all creatures on battlefield
-                                // For now, skip these (mass effects are rare on Equipment)
+                                // Apply to all creatures on the battlefield
+                                // Example: Global effects like "All creatures get -1/-1"
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_creature() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                             AffectedSelector::Self_ => {
                                 // Equipment affecting itself (not the equipped creature)
@@ -671,6 +690,10 @@ impl GameState {
                                 && types.iter().any(|t| creature.subtypes.contains(t))
                         }
                         AffectedSelector::CreaturesYouControl => creature.controller == source.controller,
+                        AffectedSelector::CreaturesYouControlOther => {
+                            // Creature must: be controlled by source controller, not be source
+                            creature_id != source_id && creature.controller == source.controller
+                        }
                         AffectedSelector::CreatureEquippedBy => {
                             // Grant keyword to equipped creature
                             self.get_attached_equipment(creature_id).contains(&source_id)

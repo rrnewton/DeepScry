@@ -1858,11 +1858,18 @@ impl CardDefinition {
                                     // Card.EquippedBy is semantically equivalent since Equipment
                                     // can only be attached to creatures (CR 301.5, 702.6)
                                     "Creature.EquippedBy" | "Card.EquippedBy" => AffectedSelector::CreatureEquippedBy,
-                                    "Creature.EnchantedBy" => AffectedSelector::CreatureEnchantedBy,
+                                    // Aura target selectors - all mean "enchanted permanent"
+                                    // Card.EnchantedBy and Permanent.EnchantedBy are used by generic auras
+                                    // that may enchant any permanent, but for +P/+T effects only creatures are meaningful
+                                    "Creature.EnchantedBy" | "Card.EnchantedBy" | "Permanent.EnchantedBy" => {
+                                        AffectedSelector::CreatureEnchantedBy
+                                    }
                                     "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
+                                    "Creature.YouCtrl+Other" => AffectedSelector::CreaturesYouControlOther,
                                     "Creature" => AffectedSelector::AllCreatures,
                                     "Card.Self" => AffectedSelector::Self_,
-                                    "Land.AttachedBy" => AffectedSelector::LandAttachedBy,
+                                    // Land aura selectors - both mean "the land this aura is enchanting"
+                                    "Land.AttachedBy" | "Land.EnchantedBy" => AffectedSelector::LandAttachedBy,
                                     // State-based selectors: equipped/enchanted
                                     "Card.Self+equipped" => AffectedSelector::SelfWhenEquipped,
                                     "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,
