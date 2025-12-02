@@ -463,6 +463,14 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Creature.YouCtrl+enchanted`
     /// Used by cards like Sphere of Safety
     EnchantedCreaturesYouControl,
+
+    /// All creatures of a specific type (global, not just yours)
+    /// Corresponds to: `Affected$ Sliver`, `Affected$ Creature.Sliver`, `Affected$ Permanent.Sliver`
+    /// Used by Sliver lords that affect ALL Slivers on the battlefield (both players)
+    AllCreaturesOfType {
+        /// The creature subtype (e.g., "Sliver")
+        subtype: crate::core::Subtype,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility

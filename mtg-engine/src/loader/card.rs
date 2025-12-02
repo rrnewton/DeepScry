@@ -1667,9 +1667,51 @@ impl CardDefinition {
         /// - "Creature.Artifact+Other+YouCtrl" → CreatureCardTypeOtherYouControl { Artifact }
         /// - "Creature.Land+YouCtrl" → LandCreaturesYouControl
         /// - "Creature.nonHuman+Other+YouCtrl" → CreatureNonTypeOtherYouControl { Human }
+        /// - "Sliver" → AllCreaturesOfType { Sliver }
+        /// - "Creature.Sliver" → AllCreaturesOfType { Sliver }
+        /// - "Permanent.Sliver" → AllCreaturesOfType { Sliver }
         ///
         /// Returns None if the pattern doesn't match a recognized format.
         fn parse_tribal_selector(value: &str) -> Option<AffectedSelector> {
+            // Pattern: Bare subtype (e.g., "Sliver") - all creatures of that type globally
+            // Used by Sliver lords that affect ALL Slivers, not just your own
+            // Note: Only match actual creature subtypes, not card types
+            if !value.contains('.') && !value.contains('+') {
+                // Common creature subtypes that use this pattern
+                let known_global_subtypes = [
+                    "Sliver", "Eldrazi", "Ally", "Ninja", "Samurai", "Wizard", "Merfolk", "Goblin", "Dragon", "Angel",
+                ];
+                if known_global_subtypes.contains(&value) {
+                    return Some(AffectedSelector::AllCreaturesOfType {
+                        subtype: crate::core::Subtype::new(value),
+                    });
+                }
+            }
+
+            // Pattern: Creature.TYPE or Permanent.TYPE (e.g., "Creature.Sliver", "Permanent.Sliver")
+            // All creatures of that type globally - used by Sliver lords
+            if (value.starts_with("Creature.") || value.starts_with("Permanent."))
+                && !value.contains("+YouCtrl")
+                && !value.contains("+OppCtrl")
+                && !value.contains("+Other")
+            {
+                let subtype = if value.starts_with("Creature.") {
+                    value.strip_prefix("Creature.")?
+                } else {
+                    value.strip_prefix("Permanent.")?
+                };
+                // Make sure we're not matching reserved types
+                if subtype != "YouCtrl"
+                    && subtype != "OppCtrl"
+                    && subtype != "EnchantedBy"
+                    && subtype != "EquippedBy"
+                    && subtype != "AttachedBy"
+                {
+                    return Some(AffectedSelector::AllCreaturesOfType {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
             // Pattern: Creature.nonTYPE+Other+YouCtrl (e.g., "Creature.nonHuman+Other+YouCtrl")
             // For cards like Mikaeus, the Unhallowed that buff non-Human creatures
             if value.starts_with("Creature.non") && value.ends_with("+Other+YouCtrl") {

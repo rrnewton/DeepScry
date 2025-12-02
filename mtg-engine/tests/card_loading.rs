@@ -900,3 +900,152 @@ fn test_load_friendly_neighborhood_land_attached_by() -> Result<()> {
 
     Ok(())
 }
+
+/// Test loading Clot Sliver (Sliver tribal static ability)
+///
+/// Clot Sliver has: "All Slivers have '{2}: Regenerate this permanent.'"
+/// Uses Affected$ Sliver pattern for global sliver effects.
+#[test]
+fn test_load_clot_sliver_global_selector() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/c/clot_sliver.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Clot Sliver");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Check that it has the Sliver subtype
+    let has_sliver_subtype = def.subtypes.iter().any(|s| s.as_str() == "Sliver");
+    assert!(has_sliver_subtype, "Should have Sliver subtype");
+
+    // Check that the S: ability line uses Affected$ Sliver
+    let has_sliver_affected = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Mode$ Continuous") && a.contains("Affected$ Sliver"));
+    assert!(
+        has_sliver_affected,
+        "Clot Sliver should have an Affected$ Sliver line. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    Ok(())
+}
+
+/// Test loading Muscle Sliver (Creature.Sliver pattern with P/T bonus)
+///
+/// Muscle Sliver has: "All Sliver creatures get +1/+1."
+/// Uses Affected$ Creature.Sliver pattern.
+#[test]
+fn test_load_muscle_sliver_creature_sliver_selector() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/m/muscle_sliver.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Muscle Sliver");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Check that the S: ability line uses Affected$ Creature.Sliver
+    let has_creature_sliver = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Mode$ Continuous") && a.contains("Affected$ Creature.Sliver"));
+    assert!(
+        has_creature_sliver,
+        "Muscle Sliver should have Affected$ Creature.Sliver. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have a ModifyPT static ability with AllCreaturesOfType selector
+    let has_pt_ability = card.static_abilities.iter().any(|a| {
+        if let StaticAbility::ModifyPT {
+            affected,
+            power,
+            toughness,
+            ..
+        } = a
+        {
+            matches!(
+                affected,
+                AffectedSelector::AllCreaturesOfType { subtype }
+                if subtype.as_str() == "Sliver"
+            ) && *power == 1
+                && *toughness == 1
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        has_pt_ability,
+        "Should have ModifyPT with AllCreaturesOfType(Sliver) +1/+1. Got: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}
+
+/// Test loading Winged Sliver (Creature.Sliver with keyword grant)
+///
+/// Winged Sliver has: "All Sliver creatures have flying."
+/// Uses Affected$ Creature.Sliver with AddKeyword$ Flying.
+#[test]
+fn test_load_winged_sliver_grants_flying() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/w/winged_sliver.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Winged Sliver");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Check that the S: ability line uses Affected$ Creature.Sliver with AddKeyword$ Flying
+    let has_flying_grant = def.raw_abilities.iter().any(|a| {
+        a.contains("Mode$ Continuous") && a.contains("Affected$ Creature.Sliver") && a.contains("AddKeyword$ Flying")
+    });
+    assert!(
+        has_flying_grant,
+        "Winged Sliver should have Affected$ Creature.Sliver AddKeyword$ Flying. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have a GrantKeyword static ability with AllCreaturesOfType selector
+    let has_keyword_ability = card.static_abilities.iter().any(|a| {
+        if let StaticAbility::GrantKeyword { affected, keyword, .. } = a {
+            matches!(
+                affected,
+                AffectedSelector::AllCreaturesOfType { subtype }
+                if subtype.as_str() == "Sliver"
+            ) && *keyword == Keyword::Flying
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        has_keyword_ability,
+        "Should have GrantKeyword Flying with AllCreaturesOfType(Sliver). Got: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}

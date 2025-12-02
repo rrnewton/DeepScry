@@ -556,6 +556,23 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            AffectedSelector::AllCreaturesOfType { subtype } => {
+                                // Check if this affects the creature:
+                                // 1. Creature must have the specified subtype
+                                // 2. Affects ALL creatures of that type (global, not just yours)
+                                // Example: Sliver lords - "All Slivers have/get..."
+                                //
+                                // This is different from CreatureTypeYouControl which only
+                                // affects your own creatures.
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check if creature has the subtype
+                                if creature.subtypes.contains(subtype) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {
@@ -663,6 +680,11 @@ impl GameState {
                             self.get_attached_auras(creature_id).contains(&source_id)
                         }
                         AffectedSelector::AllCreatures => creature.is_creature(),
+                        AffectedSelector::AllCreaturesOfType { subtype } => {
+                            // Grant keyword to all creatures with this subtype (global)
+                            // Used by Sliver lords: "All Slivers have..."
+                            creature.subtypes.contains(subtype)
+                        }
                         _ => false, // Other selectors not yet supported for keywords
                     };
 
