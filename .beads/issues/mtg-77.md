@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-01T21:51:30.924865383+00:00
+updated_at: 2025-12-03T16:24:09.517626809+00:00
 ---
 
 # Description
@@ -89,6 +89,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - ModifyPT and GrantKeyword static abilities handled
   - Global enchantments get CMC-based baseline value
   - Avoids double-counting abilities already present
+- ✅ **Combat restriction penalties (2025-12-03_#1113(93d67975))**
+  - CantAttack: -(power*9 + 40) penalty
+  - CantBlock: -10 penalty
+  - CantAttackOrBlock: reset value to 50 + (CMC*5)
+  - MustAttack: -10 penalty
+  - Goaded: -5 penalty
+  - Reference: CreatureEvaluator.java:177-197
+  - Test: test_combat_restriction_penalties() verifies all penalties
 
 **What's Missing:**
 
@@ -124,14 +132,17 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ### Lower Priority:
 
 8. **Bluffing/deception** - Hold information when advantageous
-9. **Static abilities** - "Must attack", "Can't be blocked by walls", etc.
+9. ~~**Static abilities**~~ - Partially complete: combat restrictions done (2025-12-03)
+   - ✅ Combat restrictions (CantAttack, CantBlock, MustAttack, Goaded)
+   - TODO: "Can't be blocked by" restrictions (e.g., "Can't be blocked by Walls")
+   - TODO: Other static ability types
 
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with real cards (2025-12-01) - 570 tests passing**
+- ✅ **Comprehensive test coverage with real cards (2025-12-01) - 582 tests passing**
 
 ## Next Steps (Priority Order)
 
-1. Static abilities handling
+1. More static abilities handling ("can't be blocked by" types)
 2. Bluffing/deception
