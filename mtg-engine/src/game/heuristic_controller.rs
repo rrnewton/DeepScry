@@ -964,30 +964,79 @@ impl HeuristicController {
 
     /// Check if a blocker can block an attacker
     ///
-    /// Reference: CombatUtil.canBlock()
+    /// Reference: CombatUtil.canBlock() in Java Forge
+    /// Implements blocking restrictions based on evasion abilities and protection.
     fn can_block(&self, attacker: &Card, blocker: &Card) -> bool {
-        // Defender can't block
-        if blocker.has_defender() {
-            return false;
-        }
+        // Defender can't block (creatures with Defender can't attack, but CAN block)
+        // NOTE: has_defender() on BLOCKER is wrong - Defender doesn't prevent blocking
+        // Defender prevents ATTACKING, not blocking. A Wall with Defender can still block.
 
-        // Flying can only be blocked by flying or reach
+        // Flying: can only be blocked by flying or reach
+        // Reference: CR 702.9b
         if attacker.has_flying() && !(blocker.has_flying() || blocker.has_reach()) {
             return false;
         }
 
-        // Menace requires at least 2 blockers (simplified check)
-        // In a full implementation, this would be context-dependent
-        if attacker.has_menace() {
-            // For single-blocker evaluation, menace makes it harder to block
-            // But we'll allow it for now in multi-blocker scenarios
+        // Horsemanship: can only be blocked by creatures with horsemanship
+        // Reference: CR 702.31
+        if attacker.has_horsemanship() && !blocker.has_horsemanship() {
+            return false;
         }
 
-        // TODO: Add more blocking restrictions:
-        // - Protection from color/type
-        // - Unblockable keyword
-        // - Fear/Intimidate
-        // - Other evasion abilities
+        // Shadow: can only be blocked by creatures with shadow, and
+        // creatures with shadow can only block creatures with shadow
+        // Reference: CR 702.28
+        if attacker.has_shadow() != blocker.has_shadow() {
+            // Shadow creatures can only be blocked by shadow creatures
+            // Non-shadow creatures can only be blocked by non-shadow creatures
+            return false;
+        }
+
+        // Fear: can only be blocked by artifact creatures or black creatures
+        // Reference: CR 702.36
+        if attacker.has_fear() {
+            let is_artifact = blocker.is_artifact();
+            let is_black = blocker.is_color(crate::core::Color::Black);
+            if !is_artifact && !is_black {
+                return false;
+            }
+        }
+
+        // Intimidate: can only be blocked by artifact creatures or creatures
+        // that share a color with this creature
+        // Reference: CR 702.13
+        if attacker.has_intimidate() {
+            let is_artifact = blocker.is_artifact();
+            let shares_color = attacker.colors.iter().any(|c| blocker.is_color(*c));
+            if !is_artifact && !shares_color {
+                return false;
+            }
+        }
+
+        // Skulk: can only be blocked by creatures with greater power
+        // Reference: CR 702.119
+        if attacker.has_skulk() {
+            let blocker_power = blocker.current_power();
+            let attacker_power = attacker.current_power();
+            if blocker_power <= attacker_power {
+                return false;
+            }
+        }
+
+        // Protection from color: creature with protection can't be blocked
+        // by creatures of that color
+        // Reference: CR 702.16
+        // Check if attacker has protection from blocker's colors
+        for color in &blocker.colors {
+            if attacker.has_protection_from(*color) {
+                return false;
+            }
+        }
+
+        // Menace requires at least 2 blockers (simplified check)
+        // In a full implementation, this would be context-dependent
+        // For now we allow single blocking to preserve existing logic
+        // The actual enforcement happens in declare_blockers
 
         true
     }
@@ -1853,18 +1902,60 @@ impl HeuristicController {
     /// Simplified blocking check for pump evaluation
     /// Checks if blocker can block attacker, accounting for keywords granted by pump
     fn can_block_simple(&self, attacker: &Card, blocker: &Card, keywords_granted: &[String]) -> bool {
-        // Can't block if defender
-        if blocker.has_defender() {
-            return false;
-        }
-
         // Check flying - can only be blocked by flying or reach
         let has_flying = attacker.has_flying() || keywords_granted.iter().any(|k| k == "Flying");
         if has_flying && !(blocker.has_flying() || blocker.has_reach()) {
             return false;
         }
 
-        // TODO: Add more evasion checks (Fear, Intimidate, Protection, etc.)
+        // Check horsemanship
+        let has_horsemanship = attacker.has_horsemanship() || keywords_granted.iter().any(|k| k == "Horsemanship");
+        if has_horsemanship && !blocker.has_horsemanship() {
+            return false;
+        }
+
+        // Check shadow
+        let has_shadow = attacker.has_shadow() || keywords_granted.iter().any(|k| k == "Shadow");
+        if has_shadow != blocker.has_shadow() {
+            return false;
+        }
+
+        // Check fear
+        let has_fear = attacker.has_fear() || keywords_granted.iter().any(|k| k == "Fear");
+        if has_fear {
+            let is_artifact = blocker.is_artifact();
+            let is_black = blocker.is_color(crate::core::Color::Black);
+            if !is_artifact && !is_black {
+                return false;
+            }
+        }
+
+        // Check intimidate
+        let has_intimidate = attacker.has_intimidate() || keywords_granted.iter().any(|k| k == "Intimidate");
+        if has_intimidate {
+            let is_artifact = blocker.is_artifact();
+            let shares_color = attacker.colors.iter().any(|c| blocker.is_color(*c));
+            if !is_artifact && !shares_color {
+                return false;
+            }
+        }
+
+        // Check skulk
+        let has_skulk = attacker.has_skulk() || keywords_granted.iter().any(|k| k == "Skulk");
+        if has_skulk {
+            let blocker_power = blocker.current_power();
+            let attacker_power = attacker.current_power();
+            if blocker_power <= attacker_power {
+                return false;
+            }
+        }
+
+        // Check protection from blocker's colors
+        for color in &blocker.colors {
+            if attacker.has_protection_from(*color) {
+                return false;
+            }
+        }
 
         true
     }
@@ -4419,5 +4510,190 @@ mod tests {
             "CantAttackOrBlock should be much less valuable"
         );
         assert_eq!(useless_value, 65, "CantAttackOrBlock should reset value to 50 + cmc*5");
+    }
+
+    #[test]
+    fn test_blocking_restrictions_evasion() {
+        // Test the can_block function for various evasion abilities
+        // Reference: CombatUtil.canBlock() in Java Forge
+        use crate::core::{Card, CardType, Color};
+
+        let player_id = EntityId::new(1);
+        let opponent_id = EntityId::new(2);
+        let controller = HeuristicController::new(player_id);
+
+        // Helper to create creatures with specified properties
+        let make_creature = |id: u32, owner: PlayerId, keywords: Vec<Keyword>, colors: Vec<Color>| {
+            let card_id = EntityId::new(id);
+            let mut creature = Card::new(card_id, "Test Creature", owner);
+            creature.set_power(Some(2));
+            creature.set_toughness(Some(2));
+            creature.add_type(CardType::Creature);
+            for kw in keywords {
+                creature.keywords.insert(kw);
+            }
+            for color in colors {
+                creature.colors.push(color);
+            }
+            creature
+        };
+
+        // ========== FEAR TESTS ==========
+        // Fear: can only be blocked by artifact creatures or black creatures
+        {
+            let attacker_with_fear = make_creature(100, opponent_id, vec![Keyword::Fear], vec![Color::Black]);
+            let white_blocker = make_creature(101, player_id, vec![], vec![Color::White]);
+            let black_blocker = make_creature(102, player_id, vec![], vec![Color::Black]);
+            let mut artifact_blocker = make_creature(103, player_id, vec![], vec![]);
+            artifact_blocker.add_type(CardType::Artifact);
+
+            // White creature can't block creature with Fear
+            assert!(
+                !controller.can_block(&attacker_with_fear, &white_blocker),
+                "White creature should not be able to block creature with Fear"
+            );
+
+            // Black creature CAN block creature with Fear
+            assert!(
+                controller.can_block(&attacker_with_fear, &black_blocker),
+                "Black creature should be able to block creature with Fear"
+            );
+
+            // Artifact creature CAN block creature with Fear
+            assert!(
+                controller.can_block(&attacker_with_fear, &artifact_blocker),
+                "Artifact creature should be able to block creature with Fear"
+            );
+        }
+
+        // ========== INTIMIDATE TESTS ==========
+        // Intimidate: can only be blocked by artifact creatures or creatures that share a color
+        {
+            let red_attacker_intimidate = make_creature(110, opponent_id, vec![Keyword::Intimidate], vec![Color::Red]);
+            let green_blocker = make_creature(111, player_id, vec![], vec![Color::Green]);
+            let red_blocker = make_creature(112, player_id, vec![], vec![Color::Red]);
+            let mut artifact_blocker = make_creature(113, player_id, vec![], vec![]);
+            artifact_blocker.add_type(CardType::Artifact);
+
+            // Green creature can't block red creature with Intimidate
+            assert!(
+                !controller.can_block(&red_attacker_intimidate, &green_blocker),
+                "Green creature should not be able to block red creature with Intimidate"
+            );
+
+            // Red creature CAN block red creature with Intimidate (shares color)
+            assert!(
+                controller.can_block(&red_attacker_intimidate, &red_blocker),
+                "Red creature should be able to block red creature with Intimidate (shares color)"
+            );
+
+            // Artifact creature CAN block creature with Intimidate
+            assert!(
+                controller.can_block(&red_attacker_intimidate, &artifact_blocker),
+                "Artifact creature should be able to block creature with Intimidate"
+            );
+        }
+
+        // ========== SHADOW TESTS ==========
+        // Shadow: can only be blocked by shadow, and shadow can only block shadow
+        {
+            let shadow_attacker = make_creature(120, opponent_id, vec![Keyword::Shadow], vec![Color::Black]);
+            let normal_blocker = make_creature(121, player_id, vec![], vec![Color::White]);
+            let shadow_blocker = make_creature(122, player_id, vec![Keyword::Shadow], vec![Color::Black]);
+
+            // Normal creature can't block shadow creature
+            assert!(
+                !controller.can_block(&shadow_attacker, &normal_blocker),
+                "Normal creature should not be able to block creature with Shadow"
+            );
+
+            // Shadow creature CAN block shadow creature
+            assert!(
+                controller.can_block(&shadow_attacker, &shadow_blocker),
+                "Shadow creature should be able to block creature with Shadow"
+            );
+
+            // Test the reverse: shadow creature can't be blocked by normal creatures either
+            let normal_attacker = make_creature(123, opponent_id, vec![], vec![Color::Black]);
+            assert!(
+                !controller.can_block(&normal_attacker, &shadow_blocker),
+                "Shadow creature should not be able to block normal creature"
+            );
+        }
+
+        // ========== SKULK TESTS ==========
+        // Skulk: can only be blocked by creatures with greater power
+        {
+            let skulk_attacker = make_creature(130, opponent_id, vec![Keyword::Skulk], vec![Color::Blue]);
+            // skulk_attacker has power 2
+
+            let mut weak_blocker = make_creature(131, player_id, vec![], vec![Color::White]);
+            weak_blocker.set_power(Some(1)); // Power 1
+
+            let mut equal_blocker = make_creature(132, player_id, vec![], vec![Color::White]);
+            equal_blocker.set_power(Some(2)); // Power 2
+
+            let mut strong_blocker = make_creature(133, player_id, vec![], vec![Color::White]);
+            strong_blocker.set_power(Some(3)); // Power 3
+
+            // Weak creature (power 1) can't block skulk creature (power 2)
+            assert!(
+                !controller.can_block(&skulk_attacker, &weak_blocker),
+                "Creature with power 1 should not be able to block creature with Skulk and power 2"
+            );
+
+            // Equal power creature can't block skulk creature
+            assert!(
+                !controller.can_block(&skulk_attacker, &equal_blocker),
+                "Creature with equal power should not be able to block creature with Skulk"
+            );
+
+            // Strong creature CAN block skulk creature
+            assert!(
+                controller.can_block(&skulk_attacker, &strong_blocker),
+                "Creature with greater power should be able to block creature with Skulk"
+            );
+        }
+
+        // ========== HORSEMANSHIP TESTS ==========
+        // Horsemanship: can only be blocked by creatures with horsemanship
+        {
+            let horse_attacker = make_creature(140, opponent_id, vec![Keyword::Horsemanship], vec![Color::White]);
+            let normal_blocker = make_creature(141, player_id, vec![], vec![Color::White]);
+            let horse_blocker = make_creature(142, player_id, vec![Keyword::Horsemanship], vec![Color::White]);
+
+            // Normal creature can't block horsemanship creature
+            assert!(
+                !controller.can_block(&horse_attacker, &normal_blocker),
+                "Normal creature should not be able to block creature with Horsemanship"
+            );
+
+            // Horsemanship creature CAN block horsemanship creature
+            assert!(
+                controller.can_block(&horse_attacker, &horse_blocker),
+                "Creature with Horsemanship should be able to block creature with Horsemanship"
+            );
+        }
+
+        // ========== PROTECTION TESTS ==========
+        // Protection from color: creature with protection can't be blocked by that color
+        {
+            let pro_red_attacker =
+                make_creature(150, opponent_id, vec![Keyword::ProtectionFromRed], vec![Color::White]);
+            let red_blocker = make_creature(151, player_id, vec![], vec![Color::Red]);
+            let blue_blocker = make_creature(152, player_id, vec![], vec![Color::Blue]);
+
+            // Red creature can't block creature with protection from red
+            assert!(
+                !controller.can_block(&pro_red_attacker, &red_blocker),
+                "Red creature should not be able to block creature with Protection from Red"
+            );
+
+            // Blue creature CAN block creature with protection from red
+            assert!(
+                controller.can_block(&pro_red_attacker, &blue_blocker),
+                "Blue creature should be able to block creature with Protection from Red"
+            );
+        }
     }
 }

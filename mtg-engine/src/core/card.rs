@@ -750,6 +750,52 @@ impl Card {
         self.keywords.contains(Keyword::Shroud)
     }
 
+    pub fn has_fear(&self) -> bool {
+        self.keywords.contains(Keyword::Fear)
+    }
+
+    pub fn has_intimidate(&self) -> bool {
+        self.keywords.contains(Keyword::Intimidate)
+    }
+
+    pub fn has_shadow(&self) -> bool {
+        self.keywords.contains(Keyword::Shadow)
+    }
+
+    pub fn has_skulk(&self) -> bool {
+        self.keywords.contains(Keyword::Skulk)
+    }
+
+    pub fn has_horsemanship(&self) -> bool {
+        self.keywords.contains(Keyword::Horsemanship)
+    }
+
+    /// Check if this card has protection from a specific color
+    /// Used for blocking restrictions - a creature with protection from red
+    /// can't be blocked by red creatures
+    pub fn has_protection_from(&self, color: Color) -> bool {
+        match color {
+            Color::Red => self.keywords.contains(Keyword::ProtectionFromRed),
+            Color::Blue => self.keywords.contains(Keyword::ProtectionFromBlue),
+            Color::Black => self.keywords.contains(Keyword::ProtectionFromBlack),
+            Color::White => self.keywords.contains(Keyword::ProtectionFromWhite),
+            Color::Green => self.keywords.contains(Keyword::ProtectionFromGreen),
+            Color::Colorless => false, // No protection from colorless keyword
+        }
+    }
+
+    /// Check if this card is a specific color
+    /// Used for blocking restrictions (Fear/Intimidate check if blocker is black/artifact)
+    pub fn is_color(&self, color: Color) -> bool {
+        // Check the colors field which stores the card's colors
+        self.colors.contains(&color)
+    }
+
+    /// Check if this card is colorless (artifact creatures, Eldrazi, etc.)
+    pub fn is_colorless(&self) -> bool {
+        self.colors.is_empty()
+    }
+
     pub fn tap(&mut self) {
         self.tapped = true;
     }
