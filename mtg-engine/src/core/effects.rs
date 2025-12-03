@@ -476,6 +476,27 @@ pub enum AffectedSelector {
         /// The creature subtype (e.g., "Sliver")
         subtype: crate::core::Subtype,
     },
+
+    /// The controller of this permanent (You)
+    /// Corresponds to: `Affected$ You`
+    /// Used by cards that grant abilities or effects to their controller
+    /// Example: Absolute Virtue grants Protection to you
+    You,
+
+    /// All players in the game
+    /// Corresponds to: `Affected$ Player`
+    /// Used by symmetrical effects that affect all players equally
+    Player,
+
+    /// Lands you control
+    /// Corresponds to: `Affected$ Land.YouCtrl`
+    /// Used by cards like Chromatic Lantern that grant abilities to your lands
+    LandsYouControl,
+
+    /// Opponent's creatures
+    /// Corresponds to: `Affected$ Creature.OppCtrl`
+    /// Used by cards that debuff or affect enemy creatures
+    CreaturesOpponentControls,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

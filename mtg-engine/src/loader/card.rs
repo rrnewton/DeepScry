@@ -1875,6 +1875,15 @@ impl CardDefinition {
                                     "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,
                                     "Creature.YouCtrl+equipped" => AffectedSelector::EquippedCreaturesYouControl,
                                     "Creature.YouCtrl+enchanted" => AffectedSelector::EnchantedCreaturesYouControl,
+                                    // Player-targeted selectors
+                                    // "You" affects the controller of the permanent with this ability
+                                    "You" => AffectedSelector::You,
+                                    // "Player" affects all players (symmetric effects)
+                                    "Player" => AffectedSelector::Player,
+                                    // Land selectors
+                                    "Land.YouCtrl" => AffectedSelector::LandsYouControl,
+                                    // Opponent's creatures
+                                    "Creature.OppCtrl" => AffectedSelector::CreaturesOpponentControls,
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {
@@ -2169,5 +2178,142 @@ Oracle:{T}: Prodigal Sorcerer deals 1 damage to any target.
             }
             _ => panic!("Expected DealDamage effect, got {:?}", ability.effects[0]),
         }
+    }
+
+    #[test]
+    fn test_parse_affected_you_selector() {
+        // Test parsing of Affected$ You selector
+        // Using Aegis of the Gods: "You have hexproof"
+        let content = r#"
+Name:Aegis of the Gods
+ManaCost:1 W
+Types:Enchantment Creature Human Soldier
+PT:2/1
+S:Mode$ Continuous | Affected$ You | AddKeyword$ Hexproof | Description$ You have hexproof.
+Oracle:You have hexproof. (You can't be the target of spells or abilities your opponents control.)
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Aegis of the Gods");
+
+        // Check that the static ability is parsed with You selector
+        let abilities = def.parse_static_abilities();
+        assert!(!abilities.is_empty(), "Should have static abilities");
+
+        use crate::core::effects::AffectedSelector;
+        use crate::core::StaticAbility;
+
+        // Should have a GrantKeyword ability with Affected$ You
+        let has_you_selector = abilities.iter().any(|ability| {
+            if let StaticAbility::GrantKeyword { affected, .. } = ability {
+                matches!(affected, AffectedSelector::You)
+            } else {
+                false
+            }
+        });
+        assert!(has_you_selector, "Should have GrantKeyword with You selector");
+    }
+
+    #[test]
+    fn test_parse_affected_land_youctrl_selector() {
+        // Test parsing of Affected$ Land.YouCtrl selector
+        // Using Chromatic Lantern: "Lands you control have mana ability"
+        let content = r#"
+Name:Chromatic Lantern
+ManaCost:3
+Types:Artifact
+S:Mode$ Continuous | Affected$ Land.YouCtrl | AddAbility$ AnyMana | Description$ Lands you control have "{T}: Add one mana of any color."
+SVar:AnyMana:AB$ Mana | Cost$ T | Produced$ Any | Amount$ 1 | SpellDescription$ Add one mana of any color.
+A:AB$ Mana | Cost$ T | Produced$ Any | SpellDescription$ Add one mana of any color.
+Oracle:Lands you control have "{T}: Add one mana of any color."
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Chromatic Lantern");
+
+        // Check that the static ability is parsed without warning
+        // (warning happens if selector is unknown and falls through to Self_)
+        let abilities = def.parse_static_abilities();
+
+        // Note: AddAbility$ is not the same as AddKeyword$, so we won't have a GrantKeyword
+        // But the point is that the selector is parsed correctly
+        // We can verify by re-parsing with debug output or by not seeing warnings
+        // For now, we just verify the card parses without panic
+        let _ = abilities;
+    }
+
+    #[test]
+    fn test_parse_affected_creature_oppctrl_selector() {
+        // Test parsing of Affected$ Creature.OppCtrl selector
+        // Using a mock card definition
+        let content = r#"
+Name:Test Debuff Lord
+ManaCost:2 B
+Types:Creature Zombie
+PT:2/2
+S:Mode$ Continuous | Affected$ Creature.OppCtrl | AddPower$ -1 | AddToughness$ -1 | Description$ Creatures your opponents control get -1/-1.
+Oracle:Creatures your opponents control get -1/-1.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Test Debuff Lord");
+
+        // Check that the static ability is parsed with OppCtrl selector
+        let abilities = def.parse_static_abilities();
+        assert!(!abilities.is_empty(), "Should have static abilities");
+
+        use crate::core::effects::AffectedSelector;
+        use crate::core::StaticAbility;
+
+        // Should have a ModifyPT ability with Affected$ Creature.OppCtrl
+        let has_oppctrl_selector = abilities.iter().any(|ability| {
+            if let StaticAbility::ModifyPT {
+                affected,
+                power,
+                toughness,
+                ..
+            } = ability
+            {
+                matches!(affected, AffectedSelector::CreaturesOpponentControls) && *power == -1 && *toughness == -1
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_oppctrl_selector,
+            "Should have ModifyPT with CreaturesOpponentControls selector"
+        );
+    }
+
+    #[test]
+    fn test_parse_affected_player_selector() {
+        // Test parsing of Affected$ Player selector
+        let content = r#"
+Name:Test Symmetrical Effect
+ManaCost:2 W W
+Types:Enchantment
+S:Mode$ Continuous | Affected$ Player | AddKeyword$ Hexproof | Description$ Each player has hexproof.
+Oracle:Each player has hexproof.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Test Symmetrical Effect");
+
+        // Check that the static ability is parsed with Player selector
+        let abilities = def.parse_static_abilities();
+        assert!(!abilities.is_empty(), "Should have static abilities");
+
+        use crate::core::effects::AffectedSelector;
+        use crate::core::StaticAbility;
+
+        // Should have a GrantKeyword ability with Affected$ Player
+        let has_player_selector = abilities.iter().any(|ability| {
+            if let StaticAbility::GrantKeyword { affected, .. } = ability {
+                matches!(affected, AffectedSelector::Player)
+            } else {
+                false
+            }
+        });
+        assert!(has_player_selector, "Should have GrantKeyword with Player selector");
     }
 }

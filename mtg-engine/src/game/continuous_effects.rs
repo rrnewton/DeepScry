@@ -592,6 +592,29 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            AffectedSelector::CreaturesOpponentControls => {
+                                // Check if this affects the creature:
+                                // 1. Creature must be controlled by an opponent of the source's controller
+                                // Example: Debuff effects like "Creatures your opponents control get -1/-1"
+
+                                let creature = self.cards.get(creature_id)?;
+
+                                // Check "OppCtrl" - creature must be controlled by opponent
+                                if creature.controller != source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Player-targeted selectors don't affect creature P/T
+                            AffectedSelector::You | AffectedSelector::Player => {
+                                // These selectors affect players (e.g., granting Protection to you)
+                                // Not relevant for creature P/T calculation
+                            }
+                            // Land selectors don't affect creature P/T (unless the land is a creature)
+                            AffectedSelector::LandsYouControl => {
+                                // This grants abilities/bonuses to lands you control
+                                // Not relevant for creature P/T calculation
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {
