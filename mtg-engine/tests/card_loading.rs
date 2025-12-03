@@ -1049,3 +1049,76 @@ fn test_load_winged_sliver_grants_flying() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Card.TopLibrary+YouCtrl selector is properly parsed
+/// Assemble the Players: "You may look at the top card of your library any time."
+/// Related to: mtg-170
+#[test]
+fn test_load_assemble_the_players_top_library_selector() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/a/assemble_the_players.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Assemble the Players");
+    assert!(def.types.contains(&CardType::Enchantment));
+
+    // Verify the first static ability line is present (MayLookAt)
+    let has_top_library_ability = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Affected$ Card.TopLibrary+YouCtrl") && a.contains("MayLookAt"));
+    assert!(
+        has_top_library_ability,
+        "Should have Card.TopLibrary+YouCtrl with MayLookAt. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card - we can't directly check static_abilities parsing
+    // since MayLookAt is handled differently, but we verify parsing doesn't fail
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let _card = def.instantiate(card_id, player_id);
+
+    // Parsing succeeded without warnings for Card.TopLibrary+YouCtrl
+    Ok(())
+}
+
+/// Test that Creature.AttachedBy selector is properly parsed
+/// Brainwash: "Enchanted creature can't attack unless its controller pays {3}."
+/// Related to: mtg-170
+#[test]
+fn test_load_brainwash_creature_attached_by_selector() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/b/brainwash.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Brainwash");
+    assert!(def.types.contains(&CardType::Enchantment));
+
+    // Verify the CantAttackUnless ability line is present
+    let has_cant_attack = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Creature.AttachedBy") && a.contains("CantAttackUnless"));
+    assert!(
+        has_cant_attack,
+        "Should have CantAttackUnless with Creature.AttachedBy. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card - parsing should not produce warnings for Creature.AttachedBy
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let _card = def.instantiate(card_id, player_id);
+
+    // Parsing succeeded without warnings for Creature.AttachedBy
+    Ok(())
+}

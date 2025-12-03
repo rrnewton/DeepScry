@@ -1884,6 +1884,10 @@ impl CardDefinition {
                                     "Land.YouCtrl" => AffectedSelector::LandsYouControl,
                                     // Opponent's creatures
                                     "Creature.OppCtrl" => AffectedSelector::CreaturesOpponentControls,
+                                    // Top card of library
+                                    "Card.TopLibrary+YouCtrl" => AffectedSelector::TopCardOfLibrary,
+                                    // Creature with something attached (Aura/Equipment)
+                                    "Creature.AttachedBy" => AffectedSelector::CreatureAttachedBy,
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {

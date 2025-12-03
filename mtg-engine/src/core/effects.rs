@@ -497,6 +497,17 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Creature.OppCtrl`
     /// Used by cards that debuff or affect enemy creatures
     CreaturesOpponentControls,
+
+    /// Top card of your library
+    /// Corresponds to: `Affected$ Card.TopLibrary+YouCtrl`
+    /// Used by cards that let you look at or play the top card of your library
+    /// Example: Courser of Kruphix, Garruk's Horde
+    TopCardOfLibrary,
+
+    /// Creature with something attached to it
+    /// Corresponds to: `Affected$ Creature.AttachedBy`
+    /// Used by Auras and Equipment that grant bonuses to the attached creature
+    CreatureAttachedBy,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

@@ -615,6 +615,25 @@ impl GameState {
                                 // This grants abilities/bonuses to lands you control
                                 // Not relevant for creature P/T calculation
                             }
+                            // Top card of library doesn't affect creature P/T
+                            AffectedSelector::TopCardOfLibrary => {
+                                // Affects visibility/playability of top library card
+                                // Not relevant for creature P/T calculation
+                            }
+                            AffectedSelector::CreatureAttachedBy => {
+                                // Check if this affects the creature:
+                                // 1. This is from an Aura or Equipment
+                                // 2. The source must be attached to the creature
+                                // Example: Equipment/Auras with "Equipped/Enchanted creature gets +X/+Y"
+
+                                // Check if source is attached to this creature
+                                if let Some(attached_to) = source.attached_to {
+                                    if attached_to == creature_id {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {
