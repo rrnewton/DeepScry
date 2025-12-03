@@ -108,182 +108,45 @@ impl GameState {
     /// If targets are provided, they will be used to fill in placeholder targets in effects.
     /// Otherwise, effects must already have their targets specified.
     pub fn resolve_spell(&mut self, card_id: CardId, chosen_targets: &[CardId]) -> Result<()> {
-        // Get card owner and effects
-        let (card_owner, mut effects) = {
+        // Get card owner and effects count (without cloning effects)
+        let (card_owner, effects_len) = {
             let card = self.cards.get(card_id)?;
-            // TODO: eliminate this clone and instead just take a reference. Why does it need to be mutable?
-            (card.owner, card.effects.clone())
+            (card.owner, card.effects.len())
         };
 
-        // Fill in targets for effects using the chosen targets
-        // If no targets were chosen (empty slice), effects must already be fully specified
-        let mut target_index = 0;
-        for effect in &mut effects {
-            match effect {
-                Effect::DealDamage {
-                    target: TargetRef::None,
-                    amount,
-                } if target_index < chosen_targets.len() => {
-                    // Use the chosen target
-                    *effect = Effect::DealDamage {
-                        target: TargetRef::Permanent(chosen_targets[target_index]),
-                        amount: *amount,
-                    };
-                    target_index += 1;
-                }
-                Effect::DestroyPermanent { target, restriction }
-                    if target.as_u32() == 0 && target_index < chosen_targets.len() =>
-                {
-                    // Use the chosen target
-                    *effect = Effect::DestroyPermanent {
-                        target: chosen_targets[target_index],
-                        restriction: restriction.clone(),
-                    };
-                    target_index += 1;
-                }
-                Effect::PumpCreature {
-                    target,
-                    power_bonus,
-                    toughness_bonus,
-                } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
-                    // Use the chosen target
-                    *effect = Effect::PumpCreature {
-                        target: chosen_targets[target_index],
-                        power_bonus: *power_bonus,
-                        toughness_bonus: *toughness_bonus,
-                    };
-                    target_index += 1;
-                }
-                Effect::TapPermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
-                    // Use the chosen target
-                    *effect = Effect::TapPermanent {
-                        target: chosen_targets[target_index],
-                    };
-                    target_index += 1;
-                }
-                Effect::UntapPermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
-                    // Use the chosen target
-                    *effect = Effect::UntapPermanent {
-                        target: chosen_targets[target_index],
-                    };
-                    target_index += 1;
-                }
-                Effect::CounterSpell { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
-                    // Use the chosen target
-                    *effect = Effect::CounterSpell {
-                        target: chosen_targets[target_index],
-                    };
-                    target_index += 1;
-                }
-                Effect::ExilePermanent { target } if target.as_u32() == 0 && target_index < chosen_targets.len() => {
-                    // Use the chosen target
-                    *effect = Effect::ExilePermanent {
-                        target: chosen_targets[target_index],
-                    };
-                    target_index += 1;
-                }
-                _ => {
-                    // Effect doesn't need a target, or target is already specified
-                }
-            }
-        }
-
-        // Handle placeholder player IDs (0 means "controller")
-        // This is still needed for effects that don't require targeting, like:
-        // "Draw a card" or "You gain 3 life"
-        for effect in &mut effects {
-            match effect {
-                Effect::DrawCards { player, count } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means "controller"
-                    *effect = Effect::DrawCards {
-                        player: card_owner,
-                        count: *count,
-                    };
-                }
-                Effect::GainLife { player, amount } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means "controller"
-                    *effect = Effect::GainLife {
-                        player: card_owner,
-                        amount: *amount,
-                    };
-                }
-                Effect::Mill { player, count } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means "controller"
-                    *effect = Effect::Mill {
-                        player: card_owner,
-                        count: *count,
-                    };
-                }
-                Effect::DealDamage {
-                    target: TargetRef::None,
-                    amount,
-                } => {
-                    // If no target was chosen, default to opponent for damage
-                    // This handles untargeted damage like "deals 1 damage to each opponent"
-                    if let Some(opponent_id) = self.players.iter().map(|p| p.id).find(|id| *id != card_owner) {
-                        *effect = Effect::DealDamage {
-                            target: TargetRef::Player(opponent_id),
-                            amount: *amount,
-                        };
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Find opponent ID for untargeted damage (resolve once)
+        let opponent_id = self.players.iter().map(|p| p.id).find(|id| *id != card_owner);
 
         // Check if targets are still valid before executing effects
         // MTG Rules 608.2b: If all targets are illegal, the spell doesn't resolve
-        //
-        // Check all effects that target permanents or spells on the stack
-        let mut all_targets_illegal = false;
-        if !chosen_targets.is_empty() {
-            // Check if this spell targets permanents (any effect type)
-            let targets_permanents = effects.iter().any(|effect| {
-                matches!(
-                    effect,
-                    Effect::DealDamage {
-                        target: TargetRef::Permanent(_),
-                        ..
-                    } | Effect::DestroyPermanent { .. }
-                        | Effect::ExilePermanent { .. }
-                        | Effect::TapPermanent { .. }
-                        | Effect::UntapPermanent { .. }
-                        | Effect::PumpCreature { .. }
-                )
-            });
-
-            if targets_permanents {
-                // Check if any permanent target is no longer on the battlefield
-                // This happens when multiple spells target the same permanent
-                let any_target_gone = chosen_targets
-                    .iter()
-                    .any(|&target_id| !self.battlefield.contains(target_id));
-                if any_target_gone {
-                    // Spell fizzles - permanent targets are no longer valid
-                    all_targets_illegal = true;
-                }
-            }
-
-            // Check if this spell counters spells on the stack
-            let targets_stack = effects
+        let all_targets_illegal = if !chosen_targets.is_empty() {
+            // Check if any permanent target is no longer on the battlefield
+            // This handles spells that target permanents
+            let any_permanent_gone = chosen_targets
                 .iter()
-                .any(|effect| matches!(effect, Effect::CounterSpell { .. }));
+                .any(|&target_id| !self.battlefield.contains(target_id) && !self.stack.contains(target_id));
 
-            if targets_stack {
-                // Check if any stack target is no longer on the stack
-                // This happens when multiple counterspells target the same spell
-                let any_target_gone = chosen_targets.iter().any(|&target_id| !self.stack.contains(target_id));
-                if any_target_gone {
-                    // Spell fizzles - target spell is no longer on the stack
-                    all_targets_illegal = true;
-                }
-            }
-        }
+            // If spell has targets and they're all gone, it fizzles
+            any_permanent_gone
+        } else {
+            false
+        };
 
         // Execute effects only if targets are still valid
         if !all_targets_illegal {
-            for effect in effects {
-                self.execute_effect(&effect)?;
+            // Execute effects by index, resolving targets at execution time
+            // This avoids cloning the entire Vec<Effect>
+            let mut target_index = 0;
+            for effect_index in 0..effects_len {
+                // Re-fetch effect each iteration (card ref can't be held across execute calls)
+                let effect = self.cards.get(card_id)?.effects.get(effect_index).cloned();
+
+                if let Some(effect) = effect {
+                    // Resolve the effect with context, advancing target_index as needed
+                    let resolved =
+                        self.resolve_effect_target(&effect, chosen_targets, &mut target_index, card_owner, opponent_id);
+                    self.execute_effect(&resolved)?;
+                }
             }
         }
 
@@ -737,6 +600,141 @@ impl GameState {
         // For now, this is complete - spell is on stack and costs are paid
 
         Ok(())
+    }
+
+    /// Resolve an effect's placeholder targets and player IDs
+    ///
+    /// This helper function resolves placeholder values (target ID 0, player ID 0) in effects
+    /// without requiring a clone of the entire Vec<Effect>. It returns a resolved copy of the
+    /// effect with targets filled in from the provided context.
+    ///
+    /// ## Parameters
+    /// - `effect`: The effect to resolve (borrowed)
+    /// - `chosen_targets`: Slice of targets chosen during spell casting
+    /// - `target_index`: Mutable index tracking which target to consume next
+    /// - `card_owner`: The controller of the spell (for "you" player references)
+    /// - `opponent_id`: Pre-computed opponent ID for untargeted damage effects
+    #[inline]
+    fn resolve_effect_target(
+        &self,
+        effect: &Effect,
+        chosen_targets: &[CardId],
+        target_index: &mut usize,
+        card_owner: PlayerId,
+        opponent_id: Option<PlayerId>,
+    ) -> Effect {
+        match effect {
+            // Target resolution for permanent-targeting effects
+            Effect::DealDamage {
+                target: TargetRef::None,
+                amount,
+            } => {
+                if *target_index < chosen_targets.len() {
+                    let target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::DealDamage {
+                        target: TargetRef::Permanent(target),
+                        amount: *amount,
+                    }
+                } else if let Some(opp) = opponent_id {
+                    // Default to opponent for untargeted damage
+                    Effect::DealDamage {
+                        target: TargetRef::Player(opp),
+                        amount: *amount,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::DestroyPermanent {
+                        target: resolved_target,
+                        restriction: restriction.clone(),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            Effect::PumpCreature {
+                target,
+                power_bonus,
+                toughness_bonus,
+            } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::PumpCreature {
+                        target: resolved_target,
+                        power_bonus: *power_bonus,
+                        toughness_bonus: *toughness_bonus,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            Effect::TapPermanent { target } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::TapPermanent {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::UntapPermanent {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            Effect::CounterSpell { target } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::CounterSpell {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::ExilePermanent {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            // Player ID resolution for player-targeting effects
+            Effect::DrawCards { player, count } if player.as_u32() == 0 => Effect::DrawCards {
+                player: card_owner,
+                count: *count,
+            },
+            Effect::GainLife { player, amount } if player.as_u32() == 0 => Effect::GainLife {
+                player: card_owner,
+                amount: *amount,
+            },
+            Effect::Mill { player, count } if player.as_u32() == 0 => Effect::Mill {
+                player: card_owner,
+                count: *count,
+            },
+            // No resolution needed - return clone of original
+            _ => effect.clone(),
+        }
     }
 
     /// Execute a single effect
