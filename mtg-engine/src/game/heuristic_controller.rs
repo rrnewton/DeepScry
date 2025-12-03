@@ -389,6 +389,38 @@ impl HeuristicController {
             value -= power * 9 + 40;
         }
 
+        // Combat restriction penalties
+        // Reference: CreatureEvaluator.java:177-197
+        // Java: if (c.hasKeyword("CARDNAME can't attack or block.")) { value = addValue(50 + (c.getCMC() * 5), "useless"); }
+        if card.has_keyword(Keyword::CantAttackOrBlock) {
+            // Reset everything - creature that can't attack or block is nearly useless
+            let cmc = card.mana_cost.cmc() as i32;
+            value = 50 + (cmc * 5);
+        } else {
+            // "Can't attack" - Java: if (c.hasKeyword("CARDNAME can't attack.")) { value -= power * 9 + 40; }
+            // This is already covered by Defender above, but we also check explicit CantAttack
+            // Java treats Defender the same as "can't attack" with same penalty
+            if card.has_keyword(Keyword::CantAttack) {
+                value -= power * 9 + 40;
+            }
+
+            // "Can't block" - Java: else if (c.hasKeyword("CARDNAME can't block.")) { value -= subValue(10, "cant-block"); }
+            if card.has_keyword(Keyword::CantBlock) {
+                value -= 10;
+            }
+
+            // Goaded - Java: else if (c.isGoaded()) { value -= subValue(5, "goaded"); }
+            if card.has_keyword(Keyword::Goaded) {
+                value -= 5;
+            }
+
+            // Must attack - Java: List<GameEntity> mAEnt = StaticAbilityMustAttack.entitiesMustAttack(c);
+            // if (mAEnt.contains(c)) { value -= subValue(10, "must-attack"); }
+            if card.has_keyword(Keyword::MustAttack) {
+                value -= 10;
+            }
+        }
+
         // Upkeep cost penalties (recurring costs make creatures less valuable)
         // Reference: CreatureEvaluator.java:235-276
 
@@ -4273,5 +4305,119 @@ mod tests {
             controller.should_counter_spell(&view_damage),
             "AI should want to counter opponent's damage spell"
         );
+    }
+
+    #[test]
+    fn test_combat_restriction_penalties() {
+        // Test that creatures with combat restrictions are properly penalized
+        // Reference: CreatureEvaluator.java:177-197
+        use crate::core::{Card, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let player_id = EntityId::new(1);
+        let controller = HeuristicController::new(player_id);
+
+        // Create a simple game state
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        // Helper: Create a 3/3 creature for testing
+        let make_creature = |id: u32, keywords: Vec<Keyword>| {
+            let card_id = EntityId::new(id);
+            let mut creature = Card::new(card_id, "Test Creature", player_id);
+            creature.set_power(Some(3));
+            creature.set_toughness(Some(3));
+            creature.add_type(CardType::Creature);
+            creature.mana_cost = ManaCost::from_string("3");
+            for kw in keywords {
+                creature.keywords.insert(kw);
+            }
+            (card_id, creature)
+        };
+
+        let _view = GameStateView::new(&game, player_id);
+
+        // Test 1: Normal 3/3 creature (baseline)
+        let (normal_id, normal) = make_creature(100, vec![]);
+        let mut test_game = game.clone();
+        test_game.cards.insert(normal_id, normal);
+        let view_normal = GameStateView::new(&test_game, player_id);
+        let normal_value = controller.evaluate_creature(&view_normal, normal_id);
+        println!("Normal 3/3 value: {}", normal_value);
+
+        // Test 2: Creature with Defender (can't attack)
+        // Java: value -= power * 9 + 40 = 3*9 + 40 = 67 penalty
+        let (defender_id, defender) = make_creature(101, vec![Keyword::Defender]);
+        let mut test_game = game.clone();
+        test_game.cards.insert(defender_id, defender);
+        let view_defender = GameStateView::new(&test_game, player_id);
+        let defender_value = controller.evaluate_creature(&view_defender, defender_id);
+        println!("Defender 3/3 value: {}", defender_value);
+        assert!(
+            defender_value < normal_value,
+            "Defender should be worth less than normal creature"
+        );
+        // Expected penalty: power*9 + 40 = 3*9 + 40 = 67
+        assert_eq!(
+            normal_value - defender_value,
+            67,
+            "Defender penalty should be power*9 + 40"
+        );
+
+        // Test 3: Creature with CantBlock
+        // Java: value -= 10
+        let (cant_block_id, cant_block) = make_creature(102, vec![Keyword::CantBlock]);
+        let mut test_game = game.clone();
+        test_game.cards.insert(cant_block_id, cant_block);
+        let view_cant_block = GameStateView::new(&test_game, player_id);
+        let cant_block_value = controller.evaluate_creature(&view_cant_block, cant_block_id);
+        println!("CantBlock 3/3 value: {}", cant_block_value);
+        assert!(
+            cant_block_value < normal_value,
+            "CantBlock should be worth less than normal creature"
+        );
+        assert_eq!(normal_value - cant_block_value, 10, "CantBlock penalty should be 10");
+
+        // Test 4: Creature with MustAttack
+        // Java: value -= 10
+        let (must_attack_id, must_attack) = make_creature(103, vec![Keyword::MustAttack]);
+        let mut test_game = game.clone();
+        test_game.cards.insert(must_attack_id, must_attack);
+        let view_must_attack = GameStateView::new(&test_game, player_id);
+        let must_attack_value = controller.evaluate_creature(&view_must_attack, must_attack_id);
+        println!("MustAttack 3/3 value: {}", must_attack_value);
+        assert!(
+            must_attack_value < normal_value,
+            "MustAttack should be worth less than normal creature"
+        );
+        assert_eq!(normal_value - must_attack_value, 10, "MustAttack penalty should be 10");
+
+        // Test 5: Creature with Goaded
+        // Java: value -= 5
+        let (goaded_id, goaded) = make_creature(104, vec![Keyword::Goaded]);
+        let mut test_game = game.clone();
+        test_game.cards.insert(goaded_id, goaded);
+        let view_goaded = GameStateView::new(&test_game, player_id);
+        let goaded_value = controller.evaluate_creature(&view_goaded, goaded_id);
+        println!("Goaded 3/3 value: {}", goaded_value);
+        assert!(
+            goaded_value < normal_value,
+            "Goaded should be worth less than normal creature"
+        );
+        assert_eq!(normal_value - goaded_value, 5, "Goaded penalty should be 5");
+
+        // Test 6: Creature with CantAttackOrBlock (nearly useless)
+        // Java: value = 50 + (cmc * 5) = 50 + (3 * 5) = 65 (total value, not penalty)
+        let (useless_id, useless) = make_creature(105, vec![Keyword::CantAttackOrBlock]);
+        let mut test_game = game.clone();
+        test_game.cards.insert(useless_id, useless);
+        let view_useless = GameStateView::new(&test_game, player_id);
+        let useless_value = controller.evaluate_creature(&view_useless, useless_id);
+        println!("CantAttackOrBlock 3/3 value: {}", useless_value);
+        assert!(
+            useless_value < normal_value,
+            "CantAttackOrBlock should be much less valuable"
+        );
+        assert_eq!(useless_value, 65, "CantAttackOrBlock should reset value to 50 + cmc*5");
     }
 }

@@ -56,6 +56,13 @@ pub enum Keyword {
     Wither,
     Infect,
 
+    // Combat restrictions (static abilities represented as keywords)
+    CantAttack,        // "CARDNAME can't attack."
+    CantBlock,         // "CARDNAME can't block."
+    CantAttackOrBlock, // "CARDNAME can't attack or block."
+    MustAttack,        // "CARDNAME attacks each combat if able."
+    Goaded,            // Creature is goaded (must attack if able, preferably opponent who goaded)
+
     // ===== KEYWORD ACTIONS/ABILITIES =====
     Changeling,
     Convoke,
