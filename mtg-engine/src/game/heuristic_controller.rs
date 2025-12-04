@@ -3633,6 +3633,19 @@ impl PlayerController for HeuristicController {
                 })
         });
 
+        // Check if the spell has destroy effects (Sinkhole, Terror, etc.)
+        // These should target opponent's permanents, not our own
+        let has_destroy_effect = spell_card.is_some_and(|c| {
+            c.effects
+                .iter()
+                .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }))
+                || c.activated_abilities.iter().any(|a| {
+                    a.effects
+                        .iter()
+                        .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }))
+                })
+        });
+
         // Choose targeting strategy based on spell/ability type
         let filtered_target_ids: Vec<CardId> = if let Some(damage) = damage_amount {
             // Damage abilities: Target opponent's best KILLABLE creature
@@ -3676,6 +3689,21 @@ impl PlayerController for HeuristicController {
                 .filter(|&&id| view.get_card(id).map(|c| c.owner == self.player_id).unwrap_or(false))
                 .copied()
                 .collect()
+        } else if has_destroy_effect {
+            // Destroy effects (Sinkhole, Terror, etc.): Target opponent's permanents
+            // Reference: DestroyAi.java - always targets opponent's permanents
+            let opponent_targets: Vec<CardId> = valid_targets
+                .iter()
+                .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                .copied()
+                .collect();
+            if opponent_targets.is_empty() {
+                // No opponent targets available - fallback to any valid target
+                // (This shouldn't normally happen for removal spells, but be safe)
+                valid_targets.to_vec()
+            } else {
+                opponent_targets
+            }
         } else {
             // Default: Use original logic (target our creatures first, fallback to opponent's)
             // This maintains compatibility with the stress tests
