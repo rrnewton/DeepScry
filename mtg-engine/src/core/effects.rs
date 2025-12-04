@@ -508,6 +508,16 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Creature.AttachedBy`
     /// Used by Auras and Equipment that grant bonuses to the attached creature
     CreatureAttachedBy,
+
+    /// Artifacts you control
+    /// Corresponds to: `Affected$ Artifact.YouCtrl`
+    /// Used by cards that grant bonuses to your artifacts
+    ArtifactsYouControl,
+
+    /// Other artifacts you control (excluding self)
+    /// Corresponds to: `Affected$ Artifact.YouCtrl+Other` or `Artifact.Other+YouCtrl`
+    /// Used by cards like Master of Etherium that affect other artifacts
+    ArtifactsYouControlOther,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

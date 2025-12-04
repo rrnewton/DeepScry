@@ -634,6 +634,26 @@ impl GameState {
                                     }
                                 }
                             }
+                            // Artifact selectors don't affect creature P/T directly
+                            // (unless the artifact is also a creature)
+                            AffectedSelector::ArtifactsYouControl | AffectedSelector::ArtifactsYouControlOther => {
+                                // This grants abilities/bonuses to artifacts you control
+                                // Only relevant if the creature is also an artifact
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_artifact() {
+                                    // For ArtifactsYouControlOther, exclude self
+                                    if matches!(affected, AffectedSelector::ArtifactsYouControlOther)
+                                        && creature_id == source_id
+                                    {
+                                        continue;
+                                    }
+                                    // Check controller match
+                                    if creature.controller == source.controller {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {

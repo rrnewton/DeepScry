@@ -1865,7 +1865,10 @@ impl CardDefinition {
                                         AffectedSelector::CreatureEnchantedBy
                                     }
                                     "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
-                                    "Creature.YouCtrl+Other" => AffectedSelector::CreaturesYouControlOther,
+                                    // Both orderings are valid: +Other can come before or after +YouCtrl
+                                    "Creature.YouCtrl+Other" | "Creature.Other+YouCtrl" => {
+                                        AffectedSelector::CreaturesYouControlOther
+                                    }
                                     "Creature" => AffectedSelector::AllCreatures,
                                     "Card.Self" => AffectedSelector::Self_,
                                     // Land aura selectors - both mean "the land this aura is enchanting"
@@ -1888,6 +1891,12 @@ impl CardDefinition {
                                     "Card.TopLibrary+YouCtrl" => AffectedSelector::TopCardOfLibrary,
                                     // Creature with something attached (Aura/Equipment)
                                     "Creature.AttachedBy" => AffectedSelector::CreatureAttachedBy,
+                                    // Artifacts you control
+                                    "Artifact.YouCtrl" => AffectedSelector::ArtifactsYouControl,
+                                    // Other artifacts you control
+                                    "Artifact.YouCtrl+Other" | "Artifact.Other+YouCtrl" => {
+                                        AffectedSelector::ArtifactsYouControlOther
+                                    }
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {

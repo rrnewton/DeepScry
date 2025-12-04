@@ -1122,3 +1122,103 @@ fn test_load_brainwash_creature_attached_by_selector() -> Result<()> {
     // Parsing succeeded without warnings for Creature.AttachedBy
     Ok(())
 }
+
+/// Test that Creature.Other+YouCtrl selector is properly parsed (reversed order)
+/// Aang, Air Nomad: "Other creatures you control have vigilance."
+/// Related to: mtg-147
+#[test]
+fn test_load_aang_creature_other_youctrl_selector() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/a/aang_air_nomad.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Aang, Air Nomad");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Verify the static ability line is present
+    let has_vigilance_grant = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Creature.Other+YouCtrl") && a.contains("AddKeyword$ Vigilance"));
+    assert!(
+        has_vigilance_grant,
+        "Should have Creature.Other+YouCtrl with AddKeyword$ Vigilance. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate and verify the static ability is correctly parsed
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have a GrantKeyword static ability with CreaturesYouControlOther selector
+    let has_keyword_ability = card.static_abilities.iter().any(|a| {
+        if let StaticAbility::GrantKeyword { affected, keyword, .. } = a {
+            matches!(affected, AffectedSelector::CreaturesYouControlOther) && *keyword == Keyword::Vigilance
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        has_keyword_ability,
+        "Should have GrantKeyword Vigilance with CreaturesYouControlOther. Got: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}
+
+/// Test that Artifact.YouCtrl selector is properly parsed
+/// Darksteel Forge: "Artifacts you control have indestructible."
+/// Related to: mtg-147
+#[test]
+fn test_load_darksteel_forge_artifact_youctrl_selector() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/d/darksteel_forge.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Darksteel Forge");
+    assert!(def.types.contains(&CardType::Artifact));
+
+    // Verify the static ability line is present
+    let has_indestructible_grant = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Artifact.YouCtrl") && a.contains("AddKeyword$ Indestructible"));
+    assert!(
+        has_indestructible_grant,
+        "Should have Artifact.YouCtrl with AddKeyword$ Indestructible. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate and verify the static ability is correctly parsed
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have a GrantKeyword static ability with ArtifactsYouControl selector
+    let has_keyword_ability = card.static_abilities.iter().any(|a| {
+        if let StaticAbility::GrantKeyword { affected, keyword, .. } = a {
+            matches!(affected, AffectedSelector::ArtifactsYouControl) && *keyword == Keyword::Indestructible
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        has_keyword_ability,
+        "Should have GrantKeyword Indestructible with ArtifactsYouControl. Got: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}
