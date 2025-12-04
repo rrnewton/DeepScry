@@ -726,6 +726,27 @@ impl GameState {
                                     }
                                 }
                             }
+                            // Generic "Card.AttachedBy" - any permanent this aura is attached to
+                            AffectedSelector::CardAttachedBy => {
+                                // Check if this aura is attached to the creature
+                                if let Some(attached_to) = source.attached_to {
+                                    if attached_to == creature_id {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
+                            // Land.YouOwn - affects lands you own (for graveyard effects)
+                            // Not relevant for creature P/T unless land is animated
+                            AffectedSelector::LandsYouOwn => {
+                                // These are typically "may play" effects, not P/T modifiers
+                                // Only relevant if creature is also a land
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_land() && creature.owner == source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {

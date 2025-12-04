@@ -568,6 +568,17 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Equipment.EnchantedBy`
     /// Used by Auras that attach to equipment
     EquipmentEnchantedBy,
+
+    /// Any permanent this Aura/Equipment is attached to
+    /// Corresponds to: `Affected$ Card.AttachedBy`
+    /// Used by generic Auras that can enchant any permanent type
+    /// More generic than Creature.AttachedBy or Land.AttachedBy
+    CardAttachedBy,
+
+    /// Lands you own (not just control)
+    /// Corresponds to: `Affected$ Land.YouOwn`
+    /// Used by cards like Crucible of Worlds that let you play lands from graveyard
+    LandsYouOwn,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

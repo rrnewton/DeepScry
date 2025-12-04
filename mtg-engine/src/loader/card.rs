@@ -1958,6 +1958,10 @@ impl CardDefinition {
                                     "Card.TopLibrary+YouCtrl" => AffectedSelector::TopCardOfLibrary,
                                     // Creature with something attached (Aura/Equipment)
                                     "Creature.AttachedBy" => AffectedSelector::CreatureAttachedBy,
+                                    // Any permanent with something attached
+                                    "Card.AttachedBy" => AffectedSelector::CardAttachedBy,
+                                    // Lands you own (for graveyard play effects)
+                                    "Land.YouOwn" => AffectedSelector::LandsYouOwn,
                                     // Artifacts you control
                                     "Artifact.YouCtrl" => AffectedSelector::ArtifactsYouControl,
                                     // Other artifacts you control
