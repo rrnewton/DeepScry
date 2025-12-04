@@ -592,6 +592,30 @@ pub enum AffectedSelector {
     /// Used by cards with Monstrosity that gain abilities when monstrous
     SelfWhenMonstrous,
 
+    /// Tapped creatures you control, other than self.
+    ///
+    /// Corresponds to: `Affected$ Creature.tapped+YouCtrl+Other`
+    /// Used by cards that benefit from or affect tapped creatures
+    TappedCreaturesYouControlOther,
+
+    /// Untapped creatures you control, other than self.
+    ///
+    /// Corresponds to: `Affected$ Creature.untapped+YouCtrl+Other`
+    /// Used by cards that benefit from or affect untapped creatures
+    UntappedCreaturesYouControlOther,
+
+    /// Non-land permanents you control.
+    ///
+    /// Corresponds to: `Affected$ Card.YouCtrl+nonLand`, `Affected$ Permanent.nonLand+YouCtrl`
+    /// Used by cards that affect all non-land permanents you control
+    NonLandPermanentsYouControl,
+
+    /// Non-land cards you own (in any zone).
+    ///
+    /// Corresponds to: `Affected$ Card.YouOwn+nonLand`
+    /// Used by cards that affect non-land cards you own
+    NonLandCardsYouOwn,
+
     /// OR combination of multiple selectors (matches if ANY selector matches).
     ///
     /// Corresponds to comma-separated Affected$ values like:

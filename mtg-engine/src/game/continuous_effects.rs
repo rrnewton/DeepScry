@@ -346,6 +346,18 @@ impl GameState {
             | AffectedSelector::EquipmentEnchantedBy => self.get_attached_auras(creature_id).contains(&source_id),
             AffectedSelector::CardAttachedBy => source.attached_to == Some(creature_id),
             AffectedSelector::LandsYouOwn => creature.is_land() && creature.owner == source.controller,
+            // Tapped/untapped state selectors
+            AffectedSelector::TappedCreaturesYouControlOther => {
+                creature_id != source_id && creature.controller == source.controller && creature.tapped
+            }
+            AffectedSelector::UntappedCreaturesYouControlOther => {
+                creature_id != source_id && creature.controller == source.controller && !creature.tapped
+            }
+            // Non-land permanents
+            AffectedSelector::NonLandPermanentsYouControl => {
+                creature.controller == source.controller && !creature.is_land()
+            }
+            AffectedSelector::NonLandCardsYouOwn => creature.owner == source.controller && !creature.is_land(),
             AffectedSelector::Any(selectors) => {
                 // Recursively check if ANY inner selector matches
                 selectors
@@ -883,6 +895,44 @@ impl GameState {
                             AffectedSelector::SelfWhenMonstrous => {
                                 // Not yet implemented - need is_monstrous flag on Card
                                 // Would check: creature_id == source.id && source.is_monstrous
+                            }
+                            // Tapped creatures you control (other than self)
+                            AffectedSelector::TappedCreaturesYouControlOther => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature_id != source.id
+                                    && creature.controller == source.controller
+                                    && creature.tapped
+                                {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Untapped creatures you control (other than self)
+                            AffectedSelector::UntappedCreaturesYouControlOther => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature_id != source.id
+                                    && creature.controller == source.controller
+                                    && !creature.tapped
+                                {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Non-land permanents you control
+                            AffectedSelector::NonLandPermanentsYouControl => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.controller == source.controller && !creature.is_land() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Non-land cards you own
+                            AffectedSelector::NonLandCardsYouOwn => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.owner == source.controller && !creature.is_land() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                             // OR combination - match if ANY inner selector matches
                             AffectedSelector::Any(selectors) => {

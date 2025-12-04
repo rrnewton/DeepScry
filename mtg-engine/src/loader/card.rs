@@ -1903,6 +1903,19 @@ impl CardDefinition {
                 // State-based self selectors
                 "Card.Self+untapped" => AffectedSelector::SelfWhenUntapped,
                 "Card.Self+IsMonstrous" => AffectedSelector::SelfWhenMonstrous,
+                // Tapped/untapped state selectors for creatures
+                "Creature.tapped+YouCtrl+Other" | "Creature.YouCtrl+tapped+Other" => {
+                    AffectedSelector::TappedCreaturesYouControlOther
+                }
+                "Creature.untapped+YouCtrl+Other" | "Creature.YouCtrl+untapped+Other" => {
+                    AffectedSelector::UntappedCreaturesYouControlOther
+                }
+                // Non-land permanents
+                "Card.YouCtrl+nonLand" | "Card.nonLand+YouCtrl" => AffectedSelector::NonLandPermanentsYouControl,
+                "Permanent.nonLand+YouCtrl" | "Permanent.YouCtrl+nonLand" => {
+                    AffectedSelector::NonLandPermanentsYouControl
+                }
+                "Card.YouOwn+nonLand" | "Card.nonLand+YouOwn" => AffectedSelector::NonLandCardsYouOwn,
                 // Spell types for stack effects (parsed but not yet implemented for P/T)
                 "Instant" => AffectedSelector::Self_,
                 "Sorcery" => AffectedSelector::Self_,
