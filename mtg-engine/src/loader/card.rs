@@ -1656,6 +1656,67 @@ impl CardDefinition {
             }
         }
 
+        /// Parse power/toughness value from AddPower$/AddToughness$ parameter.
+        ///
+        /// Handles:
+        /// - Simple integers: "2", "-1"
+        /// - SVar references: "X", "Y", "Z", "-X", "AffectedX"
+        /// - Count expressions: "Count$Valid..." (for counting cards)
+        /// - Variable names with negation: "-AttackingX", "-NotAttackingX"
+        ///
+        /// SVar references indicate variable P/T that depends on game state
+        /// (count of artifacts, enchantments, etc.). These are parsed as 0
+        /// for now until full SVar evaluation is implemented.
+        fn parse_pt_value(value: &str, param: &str, original: &str, ability: &str) -> i32 {
+            // Try parsing as integer first
+            if let Ok(n) = value.parse::<i32>() {
+                return n;
+            }
+
+            // Check for known SVar patterns - these are variable references
+            // that we accept silently (even though we return 0)
+            let known_var_patterns = [
+                "X",
+                "Y",
+                "Z",
+                "-X",
+                "-Y",
+                "-Z",
+                "AffectedX",
+                "AffectedY",
+                "AffectedZ",
+                "-AffectedX",
+                "-AffectedY",
+                "-AffectedZ",
+            ];
+            if known_var_patterns.contains(&value) {
+                // Known variable - silently return 0
+                // TODO(mtg-147): Implement SVar evaluation for variable P/T
+                return 0;
+            }
+
+            // Accept Count$ expressions (e.g., "Count$Valid Artifact.YouCtrl")
+            // These are inline count expressions that reference game state
+            if value.starts_with("Count$") {
+                // TODO(mtg-147): Implement SVar Count$ expression evaluation
+                return 0;
+            }
+
+            // Accept any variable name pattern (e.g., "-AttackingX", "NotAttackingY", "YourSpeed")
+            // These typically reference SVars defined elsewhere in the card
+            // Pattern: optional minus, then alphabetic chars (variable name)
+            let trimmed = value.trim_start_matches('-');
+            if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_alphabetic() || c == '_') {
+                // Looks like a variable reference - silently accept
+                // TODO(mtg-147): Implement SVar evaluation for variable P/T
+                return 0;
+            }
+
+            // Unknown pattern - warn and return 0
+            eprintln!("Warning: Failed to parse {}$ '{}' in '{}'", param, original, ability);
+            0
+        }
+
         /// Parse tribal type selector patterns
         ///
         /// Handles patterns like:
@@ -1929,18 +1990,12 @@ impl CardDefinition {
                         "AddPower" => {
                             // Remove leading + if present, then parse
                             let value_trimmed = value.trim_start_matches('+');
-                            power = value_trimmed.parse().unwrap_or_else(|_| {
-                                eprintln!("Warning: Failed to parse AddPower$ '{}' in '{}'", value, ability);
-                                0
-                            });
+                            power = parse_pt_value(value_trimmed, "AddPower", value, ability);
                         }
                         "AddToughness" => {
                             // Remove leading + if present, then parse
                             let value_trimmed = value.trim_start_matches('+');
-                            toughness = value_trimmed.parse().unwrap_or_else(|_| {
-                                eprintln!("Warning: Failed to parse AddToughness$ '{}' in '{}'", value, ability);
-                                0
-                            });
+                            toughness = parse_pt_value(value_trimmed, "AddToughness", value, ability);
                         }
                         "Description" => {
                             description = value.to_string();
