@@ -701,6 +701,14 @@ impl GameState {
                                 // This affects players, not creatures
                                 // Not relevant for creature P/T calculation
                             }
+                            // Self while attacking - grants bonuses while this creature attacks
+                            AffectedSelector::SelfWhenAttacking => {
+                                // Only applies to self and only while attacking
+                                if creature_id == source.id && self.combat.is_attacking(creature_id) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {
@@ -816,6 +824,11 @@ impl GameState {
                             // Grant keyword to all creatures with this subtype (global)
                             // Used by Sliver lords: "All Slivers have..."
                             creature.subtypes.contains(subtype)
+                        }
+                        AffectedSelector::SelfWhenAttacking => {
+                            // Grant keyword to self only while attacking
+                            // Used by cards like Soltari Lancer
+                            creature_id == source_id && self.combat.is_attacking(creature_id)
                         }
                         _ => false, // Other selectors not yet supported for keywords
                     };

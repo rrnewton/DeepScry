@@ -1909,6 +1909,8 @@ impl CardDefinition {
                                     "Creature.attacking" => AffectedSelector::AllAttackingCreatures,
                                     // Opponent player
                                     "Opponent" => AffectedSelector::Opponent,
+                                    // Self while attacking
+                                    "Card.Self+attacking" => AffectedSelector::SelfWhenAttacking,
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {

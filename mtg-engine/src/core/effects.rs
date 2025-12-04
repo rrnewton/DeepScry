@@ -548,6 +548,11 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Opponent`
     /// Used by effects that target or affect opponents
     Opponent,
+
+    /// This card itself when attacking
+    /// Corresponds to: `Affected$ Card.Self+attacking`
+    /// Used by cards like Soltari Lancer that gain abilities while attacking
+    SelfWhenAttacking,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

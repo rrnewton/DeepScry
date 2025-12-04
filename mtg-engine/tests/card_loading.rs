@@ -1379,3 +1379,52 @@ fn test_load_gnat_miser_opponent_selector() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Card.Self+attacking selector is properly parsed
+/// Soltari Lancer: "Soltari Lancer has first strike as long as it's attacking."
+/// Related to: mtg-147
+#[test]
+fn test_load_soltari_lancer_self_attacking_selector() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/s/soltari_lancer.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Soltari Lancer");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Verify the static ability line is present
+    let has_self_attacking_selector = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Card.Self+attacking") && a.contains("AddKeyword$ First Strike"));
+    assert!(
+        has_self_attacking_selector,
+        "Should have Card.Self+attacking with AddKeyword$ First Strike. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate and verify static abilities
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have GrantKeyword with SelfWhenAttacking selector
+    let has_grant_keyword = card.static_abilities.iter().any(|ability| {
+        if let StaticAbility::GrantKeyword { affected, keyword, .. } = ability {
+            matches!(affected, AffectedSelector::SelfWhenAttacking) && *keyword == Keyword::FirstStrike
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_grant_keyword,
+        "Should have GrantKeyword with SelfWhenAttacking selector. Static abilities: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}
