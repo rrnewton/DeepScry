@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-04T14:40:28.637673311+00:00
+updated_at: 2025-12-04T19:46:17.505864967+00:00
 ---
 
 # Description
@@ -24,17 +24,18 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-143: Missing player choice opportunities tracking
 - mtg-147: Affected$ selector parsing improvements
 
-**Current status as of 2025-12-04_#1134(28100f8):**
+**Current status as of 2025-12-04_#1141(00682bc):**
 - Tests: 597 passing (nextest, all categories)
 - Examples: 14/14 passing
 - Cards: 31,545 loaded from cardsfolder
-- Parser warnings: 1,694 (reduced from 2,672 - 37% improvement)
+- Parser warnings: 1,488 (reduced from 2,672 - 44% improvement)
 
 **Recent accomplishments (2025-12-04):**
-- Fixed AddMana effect player placeholder resolution (Dark Ritual bug)
-- Added variable P/T parsing (AddPower$/AddToughness$ X, Y, Z, Count$)
-- Added EnchantedBy selectors for Artifact/Planeswalker/Equipment
-- Parser warning reduction: 2,672 → 1,694 (-978 warnings)
+- AffectedSelector::Any for comma-separated OR conditions (dbce929)
+- State-based selectors: SelfWhenUntapped, SelfWhenMonstrous (66cc504)
+- Card.AttachedBy and Land.YouOwn selectors (cb54e35)
+- SmallVec optimization for spell_targets (+1.6% throughput)
+- Parser warning reduction: 2,672 → 1,488 (-1184 warnings, 44%)
 
 **Previous accomplishments (2025-11-30 to 2025-12-03):**
 - Card.Self+attacking selector for combat keywords
@@ -54,4 +55,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-**Last updated: 2025-12-04_#1134(28100f8)**
+**Last updated: 2025-12-04_#1141(00682bc)**
