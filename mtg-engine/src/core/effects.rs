@@ -534,6 +534,15 @@ pub enum AffectedSelector {
     /// Used by cards that buff token creatures specifically
     TokenCreaturesYouControl,
 
+    /// Token creatures of a specific type you control.
+    ///
+    /// Corresponds to: `Affected$ Zombie.token+YouCtrl`, `Affected$ Spirit.token+YouCtrl`
+    /// Used by cards that specifically buff token creatures of a certain type
+    TokenCreatureTypeYouControl {
+        /// The creature subtype (e.g., "Zombie", "Spirit")
+        subtype: crate::core::Subtype,
+    },
+
     /// Attacking creatures you control
     /// Corresponds to: `Affected$ Creature.attacking+YouCtrl`
     /// Used by cards that buff your attacking creatures

@@ -1806,6 +1806,23 @@ impl CardDefinition {
                 });
             }
 
+            // Pattern: Creature.TYPE+YouCtrl+Other (alternate ordering)
+            // e.g., "Creature.Artifact+YouCtrl+Other" - same as +Other+YouCtrl
+            if value.starts_with("Creature.") && value.ends_with("+YouCtrl+Other") {
+                let remainder = value.strip_prefix("Creature.")?;
+                let type_str = remainder.strip_suffix("+YouCtrl+Other")?;
+
+                // Check if it's a card type (like Artifact) vs a subtype (like Goblin)
+                if let Some(card_type) = is_card_type(type_str) {
+                    return Some(AffectedSelector::CreatureCardTypeOtherYouControl { card_type });
+                }
+
+                // Otherwise, treat as subtype (tribal)
+                return Some(AffectedSelector::CreatureTypeOtherYouControl {
+                    subtype: crate::core::Subtype::new(type_str),
+                });
+            }
+
             // Pattern: Creature.TYPE+YouCtrl (e.g., "Creature.Zombie+YouCtrl" or "Creature.Artifact+YouCtrl")
             // For cards that also buff themselves (no "Other")
             if value.starts_with("Creature.") && value.ends_with("+YouCtrl") && !value.contains("+Other") {
@@ -1852,6 +1869,17 @@ impl CardDefinition {
                 let subtype = value.strip_suffix(".YouCtrl+Other")?;
                 if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
                     return Some(AffectedSelector::CreatureTypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: TYPE.token+YouCtrl (e.g., "Zombie.token+YouCtrl")
+            // For token creatures of a specific type you control
+            if value.ends_with(".token+YouCtrl") {
+                let subtype = value.strip_suffix(".token+YouCtrl")?;
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
+                    return Some(AffectedSelector::TokenCreatureTypeYouControl {
                         subtype: crate::core::Subtype::new(subtype),
                     });
                 }
