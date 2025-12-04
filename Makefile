@@ -180,14 +180,19 @@ plot:
 	python3 scripts/plot_performance_interactive.py
 
 # Generate plots for all experiment_results/*/perf_history.csv files
+# Skips symlinked directories to avoid redundant processing
 plot-all:
 	@for csv in experiment_results/*/perf_history.csv; do \
 		if [ -f "$$csv" ]; then \
 			dir=$$(dirname "$$csv"); \
-			echo "=== Generating plot for $$csv ==="; \
-			python3 scripts/plot_performance_interactive.py \
-				--input "$$csv" \
-				--output "$$dir/performance_dashboard.html"; \
+			if [ -L "$$dir" ]; then \
+				echo "=== Skipping symlink $$dir ==="; \
+			else \
+				echo "=== Generating plot for $$csv ==="; \
+				python3 scripts/plot_performance_interactive.py \
+					--input "$$csv" \
+					--output "$$dir/performance_dashboard.html"; \
+			fi \
 		fi \
 	done
 
