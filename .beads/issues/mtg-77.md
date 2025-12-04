@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-03T20:07:04.570698574+00:00
+updated_at: 2025-12-04T14:41:47.636249333+00:00
 ---
 
 # Description
@@ -66,9 +66,12 @@ Track completion of heuristic AI port from Java Forge to Rust.
 ## Completed Work
 
 - ✅ All items marked with ✅ above
-- ✅ **Comprehensive test coverage with real cards - 587 tests passing**
+- ✅ **Comprehensive test coverage with real cards**
 
 ## Next Steps (Priority Order)
 
 1. More static abilities handling ("can't be blocked except by" types)
 2. Bluffing/deception
+
+---
+**Checked up-to-date as of 2025-12-04_#1134(28100f8) - 597 tests passing**
