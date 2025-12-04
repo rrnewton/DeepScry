@@ -3916,15 +3916,35 @@ impl PlayerController for HeuristicController {
         // Sort by evaluation (descending - best creatures first)
         blocker_list.sort_by(|a, b| b.1.cmp(&a.1));
 
+        // Check if attacker has deathtouch - affects lethal damage calculation
+        // MTG Rules 702.2c: Any nonzero damage from a source with deathtouch is lethal
+        let attacker_has_deathtouch = view.has_keyword_with_effects(attacker, crate::core::Keyword::Deathtouch);
+
         // Separate into killable and non-killable based on remaining damage
         let mut remaining_damage = attacker_power;
         let mut killable: SmallVec<[CardId; 4]> = SmallVec::new();
         let mut unkillable: SmallVec<[CardId; 4]> = SmallVec::new();
 
         for (blocker_id, _eval, toughness) in blocker_list {
-            // Calculate damage needed to kill (simplified - just toughness for now)
-            // TODO(mtg-77): Consider damage prevention, indestructible, deathtouch, wither
-            let lethal_damage = toughness;
+            // Check if blocker has indestructible - can't be killed by damage
+            // MTG Rules 702.12: An indestructible creature is not destroyed by lethal damage
+            let blocker_has_indestructible =
+                view.has_keyword_with_effects(blocker_id, crate::core::Keyword::Indestructible);
+
+            if blocker_has_indestructible {
+                // Indestructible creatures can't be killed - put at end
+                unkillable.push(blocker_id);
+                continue;
+            }
+
+            // Calculate damage needed to kill
+            // With deathtouch: 1 damage is lethal (if toughness > 0)
+            // Without deathtouch: need damage >= toughness
+            let lethal_damage = if attacker_has_deathtouch && toughness > 0 {
+                1 // Any nonzero damage from deathtouch is lethal
+            } else {
+                toughness
+            };
 
             if lethal_damage <= remaining_damage {
                 // We can kill this blocker
@@ -4224,6 +4244,135 @@ mod tests {
         // - 2/2: can't kill with 1 damage, but rules require assigning lethal
         //        before moving to next blocker, so we'd be stuck
         // The algorithm correctly recognizes 2/2 can't be killed and skips it
+    }
+
+    #[test]
+    fn test_damage_assignment_with_deathtouch() {
+        // Test that deathtouch changes lethal damage calculation
+        // MTG Rules 702.2c: Any nonzero damage from deathtouch is lethal
+        //
+        // Scenario: 2/2 Deathtouch attacker vs three blockers:
+        // - 5/5 Big creature (eval ~250)
+        // - 4/4 Medium creature (eval ~200)
+        // - 3/3 Small creature (eval ~175)
+        //
+        // Without deathtouch: 2 damage total, can't kill anything
+        // With deathtouch: 1 damage kills anything, so can kill 2 creatures!
+        //
+        // Expected order with deathtouch:
+        // - 5/5: 1 damage kills (deathtouch), 1 damage left
+        // - 4/4: 1 damage kills (deathtouch), 0 damage left
+        // - 3/3: no damage left, unkillable
+
+        let available_damage = 2;
+        let blockers = vec![
+            ("5/5 Big", 250, 5), // (name, eval, toughness)
+            ("4/4 Medium", 200, 4),
+            ("3/3 Small", 175, 3),
+        ];
+
+        // Sort by evaluation (descending - target best creatures first)
+        let mut sorted = blockers.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Simulate algorithm WITH deathtouch
+        let attacker_has_deathtouch = true;
+        let mut remaining = available_damage;
+        let mut killable = vec![];
+        let mut unkillable = vec![];
+
+        for (name, _eval, toughness) in sorted {
+            // With deathtouch, 1 damage is lethal
+            let lethal_damage = if attacker_has_deathtouch && toughness > 0 {
+                1
+            } else {
+                toughness
+            };
+
+            if lethal_damage <= remaining {
+                killable.push(name);
+                remaining -= lethal_damage;
+            } else {
+                unkillable.push(name);
+            }
+        }
+
+        // With deathtouch: can kill 5/5 (1 dmg) and 4/4 (1 dmg), 3/3 no damage left
+        assert_eq!(killable, vec!["5/5 Big", "4/4 Medium"]);
+        assert_eq!(unkillable, vec!["3/3 Small"]);
+
+        // Verify without deathtouch would give different (worse) result
+        let mut no_dt_remaining = 2;
+        let mut no_dt_killable = vec![];
+
+        for (name, _eval, toughness) in blockers {
+            if toughness <= no_dt_remaining {
+                no_dt_killable.push(name);
+                no_dt_remaining -= toughness;
+            }
+        }
+
+        // Without deathtouch: can't kill anything with only 2 damage
+        assert!(
+            no_dt_killable.is_empty(),
+            "Without deathtouch, 2 damage can't kill any creature"
+        );
+    }
+
+    #[test]
+    fn test_damage_assignment_with_indestructible() {
+        // Test that indestructible blockers are always put last
+        // MTG Rules 702.12: Indestructible creatures can't be destroyed by damage
+        //
+        // Scenario: 6/6 attacker vs three blockers:
+        // - 4/4 Indestructible (eval ~300 due to indestructible bonus)
+        // - 3/3 Normal creature (eval ~175)
+        // - 2/2 Normal creature (eval ~140)
+        //
+        // Even though the indestructible creature has highest eval,
+        // it should be last because we can't kill it anyway.
+        //
+        // Expected: kill 3/3 and 2/2, leave indestructible last
+
+        let available_damage = 6;
+        let blockers = vec![
+            ("4/4 Indestructible", 300, 4, true), // (name, eval, toughness, indestructible)
+            ("3/3 Normal", 175, 3, false),
+            ("2/2 Normal", 140, 2, false),
+        ];
+
+        // Sort by evaluation (descending)
+        let mut sorted = blockers.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Simulate algorithm with indestructible check
+        let mut remaining = available_damage;
+        let mut killable = vec![];
+        let mut unkillable = vec![];
+
+        for (name, _eval, toughness, is_indestructible) in sorted {
+            if is_indestructible {
+                // Indestructible = always unkillable
+                unkillable.push(name);
+                continue;
+            }
+
+            if toughness <= remaining {
+                killable.push(name);
+                remaining -= toughness;
+            } else {
+                unkillable.push(name);
+            }
+        }
+
+        // Killable: 3/3 (3 dmg) and 2/2 (2 dmg) = 5 damage used
+        // Unkillable: 4/4 Indestructible (even though it was first by eval)
+        assert_eq!(killable, vec!["3/3 Normal", "2/2 Normal"]);
+        assert_eq!(unkillable, vec!["4/4 Indestructible"]);
+
+        // Final order: killable first, unkillable last
+        let final_order: Vec<_> = killable.into_iter().chain(unkillable).collect();
+        assert_eq!(final_order[2], "4/4 Indestructible");
     }
 
     /// Test intelligent mana source scoring

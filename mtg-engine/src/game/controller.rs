@@ -524,6 +524,23 @@ impl<'a> GameStateView<'a> {
     pub fn get_effective_toughness(&self, creature_id: CardId) -> Option<i32> {
         self.game.get_effective_toughness(creature_id).ok()
     }
+
+    /// Check if a creature has a keyword, including keywords granted by continuous effects
+    ///
+    /// This method checks both the creature's innate keywords and any keywords
+    /// granted by continuous effects (e.g., equipment or auras that grant flying).
+    ///
+    /// ## Example
+    ///
+    /// ```ignore
+    /// // Check if blocker has indestructible (either innate or granted)
+    /// if view.has_keyword_with_effects(blocker_id, Keyword::Indestructible) {
+    ///     // Blocker can't be destroyed by damage
+    /// }
+    /// ```
+    pub fn has_keyword_with_effects(&self, card_id: CardId, keyword: crate::core::Keyword) -> bool {
+        self.game.has_keyword_with_effects(card_id, keyword)
+    }
 }
 
 /// Result of a controller choice operation
