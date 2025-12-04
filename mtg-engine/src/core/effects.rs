@@ -700,6 +700,147 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Card.Self+ThisTurnEntered`
     /// Used by cards that have effects when they ETB
     SelfThisTurnEntered,
+
+    /// Card exiled with this source (imprint, exile-based effects).
+    ///
+    /// Corresponds to: `Affected$ Card.ExiledWithSource`
+    /// Used by imprint effects like Chrome Mox, Isochron Scepter
+    CardExiledWithSource,
+
+    /// Top card of library (generic, any player).
+    ///
+    /// Corresponds to: `Affected$ Card.TopLibrary`
+    /// Used by Future Sight-like effects
+    TopOfLibrary,
+
+    /// Land card on top of your library.
+    ///
+    /// Corresponds to: `Affected$ Land.TopLibrary+YouCtrl`
+    /// Used by effects that let you play lands from the top of your library
+    LandTopOfLibrary,
+
+    /// Non-land creature on top of your library.
+    ///
+    /// Corresponds to: `Affected$ Creature.TopLibrary+YouCtrl+nonLand`
+    /// Used by effects that care about creature cards on top of library
+    CreatureTopOfLibraryNonLand,
+
+    /// Commander you control.
+    ///
+    /// Corresponds to: `Affected$ Card.IsCommander+YouCtrl`
+    /// Used by Commander-specific cards
+    CommanderYouControl,
+
+    /// Creature equipped by a legendary equipment.
+    ///
+    /// Corresponds to: `Affected$ Card.EquippedBy+Legendary`
+    /// Used by legendary equipment with special abilities
+    EquippedByLegendary,
+
+    /// Top card of library you own.
+    ///
+    /// Corresponds to: `Affected$ Card.TopLibrary+YouOwn`
+    /// Used by effects that affect cards you own on top of library
+    TopOfLibraryYouOwn,
+
+    /// Any permanent this is attached to (generic).
+    ///
+    /// Corresponds to: `Affected$ Permanent.AttachedBy`
+    /// Used by generic auras/equipment that affect any permanent type
+    PermanentAttachedBy,
+
+    /// Non-creature artifacts.
+    ///
+    /// Corresponds to: `Affected$ Artifact.nonCreature`
+    /// Used by effects that only affect non-creature artifacts
+    ArtifactsNonCreature,
+
+    /// All artifacts.
+    ///
+    /// Corresponds to: `Affected$ Artifact`
+    /// Used by effects that affect all artifacts regardless of controller
+    AllArtifacts,
+
+    /// Basic lands you control.
+    ///
+    /// Corresponds to: `Affected$ Land.Basic+YouCtrl`
+    /// Used by effects that affect basic lands you control
+    BasicLandsYouControl,
+
+    /// Specific basic land type (e.g., Mountain, Forest, Island).
+    ///
+    /// Corresponds to: `Affected$ Mountain`, `Affected$ Forest`, etc.
+    /// Used by effects that affect specific land types
+    SpecificLandType {
+        /// The land type name (e.g., "Mountain", "Island")
+        land_type: String,
+    },
+
+    /// Non-land cards with CMC at most X.
+    ///
+    /// Corresponds to: `Affected$ Card.nonLand+cmcLEX`
+    /// Used by effects that care about converted mana cost
+    NonLandCmcLE {
+        /// The maximum CMC (often X, which would be resolved at runtime)
+        max_cmc: i32,
+    },
+
+    /// Creature of a specific type with flying that opponent controls.
+    ///
+    /// Corresponds to: `Affected$ Creature.withFlying+OppCtrl`
+    /// Used by effects that target flying creatures opponents control
+    CreatureWithFlyingOppCtrl,
+
+    /// Other creatures of a specific type (zombies, etc.) you control.
+    ///
+    /// Corresponds to: `Affected$ Creature.Zombie+Other`
+    /// Used by zombie lords and similar effects
+    CreatureTypeOther {
+        /// The creature subtype
+        subtype: crate::core::Subtype,
+    },
+
+    /// Slivers you control (specific handling).
+    ///
+    /// Corresponds to: `Affected$ Permanent.Sliver+YouCtrl`
+    /// Used by Slivers that only affect your own Slivers
+    SliversYouControl,
+
+    /// Equipment attached to a permanent.
+    ///
+    /// Corresponds to: `Affected$ Permanent.EquippedBy`
+    /// Used by effects that care about equipped permanents
+    PermanentEquippedBy,
+
+    /// Vehicles this is attached to.
+    ///
+    /// Corresponds to: `Affected$ Vehicle.AttachedBy`
+    /// Used by crew-related effects
+    VehicleAttachedBy,
+
+    /// Non-land cards you own without Foretell.
+    ///
+    /// Corresponds to: `Affected$ Card.nonLand+YouOwn+withoutForetell`
+    /// Used by Foretell-related effects
+    NonLandCardsYouOwnWithoutForetell,
+
+    /// Non-land cards on top of library.
+    ///
+    /// Corresponds to: `Affected$ Card.TopLibrary+YouOwn+nonLand`
+    /// Used by effects that care about non-land cards on top
+    TopOfLibraryNonLand,
+
+    /// Remembered cards (from imprint or other memory effects).
+    ///
+    /// Corresponds to: `Affected$ Card.IsRemembered`
+    /// Used by effects that reference previously imprinted/remembered cards
+    RememberedCards,
+
+    /// Creature cards that were cast (not put into play).
+    ///
+    /// Corresponds to: `Affected$ Card.Creature+YouCtrl+wasCast`
+    /// Used by effects that care about cast vs. put into play
+    CreatureYouControlWasCast,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

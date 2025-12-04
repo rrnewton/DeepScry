@@ -421,6 +421,75 @@ impl GameState {
                     .iter()
                     .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
             }
+            // New selectors - many are not directly applicable to creature P/T modification
+            // but need placeholder matches to avoid exhaustiveness errors
+            AffectedSelector::CardExiledWithSource => false, // Not applicable to creature P/T
+            AffectedSelector::TopOfLibrary => false,         // Library cards, not battlefield
+            AffectedSelector::LandTopOfLibrary => false,     // Library cards
+            AffectedSelector::CreatureTopOfLibraryNonLand => false, // Library cards
+            AffectedSelector::CommanderYouControl => {
+                // Commander cards are creatures, but we don't track commander status yet
+                // TODO(mtg-147): Add commander tracking
+                false
+            }
+            AffectedSelector::EquippedByLegendary => {
+                // Check if equipped by a legendary equipment
+                // Note: We check if the equipment has "Legendary" subtype since supertypes
+                // are currently parsed as subtypes
+                let equipment = self.get_attached_equipment(creature_id);
+                equipment.iter().any(|&eq_id| {
+                    self.cards
+                        .get(eq_id)
+                        .map(|eq| eq.subtypes.contains(&crate::core::Subtype::new("Legendary")))
+                        .unwrap_or(false)
+                })
+            }
+            AffectedSelector::TopOfLibraryYouOwn => false, // Library cards
+            AffectedSelector::PermanentAttachedBy => source.attached_to == Some(creature_id),
+            AffectedSelector::ArtifactsNonCreature => creature.cache.is_artifact && !creature.is_creature(),
+            AffectedSelector::AllArtifacts => creature.cache.is_artifact,
+            AffectedSelector::BasicLandsYouControl => {
+                creature.is_land()
+                    && creature.controller == source.controller
+                    && (creature.name.as_str() == "Plains"
+                        || creature.name.as_str() == "Island"
+                        || creature.name.as_str() == "Swamp"
+                        || creature.name.as_str() == "Mountain"
+                        || creature.name.as_str() == "Forest")
+            }
+            AffectedSelector::SpecificLandType { land_type } => {
+                creature.is_land() && creature.subtypes.contains(&crate::core::Subtype::new(land_type))
+            }
+            AffectedSelector::NonLandCmcLE { max_cmc } => {
+                !creature.is_land() && creature.mana_cost.cmc() as i32 <= *max_cmc
+            }
+            AffectedSelector::CreatureWithFlyingOppCtrl => {
+                creature.is_creature()
+                    && creature.controller != source.controller
+                    && self.has_keyword_with_effects(creature_id, crate::core::Keyword::Flying)
+            }
+            AffectedSelector::CreatureTypeOther { subtype } => {
+                creature_id != source_id && creature.subtypes.contains(subtype)
+            }
+            AffectedSelector::SliversYouControl => {
+                creature.controller == source.controller
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Sliver"))
+            }
+            AffectedSelector::PermanentEquippedBy => self.get_attached_equipment(creature_id).contains(&source_id),
+            AffectedSelector::VehicleAttachedBy => {
+                source.attached_to == Some(creature_id)
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Vehicle"))
+            }
+            AffectedSelector::NonLandCardsYouOwnWithoutForetell => {
+                // TODO(mtg-147): Track foretell status
+                creature.owner == source.controller && !creature.is_land()
+            }
+            AffectedSelector::TopOfLibraryNonLand => false, // Library cards
+            AffectedSelector::RememberedCards => false,     // TODO(mtg-147): Track remembered cards
+            AffectedSelector::CreatureYouControlWasCast => {
+                // TODO(mtg-147): Track whether creature was cast vs put into play
+                creature.is_creature() && creature.controller == source.controller
+            }
         }
     }
 
@@ -1095,6 +1164,35 @@ impl GameState {
                                     .iter()
                                     .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
                                 {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // New selectors - use the unified helper
+                            AffectedSelector::CardExiledWithSource
+                            | AffectedSelector::TopOfLibrary
+                            | AffectedSelector::LandTopOfLibrary
+                            | AffectedSelector::CreatureTopOfLibraryNonLand
+                            | AffectedSelector::CommanderYouControl
+                            | AffectedSelector::EquippedByLegendary
+                            | AffectedSelector::TopOfLibraryYouOwn
+                            | AffectedSelector::PermanentAttachedBy
+                            | AffectedSelector::ArtifactsNonCreature
+                            | AffectedSelector::AllArtifacts
+                            | AffectedSelector::BasicLandsYouControl
+                            | AffectedSelector::SpecificLandType { .. }
+                            | AffectedSelector::NonLandCmcLE { .. }
+                            | AffectedSelector::CreatureWithFlyingOppCtrl
+                            | AffectedSelector::CreatureTypeOther { .. }
+                            | AffectedSelector::SliversYouControl
+                            | AffectedSelector::PermanentEquippedBy
+                            | AffectedSelector::VehicleAttachedBy
+                            | AffectedSelector::NonLandCardsYouOwnWithoutForetell
+                            | AffectedSelector::TopOfLibraryNonLand
+                            | AffectedSelector::RememberedCards
+                            | AffectedSelector::CreatureYouControlWasCast => {
+                                // Use the unified selector_applies_to_creature helper
+                                if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;
                                     toughness_bonus += toughness;
                                 }

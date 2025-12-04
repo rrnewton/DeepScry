@@ -1918,6 +1918,32 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: Creature.TYPE+Other (e.g., "Creature.Zombie+Other")
+            // For cards that buff other creatures of a specific type (excluding themselves)
+            if value.starts_with("Creature.") && value.ends_with("+Other") && !value.contains("+YouCtrl") {
+                let remainder = value.strip_prefix("Creature.")?;
+                let subtype = remainder.strip_suffix("+Other")?;
+                // Don't match card types or colors (already handled)
+                if !color_names.contains(&subtype) && is_card_type(subtype).is_none() {
+                    return Some(AffectedSelector::CreatureTypeOther {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Card.nonLand+cmcLEX (e.g., "Card.nonLand+cmcLE3")
+            // For effects that care about converted mana cost
+            if value.starts_with("Card.nonLand+cmcLE") {
+                let cmc_str = value.strip_prefix("Card.nonLand+cmcLE")?;
+                // Handle both numeric and X values
+                let max_cmc = if cmc_str == "X" {
+                    0
+                } else {
+                    cmc_str.parse::<i32>().unwrap_or(0)
+                };
+                return Some(AffectedSelector::NonLandCmcLE { max_cmc });
+            }
+
             None
         }
 
@@ -1990,6 +2016,53 @@ impl CardDefinition {
                 // Spell types for stack effects (parsed but not yet implemented for P/T)
                 "Instant" => AffectedSelector::Self_,
                 "Sorcery" => AffectedSelector::Self_,
+                // Exile-based effects
+                "Card.ExiledWithSource" => AffectedSelector::CardExiledWithSource,
+                // Top of library selectors
+                "Card.TopLibrary" => AffectedSelector::TopOfLibrary,
+                "Land.TopLibrary+YouCtrl" => AffectedSelector::LandTopOfLibrary,
+                "Creature.TopLibrary+YouCtrl+nonLand" => AffectedSelector::CreatureTopOfLibraryNonLand,
+                "Card.TopLibrary+YouOwn" => AffectedSelector::TopOfLibraryYouOwn,
+                "Card.TopLibrary+YouOwn+nonLand" => AffectedSelector::TopOfLibraryNonLand,
+                // Commander-specific
+                "Card.IsCommander+YouCtrl" => AffectedSelector::CommanderYouControl,
+                // Equipment selectors
+                "Card.EquippedBy+Legendary" => AffectedSelector::EquippedByLegendary,
+                // Attachment selectors
+                "Permanent.AttachedBy" => AffectedSelector::PermanentAttachedBy,
+                "Permanent.EquippedBy" => AffectedSelector::PermanentEquippedBy,
+                "Vehicle.AttachedBy" => AffectedSelector::VehicleAttachedBy,
+                // Artifact selectors
+                "Artifact.nonCreature" => AffectedSelector::ArtifactsNonCreature,
+                "Artifact" => AffectedSelector::AllArtifacts,
+                // Land selectors
+                "Land.Basic+YouCtrl" => AffectedSelector::BasicLandsYouControl,
+                // Basic land types
+                "Mountain" => AffectedSelector::SpecificLandType {
+                    land_type: "Mountain".to_string(),
+                },
+                "Forest" => AffectedSelector::SpecificLandType {
+                    land_type: "Forest".to_string(),
+                },
+                "Island" => AffectedSelector::SpecificLandType {
+                    land_type: "Island".to_string(),
+                },
+                "Plains" => AffectedSelector::SpecificLandType {
+                    land_type: "Plains".to_string(),
+                },
+                "Swamp" => AffectedSelector::SpecificLandType {
+                    land_type: "Swamp".to_string(),
+                },
+                // Flying/keyword-based selectors
+                "Creature.withFlying+OppCtrl" => AffectedSelector::CreatureWithFlyingOppCtrl,
+                // Sliver selectors
+                "Permanent.Sliver+YouCtrl" => AffectedSelector::SliversYouControl,
+                // Foretell selectors
+                "Card.nonLand+YouOwn+withoutForetell" => AffectedSelector::NonLandCardsYouOwnWithoutForetell,
+                // Remembered cards
+                "Card.IsRemembered" => AffectedSelector::RememberedCards,
+                // Cast-based selectors
+                "Card.Creature+YouCtrl+wasCast" => AffectedSelector::CreatureYouControlWasCast,
                 _ => {
                     // Try to parse tribal type patterns
                     return parse_tribal_selector(value);
