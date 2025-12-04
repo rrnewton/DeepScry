@@ -12,8 +12,8 @@ Creates a standalone HTML dashboard with interactive plots showing:
 Usage: ./scripts/plot_performance_interactive.py [options]
 
 Options:
-  --input FILE      Input CSV file (default: experiment_results/AMD_Ryzen_Threadripper_PRO_7975WX_32-Cores/perf_history.csv)
-  --output FILE     Output HTML file (default: experiment_results/performance_dashboard.html)
+  --input FILE      Input CSV file (default: experiment_results/default/perf_history.csv)
+  --output FILE     Output HTML file (default: experiment_results/default/performance_dashboard.html)
   --benchmark NAME  Filter to specific benchmark (default: all)
 
 Examples:
@@ -44,12 +44,12 @@ def parse_args():
     )
     parser.add_argument(
         '--input',
-        default='experiment_results/AMD_Ryzen_Threadripper_PRO_7975WX_32-Cores/perf_history.csv',
+        default='experiment_results/default/perf_history.csv',
         help='Input CSV file'
     )
     parser.add_argument(
         '--output',
-        default='experiment_results/AMD_Ryzen_Threadripper_PRO_7975WX_32-Cores/performance_dashboard.html',
+        default='experiment_results/default/performance_dashboard.html',
         help='Output HTML file'
     )
     parser.add_argument(

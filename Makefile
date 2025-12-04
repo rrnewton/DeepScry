@@ -179,6 +179,18 @@ info:
 plot:
 	python3 scripts/plot_performance_interactive.py
 
+# Generate plots for all experiment_results/*/perf_history.csv files
+plot-all:
+	@for csv in experiment_results/*/perf_history.csv; do \
+		if [ -f "$$csv" ]; then \
+			dir=$$(dirname "$$csv"); \
+			echo "=== Generating plot for $$csv ==="; \
+			python3 scripts/plot_performance_interactive.py \
+				--input "$$csv" \
+				--output "$$dir/performance_dashboard.html"; \
+		fi \
+	done
+
 # Run all performance benchmarks and record to CSV (takes a long time)
 # This is the OFFICIAL benchmark entrypoint - always use this for tracked results
 bench: full-benchmark
