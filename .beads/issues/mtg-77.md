@@ -52,6 +52,11 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Deathtouch attackers: 1 damage is lethal per MTG Rules 702.2c
   - Indestructible blockers: Always put last (can't be killed)
   - Tests: test_damage_assignment_with_deathtouch, test_damage_assignment_with_indestructible
+- ✅ **Landwalk evasion evaluation (2025-12-04_#1154(0d099e3))**
+  - Creatures with Landwalk get power*10 bonus when opponent has matching land
+  - can_block_with_view() checks landwalk against defender's lands
+  - Reference: CR 702.14 - Landwalk grants unblockability
+  - Tests: 5 new tests for swampwalk/islandwalk/forestwalk + Bog Wraith e2e
 
 **What's Missing:**
 
@@ -78,4 +83,4 @@ Track completion of heuristic AI port from Java Forge to Rust.
 2. Bluffing/deception
 
 ---
-**Checked up-to-date as of 2025-12-04_#1151(d920ac0) - 599 tests passing**
+**Checked up-to-date as of 2025-12-04_#1154(0d099e3) - 604 tests passing**
