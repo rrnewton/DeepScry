@@ -1885,6 +1885,39 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: Card.Self+counters_GE*_TYPE (e.g., "Card.Self+counters_GE8_CHARGE")
+            // For cards that gain abilities when they have enough counters
+            if value.starts_with("Card.Self+counters_GE") {
+                let remainder = value.strip_prefix("Card.Self+counters_GE")?;
+                // Parse the counter threshold and type (e.g., "8_CHARGE" -> 8, "CHARGE")
+                if let Some((num_str, counter_type)) = remainder.split_once('_') {
+                    if let Ok(minimum) = num_str.parse::<u32>() {
+                        return Some(AffectedSelector::SelfWithCounters {
+                            counter_type: counter_type.to_string(),
+                            minimum,
+                        });
+                    }
+                }
+            }
+
+            // Pattern: Card.Self+ChosenMode* (e.g., "Card.Self+ChosenModeKhans")
+            // For cards with modal choices - treat as self
+            if value.starts_with("Card.Self+ChosenMode") {
+                return Some(AffectedSelector::Self_);
+            }
+
+            // Pattern: Creature.COLOR+Other (e.g., "Creature.Black+Other")
+            // For cards that buff creatures of a specific color
+            let color_names = ["White", "Blue", "Black", "Red", "Green"];
+            for color in &color_names {
+                let pattern = format!("Creature.{}+Other", color);
+                if value == pattern {
+                    return Some(AffectedSelector::CreatureColorOther {
+                        color: color.to_string(),
+                    });
+                }
+            }
+
             None
         }
 
@@ -1931,6 +1964,16 @@ impl CardDefinition {
                 // State-based self selectors
                 "Card.Self+untapped" => AffectedSelector::SelfWhenUntapped,
                 "Card.Self+IsMonstrous" => AffectedSelector::SelfWhenMonstrous,
+                "Card.Self+ThisTurnEntered" => AffectedSelector::SelfThisTurnEntered,
+                // Generic permanent and card selectors
+                "Permanent" => AffectedSelector::AllPermanents,
+                "Card" => AffectedSelector::AllCards,
+                "Card.YouCtrl" => AffectedSelector::CardsYouControl,
+                "Card.OppOwn" => AffectedSelector::CardsOpponentOwns,
+                // Non-basic lands
+                "Land.nonBasic" | "Land.nonBasic+YouCtrl" => AffectedSelector::NonBasicLands,
+                // Human-specific equipment
+                "Human.EquippedBy" => AffectedSelector::HumanEquippedBy,
                 // Tapped/untapped state selectors for creatures
                 "Creature.tapped+YouCtrl+Other" | "Creature.YouCtrl+tapped+Other" => {
                     AffectedSelector::TappedCreaturesYouControlOther

@@ -364,6 +364,57 @@ impl GameState {
                 creature.controller == source.controller && !creature.is_land()
             }
             AffectedSelector::NonLandCardsYouOwn => creature.owner == source.controller && !creature.is_land(),
+            // Generic selectors
+            AffectedSelector::AllPermanents => true, // All permanents, including creatures
+            AffectedSelector::AllCards => true,      // All cards
+            AffectedSelector::CardsYouControl => creature.controller == source.controller,
+            AffectedSelector::CardsOpponentOwns => creature.owner != source.controller,
+            // Counter-based selectors - check if source has enough counters
+            AffectedSelector::SelfWithCounters { counter_type, minimum } => {
+                if creature_id != source_id {
+                    return false;
+                }
+                // Check counter count on the source card
+                // Note: This is a simplified check - need to map counter type strings to CounterType
+                let count = match counter_type.as_str() {
+                    "CHARGE" => source.get_counter(crate::core::CounterType::Charge),
+                    "P1P1" => source.get_counter(crate::core::CounterType::P1P1),
+                    "DIVINITY" => source.get_counter(crate::core::CounterType::Divinity),
+                    _ => 0, // Unknown counter type
+                };
+                count >= *minimum as u8
+            }
+            AffectedSelector::NonBasicLands => {
+                // Check if it's a land that's not a basic land (Plains, Island, Swamp, Mountain, Forest)
+                if !creature.is_land() {
+                    return false;
+                }
+                let name = creature.name.as_str();
+                !(name == "Plains" || name == "Island" || name == "Swamp" || name == "Mountain" || name == "Forest")
+            }
+            AffectedSelector::CreatureColorOther { color } => {
+                if creature_id == source_id {
+                    return false;
+                }
+                // Check if creature has the specified color
+                // Note: This is simplified - we'd need to check the card's color identity
+                creature.is_creature()
+                    && match color.as_str() {
+                        "White" => creature.mana_cost.white > 0,
+                        "Blue" => creature.mana_cost.blue > 0,
+                        "Black" => creature.mana_cost.black > 0,
+                        "Red" => creature.mana_cost.red > 0,
+                        "Green" => creature.mana_cost.green > 0,
+                        _ => false,
+                    }
+            }
+            AffectedSelector::HumanEquippedBy => {
+                self.get_attached_equipment(creature_id).contains(&source_id)
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Human"))
+            }
+            AffectedSelector::SelfThisTurnEntered => {
+                creature_id == source_id && creature.turn_entered_battlefield == Some(self.turn.turn_number)
+            }
             AffectedSelector::Any(selectors) => {
                 // Recursively check if ANY inner selector matches
                 selectors
@@ -942,6 +993,97 @@ impl GameState {
                             AffectedSelector::NonLandCardsYouOwn => {
                                 let creature = self.cards.get(creature_id)?;
                                 if creature.owner == source.controller && !creature.is_land() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Generic selectors
+                            AffectedSelector::AllPermanents => {
+                                power_bonus += power;
+                                toughness_bonus += toughness;
+                            }
+                            AffectedSelector::AllCards => {
+                                power_bonus += power;
+                                toughness_bonus += toughness;
+                            }
+                            AffectedSelector::CardsYouControl => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.controller == source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::CardsOpponentOwns => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.owner != source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Counter-based self selectors
+                            AffectedSelector::SelfWithCounters { counter_type, minimum } => {
+                                if creature_id == source.id {
+                                    // Check counter count
+                                    let count = match counter_type.as_str() {
+                                        "CHARGE" => source.get_counter(crate::core::CounterType::Charge),
+                                        "P1P1" => source.get_counter(crate::core::CounterType::P1P1),
+                                        "DIVINITY" => source.get_counter(crate::core::CounterType::Divinity),
+                                        _ => 0,
+                                    };
+                                    if count >= *minimum as u8 {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
+                            AffectedSelector::NonBasicLands => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_land() {
+                                    // Check if it's not a basic land
+                                    let name = creature.name.as_str();
+                                    let is_basic = name == "Plains"
+                                        || name == "Island"
+                                        || name == "Swamp"
+                                        || name == "Mountain"
+                                        || name == "Forest";
+                                    if !is_basic {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
+                            AffectedSelector::CreatureColorOther { color } => {
+                                if creature_id != source.id {
+                                    let creature = self.cards.get(creature_id)?;
+                                    let matches = creature.is_creature()
+                                        && match color.as_str() {
+                                            "White" => creature.mana_cost.white > 0,
+                                            "Blue" => creature.mana_cost.blue > 0,
+                                            "Black" => creature.mana_cost.black > 0,
+                                            "Red" => creature.mana_cost.red > 0,
+                                            "Green" => creature.mana_cost.green > 0,
+                                            _ => false,
+                                        };
+                                    if matches {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
+                            AffectedSelector::HumanEquippedBy => {
+                                let creature = self.cards.get(creature_id)?;
+                                if self.get_attached_equipment(creature_id).contains(&source_id)
+                                    && creature.subtypes.contains(&crate::core::Subtype::new("Human"))
+                                {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            AffectedSelector::SelfThisTurnEntered => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature_id == source.id
+                                    && creature.turn_entered_battlefield == Some(self.turn.turn_number)
+                                {
                                     power_bonus += power;
                                     toughness_bonus += toughness;
                                 }

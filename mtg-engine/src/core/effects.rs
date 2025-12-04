@@ -634,6 +634,72 @@ pub enum AffectedSelector {
     ///
     /// Used when a card affects multiple distinct categories of permanents.
     Any(Vec<AffectedSelector>),
+
+    /// All permanents on the battlefield.
+    ///
+    /// Corresponds to: `Affected$ Permanent`
+    /// Used by effects that affect all permanents regardless of type or controller
+    AllPermanents,
+
+    /// All cards (any zone, any controller).
+    ///
+    /// Corresponds to: `Affected$ Card`
+    /// Used by very broad effects that can affect cards in any zone
+    AllCards,
+
+    /// Cards you control (on the battlefield).
+    ///
+    /// Corresponds to: `Affected$ Card.YouCtrl`
+    /// Used by effects that affect all your permanents
+    CardsYouControl,
+
+    /// Cards owned by opponents.
+    ///
+    /// Corresponds to: `Affected$ Card.OppOwn`
+    /// Used by effects that affect cards owned by opponents
+    CardsOpponentOwns,
+
+    /// This card itself when it has a minimum number of a specific counter type.
+    ///
+    /// Corresponds to: `Affected$ Card.Self+counters_GE*_TYPE`
+    /// Examples:
+    /// - `Card.Self+counters_GE8_CHARGE` (at least 8 charge counters)
+    /// - `Card.Self+counters_GE1_P1P1` (at least 1 +1/+1 counter)
+    ///
+    /// Used by cards that gain abilities when they have enough counters.
+    SelfWithCounters {
+        /// The counter type (e.g., "CHARGE", "P1P1", "DIVINITY")
+        counter_type: String,
+        /// The minimum number of counters required
+        minimum: u32,
+    },
+
+    /// Non-basic lands (either you control or all).
+    ///
+    /// Corresponds to: `Affected$ Land.nonBasic`, `Affected$ Land.nonBasic+YouCtrl`
+    /// Used by effects that affect non-basic lands
+    NonBasicLands,
+
+    /// Creatures of a specific color, other than self.
+    ///
+    /// Corresponds to: `Affected$ Creature.Black+Other`, `Affected$ Creature.White+Other`
+    /// Used by cards that buff creatures of a specific color excluding themselves
+    CreatureColorOther {
+        /// The color name (e.g., "Black", "White", "Blue")
+        color: String,
+    },
+
+    /// Humans equipped by this equipment.
+    ///
+    /// Corresponds to: `Affected$ Human.EquippedBy`
+    /// Used by equipment that specifically grants bonuses to equipped Humans
+    HumanEquippedBy,
+
+    /// Cards that entered the battlefield this turn (usually self).
+    ///
+    /// Corresponds to: `Affected$ Card.Self+ThisTurnEntered`
+    /// Used by cards that have effects when they ETB
+    SelfThisTurnEntered,
 }
 
 /// Cache for expensive string operations on ActivatedAbility
