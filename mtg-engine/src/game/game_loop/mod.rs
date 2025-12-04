@@ -24,6 +24,7 @@ use crate::game::controller::{GameStateView, PlayerController};
 use crate::game::phase::Step;
 use crate::game::GameState;
 use crate::{MtgError, Result};
+use smallvec::SmallVec;
 
 // Module structure
 mod actions;
@@ -93,7 +94,8 @@ pub struct GameLoop<'a> {
     step_header_printed: bool,
     /// Track targets for spells on the stack (spell_id -> chosen_targets)
     /// This is needed because targets are chosen at cast time but used at resolution time
-    spell_targets: Vec<(CardId, Vec<CardId>)>,
+    /// Uses SmallVec for targets since most spells have 0-2 targets (avoids heap allocation)
+    spell_targets: Vec<(CardId, SmallVec<[CardId; 2]>)>,
     /// Global choice counter for tracking all player choices
     /// Increments each time a controller makes any decision
     choice_counter: u32,

@@ -17,13 +17,12 @@ impl<'a> GameLoop<'a> {
     /// This removes the spell from the stack and executes its effects.
     /// Implements MTG Comprehensive Rules 608 (Resolving Spells and Abilities).
     pub(super) fn resolve_top_spell_from_stack(&mut self, spell_id: CardId) -> Result<()> {
-        // Look up the targets for this spell
-        // Use SmallVec for targets - most spells have 0-2 targets
+        // Look up the targets for this spell (already stored as SmallVec)
         let targets: SmallVec<[CardId; 2]> = self
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)
-            .map(|(_, t)| t.iter().copied().collect())
+            .map(|(_, t)| t.clone())
             .unwrap_or_default();
 
         // Check if verbose logging is enabled (avoids allocations when not logging)
@@ -419,13 +418,14 @@ impl<'a> GameLoop<'a> {
                                     .unwrap_or_else(|_| SmallVec::new());
 
                                 // Ask controller to choose targets (only if there are valid targets)
-                                let chosen_targets_vec: Vec<CardId> = if valid_targets.is_empty() {
+                                // Use SmallVec for targets - most spells have 0-2 targets (avoids heap allocation)
+                                let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
                                     // No targets needed - spell has no targeting effects
-                                    Vec::new()
+                                    SmallVec::new()
                                 } else if valid_targets.len() == 1 {
                                     // Only one valid target - auto-select without calling controller
                                     // This is not a choice, so don't log ChoicePoint
-                                    vec![valid_targets[0]]
+                                    smallvec::smallvec![valid_targets[0]]
                                 } else {
                                     // Multiple valid targets - ask controller to choose
                                     // Capture log size BEFORE asking controller (before controller logs its choice)
@@ -443,7 +443,8 @@ impl<'a> GameLoop<'a> {
                                 };
 
                                 // Clone for closure (which will move it)
-                                let targets_for_callback = chosen_targets_vec.clone();
+                                // Convert to Vec for callback signature compatibility
+                                let targets_for_callback: Vec<CardId> = chosen_targets_vec.iter().copied().collect();
 
                                 // Create targeting callback
                                 let targeting_callback = move |_game: &GameState, _spell_id: CardId| {
