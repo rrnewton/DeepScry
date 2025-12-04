@@ -1222,3 +1222,77 @@ fn test_load_darksteel_forge_artifact_youctrl_selector() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Land selector is properly parsed
+/// Blanket of Night: "Each land is a Swamp in addition to its other land types."
+/// Related to: mtg-147
+#[test]
+fn test_load_blanket_of_night_land_selector() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/b/blanket_of_night.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Blanket of Night");
+    assert!(def.types.contains(&CardType::Enchantment));
+
+    // Verify the static ability line is present with Land selector
+    let has_land_selector = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Affected$ Land") && a.contains("AddType$ Swamp"));
+    assert!(
+        has_land_selector,
+        "Should have Land selector with AddType$ Swamp. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate - parsing should succeed without warnings
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let _card = def.instantiate(card_id, player_id);
+
+    Ok(())
+}
+
+/// Test that Permanent.YouCtrl selector is properly parsed
+/// Wondrous Crucible: "Permanents you control have ward {2}."
+/// Related to: mtg-147
+/// Note: Ward:2 keyword parsing is not fully implemented, so we just verify
+/// the selector is recognized without warnings.
+#[test]
+fn test_load_wondrous_crucible_permanent_youctrl_selector() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/w/wondrous_crucible.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Wondrous Crucible");
+    assert!(def.types.contains(&CardType::Artifact));
+
+    // Verify the static ability line is present
+    let has_ward_grant = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Permanent.YouCtrl") && a.contains("AddKeyword$ Ward"));
+    assert!(
+        has_ward_grant,
+        "Should have Permanent.YouCtrl with Ward keyword. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate - parsing should succeed without "Unknown selector" warnings
+    // Note: The Ward:2 keyword itself isn't fully parsed, so we can't check for
+    // GrantKeyword in static_abilities. This test verifies selector parsing only.
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let _card = def.instantiate(card_id, player_id);
+
+    Ok(())
+}

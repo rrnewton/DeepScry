@@ -518,6 +518,21 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Artifact.YouCtrl+Other` or `Artifact.Other+YouCtrl`
     /// Used by cards like Master of Etherium that affect other artifacts
     ArtifactsYouControlOther,
+
+    /// All lands on the battlefield
+    /// Corresponds to: `Affected$ Land`
+    /// Used by global land effects (e.g., mass land animation)
+    AllLands,
+
+    /// Permanents you control
+    /// Corresponds to: `Affected$ Permanent.YouCtrl`
+    /// Used by cards that affect all your permanents regardless of type
+    PermanentsYouControl,
+
+    /// Token creatures you control
+    /// Corresponds to: `Affected$ Creature.token+YouCtrl`
+    /// Used by cards that buff token creatures specifically
+    TokenCreaturesYouControl,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

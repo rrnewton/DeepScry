@@ -654,6 +654,31 @@ impl GameState {
                                     }
                                 }
                             }
+                            // Land selector doesn't affect creature P/T (unless land is animated)
+                            AffectedSelector::AllLands => {
+                                // This grants abilities/bonuses to lands
+                                // Only relevant if the creature is also a land
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_land() {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Permanents you control
+                            AffectedSelector::PermanentsYouControl => {
+                                // Affects all permanents you control (creatures, artifacts, etc.)
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.controller == source.controller {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Token creatures you control
+                            // TODO(mtg-147): Implement when is_token field is added to Card
+                            AffectedSelector::TokenCreaturesYouControl => {
+                                // Would need is_token field on Card struct
+                                // For now, this selector is parsed but not evaluated
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {

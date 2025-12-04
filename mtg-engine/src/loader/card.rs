@@ -1897,6 +1897,12 @@ impl CardDefinition {
                                     "Artifact.YouCtrl+Other" | "Artifact.Other+YouCtrl" => {
                                         AffectedSelector::ArtifactsYouControlOther
                                     }
+                                    // All lands on the battlefield
+                                    "Land" => AffectedSelector::AllLands,
+                                    // Permanents you control
+                                    "Permanent.YouCtrl" => AffectedSelector::PermanentsYouControl,
+                                    // Token creatures you control
+                                    "Creature.token+YouCtrl" => AffectedSelector::TokenCreaturesYouControl,
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {
