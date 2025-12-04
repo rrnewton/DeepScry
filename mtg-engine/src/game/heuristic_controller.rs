@@ -9,7 +9,7 @@
 //! - AiController.java (core logic)
 //! - CreatureEvaluator.java (creature scoring)
 
-use crate::core::{Card, CardId, Keyword, ManaCost, PlayerId, SpellAbility};
+use crate::core::{Card, CardId, Keyword, KeywordArgs, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
@@ -183,6 +183,32 @@ impl HeuristicController {
         // Java: if (c.hasKeyword(Keyword.SHADOW)) { value += addValue(power * 10, "shadow"); }
         if card.has_keyword(Keyword::Shadow) {
             value += power * 10;
+        }
+
+        // Landwalk: Unblockable if defending player controls a land of the appropriate type
+        // Reference: CR 702.14 - Landwalk makes creature unblockable if opponent has that land type
+        // Java: checks Keyword.LANDWALK and validates against opponent's lands
+        // Bonus is power * 10 (same as flying/shadow) when opponent has the relevant land
+        if card.has_keyword(Keyword::Landwalk) {
+            // Check each landwalk type the creature has
+            for keyword_args in card.keywords.iter_args() {
+                if let KeywordArgs::Landwalk { land_type } = keyword_args {
+                    // Check if any opponent controls a land with this subtype
+                    let opponent_has_land = view.battlefield().iter().filter_map(|&id| view.get_card(id)).any(|c| {
+                        c.controller != card.controller
+                            && c.is_land()
+                            && c.subtypes
+                                .iter()
+                                .any(|st| st.as_str().eq_ignore_ascii_case(land_type.as_str()))
+                    });
+
+                    if opponent_has_land {
+                        // Landwalk is as good as flying when active (unblockable)
+                        value += power * 10;
+                        break; // Only count once even if multiple landwalks match
+                    }
+                }
+            }
         }
 
         // Unblockable check
@@ -890,11 +916,14 @@ impl HeuristicController {
         let has_combat_effect = attacker.has_lifelink() || attacker.has_keyword(Keyword::Wither);
 
         // Collect all potential blockers from opponents (typically 2-8 creatures)
+        // Use can_block_with_view for full landwalk support
         let potential_blockers: SmallVec<[&Card; 8]> = view
             .battlefield()
             .iter()
             .filter_map(|&id| view.get_card(id))
-            .filter(|c| c.owner != self.player_id && c.is_creature() && !c.tapped && self.can_block(attacker, c))
+            .filter(|c| {
+                c.owner != self.player_id && c.is_creature() && !c.tapped && self.can_block_with_view(attacker, c, view)
+            })
             .collect();
 
         let number_of_blockers = potential_blockers.len();
@@ -966,7 +995,26 @@ impl HeuristicController {
     ///
     /// Reference: CombatUtil.canBlock() in Java Forge
     /// Implements blocking restrictions based on evasion abilities and protection.
+    ///
+    /// Note: This is a simplified version that doesn't check landwalk.
+    /// Use `can_block_with_view` when view is available for full landwalk support.
     fn can_block(&self, attacker: &Card, blocker: &Card) -> bool {
+        self.can_block_impl(attacker, blocker, None)
+    }
+
+    /// Check if a blocker can block an attacker with full landwalk support
+    ///
+    /// This version takes a GameStateView to check if the defending player
+    /// controls a land of the type the attacker has landwalk for.
+    fn can_block_with_view(&self, attacker: &Card, blocker: &Card, view: &GameStateView) -> bool {
+        self.can_block_impl(attacker, blocker, Some(view))
+    }
+
+    /// Implementation of blocking check with optional view for landwalk
+    ///
+    /// Reference: CombatUtil.canBlock() in Java Forge
+    /// Implements blocking restrictions based on evasion abilities and protection.
+    fn can_block_impl(&self, attacker: &Card, blocker: &Card, view: Option<&GameStateView>) -> bool {
         // Defender can't block (creatures with Defender can't attack, but CAN block)
         // NOTE: has_defender() on BLOCKER is wrong - Defender doesn't prevent blocking
         // Defender prevents ATTACKING, not blocking. A Wall with Defender can still block.
@@ -1020,6 +1068,32 @@ impl HeuristicController {
             let attacker_power = attacker.current_power();
             if blocker_power <= attacker_power {
                 return false;
+            }
+        }
+
+        // Landwalk: can't be blocked if defending player controls a land of the appropriate type
+        // Reference: CR 702.14
+        if attacker.has_keyword(Keyword::Landwalk) {
+            if let Some(view) = view {
+                // Check each landwalk type the creature has
+                for keyword_args in attacker.keywords.iter_args() {
+                    if let KeywordArgs::Landwalk { land_type } = keyword_args {
+                        // Check if defending player (blocker's controller) controls a land with this subtype
+                        let defender_has_land =
+                            view.battlefield().iter().filter_map(|&id| view.get_card(id)).any(|c| {
+                                c.controller == blocker.controller
+                                    && c.is_land()
+                                    && c.subtypes
+                                        .iter()
+                                        .any(|st| st.as_str().eq_ignore_ascii_case(land_type.as_str()))
+                            });
+
+                        if defender_has_land {
+                            // Attacker can't be blocked due to landwalk
+                            return false;
+                        }
+                    }
+                }
             }
         }
 

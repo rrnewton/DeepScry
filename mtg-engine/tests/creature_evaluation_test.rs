@@ -1155,3 +1155,178 @@ fn test_afflict_creature() {
 
     assert_eq!(score, 195, "3/3 with Afflict should score 195");
 }
+
+// =========================================================================
+// LANDWALK EVASION TESTS
+// Reference: CR 702.14 - Landwalk makes creature unblockable if defending
+// player controls a land of the appropriate type
+// =========================================================================
+
+use mtg_forge_rs::core::{CardType as CT, Subtype};
+
+/// Helper to create a game with a landwalk creature and opponent with specific lands
+fn create_landwalk_test_setup(land_type: &str, opponent_has_matching_land: bool) -> (GameState, CardId, PlayerId) {
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let opponent_id = game.players[1].id;
+
+    // Create a creature with landwalk
+    let creature_id = CardId::new(100);
+    let mut creature = Card::new(creature_id, "Swampwalk Creature", player_id);
+    creature.add_type(CT::Creature);
+    creature.set_power(Some(3));
+    creature.set_toughness(Some(3));
+    creature.mana_cost.generic = 4;
+    creature.keywords.insert_complex(KeywordArgs::Landwalk {
+        land_type: Subtype::new(land_type),
+    });
+    game.cards.insert(creature_id, creature);
+
+    // Add the creature to battlefield so the controller check works
+    game.battlefield.add(creature_id);
+
+    if opponent_has_matching_land {
+        // Create opponent's land
+        let land_id = CardId::new(200);
+        let mut land = Card::new(land_id, land_type, opponent_id);
+        land.add_type(CT::Land);
+        land.set_subtypes(smallvec::smallvec![Subtype::new(land_type)]);
+        land.controller = opponent_id;
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+    }
+
+    (game, creature_id, player_id)
+}
+
+#[test]
+fn test_landwalk_with_matching_land() {
+    // Test creature with Swampwalk when opponent has a Swamp
+    // Landwalk bonus is power * 10 (same as flying) when active
+    //
+    // Expected score calculation for a 3/3 with Swampwalk for 4, opponent has Swamp:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (3): +30 (3 * 10)
+    // - CMC (4): +20 (4 * 5)
+    // - Landwalk (active): +30 (power * 10 = 3 * 10)
+    // Total: 80 + 20 + 45 + 30 + 20 + 30 = 225
+
+    let (game, creature_id, player_id) = create_landwalk_test_setup("Swamp", true);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, creature_id);
+
+    assert_eq!(
+        score, 225,
+        "3/3 with Swampwalk should score 225 when opponent has Swamp"
+    );
+}
+
+#[test]
+fn test_landwalk_without_matching_land() {
+    // Test creature with Swampwalk when opponent has NO Swamp
+    // Landwalk should NOT add a bonus when not active
+    //
+    // Expected score calculation for a 3/3 with Swampwalk for 4, opponent has NO Swamp:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (3): +45 (3 * 15)
+    // - Toughness (3): +30 (3 * 10)
+    // - CMC (4): +20 (4 * 5)
+    // - Landwalk (inactive): +0
+    // Total: 80 + 20 + 45 + 30 + 20 = 195
+
+    let (game, creature_id, player_id) = create_landwalk_test_setup("Swamp", false);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, creature_id);
+
+    assert_eq!(
+        score, 195,
+        "3/3 with Swampwalk should score 195 when opponent has NO Swamp"
+    );
+}
+
+#[test]
+fn test_islandwalk_with_matching_land() {
+    // Test creature with Islandwalk when opponent has an Island
+    // Landwalk bonus is power * 10 (same as flying) when active
+
+    let (game, creature_id, player_id) = create_landwalk_test_setup("Island", true);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, creature_id);
+
+    assert_eq!(
+        score, 225,
+        "3/3 with Islandwalk should score 225 when opponent has Island"
+    );
+}
+
+#[test]
+fn test_forestwalk_without_matching_land() {
+    // Test creature with Forestwalk when opponent has NO Forest
+    // Landwalk should NOT add a bonus when not active
+
+    let (game, creature_id, player_id) = create_landwalk_test_setup("Forest", false);
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, creature_id);
+
+    assert_eq!(
+        score, 195,
+        "3/3 with Forestwalk should score 195 when opponent has NO Forest"
+    );
+}
+
+/// Test that landwalk creature is evaluated as unblockable in blocking analysis
+#[test]
+fn test_e2e_bog_wraith_landwalk() {
+    let path = PathBuf::from("../cardsfolder/b/bog_wraith.txt");
+    if !path.exists() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+
+    let def = CardLoader::load_from_file(&path).expect("Failed to load Bog Wraith");
+    assert_eq!(def.name.as_str(), "Bog Wraith");
+
+    let mut game = GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+    let player_id = game.players[0].id;
+    let opponent_id = game.players[1].id;
+    let creature_id = CardId::new(100);
+    let creature = def.instantiate(creature_id, player_id);
+
+    // Verify Swampwalk keyword was parsed
+    assert!(
+        creature.has_keyword(Keyword::Landwalk),
+        "Bog Wraith should have Landwalk keyword"
+    );
+
+    game.cards.insert(creature_id, creature);
+    game.battlefield.add(creature_id);
+
+    // Add opponent's Swamp to make swampwalk active
+    let swamp_id = CardId::new(200);
+    let mut swamp = Card::new(swamp_id, "Swamp", opponent_id);
+    swamp.add_type(CT::Land);
+    swamp.set_subtypes(smallvec::smallvec![Subtype::new("Swamp")]);
+    swamp.controller = opponent_id;
+    game.cards.insert(swamp_id, swamp);
+    game.battlefield.add(swamp_id);
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, creature_id);
+
+    // Bog Wraith: 3/3 with Swampwalk for 3B (CMC 4)
+    // Base: 80 + Non-token: 20 + P(3)*15: 45 + T(3)*10: 30 + CMC(4)*5: 20 = 195
+    // + Landwalk (active, opponent has Swamp): 3 * 10 = 30
+    // Total: 225
+    assert_eq!(
+        score, 225,
+        "Bog Wraith (3/3 Swampwalk) should score 225 when opponent has Swamp"
+    );
+}
