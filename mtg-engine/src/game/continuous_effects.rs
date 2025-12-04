@@ -338,6 +338,9 @@ impl GameState {
             AffectedSelector::AllAttackingCreatures => self.combat.is_attacking(creature_id),
             AffectedSelector::Opponent => false, // Player target
             AffectedSelector::SelfWhenAttacking => creature_id == source_id && self.combat.is_attacking(creature_id),
+            AffectedSelector::SelfWhenUntapped => creature_id == source_id && !creature.tapped,
+            // TODO(mtg-147): SelfWhenMonstrous requires tracking monstrous state on cards
+            AffectedSelector::SelfWhenMonstrous => false, // Not yet implemented - need monstrous flag
             AffectedSelector::ArtifactEnchantedBy
             | AffectedSelector::PlaneswalkerEnchantedBy
             | AffectedSelector::EquipmentEnchantedBy => self.get_attached_auras(creature_id).contains(&source_id),
@@ -866,6 +869,20 @@ impl GameState {
                                     power_bonus += power;
                                     toughness_bonus += toughness;
                                 }
+                            }
+                            // Self while untapped - grants bonuses while this card is untapped
+                            AffectedSelector::SelfWhenUntapped => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature_id == source.id && !creature.tapped {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Self while monstrous - grants abilities when Monstrosity has been activated
+                            // TODO(mtg-147): Requires tracking monstrous state on cards
+                            AffectedSelector::SelfWhenMonstrous => {
+                                // Not yet implemented - need is_monstrous flag on Card
+                                // Would check: creature_id == source.id && source.is_monstrous
                             }
                             // OR combination - match if ANY inner selector matches
                             AffectedSelector::Any(selectors) => {

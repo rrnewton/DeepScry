@@ -580,6 +580,18 @@ pub enum AffectedSelector {
     /// Used by cards like Crucible of Worlds that let you play lands from graveyard
     LandsYouOwn,
 
+    /// This card itself when untapped.
+    ///
+    /// Corresponds to: `Affected$ Card.Self+untapped`
+    /// Used by cards that get bonuses while untapped (e.g., Wall of Roots +0/+3)
+    SelfWhenUntapped,
+
+    /// This card itself when monstrous (Monstrosity has been activated).
+    ///
+    /// Corresponds to: `Affected$ Card.Self+IsMonstrous`
+    /// Used by cards with Monstrosity that gain abilities when monstrous
+    SelfWhenMonstrous,
+
     /// OR combination of multiple selectors (matches if ANY selector matches).
     ///
     /// Corresponds to comma-separated Affected$ values like:

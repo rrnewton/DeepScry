@@ -1900,6 +1900,9 @@ impl CardDefinition {
                 "Creature.attacking" => AffectedSelector::AllAttackingCreatures,
                 "Opponent" => AffectedSelector::Opponent,
                 "Card.Self+attacking" => AffectedSelector::SelfWhenAttacking,
+                // State-based self selectors
+                "Card.Self+untapped" => AffectedSelector::SelfWhenUntapped,
+                "Card.Self+IsMonstrous" => AffectedSelector::SelfWhenMonstrous,
                 // Spell types for stack effects (parsed but not yet implemented for P/T)
                 "Instant" => AffectedSelector::Self_,
                 "Sorcery" => AffectedSelector::Self_,
