@@ -1934,6 +1934,12 @@ impl CardDefinition {
                                     "Card.Self" => AffectedSelector::Self_,
                                     // Land aura selectors - both mean "the land this aura is enchanting"
                                     "Land.AttachedBy" | "Land.EnchantedBy" => AffectedSelector::LandAttachedBy,
+                                    // Artifact aura selectors - auras attached to artifacts
+                                    "Artifact.EnchantedBy" => AffectedSelector::ArtifactEnchantedBy,
+                                    // Planeswalker aura selectors - auras attached to planeswalkers
+                                    "Planeswalker.EnchantedBy" => AffectedSelector::PlaneswalkerEnchantedBy,
+                                    // Equipment aura selectors - auras attached to equipment
+                                    "Equipment.EnchantedBy" => AffectedSelector::EquipmentEnchantedBy,
                                     // State-based selectors: equipped/enchanted
                                     "Card.Self+equipped" => AffectedSelector::SelfWhenEquipped,
                                     "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,

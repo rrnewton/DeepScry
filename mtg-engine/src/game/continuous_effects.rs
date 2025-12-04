@@ -709,6 +709,23 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            // Enchanted permanent selectors - these are for Auras that grant effects
+                            // to the enchanted permanent. For creature P/T calculations, these only
+                            // apply if the enchanted permanent is a creature.
+                            AffectedSelector::ArtifactEnchantedBy
+                            | AffectedSelector::PlaneswalkerEnchantedBy
+                            | AffectedSelector::EquipmentEnchantedBy => {
+                                // These auras typically enchant non-creatures
+                                // For P/T calculation, they would only matter if the artifact/etc
+                                // becomes animated into a creature. Check if this aura is attached
+                                // to the creature we're calculating P/T for.
+                                if let Some(attached_to) = source.attached_to {
+                                    if attached_to == creature_id {
+                                        power_bonus += power;
+                                        toughness_bonus += toughness;
+                                    }
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {

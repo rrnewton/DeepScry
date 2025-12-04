@@ -553,6 +553,21 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Card.Self+attacking`
     /// Used by cards like Soltari Lancer that gain abilities while attacking
     SelfWhenAttacking,
+
+    /// The artifact enchanted by this Aura
+    /// Corresponds to: `Affected$ Artifact.EnchantedBy`
+    /// Used by Auras that attach to artifacts (e.g., Splinter)
+    ArtifactEnchantedBy,
+
+    /// The planeswalker enchanted by this Aura
+    /// Corresponds to: `Affected$ Planeswalker.EnchantedBy`
+    /// Used by Auras that attach to planeswalkers
+    PlaneswalkerEnchantedBy,
+
+    /// The equipment enchanted by this Aura
+    /// Corresponds to: `Affected$ Equipment.EnchantedBy`
+    /// Used by Auras that attach to equipment
+    EquipmentEnchantedBy,
 }
 
 /// Cache for expensive string operations on ActivatedAbility
