@@ -105,6 +105,23 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
+                    // Player-targeting effects: resolve placeholder (0) to card owner
+                    Effect::AddMana { player, mana } if player.as_u32() == 0 => Effect::AddMana {
+                        player: card_owner,
+                        mana: *mana,
+                    },
+                    Effect::DrawCards { player, count } if player.as_u32() == 0 => Effect::DrawCards {
+                        player: card_owner,
+                        count: *count,
+                    },
+                    Effect::GainLife { player, amount } if player.as_u32() == 0 => Effect::GainLife {
+                        player: card_owner,
+                        amount: *amount,
+                    },
+                    Effect::Mill { player, count } if player.as_u32() == 0 => Effect::Mill {
+                        player: card_owner,
+                        count: *count,
+                    },
                     _ => effect.clone(),
                 };
 

@@ -342,4 +342,93 @@ mod tests {
             );
         }
     }
+
+    /// Test that mana ritual spells (like Dark Ritual) add mana to the caster's pool
+    /// This tests that the AddMana effect correctly resolves player placeholder (0) to card owner.
+    #[test]
+    fn test_resolve_mana_ritual_spell() {
+        use crate::core::{Color, Effect, ManaCost, PlayerId};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+        let p2_id = game.players.get(1).unwrap().id;
+
+        // Create a Dark Ritual style spell in P2's hand (owned and cast by P2)
+        // Cost: B, adds BBB to controller's pool
+        let ritual_id = game.next_card_id();
+        let mut ritual = Card::new(ritual_id, "Dark Ritual".to_string(), p2_id);
+        ritual.controller = p2_id; // P2 controls this spell
+        ritual.add_type(CardType::Instant);
+        ritual.mana_cost = ManaCost::from_string("B");
+
+        // AddMana effect with placeholder player ID (0) - should resolve to card_owner (P2)
+        ritual.effects.push(Effect::AddMana {
+            player: PlayerId::new(0), // Placeholder - will be resolved to card owner
+            mana: ManaCost {
+                white: 0,
+                blue: 0,
+                black: 3, // BBB
+                red: 0,
+                green: 0,
+                colorless: 0,
+                generic: 0,
+                x_count: 0,
+            },
+        });
+        game.cards.insert(ritual_id, ritual);
+
+        // Add mana for casting (not the ritual's effect)
+        let p2 = game.get_player_mut(p2_id).unwrap();
+        p2.mana_pool.add_color(Color::Black); // For casting cost
+
+        // Add spell to P2's hand and cast it
+        if let Some(zones) = game.get_player_zones_mut(p2_id) {
+            zones.hand.add(ritual_id);
+        }
+
+        // Cast the spell (this puts it on stack and pays cost)
+        assert!(
+            game.cast_spell(p2_id, ritual_id, vec![]).is_ok(),
+            "P2 should be able to cast Dark Ritual"
+        );
+
+        // Check P2's mana pool before resolution (should be empty after paying B)
+        let p2_before = game.get_player(p2_id).unwrap();
+        assert_eq!(
+            p2_before.mana_pool.black, 0,
+            "P2 should have no black mana after paying cost"
+        );
+
+        // P1's pool should also be empty
+        let p1_before = game.get_player(p1_id).unwrap();
+        assert_eq!(p1_before.mana_pool.black, 0, "P1 should have no black mana initially");
+
+        // Resolve the spell - this should add BBB to P2's pool (the caster), NOT P1
+        assert!(
+            game.resolve_spell(ritual_id, &[]).is_ok(),
+            "Failed to resolve Dark Ritual"
+        );
+
+        // P2 (the caster) should now have 3 black mana
+        let p2_after = game.get_player(p2_id).unwrap();
+        assert_eq!(
+            p2_after.mana_pool.black, 3,
+            "P2 should have 3 black mana from Dark Ritual"
+        );
+
+        // P1 (the opponent) should NOT have gained any mana
+        let p1_after = game.get_player(p1_id).unwrap();
+        assert_eq!(
+            p1_after.mana_pool.black, 0,
+            "P1 should NOT have gained mana from opponent's Dark Ritual"
+        );
+
+        // Spell should be in graveyard (it's an instant)
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(ritual_id),
+                "Dark Ritual should be in P2's graveyard"
+            );
+        }
+    }
 }

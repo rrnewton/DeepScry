@@ -732,6 +732,10 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::AddMana { player, mana } if player.as_u32() == 0 => Effect::AddMana {
+                player: card_owner,
+                mana: *mana,
+            },
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
