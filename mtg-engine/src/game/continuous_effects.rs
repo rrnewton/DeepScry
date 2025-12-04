@@ -679,6 +679,28 @@ impl GameState {
                                 // Would need is_token field on Card struct
                                 // For now, this selector is parsed but not evaluated
                             }
+                            // Attacking creatures you control
+                            AffectedSelector::AttackingCreaturesYouControl => {
+                                // Only affects creatures you control that are attacking
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.controller == source.controller && self.combat.is_attacking(creature_id) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // All attacking creatures
+                            AffectedSelector::AllAttackingCreatures => {
+                                // Affects all attacking creatures regardless of controller
+                                if self.combat.is_attacking(creature_id) {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
+                            // Opponent player - doesn't affect creature P/T
+                            AffectedSelector::Opponent => {
+                                // This affects players, not creatures
+                                // Not relevant for creature P/T calculation
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {

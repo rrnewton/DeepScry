@@ -1296,3 +1296,86 @@ fn test_load_wondrous_crucible_permanent_youctrl_selector() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Creature.attacking+YouCtrl selector is properly parsed
+/// Goblin Oriflamme: "Attacking creatures you control get +1/+0."
+/// Related to: mtg-147
+#[test]
+fn test_load_goblin_oriflamme_attacking_youctrl_selector() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/g/goblin_oriflamme.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Goblin Oriflamme");
+    assert!(def.types.contains(&CardType::Enchantment));
+
+    // Verify the static ability line is present
+    let has_attacking_selector = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Creature.attacking+YouCtrl") && a.contains("AddPower$ 1"));
+    assert!(
+        has_attacking_selector,
+        "Should have Creature.attacking+YouCtrl with AddPower$ 1. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate and verify static abilities
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have ModifyPT with AttackingCreaturesYouControl selector
+    let has_modifypt = card.static_abilities.iter().any(|ability| {
+        if let StaticAbility::ModifyPT { affected, power, .. } = ability {
+            matches!(affected, AffectedSelector::AttackingCreaturesYouControl) && *power == 1
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_modifypt,
+        "Should have ModifyPT with AttackingCreaturesYouControl selector"
+    );
+
+    Ok(())
+}
+
+/// Test that Opponent selector is properly parsed
+/// Gnat Miser: "Each opponent's maximum hand size is reduced by one."
+/// Related to: mtg-147
+#[test]
+fn test_load_gnat_miser_opponent_selector() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/g/gnat_miser.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Gnat Miser");
+    assert!(def.types.contains(&CardType::Creature));
+
+    // Verify the static ability line is present
+    let has_opponent_selector = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Affected$ Opponent") && a.contains("RaiseMaxHandSize$ -1"));
+    assert!(
+        has_opponent_selector,
+        "Should have Opponent selector with RaiseMaxHandSize. Abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate - parsing should succeed without warnings
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let _card = def.instantiate(card_id, player_id);
+
+    Ok(())
+}

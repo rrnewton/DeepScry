@@ -1903,6 +1903,12 @@ impl CardDefinition {
                                     "Permanent.YouCtrl" => AffectedSelector::PermanentsYouControl,
                                     // Token creatures you control
                                     "Creature.token+YouCtrl" => AffectedSelector::TokenCreaturesYouControl,
+                                    // Attacking creatures you control
+                                    "Creature.attacking+YouCtrl" => AffectedSelector::AttackingCreaturesYouControl,
+                                    // All attacking creatures
+                                    "Creature.attacking" => AffectedSelector::AllAttackingCreatures,
+                                    // Opponent player
+                                    "Opponent" => AffectedSelector::Opponent,
                                     _ => {
                                         // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
                                         if let Some(parsed) = parse_tribal_selector(value) {

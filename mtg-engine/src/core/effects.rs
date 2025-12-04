@@ -533,6 +533,21 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Creature.token+YouCtrl`
     /// Used by cards that buff token creatures specifically
     TokenCreaturesYouControl,
+
+    /// Attacking creatures you control
+    /// Corresponds to: `Affected$ Creature.attacking+YouCtrl`
+    /// Used by cards that buff your attacking creatures
+    AttackingCreaturesYouControl,
+
+    /// All attacking creatures (regardless of controller)
+    /// Corresponds to: `Affected$ Creature.attacking`
+    /// Used by cards that affect all attackers
+    AllAttackingCreatures,
+
+    /// Opponent player(s)
+    /// Corresponds to: `Affected$ Opponent`
+    /// Used by effects that target or affect opponents
+    Opponent,
 }
 
 /// Cache for expensive string operations on ActivatedAbility
