@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-04T14:41:47.636249333+00:00
+updated_at: 2025-12-04T20:49:53.989124395+00:00
 ---
 
 # Description
@@ -48,6 +48,10 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Protection from color: Can't be blocked by that color
   - Reference: CombatUtil.canBlock() in Java Forge
   - Test: test_blocking_restrictions_evasion() with 6 test scenarios
+- ✅ **Deathtouch/Indestructible damage assignment (2025-12-04_#1151(d920ac0))**
+  - Deathtouch attackers: 1 damage is lethal per MTG Rules 702.2c
+  - Indestructible blockers: Always put last (can't be killed)
+  - Tests: test_damage_assignment_with_deathtouch, test_damage_assignment_with_indestructible
 
 **What's Missing:**
 
@@ -74,4 +78,4 @@ Track completion of heuristic AI port from Java Forge to Rust.
 2. Bluffing/deception
 
 ---
-**Checked up-to-date as of 2025-12-04_#1134(28100f8) - 597 tests passing**
+**Checked up-to-date as of 2025-12-04_#1151(d920ac0) - 599 tests passing**
