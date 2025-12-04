@@ -232,6 +232,126 @@ impl GameState {
         })
     }
 
+    /// Check if an AffectedSelector applies to a given creature from a given source.
+    ///
+    /// Used primarily to support `AffectedSelector::Any` by enabling recursive checking.
+    ///
+    /// ## Arguments
+    /// - `selector` - The selector to check
+    /// - `creature_id` - The creature being evaluated
+    /// - `source_id` - The permanent with the static ability
+    ///
+    /// ## Returns
+    /// `true` if the selector matches the creature, `false` otherwise.
+    fn selector_applies_to_creature(
+        &self,
+        selector: &crate::core::AffectedSelector,
+        creature_id: CardId,
+        source_id: CardId,
+    ) -> bool {
+        use crate::core::{AffectedSelector, CardType};
+
+        let creature = match self.cards.get(creature_id) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let source = match self.cards.get(source_id) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        match selector {
+            AffectedSelector::CreatureEquippedBy => self.get_attached_equipment(creature_id).contains(&source_id),
+            AffectedSelector::CreaturesYouControl => creature.controller == source.controller,
+            AffectedSelector::CreaturesYouControlOther => {
+                creature_id != source_id && creature.controller == source.controller
+            }
+            AffectedSelector::AllCreatures => creature.is_creature(),
+            AffectedSelector::Self_ => creature_id == source_id,
+            AffectedSelector::LandAttachedBy => false, // Not relevant for creature P/T
+            AffectedSelector::CreatureTypesOtherYouControl { types } => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && types.iter().any(|subtype| creature.subtypes.contains(subtype))
+            }
+            AffectedSelector::CreatureTypeYouControl { subtype } => {
+                creature.controller == source.controller && creature.subtypes.contains(subtype)
+            }
+            AffectedSelector::CreatureTypeOtherYouControl { subtype } => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.subtypes.contains(subtype)
+            }
+            AffectedSelector::CreatureEnchantedBy => self.get_attached_auras(creature_id).contains(&source_id),
+            AffectedSelector::CreatureCardTypeOtherYouControl { card_type } => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && match card_type {
+                        CardType::Artifact => creature.cache.is_artifact,
+                        _ => false,
+                    }
+            }
+            AffectedSelector::CreatureCardTypeYouControl { card_type } => {
+                creature.controller == source.controller
+                    && match card_type {
+                        CardType::Artifact => creature.cache.is_artifact,
+                        _ => false,
+                    }
+            }
+            AffectedSelector::LandCreaturesYouControl => creature.controller == source.controller && creature.is_land(),
+            AffectedSelector::CreatureNonTypeOtherYouControl { excluded_subtype } => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && !creature.subtypes.contains(excluded_subtype)
+            }
+            AffectedSelector::SelfWhenEquipped => {
+                creature_id == source_id && !self.get_attached_equipment(creature_id).is_empty()
+            }
+            AffectedSelector::SelfWhenEnchanted => {
+                creature_id == source_id && !self.get_attached_auras(creature_id).is_empty()
+            }
+            AffectedSelector::EquippedCreaturesYouControl => {
+                creature.controller == source.controller && !self.get_attached_equipment(creature_id).is_empty()
+            }
+            AffectedSelector::EnchantedCreaturesYouControl => {
+                creature.controller == source.controller && !self.get_attached_auras(creature_id).is_empty()
+            }
+            AffectedSelector::AllCreaturesOfType { subtype } => creature.subtypes.contains(subtype),
+            AffectedSelector::CreaturesOpponentControls => creature.controller != source.controller,
+            AffectedSelector::You | AffectedSelector::Player => false, // Player targets, not creatures
+            AffectedSelector::LandsYouControl => false,                // Land targets, not creatures
+            AffectedSelector::TopCardOfLibrary => false,               // Library, not battlefield
+            AffectedSelector::CreatureAttachedBy => source.attached_to == Some(creature_id),
+            AffectedSelector::ArtifactsYouControl => {
+                creature.controller == source.controller && creature.cache.is_artifact
+            }
+            AffectedSelector::ArtifactsYouControlOther => {
+                creature_id != source_id && creature.controller == source.controller && creature.cache.is_artifact
+            }
+            AffectedSelector::AllLands => creature.is_land(),
+            AffectedSelector::PermanentsYouControl => creature.controller == source.controller,
+            // TODO(mtg-147): Implement TokenCreaturesYouControl when is_token field is added to Card
+            AffectedSelector::TokenCreaturesYouControl => false, // Not yet implemented
+            AffectedSelector::AttackingCreaturesYouControl => {
+                creature.controller == source.controller && self.combat.is_attacking(creature_id)
+            }
+            AffectedSelector::AllAttackingCreatures => self.combat.is_attacking(creature_id),
+            AffectedSelector::Opponent => false, // Player target
+            AffectedSelector::SelfWhenAttacking => creature_id == source_id && self.combat.is_attacking(creature_id),
+            AffectedSelector::ArtifactEnchantedBy
+            | AffectedSelector::PlaneswalkerEnchantedBy
+            | AffectedSelector::EquipmentEnchantedBy => self.get_attached_auras(creature_id).contains(&source_id),
+            AffectedSelector::CardAttachedBy => source.attached_to == Some(creature_id),
+            AffectedSelector::LandsYouOwn => creature.is_land() && creature.owner == source.controller,
+            AffectedSelector::Any(selectors) => {
+                // Recursively check if ANY inner selector matches
+                selectors
+                    .iter()
+                    .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
+            }
+        }
+    }
+
     /// Calculate Layer 7c continuous effects (Equipment, anthems, etc).
     ///
     /// ## CR 613.4c
@@ -747,6 +867,17 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
+                            // OR combination - match if ANY inner selector matches
+                            AffectedSelector::Any(selectors) => {
+                                // Use the helper to check if any selector applies
+                                if selectors
+                                    .iter()
+                                    .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
+                                {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
+                            }
                         }
                     }
                     StaticAbility::GrantKeyword { .. } => {
@@ -867,6 +998,12 @@ impl GameState {
                             // Grant keyword to self only while attacking
                             // Used by cards like Soltari Lancer
                             creature_id == source_id && self.combat.is_attacking(creature_id)
+                        }
+                        AffectedSelector::Any(selectors) => {
+                            // OR combination - match if ANY inner selector matches
+                            selectors
+                                .iter()
+                                .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
                         }
                         _ => false, // Other selectors not yet supported for keywords
                     };

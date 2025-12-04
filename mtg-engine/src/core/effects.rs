@@ -579,6 +579,16 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Land.YouOwn`
     /// Used by cards like Crucible of Worlds that let you play lands from graveyard
     LandsYouOwn,
+
+    /// OR combination of multiple selectors (matches if ANY selector matches).
+    ///
+    /// Corresponds to comma-separated Affected$ values like:
+    /// - `Affected$ Goblin.YouCtrl+Other,Orc.YouCtrl+Other` (tribal lords)
+    /// - `Affected$ Instant,Sorcery` (spell type OR)
+    /// - `Affected$ Creature.PairedWith,Creature.Self+Paired` (soulbond)
+    ///
+    /// Used when a card affects multiple distinct categories of permanents.
+    Any(Vec<AffectedSelector>),
 }
 
 /// Cache for expensive string operations on ActivatedAbility

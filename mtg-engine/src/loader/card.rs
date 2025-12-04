@@ -1846,8 +1846,71 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: TYPE.YouCtrl+Other (alternate ordering, e.g., "Goblin.YouCtrl+Other")
+            // Same as above but with different parameter order
+            if value.ends_with(".YouCtrl+Other") {
+                let subtype = value.strip_suffix(".YouCtrl+Other")?;
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
+                    return Some(AffectedSelector::CreatureTypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
             None
         }
+
+        /// Parse a single Affected$ selector value into an AffectedSelector.
+        ///
+        /// This combines explicit matches for known selectors with the tribal pattern parser.
+        /// Returns None if the selector cannot be parsed (caller should emit warning).
+        fn parse_single_affected_selector(value: &str) -> Option<AffectedSelector> {
+            // First, try explicit matches for known selectors
+            let selector = match value {
+                "Creature.EquippedBy" | "Card.EquippedBy" => AffectedSelector::CreatureEquippedBy,
+                "Creature.EnchantedBy" | "Card.EnchantedBy" | "Permanent.EnchantedBy" => {
+                    AffectedSelector::CreatureEnchantedBy
+                }
+                "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
+                "Creature.YouCtrl+Other" | "Creature.Other+YouCtrl" => AffectedSelector::CreaturesYouControlOther,
+                "Creature" => AffectedSelector::AllCreatures,
+                "Card.Self" => AffectedSelector::Self_,
+                "Land.AttachedBy" | "Land.EnchantedBy" => AffectedSelector::LandAttachedBy,
+                "Artifact.EnchantedBy" => AffectedSelector::ArtifactEnchantedBy,
+                "Planeswalker.EnchantedBy" => AffectedSelector::PlaneswalkerEnchantedBy,
+                "Equipment.EnchantedBy" => AffectedSelector::EquipmentEnchantedBy,
+                "Card.Self+equipped" => AffectedSelector::SelfWhenEquipped,
+                "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,
+                "Creature.YouCtrl+equipped" => AffectedSelector::EquippedCreaturesYouControl,
+                "Creature.YouCtrl+enchanted" => AffectedSelector::EnchantedCreaturesYouControl,
+                "You" => AffectedSelector::You,
+                "Player" => AffectedSelector::Player,
+                "Land.YouCtrl" => AffectedSelector::LandsYouControl,
+                "Creature.OppCtrl" => AffectedSelector::CreaturesOpponentControls,
+                "Card.TopLibrary+YouCtrl" => AffectedSelector::TopCardOfLibrary,
+                "Creature.AttachedBy" => AffectedSelector::CreatureAttachedBy,
+                "Card.AttachedBy" => AffectedSelector::CardAttachedBy,
+                "Land.YouOwn" => AffectedSelector::LandsYouOwn,
+                "Artifact.YouCtrl" => AffectedSelector::ArtifactsYouControl,
+                "Artifact.YouCtrl+Other" | "Artifact.Other+YouCtrl" => AffectedSelector::ArtifactsYouControlOther,
+                "Land" => AffectedSelector::AllLands,
+                "Permanent.YouCtrl" => AffectedSelector::PermanentsYouControl,
+                "Creature.token+YouCtrl" => AffectedSelector::TokenCreaturesYouControl,
+                "Creature.attacking+YouCtrl" => AffectedSelector::AttackingCreaturesYouControl,
+                "Creature.attacking" => AffectedSelector::AllAttackingCreatures,
+                "Opponent" => AffectedSelector::Opponent,
+                "Card.Self+attacking" => AffectedSelector::SelfWhenAttacking,
+                // Spell types for stack effects (parsed but not yet implemented for P/T)
+                "Instant" => AffectedSelector::Self_,
+                "Sorcery" => AffectedSelector::Self_,
+                _ => {
+                    // Try to parse tribal type patterns
+                    return parse_tribal_selector(value);
+                }
+            };
+            Some(selector)
+        }
+
         let mut abilities = Vec::new();
 
         for ability in &self.raw_abilities {
@@ -1878,7 +1941,7 @@ impl CardDefinition {
                         "Affected" => {
                             // Check for comma-separated selectors (e.g., "Creature.Zombie+Other+YouCtrl,Creature.Skeleton+YouCtrl")
                             if value.contains(',') {
-                                // Parse comma-separated list of creature types
+                                // First, try to parse as tribal creature types (shortcut for common case)
                                 // Handles both old format (TYPE.Other+YouCtrl) and new format (Creature.TYPE+Other+YouCtrl)
                                 let types: Vec<Subtype> = value
                                     .split(',')
@@ -1904,96 +1967,41 @@ impl CardDefinition {
                                     .collect();
 
                                 if !types.is_empty() {
+                                    // Pure tribal shortcut - all parts matched creature types
                                     affected = AffectedSelector::CreatureTypesOtherYouControl { types };
                                 } else {
-                                    eprintln!(
-                                        "Warning: Failed to parse comma-separated Affected$ selector '{}' in '{}'",
-                                        value, ability
-                                    );
-                                    affected = AffectedSelector::Self_;
+                                    // Fallback: Parse each part as an individual selector and wrap in Any
+                                    // This handles complex OR patterns like:
+                                    // - "Goblin.YouCtrl+Other,Orc.YouCtrl+Other"
+                                    // - "Instant,Sorcery"
+                                    // - "Creature.PairedWith,Creature.Self+Paired"
+                                    let selectors: Vec<AffectedSelector> = value
+                                        .split(',')
+                                        .filter_map(|part| parse_single_affected_selector(part.trim()))
+                                        .collect();
+
+                                    if selectors.len() == 1 {
+                                        // Single selector parsed - use it directly
+                                        affected = selectors.into_iter().next().unwrap();
+                                    } else if selectors.len() > 1 {
+                                        // Multiple selectors parsed - wrap in Any (OR)
+                                        affected = AffectedSelector::Any(selectors);
+                                    } else {
+                                        // No selectors could be parsed - emit warning
+                                        eprintln!(
+                                            "Warning: Failed to parse comma-separated Affected$ selector '{}' in '{}'",
+                                            value, ability
+                                        );
+                                        affected = AffectedSelector::Self_;
+                                    }
                                 }
                             } else {
-                                // Single selector - try exact match first, then pattern-based parsing
-                                affected = match value {
-                                    // Equipment target selectors - both mean "creature equipped by this"
-                                    // Card.EquippedBy is semantically equivalent since Equipment
-                                    // can only be attached to creatures (CR 301.5, 702.6)
-                                    "Creature.EquippedBy" | "Card.EquippedBy" => AffectedSelector::CreatureEquippedBy,
-                                    // Aura target selectors - all mean "enchanted permanent"
-                                    // Card.EnchantedBy and Permanent.EnchantedBy are used by generic auras
-                                    // that may enchant any permanent, but for +P/+T effects only creatures are meaningful
-                                    "Creature.EnchantedBy" | "Card.EnchantedBy" | "Permanent.EnchantedBy" => {
-                                        AffectedSelector::CreatureEnchantedBy
-                                    }
-                                    "Creature.YouCtrl" => AffectedSelector::CreaturesYouControl,
-                                    // Both orderings are valid: +Other can come before or after +YouCtrl
-                                    "Creature.YouCtrl+Other" | "Creature.Other+YouCtrl" => {
-                                        AffectedSelector::CreaturesYouControlOther
-                                    }
-                                    "Creature" => AffectedSelector::AllCreatures,
-                                    "Card.Self" => AffectedSelector::Self_,
-                                    // Land aura selectors - both mean "the land this aura is enchanting"
-                                    "Land.AttachedBy" | "Land.EnchantedBy" => AffectedSelector::LandAttachedBy,
-                                    // Artifact aura selectors - auras attached to artifacts
-                                    "Artifact.EnchantedBy" => AffectedSelector::ArtifactEnchantedBy,
-                                    // Planeswalker aura selectors - auras attached to planeswalkers
-                                    "Planeswalker.EnchantedBy" => AffectedSelector::PlaneswalkerEnchantedBy,
-                                    // Equipment aura selectors - auras attached to equipment
-                                    "Equipment.EnchantedBy" => AffectedSelector::EquipmentEnchantedBy,
-                                    // State-based selectors: equipped/enchanted
-                                    "Card.Self+equipped" => AffectedSelector::SelfWhenEquipped,
-                                    "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,
-                                    "Creature.YouCtrl+equipped" => AffectedSelector::EquippedCreaturesYouControl,
-                                    "Creature.YouCtrl+enchanted" => AffectedSelector::EnchantedCreaturesYouControl,
-                                    // Player-targeted selectors
-                                    // "You" affects the controller of the permanent with this ability
-                                    "You" => AffectedSelector::You,
-                                    // "Player" affects all players (symmetric effects)
-                                    "Player" => AffectedSelector::Player,
-                                    // Land selectors
-                                    "Land.YouCtrl" => AffectedSelector::LandsYouControl,
-                                    // Opponent's creatures
-                                    "Creature.OppCtrl" => AffectedSelector::CreaturesOpponentControls,
-                                    // Top card of library
-                                    "Card.TopLibrary+YouCtrl" => AffectedSelector::TopCardOfLibrary,
-                                    // Creature with something attached (Aura/Equipment)
-                                    "Creature.AttachedBy" => AffectedSelector::CreatureAttachedBy,
-                                    // Any permanent with something attached
-                                    "Card.AttachedBy" => AffectedSelector::CardAttachedBy,
-                                    // Lands you own (for graveyard play effects)
-                                    "Land.YouOwn" => AffectedSelector::LandsYouOwn,
-                                    // Artifacts you control
-                                    "Artifact.YouCtrl" => AffectedSelector::ArtifactsYouControl,
-                                    // Other artifacts you control
-                                    "Artifact.YouCtrl+Other" | "Artifact.Other+YouCtrl" => {
-                                        AffectedSelector::ArtifactsYouControlOther
-                                    }
-                                    // All lands on the battlefield
-                                    "Land" => AffectedSelector::AllLands,
-                                    // Permanents you control
-                                    "Permanent.YouCtrl" => AffectedSelector::PermanentsYouControl,
-                                    // Token creatures you control
-                                    "Creature.token+YouCtrl" => AffectedSelector::TokenCreaturesYouControl,
-                                    // Attacking creatures you control
-                                    "Creature.attacking+YouCtrl" => AffectedSelector::AttackingCreaturesYouControl,
-                                    // All attacking creatures
-                                    "Creature.attacking" => AffectedSelector::AllAttackingCreatures,
-                                    // Opponent player
-                                    "Opponent" => AffectedSelector::Opponent,
-                                    // Self while attacking
-                                    "Card.Self+attacking" => AffectedSelector::SelfWhenAttacking,
-                                    _ => {
-                                        // Try to parse tribal type patterns: TYPE.YouCtrl or TYPE.Other+YouCtrl
-                                        if let Some(parsed) = parse_tribal_selector(value) {
-                                            parsed
-                                        } else {
-                                            eprintln!(
-                                                "Warning: Unknown Affected$ selector '{}' in '{}'",
-                                                value, ability
-                                            );
-                                            AffectedSelector::Self_
-                                        }
-                                    }
+                                // Single selector - use the unified parser
+                                affected = if let Some(parsed) = parse_single_affected_selector(value) {
+                                    parsed
+                                } else {
+                                    eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
+                                    AffectedSelector::Self_
                                 };
                             }
                         }
