@@ -21,6 +21,7 @@
 //! The default port is 17771.
 
 mod controller;
+mod local_controller;
 mod protocol;
 mod remote_controller;
 
@@ -30,6 +31,7 @@ mod client;
 mod server;
 
 pub use controller::*;
+pub use local_controller::*;
 pub use protocol::*;
 pub use remote_controller::*;
 
