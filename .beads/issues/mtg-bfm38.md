@@ -6,7 +6,7 @@ issue_type: task
 depends_on:
   mtg-to96y: parent-child
 created_at: 2025-12-05T17:58:29.730244324+00:00
-updated_at: 2025-12-05T17:58:29.730244324+00:00
+updated_at: 2025-12-05T23:16:26.742820585+00:00
 ---
 
 # Description
@@ -101,11 +101,14 @@ Integration tests requiring actual WebSocket connections:
   - Eliminates code duplication
   - Shows viewer's hand (not just active player)
 - **Connect CLI enhanced**: Added --controller, --fixed-inputs, --seed-player, --visual-stacks, --verbosity
+- **--real-gameloop flag**: Added CLI flag to use run_game_real (commits c0c6500e, d5f84f80)
+- **SharedRevealQueue**: Infrastructure for passing card reveals from WebSocket to game thread (commit ba0fba13)
+- **Makefile/test_helpers**: Added --features network to validation (commit c0c6500e)
 
 ### In Progress
-- Integrate real GameLoop with InteractiveController on client side
-- Wire up RemoteController to receive OpponentChoice messages
-- Full deterministic sync between client and server GameLoops
+- **run_game_real timing**: Reveals only drained at startup, not during gameplay
+  - Need to either hook GameLoop or have controllers drain queue
+  - Core infrastructure is in place
 
 ### FIXME-UNFINISHED Items
 See markers in code for stubbed functionality:
@@ -123,19 +126,3 @@ See markers in code for stubbed functionality:
 
 Use localhost connections with fixed-script or heuristic controllers.
 Compare network game results with equivalent local games to verify determinism.
-
-## Validation
-
-```bash
-# Local game (baseline)
-mtg tui deck1.dck deck2.dck --p1=heuristic --p2=heuristic --seed=12345
-
-# Network game (should produce identical result)
-mtg server --port=17771 --password=test &
-mtg connect deck1.dck --server=localhost:17771 --password=test --controller=heuristic &
-mtg connect deck2.dck --server=localhost:17771 --password=test --controller=heuristic
-```
-
-## Reference
-
-See `ai_docs/NETWORKING_DESIGN_PLAN.md` Part 5

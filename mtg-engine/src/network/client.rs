@@ -20,7 +20,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 
 /// Shared queue for card reveals from the server
 ///
-/// Used in `run_game_real` to communicate card reveals from the WebSocket handler
+/// Used in `run_game()` to communicate card reveals from the WebSocket handler
 /// to the game thread, which can then queue them into the appropriate library.
 pub type SharedRevealQueue = Arc<Mutex<VecDeque<(PlayerId, CardId, RevealReason)>>>;
 
@@ -435,8 +435,12 @@ impl NetworkClient {
         }
     }
 
-    /// Run the game loop with a local controller
-    pub async fn run_game<C: PlayerController>(&mut self, mut controller: C) -> Result<Option<PlayerId>> {
+    /// Run the game using message-based protocol (no local GameLoop)
+    ///
+    /// This is the simpler approach where the client just responds to server messages.
+    /// The server runs the authoritative GameLoop and sends choice requests.
+    /// Use `run_game()` for the preferred GameLoop-based approach.
+    pub async fn run_game_message_based<C: PlayerController>(&mut self, mut controller: C) -> Result<Option<PlayerId>> {
         let card_db = self.card_db.clone().expect("Card DB not loaded");
 
         // Print initial game state
@@ -639,10 +643,11 @@ impl NetworkClient {
         Ok(())
     }
 
-    /// Run the game using a real GameLoop with the provided controller
+    /// Run the game with a synchronized local GameLoop
     ///
-    /// This is the new architecture that runs an actual GameLoop on the client side,
-    /// keeping the game state in sync with the server through choice messages.
+    /// This runs an actual GameLoop on the client side, keeping the game state
+    /// in sync with the server through choice messages. Card reveals from the
+    /// server are queued into the local game state's libraries.
     ///
     /// # Architecture
     ///
@@ -659,10 +664,7 @@ impl NetworkClient {
     /// │  └──────────────────┘     └────────────────────────────────┘   │
     /// └─────────────────────────────────────────────────────────────────┘
     /// ```
-    pub async fn run_game_real<C: PlayerController + Send + 'static>(
-        &mut self,
-        controller: C,
-    ) -> Result<Option<PlayerId>> {
+    pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
         use crate::network::{
             LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteChoice, RemoteController,

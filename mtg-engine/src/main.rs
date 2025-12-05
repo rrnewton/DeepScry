@@ -480,10 +480,11 @@ enum Commands {
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
 
-        /// Use real GameLoop on client side (experimental)
-        /// Runs a synchronized GameLoop that replays opponent choices locally
+        /// Use message-based protocol instead of synchronized GameLoop
+        /// The message-based approach is simpler but doesn't run a local GameLoop.
+        /// Default is to run a synchronized GameLoop on the client side.
         #[arg(long)]
-        real_gameloop: bool,
+        message_based: bool,
     },
 }
 
@@ -730,7 +731,7 @@ async fn main() -> Result<()> {
             seed_player,
             visual_stacks,
             verbosity,
-            real_gameloop,
+            message_based,
         } => {
             use mtg_forge_rs::core::PlayerId;
             use mtg_forge_rs::game::{HeuristicController, RichInputController, VerbosityLevel};
@@ -781,12 +782,13 @@ async fn main() -> Result<()> {
             let our_player_id = client.our_player_id().unwrap_or(PlayerId::new(0));
 
             // Create controller based on type
-            // When real_gameloop is true, use run_game_real which runs a synchronized GameLoop
+            // Default: run_game() uses synchronized GameLoop
+            // With --message-based: run_game_message_based() just responds to server messages
             let result: Option<PlayerId> = match controller_type {
                 ControllerType::Zero => {
                     let ctrl = ZeroController::new(our_player_id);
-                    if real_gameloop {
-                        client.run_game_real(ctrl).await
+                    if message_based {
+                        client.run_game_message_based(ctrl).await
                     } else {
                         client.run_game(ctrl).await
                     }
@@ -802,35 +804,34 @@ async fn main() -> Result<()> {
                         );
                         RandomController::with_seed(our_player_id, entropy_seed)
                     };
-                    if real_gameloop {
-                        client.run_game_real(ctrl).await
+                    if message_based {
+                        client.run_game_message_based(ctrl).await
                     } else {
                         client.run_game(ctrl).await
                     }
                 }
                 ControllerType::Tui => {
                     let ctrl = InteractiveController::new(our_player_id);
-                    if real_gameloop {
-                        client.run_game_real(ctrl).await
+                    if message_based {
+                        client.run_game_message_based(ctrl).await
                     } else {
                         client.run_game(ctrl).await
                     }
                 }
                 ControllerType::Fancy => {
-                    if real_gameloop {
-                        return Err(mtg_forge_rs::MtgError::InvalidAction(
-                            "--real-gameloop is not supported with --controller=fancy".to_string(),
-                        ));
+                    // Fancy TUI requires message-based mode (not Send)
+                    if !message_based {
+                        log::info!("Fancy TUI requires --message-based mode, enabling automatically");
                     }
                     let ctrl = FancyTuiController::new(our_player_id, visual_stacks).map_err(|e| {
                         mtg_forge_rs::MtgError::InvalidAction(format!("Failed to init Fancy TUI: {}", e))
                     })?;
-                    client.run_game(ctrl).await
+                    client.run_game_message_based(ctrl).await
                 }
                 ControllerType::Heuristic => {
                     let ctrl = HeuristicController::new(our_player_id);
-                    if real_gameloop {
-                        client.run_game_real(ctrl).await
+                    if message_based {
+                        client.run_game_message_based(ctrl).await
                     } else {
                         client.run_game(ctrl).await
                     }
@@ -840,8 +841,8 @@ async fn main() -> Result<()> {
                         mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
                     })?;
                     let ctrl = RichInputController::new(our_player_id, script);
-                    if real_gameloop {
-                        client.run_game_real(ctrl).await
+                    if message_based {
+                        client.run_game_message_based(ctrl).await
                     } else {
                         client.run_game(ctrl).await
                     }
