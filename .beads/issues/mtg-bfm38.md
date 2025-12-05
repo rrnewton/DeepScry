@@ -89,6 +89,31 @@ Integration tests requiring actual WebSocket connections:
 2. ~~Run complete game with automated controllers~~ (DONE: test_full_game_always_pass)
 3. Detect desync by corrupting client state
 
+## Client-Side UI Progress (2025-12-05)
+
+### Completed
+- **RemoteController**: Created controller for receiving opponent choices from server
+  - Implements full PlayerController trait
+  - Receives choices via mpsc channel
+  - Returns ChoiceResult::ExitGame on disconnect
+- **Shared display function**: Extracted `print_battlefield_state` to game::display module
+  - Used by both GameLoop and NetworkClient
+  - Eliminates code duplication
+  - Shows viewer's hand (not just active player)
+- **Connect CLI enhanced**: Added --controller, --fixed-inputs, --seed-player, --visual-stacks, --verbosity
+
+### In Progress
+- Integrate real GameLoop with InteractiveController on client side
+- Wire up RemoteController to receive OpponentChoice messages
+- Full deterministic sync between client and server GameLoops
+
+### FIXME-UNFINISHED Items
+See markers in code for stubbed functionality:
+- Client doesn't replay opponent choices on shadow state
+- Hash verification accepts server hash without computing local
+- Multi-select not supported for targets, mana, attackers, blockers, discard
+- GameEndReason not from actual GameLoop
+
 ## Fixed Issues
 
 - **Server now sends GameEnded**: Added oneshot channels to signal game end to WebSocket handlers.
