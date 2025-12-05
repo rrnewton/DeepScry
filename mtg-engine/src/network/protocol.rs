@@ -457,4 +457,157 @@ mod tests {
             assert_eq!(roundtrip, reason);
         }
     }
+
+    #[test]
+    fn test_all_server_message_variants() {
+        // Test all ServerMessage variants for round-trip serialization
+        let player_id = PlayerId::new(1);
+        let card_id = CardId::new(42);
+
+        let messages: Vec<ServerMessage> = vec![
+            ServerMessage::AuthResult {
+                success: true,
+                error: None,
+                your_player_id: Some(player_id),
+            },
+            ServerMessage::AuthResult {
+                success: false,
+                error: Some("Invalid password".to_string()),
+                your_player_id: None,
+            },
+            ServerMessage::WaitingForOpponent,
+            ServerMessage::GameStarted {
+                your_player_id: player_id,
+                opponent_name: "Bob".to_string(),
+                opening_hand: vec![CardReveal {
+                    card_id,
+                    name: "Mountain".to_string(),
+                    mana_cost: String::new(),
+                    type_line: "Basic Land - Mountain".to_string(),
+                    text: String::new(),
+                    pt: None,
+                }],
+                opponent_hand_count: 7,
+                library_size: 53,
+                opponent_library_size: 53,
+                opponent_decklist: None,
+                starting_life: 20,
+                initial_state_hash: 0x12345678,
+            },
+            ServerMessage::ChoiceRequest {
+                choice_seq: 1,
+                choice_type: ChoiceType::Priority { available_count: 2 },
+                options: vec!["Pass".to_string(), "Play Mountain".to_string()],
+                state_hash: 0xABCDEF,
+                context: None,
+            },
+            ServerMessage::CardRevealed {
+                owner: player_id,
+                card: CardReveal {
+                    card_id,
+                    name: "Lightning Bolt".to_string(),
+                    mana_cost: "{R}".to_string(),
+                    type_line: "Instant".to_string(),
+                    text: "Deal 3 damage to any target.".to_string(),
+                    pt: None,
+                },
+                reason: RevealReason::Draw,
+            },
+            ServerMessage::OpponentChoice {
+                choice_seq: 5,
+                choice_type: ChoiceType::Priority { available_count: 0 },
+                choice_index: 0,
+                description: "Pass priority".to_string(),
+            },
+            ServerMessage::GameEnded {
+                winner: Some(player_id),
+                reason: GameEndReason::PlayerDeath(PlayerId::new(0)),
+                final_state_hash: 0xFEDCBA98,
+            },
+            ServerMessage::GameEnded {
+                winner: None,
+                reason: GameEndReason::Draw,
+                final_state_hash: 0,
+            },
+            ServerMessage::Error {
+                message: "Connection timeout".to_string(),
+                fatal: true,
+            },
+            ServerMessage::Pong {
+                timestamp_ms: 1234567890,
+            },
+        ];
+
+        for msg in messages {
+            let json = serde_json::to_string(&msg).expect("serialize");
+            let roundtrip: ServerMessage = serde_json::from_str(&json).expect("deserialize");
+            // Re-serialize to compare (since we can't derive PartialEq for all variants)
+            let json2 = serde_json::to_string(&roundtrip).expect("re-serialize");
+            assert_eq!(json, json2, "Round-trip failed for message variant");
+        }
+    }
+
+    #[test]
+    fn test_all_client_message_variants() {
+        // Test all ClientMessage variants for round-trip serialization
+        let messages: Vec<ClientMessage> = vec![
+            ClientMessage::Authenticate {
+                password: "secret123".to_string(),
+                player_name: "Alice".to_string(),
+                deck: DeckSubmission::new(
+                    vec![("Forest".to_string(), 20), ("Grizzly Bears".to_string(), 4)],
+                    vec![],
+                ),
+            },
+            ClientMessage::SubmitChoice {
+                choice_seq: 42,
+                choice_index: 1,
+            },
+            ClientMessage::Ping {
+                timestamp_ms: 9876543210,
+            },
+            ClientMessage::Disconnect,
+        ];
+
+        for msg in messages {
+            let json = serde_json::to_string(&msg).expect("serialize");
+            let roundtrip: ClientMessage = serde_json::from_str(&json).expect("deserialize");
+            let json2 = serde_json::to_string(&roundtrip).expect("re-serialize");
+            assert_eq!(json, json2, "Round-trip failed for message variant");
+        }
+    }
+
+    #[test]
+    fn test_choice_type_all_variants() {
+        let card_id = CardId::new(99);
+
+        let choice_types = vec![
+            ChoiceType::Priority { available_count: 5 },
+            ChoiceType::Targets {
+                spell_id: card_id,
+                target_count: 2,
+            },
+            ChoiceType::ManaSources {
+                cost: ManaCost::from_string("2R"),
+            },
+            ChoiceType::Attackers { available_count: 4 },
+            ChoiceType::Blockers {
+                attacker_count: 3,
+                blocker_count: 5,
+            },
+            ChoiceType::DamageOrder {
+                attacker: card_id,
+                blocker_count: 2,
+            },
+            ChoiceType::Discard { count: 2 },
+            ChoiceType::LibrarySearch { valid_count: 10 },
+        ];
+
+        for ct in choice_types {
+            let json = serde_json::to_string(&ct).expect("serialize");
+            let roundtrip: ChoiceType = serde_json::from_str(&json).expect("deserialize");
+            let json2 = serde_json::to_string(&roundtrip).expect("re-serialize");
+            assert_eq!(json, json2, "Round-trip failed for ChoiceType variant");
+        }
+    }
 }
