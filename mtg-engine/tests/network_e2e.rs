@@ -823,17 +823,6 @@ mod websocket_integration {
             let msg = match timeout(Duration::from_secs(30), receive_message(&mut ws)).await {
                 Ok(Ok(msg)) => msg,
                 Ok(Err(e)) => {
-                    // TODO(mtg-bfm38): Server should send GameEnded before closing connection
-                    // For now, treat connection close after many turns as game end
-                    if choice_count > 100 {
-                        log::warn!(
-                            "{}: Connection closed after {} choices, treating as game end: {}",
-                            name,
-                            choice_count,
-                            e
-                        );
-                        return Ok(None); // Unknown winner due to abrupt close
-                    }
                     return Err(format!("{}: Receive error: {}", name, e));
                 }
                 Err(_) => return Err(format!("{}: Timeout waiting for message", name)),

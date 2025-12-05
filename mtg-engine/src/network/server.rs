@@ -8,9 +8,11 @@
 //! - Broadcasts card reveals and opponent choices
 
 use crate::core::PlayerId;
-use crate::game::{GameLoop, GameState};
+use crate::game::{GameEndReason, GameLoop, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
-use crate::network::protocol::{CardReveal, ClientMessage, DeckListInfo, DeckSubmission, ServerMessage};
+use crate::network::protocol::{
+    CardReveal, ClientMessage, DeckListInfo, DeckSubmission, ServerMessage,
+};
 use crate::network::{ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -18,7 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc as tokio_mpsc, Mutex};
+use tokio::sync::{mpsc as tokio_mpsc, oneshot, Mutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -88,6 +90,14 @@ struct ActiveGame {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Connection handler for a single player
+/// Information about how a game ended, sent to WebSocket handlers
+#[derive(Clone)]
+struct GameEndInfo {
+    winner: Option<PlayerId>,
+    reason: GameEndReason,
+    final_hash: u64,
+}
+
 struct PlayerConnection {
     /// Player ID in the game
     player_id: PlayerId,
@@ -97,6 +107,8 @@ struct PlayerConnection {
     request_rx: tokio_mpsc::Receiver<ChoiceRequest>,
     /// Channel to send choice responses to NetworkController
     response_tx: std::sync::mpsc::Sender<ChoiceResponse>,
+    /// Channel to receive game end notification
+    game_end_rx: oneshot::Receiver<GameEndInfo>,
 }
 
 impl PlayerConnection {
@@ -384,18 +396,24 @@ async fn run_game(
     let (p1_ws_tx, p1_ws_rx) = p1.ws_stream.split();
     let (p2_ws_tx, p2_ws_rx) = p2.ws_stream.split();
 
+    // Create oneshot channels to notify handlers when game ends
+    let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
+    let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
+
     // Create PlayerConnections with tokio receivers
     let mut p1_conn = PlayerConnection {
         player_id: PlayerId::new(0),
         ws_tx: p1_ws_tx,
         request_rx: p1_async_request_rx,
         response_tx: p1_response_tx,
+        game_end_rx: p1_game_end_rx,
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
         ws_tx: p2_ws_tx,
         request_rx: p2_async_request_rx,
         response_tx: p2_response_tx,
+        game_end_rx: p2_game_end_rx,
     };
 
     // Convert deck submissions to DeckList format
@@ -500,20 +518,63 @@ async fn run_game(
     // Wait for game to complete
     let result = game_loop_handle.await?;
 
+    // Get final state hash for the GameEnded message
+    let final_hash = {
+        let game_guard = game.lock().await;
+        compute_network_hash(&game_guard)
+    };
+
+    // Send game end notification to both handlers
+    match &result {
+        Ok(winner) => {
+            log::info!("Game {}: Completed, winner = {:?}", game_id, winner);
+
+            // Determine the reason based on game state
+            // For now, use PlayerDeath if there's a winner, Draw otherwise
+            let reason = match winner {
+                Some(winner_id) => {
+                    // The loser is the other player
+                    let loser_id = if *winner_id == PlayerId::new(0) {
+                        PlayerId::new(1)
+                    } else {
+                        PlayerId::new(0)
+                    };
+                    GameEndReason::PlayerDeath(loser_id)
+                }
+                None => GameEndReason::Draw,
+            };
+
+            let end_info = GameEndInfo {
+                winner: *winner,
+                reason,
+                final_hash,
+            };
+
+            // Send to both players (ignore errors if handlers already closed)
+            let _ = p1_game_end_tx.send(end_info.clone());
+            let _ = p2_game_end_tx.send(end_info);
+        }
+        Err(e) => {
+            log::error!("Game {}: Error - {}", game_id, e);
+            // Still try to notify players of the error
+            let end_info = GameEndInfo {
+                winner: None,
+                reason: GameEndReason::Draw, // Use draw for errors
+                final_hash,
+            };
+            let _ = p1_game_end_tx.send(end_info.clone());
+            let _ = p2_game_end_tx.send(end_info);
+        }
+    }
+
+    // Wait briefly for handlers to send GameEnded before aborting
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
     // Cancel all handlers
     p1_handler.abort();
     p2_handler.abort();
     p1_bridge.abort();
     p2_bridge.abort();
-
-    match result {
-        Ok(winner) => {
-            log::info!("Game {}: Completed, winner = {:?}", game_id, winner);
-        }
-        Err(e) => {
-            log::error!("Game {}: Error - {}", game_id, e);
-        }
-    }
 
     Ok(())
 }
@@ -527,6 +588,25 @@ async fn handle_player_websocket(
 ) -> Result<()> {
     loop {
         tokio::select! {
+            // Check for game end notification
+            end_info = &mut conn.game_end_rx => {
+                match end_info {
+                    Ok(info) => {
+                        log::info!("Player {:?}: Sending GameEnded", conn.player_id);
+                        conn.send(&ServerMessage::GameEnded {
+                            winner: info.winner,
+                            reason: info.reason,
+                            final_state_hash: info.final_hash,
+                        }).await?;
+                    }
+                    Err(_) => {
+                        // Channel closed without sending - unusual but not fatal
+                        log::warn!("Player {:?}: Game end channel closed", conn.player_id);
+                    }
+                }
+                break;
+            }
+
             // Check for choice requests from NetworkController (via bridge)
             request = conn.request_rx.recv() => {
                 match request {
@@ -541,8 +621,8 @@ async fn handle_player_websocket(
                         }).await?;
                     }
                     None => {
-                        // Channel closed - game ended
-                        break;
+                        // Channel closed - game ended but we should wait for game_end_rx
+                        log::debug!("Player {:?}: Request channel closed", conn.player_id);
                     }
                 }
             }

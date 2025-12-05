@@ -89,10 +89,10 @@ Integration tests requiring actual WebSocket connections:
 2. ~~Run complete game with automated controllers~~ (DONE: test_full_game_always_pass)
 3. Detect desync by corrupting client state
 
-## Known Issues
+## Fixed Issues
 
-- **Server doesn't send GameEnded**: When a game ends, the server aborts WebSocket handlers
-  without sending a GameEnded message. TODO(mtg-bfm38): Fix server to send GameEnded properly.
+- **Server now sends GameEnded**: Added oneshot channels to signal game end to WebSocket handlers.
+  Handlers now properly send GameEnded message with winner, reason, and final state hash before closing.
 
 ## Test Strategy
 
