@@ -51,6 +51,7 @@ ensure_mtg_binary() {
 # If ensure_mtg_binary() was called first, uses the pre-built binary.
 # Otherwise, uses cargo run --release --bin mtg (builds on first invocation).
 run_mtg() {
+    echo ">>> mtg $@" > /dev/pts/1
     if [ -n "$MTG_BIN" ] && [ -f "$MTG_BIN" ]; then
         # Use pre-built binary if available
         "$MTG_BIN" "$@"
