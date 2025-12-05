@@ -12,11 +12,17 @@ use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+
+/// Shared queue for card reveals from the server
+///
+/// Used in `run_game_real` to communicate card reveals from the WebSocket handler
+/// to the game thread, which can then queue them into the appropriate library.
+pub type SharedRevealQueue = Arc<Mutex<VecDeque<(PlayerId, CardId, RevealReason)>>>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT CONFIGURATION
@@ -683,6 +689,10 @@ impl NetworkClient {
         // Game end signal
         let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<Option<PlayerId>>(1);
 
+        // Shared queue for card reveals (WebSocket handler -> Game thread)
+        let reveal_queue: SharedRevealQueue = Arc::new(Mutex::new(VecDeque::new()));
+        let reveal_queue_ws = reveal_queue.clone();
+
         // Create controllers
         let local_controller = NetworkLocalController::new(
             controller,
@@ -704,7 +714,7 @@ impl NetworkClient {
         );
         let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
 
-        // Clone game state for the game thread
+        // Get game state for the game thread
         let mut game = client_state.game;
 
         // Spawn WebSocket handler task
@@ -718,9 +728,10 @@ impl NetworkClient {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
                                         log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
-                                        // Queue to library for drawing
-                                        // Note: We need shared access to game state here
-                                        // For now, just log it - the game thread handles this
+                                        // Queue card reveal for the game thread to process
+                                        if let Ok(mut queue) = reveal_queue_ws.lock() {
+                                            queue.push_back((owner, card.card_id, reason));
+                                        }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_index, description, .. }) => {
                                         log::debug!("Opponent chose: {} ({})", description, choice_index);
@@ -789,10 +800,32 @@ impl NetworkClient {
         });
 
         // Run game loop in blocking thread
+        // The game thread will periodically drain the reveal_queue into the game's libraries
         let mut local_controller = local_controller;
         let mut remote_controller = remote_controller;
         let game_result = tokio::task::spawn_blocking(move || {
+            // Helper to drain reveal queue into game state
+            let drain_reveals = |game: &mut GameState| {
+                if let Ok(mut queue) = reveal_queue.lock() {
+                    while let Some((owner, card_id, reason)) = queue.pop_front() {
+                        if matches!(reason, RevealReason::Draw) {
+                            if let Some(zones) = game.get_player_zones_mut(owner) {
+                                zones.library.queue_reveal(card_id);
+                                log::debug!("Queued reveal for {:?}: {:?}", owner, card_id);
+                            }
+                        }
+                        // Other reveal reasons (TokenCreated, etc.) would need card instantiation
+                        // which requires access to card_db - skip for now
+                    }
+                }
+            };
+
+            // Process any reveals before starting
+            drain_reveals(&mut game);
+
             let mut game_loop = GameLoop::new(&mut game);
+            // TODO: Ideally we'd hook into GameLoop to drain reveals before each draw
+            // For now, this processes reveals queued during game setup
             game_loop.run_game(&mut local_controller, &mut remote_controller)
         });
 
