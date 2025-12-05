@@ -785,7 +785,10 @@ async fn main() -> Result<()> {
                         RandomController::with_seed(our_player_id, seed)
                     } else {
                         let entropy_seed = SeedArg::FromEntropy.resolve();
-                        log::warn!("No seed provided for Random controller, using entropy: {}", entropy_seed);
+                        log::warn!(
+                            "No seed provided for Random controller, using entropy: {}",
+                            entropy_seed
+                        );
                         RandomController::with_seed(our_player_id, entropy_seed)
                     };
                     client.run_game(ctrl).await
@@ -795,8 +798,9 @@ async fn main() -> Result<()> {
                     client.run_game(ctrl).await
                 }
                 ControllerType::Fancy => {
-                    let ctrl = FancyTuiController::new(our_player_id, visual_stacks)
-                        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to init Fancy TUI: {}", e)))?;
+                    let ctrl = FancyTuiController::new(our_player_id, visual_stacks).map_err(|e| {
+                        mtg_forge_rs::MtgError::InvalidAction(format!("Failed to init Fancy TUI: {}", e))
+                    })?;
                     client.run_game(ctrl).await
                 }
                 ControllerType::Heuristic => {
@@ -804,8 +808,9 @@ async fn main() -> Result<()> {
                     client.run_game(ctrl).await
                 }
                 ControllerType::Fixed => {
-                    let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap())
-                        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e)))?;
+                    let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap()).map_err(|e| {
+                        mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
+                    })?;
                     let ctrl = RichInputController::new(our_player_id, script);
                     client.run_game(ctrl).await
                 }

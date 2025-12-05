@@ -632,6 +632,186 @@ impl NetworkClient {
         }
         Ok(())
     }
+
+    /// Run the game using a real GameLoop with the provided controller
+    ///
+    /// This is the new architecture that runs an actual GameLoop on the client side,
+    /// keeping the game state in sync with the server through choice messages.
+    ///
+    /// # Architecture
+    ///
+    /// ```text
+    /// ┌─────────────────────────────────────────────────────────────────┐
+    /// │                        Client                                   │
+    /// │  ┌──────────────────┐     ┌────────────────────────────────┐   │
+    /// │  │ WebSocket Task   │     │ Game Thread (spawn_blocking)   │   │
+    /// │  │                  │     │                                │   │
+    /// │  │ ◄─ CardRevealed ─┼─────┼─► queue to library             │   │
+    /// │  │ ◄─ OpponentChoice┼─────┼─► RemoteController             │   │
+    /// │  │ ─► SubmitChoice ◄┼─────┼── NetworkLocalController       │   │
+    /// │  │ ◄─ GameEnded ────┼─────┼─► signal end                   │   │
+    /// │  └──────────────────┘     └────────────────────────────────┘   │
+    /// └─────────────────────────────────────────────────────────────────┘
+    /// ```
+    pub async fn run_game_real<C: PlayerController + Send + 'static>(
+        &mut self,
+        controller: C,
+    ) -> Result<Option<PlayerId>> {
+        use crate::game::GameLoop;
+        use crate::network::{
+            LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteChoice, RemoteController,
+        };
+        use std::sync::mpsc;
+        use tokio::sync::mpsc as tokio_mpsc;
+
+        // Take ownership of WebSocket and state
+        let ws = self.ws.take().ok_or_else(|| anyhow!("Not connected"))?;
+        let client_state = self.state.take().ok_or_else(|| anyhow!("Game not started"))?;
+        let _our_player_id = client_state.our_player_id;
+        let opponent_id = client_state.opponent_id;
+
+        // Split WebSocket
+        let (mut ws_sink, mut ws_stream) = ws.split();
+
+        // Create channels for communication
+        // Local controller -> WebSocket (our choices)
+        let (local_choice_tx, mut local_choice_rx) = tokio_mpsc::channel::<LocalChoice>(16);
+        // WebSocket -> Local controller (acknowledgments)
+        let (local_msg_tx, local_msg_rx) = mpsc::channel::<LocalControllerMessage>();
+        // WebSocket -> Remote controller (opponent choices)
+        let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteChoice>();
+        // Game end signal
+        let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<Option<PlayerId>>(1);
+
+        // Create controllers
+        let local_controller = NetworkLocalController::new(
+            controller,
+            // Convert tokio channel to std channel for blocking thread
+            {
+                let (std_tx, std_rx) = mpsc::channel();
+                // Spawn a task to forward from std channel to tokio channel
+                let local_choice_tx_clone = local_choice_tx.clone();
+                tokio::spawn(async move {
+                    while let Ok(choice) = std_rx.recv() {
+                        if local_choice_tx_clone.send(choice).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+                std_tx
+            },
+            local_msg_rx,
+        );
+        let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
+
+        // Clone game state for the game thread
+        let mut game = client_state.game;
+
+        // Spawn WebSocket handler task
+        let ws_handler = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    // Receive messages from server
+                    msg = ws_stream.next() => {
+                        match msg {
+                            Some(Ok(Message::Text(text))) => {
+                                match serde_json::from_str::<ServerMessage>(&text) {
+                                    Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
+                                        log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
+                                        // Queue to library for drawing
+                                        // Note: We need shared access to game state here
+                                        // For now, just log it - the game thread handles this
+                                    }
+                                    Ok(ServerMessage::OpponentChoice { choice_index, description, .. }) => {
+                                        log::debug!("Opponent chose: {} ({})", description, choice_index);
+                                        let _ = remote_choice_tx.send(RemoteChoice {
+                                            choice_index,
+                                            description,
+                                        });
+                                    }
+                                    Ok(ServerMessage::ChoiceRequest { .. }) => {
+                                        // We're being asked for a choice - acknowledge to local controller
+                                        let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
+                                    }
+                                    Ok(ServerMessage::GameEnded { winner, .. }) => {
+                                        log::info!("Game ended, winner: {:?}", winner);
+                                        let _ = game_end_tx.send(winner).await;
+                                        return;
+                                    }
+                                    Ok(ServerMessage::Error { message, fatal }) => {
+                                        if fatal {
+                                            log::error!("Fatal server error: {}", message);
+                                            let _ = local_msg_tx.send(LocalControllerMessage::Error(message));
+                                            return;
+                                        }
+                                        log::warn!("Server warning: {}", message);
+                                    }
+                                    Ok(_) => {
+                                        // Ignore other messages
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to parse server message: {}", e);
+                                    }
+                                }
+                            }
+                            Some(Ok(Message::Close(_))) | None => {
+                                log::info!("Connection closed");
+                                let _ = local_msg_tx.send(LocalControllerMessage::GameEnded);
+                                return;
+                            }
+                            Some(Ok(_)) => {
+                                // Ignore binary/ping/pong
+                            }
+                            Some(Err(e)) => {
+                                log::error!("WebSocket error: {}", e);
+                                let _ = local_msg_tx.send(LocalControllerMessage::Error(e.to_string()));
+                                return;
+                            }
+                        }
+                    }
+
+                    // Send our choices to server
+                    choice = local_choice_rx.recv() => {
+                        if let Some(choice) = choice {
+                            let msg = ClientMessage::SubmitChoice {
+                                choice_seq: 0, // TODO: Track sequence numbers
+                                choice_index: choice.choice_index,
+                            };
+                            let text = serde_json::to_string(&msg).unwrap();
+                            if ws_sink.send(Message::Text(text.into())).await.is_err() {
+                                log::error!("Failed to send choice to server");
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Run game loop in blocking thread
+        let mut local_controller = local_controller;
+        let mut remote_controller = remote_controller;
+        let game_result = tokio::task::spawn_blocking(move || {
+            let mut game_loop = GameLoop::new(&mut game);
+            game_loop.run_game(&mut local_controller, &mut remote_controller)
+        });
+
+        // Wait for game to end
+        tokio::select! {
+            result = game_result => {
+                ws_handler.abort();
+                match result {
+                    Ok(Ok(game_result)) => Ok(game_result.winner),
+                    Ok(Err(e)) => Err(anyhow!("Game error: {}", e)),
+                    Err(e) => Err(anyhow!("Game thread panic: {}", e)),
+                }
+            }
+            winner = game_end_rx.recv() => {
+                ws_handler.abort();
+                Ok(winner.flatten())
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

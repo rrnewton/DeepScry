@@ -81,13 +81,7 @@ struct ClientProcess {
 #[allow(dead_code)]
 impl ClientProcess {
     /// Start a client process
-    fn start(
-        deck_path: &str,
-        server: &str,
-        password: &str,
-        name: &str,
-        cardsfolder: &str,
-    ) -> Self {
+    fn start(deck_path: &str, server: &str, password: &str, name: &str, cardsfolder: &str) -> Self {
         let child = Command::new("cargo")
             .args([
                 "run",
@@ -161,9 +155,7 @@ fn test_deck_path(name: &str) -> String {
 /// Get path to cardsfolder (for process-spawning tests)
 #[allow(dead_code)]
 fn cardsfolder_path() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("cardsfolder");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("cardsfolder");
     path.to_string_lossy().to_string()
 }
 
@@ -229,9 +221,7 @@ fn test_two_clients_connect() {
 #[cfg(test)]
 mod async_tests {
     use mtg_forge_rs::core::PlayerId;
-    use mtg_forge_rs::network::{
-        CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage,
-    };
+    use mtg_forge_rs::network::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 
     /// Test protocol message round-trips work correctly
     #[test]
@@ -271,10 +261,7 @@ mod async_tests {
     #[test]
     fn test_deck_submission_encoding() {
         let deck = DeckSubmission::new(
-            vec![
-                ("Lightning Bolt".to_string(), 4),
-                ("Mountain".to_string(), 20),
-            ],
+            vec![("Lightning Bolt".to_string(), 4), ("Mountain".to_string(), 20)],
             vec![("Pyroclasm".to_string(), 2)],
         );
 
@@ -308,8 +295,7 @@ mod async_tests {
         };
 
         let request_json = serde_json::to_string(&request).expect("serialize request");
-        let decoded_request: ServerMessage =
-            serde_json::from_str(&request_json).expect("deserialize request");
+        let decoded_request: ServerMessage = serde_json::from_str(&request_json).expect("deserialize request");
 
         // Client sends response
         let response = ClientMessage::SubmitChoice {
@@ -318,13 +304,14 @@ mod async_tests {
         };
 
         let response_json = serde_json::to_string(&response).expect("serialize response");
-        let decoded_response: ClientMessage =
-            serde_json::from_str(&response_json).expect("deserialize response");
+        let decoded_response: ClientMessage = serde_json::from_str(&response_json).expect("deserialize response");
 
         // Verify choice_seq matches
         match (decoded_request, decoded_response) {
             (
-                ServerMessage::ChoiceRequest { choice_seq: req_seq, .. },
+                ServerMessage::ChoiceRequest {
+                    choice_seq: req_seq, ..
+                },
                 ClientMessage::SubmitChoice {
                     choice_seq: resp_seq,
                     choice_index,
@@ -376,9 +363,7 @@ mod async_tests {
 #[cfg(test)]
 mod websocket_integration {
     use futures_util::{SinkExt, StreamExt};
-    use mtg_forge_rs::network::{
-        ClientMessage, DeckSubmission, GameServer, ServerConfig, ServerMessage,
-    };
+    use mtg_forge_rs::network::{ClientMessage, DeckSubmission, GameServer, ServerConfig, ServerMessage};
     use std::path::PathBuf;
     use std::time::Duration;
     use tokio::net::TcpStream;
@@ -390,8 +375,7 @@ mod websocket_integration {
     /// releasing this port and the server binding to it, but in practice this
     /// works reliably for test purposes.
     fn allocate_random_port() -> u16 {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("Failed to bind to random port");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         port
@@ -418,18 +402,13 @@ mod websocket_integration {
 
     /// Get cardsfolder path
     fn cardsfolder_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("cardsfolder")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("cardsfolder")
     }
 
     /// Create a simple test deck submission
     fn simple_deck() -> DeckSubmission {
         DeckSubmission::new(
-            vec![
-                ("Lightning Bolt".to_string(), 4),
-                ("Mountain".to_string(), 56),
-            ],
+            vec![("Lightning Bolt".to_string(), 4), ("Mountain".to_string(), 56)],
             vec![],
         )
     }
@@ -830,9 +809,7 @@ mod websocket_integration {
 
             match msg {
                 ServerMessage::ChoiceRequest {
-                    choice_seq,
-                    options,
-                    ..
+                    choice_seq, options, ..
                 } => {
                     choice_count += 1;
                     if choice_count > max_choices {
@@ -1068,9 +1045,7 @@ mod websocket_integration {
 
         // With deck_visibility=true, both should have opponent_decklist
         match game_started_1 {
-            ServerMessage::GameStarted {
-                opponent_decklist, ..
-            } => {
+            ServerMessage::GameStarted { opponent_decklist, .. } => {
                 assert!(
                     opponent_decklist.is_some(),
                     "Expected opponent decklist when deck_visibility is true"
@@ -1080,9 +1055,7 @@ mod websocket_integration {
         }
 
         match game_started_2 {
-            ServerMessage::GameStarted {
-                opponent_decklist, ..
-            } => {
+            ServerMessage::GameStarted { opponent_decklist, .. } => {
                 assert!(
                     opponent_decklist.is_some(),
                     "Expected opponent decklist when deck_visibility is true"
@@ -1169,9 +1142,7 @@ mod websocket_integration {
 
         // With deck_visibility=false, both should have NO opponent_decklist
         match game_started_1 {
-            ServerMessage::GameStarted {
-                opponent_decklist, ..
-            } => {
+            ServerMessage::GameStarted { opponent_decklist, .. } => {
                 assert!(
                     opponent_decklist.is_none(),
                     "Expected no opponent decklist when deck_visibility is false"
@@ -1181,9 +1152,7 @@ mod websocket_integration {
         }
 
         match game_started_2 {
-            ServerMessage::GameStarted {
-                opponent_decklist, ..
-            } => {
+            ServerMessage::GameStarted { opponent_decklist, .. } => {
                 assert!(
                     opponent_decklist.is_none(),
                     "Expected no opponent decklist when deck_visibility is false"

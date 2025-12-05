@@ -97,7 +97,11 @@ impl RemoteController {
                     // Index == len typically means "pass" or "none"
                     ChoiceResult::Ok(None)
                 } else {
-                    log::warn!("RemoteController: Invalid choice index {} for {} items", idx, items.len());
+                    log::warn!(
+                        "RemoteController: Invalid choice index {} for {} items",
+                        idx,
+                        items.len()
+                    );
                     ChoiceResult::Ok(None)
                 }
             }

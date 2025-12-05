@@ -31,8 +31,9 @@ ensure_mtg_binary() {
 
     # Always build release binary at start of each test
     # This ensures tests use latest code and provides consistent timing
+    # Include network feature for client/server functionality
     echo "Building release binary..."
-    cargo build --release --bin mtg
+    cargo build --release --bin mtg --features network
     echo ""
 
     # Set MTG_BIN for use in tests

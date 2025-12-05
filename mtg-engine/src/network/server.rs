@@ -10,9 +10,7 @@
 use crate::core::PlayerId;
 use crate::game::{GameEndReason, GameLoop, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
-use crate::network::protocol::{
-    CardReveal, ClientMessage, DeckListInfo, DeckSubmission, ServerMessage,
-};
+use crate::network::protocol::{CardReveal, ClientMessage, DeckListInfo, DeckSubmission, ServerMessage};
 use crate::network::{ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};

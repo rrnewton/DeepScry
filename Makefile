@@ -40,10 +40,10 @@ build-release:
 	@echo "=== Building release ==="
 	cargo build --release
 
-# Run unit tests
+# Run unit tests (including network tests)
 test:
 	@echo "=== Running unit tests ==="
-	cargo nextest run
+	cargo nextest run --features network
 
 # Fast compilation check (no codegen)
 check:
@@ -62,9 +62,10 @@ fmt-check:
 
 # Run clippy linter
 # Note: mtg-benchmarks has mutually exclusive features, so we run it separately without --all-features
+# Note: mtg-forge-rs network feature requires native deps, so we include it explicitly
 clippy:
 	@echo "=== Running clippy ==="
-	cargo clippy -p mtg-forge-rs --all-targets --all-features -- -D warnings
+	cargo clippy -p mtg-forge-rs --all-targets --all-features --features network -- -D warnings
 	cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
 
 # Detect code duplication
