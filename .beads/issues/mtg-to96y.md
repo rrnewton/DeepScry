@@ -40,9 +40,9 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 
 ## Implementation Phases
 
-- [ ] mtg-d2p73: Protocol types and message serialization
-- [ ] mtg-ely5l: Network state hashing (HashMode::Network)
-- [ ] mtg-bl5pe: Engine refactoring (LibraryMode::Remote)
+- [x] mtg-d2p73: Protocol types and message serialization (CLOSED)
+- [x] mtg-ely5l: Network state hashing (HashMode::Network) (CLOSED)
+- [~] mtg-bl5pe: Engine refactoring (LibraryMode::Remote) - IN PROGRESS
 - [ ] mtg-2zdqe: NetworkController implementation
 - [ ] mtg-3n53a: WebSocket server
 - [ ] mtg-9644z: Client with shadow state

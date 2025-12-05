@@ -1,12 +1,12 @@
 ---
 title: Network protocol types and message serialization
-status: open
+status: closed
 priority: 2
 issue_type: task
 depends_on:
   mtg-to96y: parent-child
 created_at: 2025-12-05T17:57:12.749279939+00:00
-updated_at: 2025-12-05T17:57:12.749279939+00:00
+updated_at: 2025-12-05T18:09:39.323146055+00:00
 ---
 
 # Description
