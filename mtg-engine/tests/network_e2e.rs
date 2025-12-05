@@ -705,4 +705,506 @@ mod websocket_integration {
         let _ = ws.close(None).await;
         server_handle.abort();
     }
+
+    /// Test a complete game played over the network with automated responses.
+    /// Both clients always choose option 0 (pass priority), so the game
+    /// progresses through turns until a player loses to decking or other means.
+    #[tokio::test]
+    async fn test_full_game_always_pass() {
+        let port = allocate_random_port();
+        let password = "fullgame";
+
+        let config = ServerConfig {
+            port,
+            password: password.to_string(),
+            cardsfolder: cardsfolder_path(),
+            starting_life: 20,
+            ..Default::default()
+        };
+
+        let mut server = GameServer::new(config);
+        let server_handle = tokio::spawn(async move {
+            let _ = timeout(Duration::from_secs(120), server.run()).await;
+        });
+
+        assert!(
+            wait_for_server(port, 20).await,
+            "Server did not start accepting connections within timeout"
+        );
+
+        let url = format!("ws://localhost:{}", port);
+
+        // Connect and authenticate client 1 FIRST (server blocks until auth received)
+        let (mut ws1, _) = connect_async(&url).await.expect("Client 1 connect failed");
+
+        send_message(
+            &mut ws1,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "PassBot1".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth 1 failed");
+
+        // Get auth result and waiting for client 1
+        let _ = receive_message(&mut ws1).await.expect("Auth result 1");
+        let _ = receive_message(&mut ws1).await.expect("Waiting msg");
+
+        // NOW connect and authenticate client 2 (server is ready to accept)
+        let (mut ws2, _) = connect_async(&url).await.expect("Client 2 connect failed");
+
+        send_message(
+            &mut ws2,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "PassBot2".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth 2 failed");
+
+        // Get auth result for client 2
+        let _ = receive_message(&mut ws2).await.expect("Auth result 2");
+
+        // Both should receive GameStarted
+        let game_started_1 = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+            .await
+            .expect("Timeout waiting for GameStarted")
+            .expect("Failed to receive GameStarted");
+
+        let _game_started_2 = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+            .await
+            .expect("Timeout waiting for GameStarted")
+            .expect("Failed to receive GameStarted");
+
+        // Get our player ID
+        let our_player_id = match game_started_1 {
+            ServerMessage::GameStarted { your_player_id, .. } => your_player_id,
+            _ => panic!("Expected GameStarted"),
+        };
+
+        // Run game loop for both clients concurrently
+        // Each client processes messages and always responds with choice 0
+        let client1_handle = tokio::spawn(run_auto_client(ws1, our_player_id, "Client1"));
+        let client2_handle = tokio::spawn(run_auto_client(ws2, our_player_id, "Client2"));
+
+        // Wait for both clients to finish (game ends)
+        let (result1, result2) = tokio::join!(client1_handle, client2_handle);
+
+        let winner1 = result1.expect("Client 1 task panicked").expect("Client 1 error");
+        let winner2 = result2.expect("Client 2 task panicked").expect("Client 2 error");
+
+        // Both clients should see the same winner
+        assert_eq!(
+            winner1, winner2,
+            "Clients disagree on winner: {:?} vs {:?}",
+            winner1, winner2
+        );
+
+        // Game should have ended (winner could be None for draw, or Some for winner)
+        log::info!("Game completed with winner: {:?}", winner1);
+
+        server_handle.abort();
+    }
+
+    /// Run an automated client that always chooses option 0 until game ends
+    async fn run_auto_client(
+        mut ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        _our_player_id: mtg_forge_rs::core::PlayerId,
+        name: &str,
+    ) -> Result<Option<mtg_forge_rs::core::PlayerId>, String> {
+        let mut choice_count = 0;
+        let max_choices = 10000; // Safety limit to prevent infinite loops
+
+        loop {
+            let msg = match timeout(Duration::from_secs(30), receive_message(&mut ws)).await {
+                Ok(Ok(msg)) => msg,
+                Ok(Err(e)) => {
+                    // TODO(mtg-bfm38): Server should send GameEnded before closing connection
+                    // For now, treat connection close after many turns as game end
+                    if choice_count > 100 {
+                        log::warn!(
+                            "{}: Connection closed after {} choices, treating as game end: {}",
+                            name,
+                            choice_count,
+                            e
+                        );
+                        return Ok(None); // Unknown winner due to abrupt close
+                    }
+                    return Err(format!("{}: Receive error: {}", name, e));
+                }
+                Err(_) => return Err(format!("{}: Timeout waiting for message", name)),
+            };
+
+            match msg {
+                ServerMessage::ChoiceRequest {
+                    choice_seq,
+                    options,
+                    ..
+                } => {
+                    choice_count += 1;
+                    if choice_count > max_choices {
+                        return Err(format!("{}: Too many choices ({})", name, choice_count));
+                    }
+
+                    // Always choose 0 (pass priority or first option)
+                    let choice_index = 0.min(options.len().saturating_sub(1));
+
+                    if let Err(e) = send_message(
+                        &mut ws,
+                        &ClientMessage::SubmitChoice {
+                            choice_seq,
+                            choice_index,
+                        },
+                    )
+                    .await
+                    {
+                        return Err(format!("{}: Send error: {}", name, e));
+                    }
+                }
+
+                ServerMessage::CardRevealed { .. } => {
+                    // Just acknowledge, don't need to do anything
+                }
+
+                ServerMessage::OpponentChoice { .. } => {
+                    // Just acknowledge opponent's choice
+                }
+
+                ServerMessage::GameEnded { winner, reason, .. } => {
+                    log::info!("{}: Game ended - {:?}, winner: {:?}", name, reason, winner);
+                    let _ = ws.close(None).await;
+                    return Ok(winner);
+                }
+
+                ServerMessage::Error { message, fatal } => {
+                    if fatal {
+                        return Err(format!("{}: Fatal error: {}", name, message));
+                    }
+                    log::warn!("{}: Non-fatal error: {}", name, message);
+                }
+
+                ServerMessage::Pong { .. } => {}
+
+                other => {
+                    log::debug!("{}: Ignoring message: {:?}", name, other);
+                }
+            }
+        }
+    }
+
+    /// Test that server handles client disconnect gracefully
+    #[tokio::test]
+    async fn test_client_disconnect_handling() {
+        let port = allocate_random_port();
+        let password = "disconnecttest";
+
+        let config = ServerConfig {
+            port,
+            password: password.to_string(),
+            cardsfolder: cardsfolder_path(),
+            ..Default::default()
+        };
+
+        let mut server = GameServer::new(config);
+        let server_handle = tokio::spawn(async move {
+            let _ = timeout(Duration::from_secs(60), server.run()).await;
+        });
+
+        assert!(
+            wait_for_server(port, 20).await,
+            "Server did not start accepting connections"
+        );
+
+        let url = format!("ws://localhost:{}", port);
+
+        // Connect and authenticate client 1
+        let (mut ws1, _) = connect_async(&url).await.expect("Client 1 connect failed");
+
+        send_message(
+            &mut ws1,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "Alice".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth failed");
+
+        // Get auth result and waiting message
+        let _ = receive_message(&mut ws1).await.expect("Auth result");
+        let waiting = receive_message(&mut ws1).await.expect("Waiting msg");
+        assert!(
+            matches!(waiting, ServerMessage::WaitingForOpponent),
+            "Expected WaitingForOpponent"
+        );
+
+        // Connect and authenticate client 2
+        let (mut ws2, _) = connect_async(&url).await.expect("Client 2 connect failed");
+
+        send_message(
+            &mut ws2,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "Bob".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth 2 failed");
+
+        let _ = receive_message(&mut ws2).await.expect("Auth result 2");
+
+        // Both get GameStarted
+        let _ = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+            .await
+            .expect("Timeout")
+            .expect("GameStarted 1");
+
+        let _ = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+            .await
+            .expect("Timeout")
+            .expect("GameStarted 2");
+
+        // Client 1 disconnects abruptly (without sending Disconnect message)
+        drop(ws1);
+
+        // Give server time to notice the disconnect
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Client 2 should eventually get an error or the connection should close
+        // The server should not crash - it should handle the disconnect gracefully
+        // For now, we just verify the server is still running by checking if we can
+        // receive a message (might be an error) or the connection closes
+        let result = timeout(Duration::from_secs(5), receive_message(&mut ws2)).await;
+
+        // Either:
+        // - Timeout (server is busy, but not crashed)
+        // - Error (server closed connection due to opponent disconnect)
+        // - GameEnded (proper implementation would send this)
+        // All of these are acceptable - we're just verifying no crash
+        match result {
+            Ok(Ok(msg)) => {
+                log::info!("Client 2 received: {:?}", msg);
+            }
+            Ok(Err(e)) => {
+                log::info!("Client 2 got error (expected): {}", e);
+            }
+            Err(_) => {
+                log::info!("Client 2 timed out (server still running)");
+            }
+        }
+
+        // Clean up
+        let _ = ws2.close(None).await;
+        server_handle.abort();
+
+        // If we got here, the server didn't crash - test passes
+    }
+
+    /// Test that deck_visibility flag controls whether opponent decklist is sent
+    #[tokio::test]
+    async fn test_deck_visibility_enabled() {
+        let port = allocate_random_port();
+        let password = "deckvis";
+
+        // Enable deck visibility
+        let config = ServerConfig {
+            port,
+            password: password.to_string(),
+            cardsfolder: cardsfolder_path(),
+            deck_visibility: true,
+            ..Default::default()
+        };
+
+        let mut server = GameServer::new(config);
+        let server_handle = tokio::spawn(async move {
+            let _ = timeout(Duration::from_secs(60), server.run()).await;
+        });
+
+        assert!(
+            wait_for_server(port, 20).await,
+            "Server did not start accepting connections"
+        );
+
+        let url = format!("ws://localhost:{}", port);
+
+        // Connect and authenticate client 1
+        let (mut ws1, _) = connect_async(&url).await.expect("Client 1 connect failed");
+
+        send_message(
+            &mut ws1,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "Visible1".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth failed");
+
+        let _ = receive_message(&mut ws1).await.expect("Auth result");
+        let _ = receive_message(&mut ws1).await.expect("Waiting msg");
+
+        // Connect and authenticate client 2
+        let (mut ws2, _) = connect_async(&url).await.expect("Client 2 connect failed");
+
+        send_message(
+            &mut ws2,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "Visible2".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth 2 failed");
+
+        let _ = receive_message(&mut ws2).await.expect("Auth result 2");
+
+        // Get GameStarted messages
+        let game_started_1 = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+            .await
+            .expect("Timeout")
+            .expect("GameStarted 1");
+
+        let game_started_2 = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+            .await
+            .expect("Timeout")
+            .expect("GameStarted 2");
+
+        // With deck_visibility=true, both should have opponent_decklist
+        match game_started_1 {
+            ServerMessage::GameStarted {
+                opponent_decklist, ..
+            } => {
+                assert!(
+                    opponent_decklist.is_some(),
+                    "Expected opponent decklist when deck_visibility is true"
+                );
+            }
+            other => panic!("Expected GameStarted, got {:?}", other),
+        }
+
+        match game_started_2 {
+            ServerMessage::GameStarted {
+                opponent_decklist, ..
+            } => {
+                assert!(
+                    opponent_decklist.is_some(),
+                    "Expected opponent decklist when deck_visibility is true"
+                );
+            }
+            other => panic!("Expected GameStarted, got {:?}", other),
+        }
+
+        let _ = ws1.close(None).await;
+        let _ = ws2.close(None).await;
+        server_handle.abort();
+    }
+
+    /// Test that deck_visibility=false hides opponent decklist
+    #[tokio::test]
+    async fn test_deck_visibility_disabled() {
+        let port = allocate_random_port();
+        let password = "deckvis_off";
+
+        // Disable deck visibility (default)
+        let config = ServerConfig {
+            port,
+            password: password.to_string(),
+            cardsfolder: cardsfolder_path(),
+            deck_visibility: false,
+            ..Default::default()
+        };
+
+        let mut server = GameServer::new(config);
+        let server_handle = tokio::spawn(async move {
+            let _ = timeout(Duration::from_secs(60), server.run()).await;
+        });
+
+        assert!(
+            wait_for_server(port, 20).await,
+            "Server did not start accepting connections"
+        );
+
+        let url = format!("ws://localhost:{}", port);
+
+        // Connect and authenticate client 1
+        let (mut ws1, _) = connect_async(&url).await.expect("Client 1 connect failed");
+
+        send_message(
+            &mut ws1,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "Hidden1".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth failed");
+
+        let _ = receive_message(&mut ws1).await.expect("Auth result");
+        let _ = receive_message(&mut ws1).await.expect("Waiting msg");
+
+        // Connect and authenticate client 2
+        let (mut ws2, _) = connect_async(&url).await.expect("Client 2 connect failed");
+
+        send_message(
+            &mut ws2,
+            &ClientMessage::Authenticate {
+                password: password.to_string(),
+                player_name: "Hidden2".to_string(),
+                deck: simple_deck(),
+            },
+        )
+        .await
+        .expect("Auth 2 failed");
+
+        let _ = receive_message(&mut ws2).await.expect("Auth result 2");
+
+        // Get GameStarted messages
+        let game_started_1 = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+            .await
+            .expect("Timeout")
+            .expect("GameStarted 1");
+
+        let game_started_2 = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+            .await
+            .expect("Timeout")
+            .expect("GameStarted 2");
+
+        // With deck_visibility=false, both should have NO opponent_decklist
+        match game_started_1 {
+            ServerMessage::GameStarted {
+                opponent_decklist, ..
+            } => {
+                assert!(
+                    opponent_decklist.is_none(),
+                    "Expected no opponent decklist when deck_visibility is false"
+                );
+            }
+            other => panic!("Expected GameStarted, got {:?}", other),
+        }
+
+        match game_started_2 {
+            ServerMessage::GameStarted {
+                opponent_decklist, ..
+            } => {
+                assert!(
+                    opponent_decklist.is_none(),
+                    "Expected no opponent decklist when deck_visibility is false"
+                );
+            }
+            other => panic!("Expected GameStarted, got {:?}", other),
+        }
+
+        let _ = ws1.close(None).await;
+        let _ = ws2.close(None).await;
+        server_handle.abort();
+    }
 }

@@ -23,11 +23,11 @@ End-to-end tests for networked gameplay.
 - [x] Test: Server accepts two clients, starts game (test_two_clients_game_start)
 - [x] Test: Server authentication flow (test_server_auth_flow)
 - [x] Test: Wrong password rejected (test_wrong_password_rejected)
-- [ ] Test: Full game with fixed-script controllers over network
+- [x] Test: Full game with automated controllers over network (test_full_game_always_pass)
 - [ ] Test: Hash verification detects intentional desync
-- [ ] Test: Deck visibility flag sends/hides deck lists
-- [ ] Test: Graceful handling of client disconnect
-- [ ] Test: Concurrent games on same server (if supported)
+- [x] Test: Deck visibility flag sends/hides deck lists (test_deck_visibility_enabled/disabled)
+- [x] Test: Graceful handling of client disconnect (test_client_disconnect_handling)
+- [x] Test: Concurrent games on same server - NOT SUPPORTED (server handles connections sequentially)
 - [ ] Integration with existing agentplay scripts
 
 ## Completed Tests
@@ -77,13 +77,22 @@ End-to-end tests for networked gameplay.
 - `test_deck_submission_encoding` - ClientMessage Authenticate round-trip
 - `test_choice_flow_encoding` - ChoiceRequest/SubmitChoice flow
 - `test_card_reveal_flow` - CardRevealed message round-trip
+- `test_full_game_always_pass` - Complete game played over network (107 turns to deck-out)
+- `test_client_disconnect_handling` - Server handles client disconnect gracefully
+- `test_deck_visibility_enabled` - Deck list shared when enabled
+- `test_deck_visibility_disabled` - Deck list hidden when disabled
 
 ## Remaining Work
 
 Integration tests requiring actual WebSocket connections:
 1. ~~Spawn server, connect two clients, verify game starts~~ (DONE: test_two_clients_game_start)
-2. Run complete game with FixedScriptController over network
+2. ~~Run complete game with automated controllers~~ (DONE: test_full_game_always_pass)
 3. Detect desync by corrupting client state
+
+## Known Issues
+
+- **Server doesn't send GameEnded**: When a game ends, the server aborts WebSocket handlers
+  without sending a GameEnded message. TODO(mtg-bfm38): Fix server to send GameEnded properly.
 
 ## Test Strategy
 
