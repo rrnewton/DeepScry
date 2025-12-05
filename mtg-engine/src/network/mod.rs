@@ -22,6 +22,7 @@
 
 mod controller;
 mod protocol;
+mod remote_controller;
 
 #[cfg(feature = "network")]
 mod client;
@@ -30,6 +31,7 @@ mod server;
 
 pub use controller::*;
 pub use protocol::*;
+pub use remote_controller::*;
 
 #[cfg(feature = "network")]
 pub use client::*;
