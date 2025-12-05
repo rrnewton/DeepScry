@@ -20,7 +20,9 @@ End-to-end tests for networked gameplay.
 - [x] Test: Protocol serialization round-trips for all message types
 - [x] Test: State hash computation excludes hidden info (test_network_mode_strips_hidden_info)
 - [x] Test: LibraryMode::Remote draw behavior (zones.rs tests)
-- [ ] Test: Server accepts two clients, starts game
+- [x] Test: Server accepts two clients, starts game (test_two_clients_game_start)
+- [x] Test: Server authentication flow (test_server_auth_flow)
+- [x] Test: Wrong password rejected (test_wrong_password_rejected)
 - [ ] Test: Full game with fixed-script controllers over network
 - [ ] Test: Hash verification detects intentional desync
 - [ ] Test: Deck visibility flag sends/hides deck lists
@@ -67,10 +69,19 @@ End-to-end tests for networked gameplay.
 - `test_invalid_choice_error` - Choice bounds
 - `test_network_error_display` - Error formatting
 
+### WebSocket Integration (network_e2e.rs)
+- `test_server_auth_flow` - Server accepts connections, authenticates clients
+- `test_two_clients_game_start` - Two clients connect and receive GameStarted
+- `test_wrong_password_rejected` - Invalid password rejected
+- `test_protocol_encoding_decoding` - GameStarted message round-trip
+- `test_deck_submission_encoding` - ClientMessage Authenticate round-trip
+- `test_choice_flow_encoding` - ChoiceRequest/SubmitChoice flow
+- `test_card_reveal_flow` - CardRevealed message round-trip
+
 ## Remaining Work
 
 Integration tests requiring actual WebSocket connections:
-1. Spawn server, connect two clients, verify game starts
+1. ~~Spawn server, connect two clients, verify game starts~~ (DONE: test_two_clients_game_start)
 2. Run complete game with FixedScriptController over network
 3. Detect desync by corrupting client state
 
