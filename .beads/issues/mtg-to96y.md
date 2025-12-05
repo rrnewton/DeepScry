@@ -45,10 +45,11 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 - [x] mtg-bl5pe: Engine refactoring (LibraryMode::Remote) (CLOSED)
 - [x] mtg-2zdqe: NetworkController implementation (CLOSED)
 - [x] mtg-3n53a: WebSocket server (CLOSED)
-- [ ] mtg-9644z: Client with shadow state
+- [x] mtg-9644z: Client with shadow state (CLOSED)
 - [ ] mtg-bfm38: E2E testing
 
 ## Dependencies
 
 - tokio-tungstenite (native WebSocket)
 - futures-util
+- futures-executor

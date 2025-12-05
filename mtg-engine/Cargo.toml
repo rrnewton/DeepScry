@@ -78,6 +78,7 @@ glob = { version = "0.3", optional = true }
 # Networking (native only)
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
+futures-executor = { version = "0.3", optional = true }
 
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }
@@ -157,6 +158,7 @@ wasm-tui = [
 network = [
     "tokio-tungstenite",
     "futures-util",
+    "futures-executor",
     "tokio",  # Needs async runtime
 ]
 

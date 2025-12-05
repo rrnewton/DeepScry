@@ -24,11 +24,15 @@ mod controller;
 mod protocol;
 
 #[cfg(feature = "network")]
+mod client;
+#[cfg(feature = "network")]
 mod server;
 
 pub use controller::*;
 pub use protocol::*;
 
+#[cfg(feature = "network")]
+pub use client::*;
 #[cfg(feature = "network")]
 pub use server::*;
 

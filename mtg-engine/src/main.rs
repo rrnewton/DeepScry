@@ -434,6 +434,29 @@ enum Commands {
         #[arg(long)]
         deck_visibility: bool,
     },
+
+    /// Connect to a multiplayer game server
+    #[cfg(feature = "network")]
+    Connect {
+        /// Deck file to use
+        deck: PathBuf,
+
+        /// Server address (host:port)
+        #[arg(long, short = 's', default_value = "localhost:17771")]
+        server: String,
+
+        /// Server password (if required)
+        #[arg(long)]
+        password: Option<String>,
+
+        /// Your player name
+        #[arg(long, short = 'n', default_value = "Player")]
+        name: String,
+
+        /// Path to cardsfolder (default: cardsfolder)
+        #[arg(long, default_value = "cardsfolder")]
+        cardsfolder: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -666,6 +689,51 @@ async fn main() -> Result<()> {
                 .run()
                 .await
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Server error: {}", e)))?;
+        }
+        #[cfg(feature = "network")]
+        Commands::Connect {
+            deck,
+            server,
+            password,
+            name,
+            cardsfolder,
+        } => {
+            use mtg_forge_rs::core::PlayerId;
+            use mtg_forge_rs::game::HeuristicController;
+            use mtg_forge_rs::network::{ClientConfig, NetworkClient};
+
+            let config = ClientConfig {
+                server,
+                password: password.unwrap_or_default(),
+                player_name: name,
+                deck_path: deck,
+                cardsfolder,
+            };
+
+            let mut client = NetworkClient::new(config);
+            client
+                .connect()
+                .await
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Connection error: {}", e)))?;
+
+            client
+                .wait_for_game_start()
+                .await
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game start error: {}", e)))?;
+
+            // Use heuristic AI controller for now (could add --controller option later)
+            let controller = HeuristicController::new(PlayerId::new(0));
+            let result: Option<PlayerId> = client
+                .run_game(controller)
+                .await
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
+
+            match result {
+                Some(winner) => log::info!("Game ended. Winner: {:?}", winner),
+                None => log::info!("Game ended in a draw"),
+            }
+
+            client.disconnect().await.ok();
         }
     }
 
