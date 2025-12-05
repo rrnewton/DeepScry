@@ -7,7 +7,7 @@
 //! - Proxies choices to local PlayerController
 
 use crate::core::{CardId, PlayerId};
-use crate::game::{GameState, PlayerController, VerbosityLevel};
+use crate::game::{print_battlefield_state, print_separator, GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 use anyhow::{anyhow, Result};
@@ -304,9 +304,7 @@ impl NetworkClient {
 
     /// Print the current game state (battlefield, life totals, etc.)
     ///
-    /// FIXME-UNFINISHED: This duplicates GameLoop::print_battlefield_state from logging.rs.
-    /// Should refactor to share code, ideally by using GameLoop for client-side game
-    /// execution rather than this separate shadow state management.
+    /// Uses the shared display function, showing our player's hand contents.
     fn print_game_state(&self) {
         if self.verbosity < VerbosityLevel::Normal {
             return;
@@ -317,72 +315,9 @@ impl NetworkClient {
             None => return,
         };
 
-        println!("\n════════════════════════════════════════════════════════════════");
-        println!("                      GAME STATE");
-        println!("════════════════════════════════════════════════════════════════");
-
-        // Print each player's state
-        for player in state.game.players.iter() {
-            let is_us = player.id == state.our_player_id;
-            let marker = if is_us { " (You)" } else { "" };
-
-            println!("\n{}{}: Life {}", player.name, marker, player.life);
-
-            if let Some(zones) = state.game.get_player_zones(player.id) {
-                println!(
-                    "  Hand: {} | Library: {} | Graveyard: {} | Exile: {}",
-                    zones.hand.len(),
-                    zones.library.len(),
-                    zones.graveyard.len(),
-                    zones.exile.len()
-                );
-
-                // Show our hand contents
-                if is_us && !zones.hand.is_empty() {
-                    println!("  Hand contents:");
-                    for &card_id in &zones.hand.cards {
-                        if let Ok(card) = state.game.cards.get(card_id) {
-                            println!("    - {} ({})", card.name, card.mana_cost);
-                        }
-                    }
-                }
-            }
-
-            // Battlefield permanents controlled by this player
-            let player_permanents: Vec<_> = state
-                .game
-                .battlefield
-                .cards
-                .iter()
-                .filter_map(|&card_id| {
-                    state.game.cards.get(card_id).ok().and_then(|card| {
-                        if card.controller == player.id {
-                            Some((card_id, card))
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect();
-
-            if player_permanents.is_empty() {
-                println!("  Battlefield: (empty)");
-            } else {
-                println!("  Battlefield:");
-                for (card_id, card) in player_permanents {
-                    let tap_status = if card.tapped { " (tapped)" } else { "" };
-                    if card.is_creature() {
-                        let power = card.current_power();
-                        let toughness = card.current_toughness();
-                        println!("    {} ({}) - {}/{}{}", card.name, card_id, power, toughness, tap_status);
-                    } else {
-                        println!("    {} ({}){}", card.name, card_id, tap_status);
-                    }
-                }
-            }
-        }
-
-        println!("════════════════════════════════════════════════════════════════\n");
+        print_separator(Some("GAME STATE"));
+        // Show our hand contents (not active player, since we're a network client)
+        print_battlefield_state(&state.game, Some(state.our_player_id));
     }
 
     /// Connect to the server and authenticate

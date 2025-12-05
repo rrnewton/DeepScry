@@ -4,6 +4,7 @@ pub mod actions;
 pub mod combat;
 pub mod continuous_effects;
 pub mod controller;
+pub mod display;
 #[cfg(feature = "native-tui")]
 pub mod fancy_fixed_controller;
 #[cfg(feature = "native-tui")]
@@ -76,3 +77,6 @@ pub use state::GameState;
 pub use state_hash::{compute_state_hash, compute_undo_test_hash, format_hash};
 pub use stop_condition::{StopCondition, StopPlayer};
 pub use zero_controller::ZeroController;
+
+// Display functions
+pub use display::{print_battlefield_state, print_separator};
