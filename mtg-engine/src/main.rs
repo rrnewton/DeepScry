@@ -410,6 +410,30 @@ enum Commands {
         #[arg(long, short = 'd', default_value = "decks/old_school*/*.dck")]
         deck_glob: String,
     },
+
+    /// Start a multiplayer game server
+    #[cfg(feature = "network")]
+    Server {
+        /// Port to listen on (default: 17771)
+        #[arg(long, short = 'p', default_value = "17771")]
+        port: u16,
+
+        /// Password required to join (empty for no password)
+        #[arg(long)]
+        password: Option<String>,
+
+        /// Path to cardsfolder (default: cardsfolder)
+        #[arg(long, default_value = "cardsfolder")]
+        cardsfolder: PathBuf,
+
+        /// Starting life total (default: 20)
+        #[arg(long, default_value = "20")]
+        starting_life: i32,
+
+        /// Share deck lists between players (tournament mode)
+        #[arg(long)]
+        deck_visibility: bool,
+    },
 }
 
 #[tokio::main]
@@ -618,6 +642,31 @@ async fn main() -> Result<()> {
         }
         Commands::Stats {} => run_stats().await?,
         Commands::ExportWasm { output, deck_glob } => run_export_wasm(output, deck_glob).await?,
+        #[cfg(feature = "network")]
+        Commands::Server {
+            port,
+            password,
+            cardsfolder,
+            starting_life,
+            deck_visibility,
+        } => {
+            use mtg_forge_rs::network::{GameServer, ServerConfig};
+
+            let config = ServerConfig {
+                port,
+                password: password.unwrap_or_default(),
+                cardsfolder,
+                starting_life,
+                deck_visibility,
+                ..Default::default()
+            };
+
+            let mut server = GameServer::new(config);
+            server
+                .run()
+                .await
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Server error: {}", e)))?;
+        }
     }
 
     Ok(())

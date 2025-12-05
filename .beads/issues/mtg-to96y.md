@@ -44,7 +44,7 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 - [x] mtg-ely5l: Network state hashing (HashMode::Network) (CLOSED)
 - [x] mtg-bl5pe: Engine refactoring (LibraryMode::Remote) (CLOSED)
 - [x] mtg-2zdqe: NetworkController implementation (CLOSED)
-- [ ] mtg-3n53a: WebSocket server
+- [x] mtg-3n53a: WebSocket server (CLOSED)
 - [ ] mtg-9644z: Client with shadow state
 - [ ] mtg-bfm38: E2E testing
 

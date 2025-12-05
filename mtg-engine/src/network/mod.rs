@@ -23,8 +23,14 @@
 mod controller;
 mod protocol;
 
+#[cfg(feature = "network")]
+mod server;
+
 pub use controller::*;
 pub use protocol::*;
+
+#[cfg(feature = "network")]
+pub use server::*;
 
 /// Default port for MTG network games
 pub const DEFAULT_PORT: u16 = 17771;
