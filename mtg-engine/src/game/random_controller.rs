@@ -374,6 +374,13 @@ impl PlayerController for RandomController {
         serde_json::to_value(state).ok()
     }
 
+    fn choose_from_options(&mut self, options: &[String]) -> usize {
+        if options.is_empty() {
+            return 0;
+        }
+        self.rng.gen_range(0..options.len())
+    }
+
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Random
     }

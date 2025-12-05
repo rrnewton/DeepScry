@@ -259,7 +259,7 @@ impl PlayerController for NetworkController {
         // Send request
         let choice_type = ChoiceType::Targets {
             spell_id: spell,
-            target_count: 1, // TODO: Support multiple targets
+            target_count: 1, // FIXME-UNFINISHED: Support multiple targets
         };
 
         match self.request_choice(choice_type, options, state_hash) {
@@ -293,7 +293,7 @@ impl PlayerController for NetworkController {
         // Send request
         let choice_type = ChoiceType::ManaSources { cost: *cost };
 
-        // TODO: This needs more sophisticated handling for multiple source selection
+        // FIXME-UNFINISHED: Needs multi-select for paying costs with multiple sources
         match self.request_choice(choice_type, options, state_hash) {
             Ok(idx) => {
                 if idx < available_sources.len() {
@@ -326,7 +326,7 @@ impl PlayerController for NetworkController {
             available_count: available_creatures.len(),
         };
 
-        // TODO: Support multi-select for attackers
+        // FIXME-UNFINISHED: Support multi-select for attackers (currently single selection)
         match self.request_choice(choice_type, options, state_hash) {
             Ok(0) => ChoiceResult::Ok(SmallVec::new()), // No attackers
             Ok(idx) => {
@@ -369,7 +369,7 @@ impl PlayerController for NetworkController {
             blocker_count: available_blockers.len(),
         };
 
-        // TODO: Support multi-select for blockers
+        // FIXME-UNFINISHED: Support multi-select for blockers (currently single selection)
         match self.request_choice(choice_type, options, state_hash) {
             Ok(0) => ChoiceResult::Ok(SmallVec::new()), // No blockers
             Ok(idx) => {
@@ -412,7 +412,7 @@ impl PlayerController for NetworkController {
             blocker_count: blockers.len(),
         };
 
-        // TODO: Support ordering all blockers
+        // FIXME-UNFINISHED: Support full ordering of all blockers (only picks first currently)
         match self.request_choice(choice_type, options, state_hash) {
             Ok(idx) => {
                 if idx < blockers.len() {
@@ -452,7 +452,7 @@ impl PlayerController for NetworkController {
         // Send request
         let choice_type = ChoiceType::Discard { count };
 
-        // TODO: Support multi-select for discarding multiple cards
+        // FIXME-UNFINISHED: Support multi-select for discarding multiple cards
         match self.request_choice(choice_type, options, state_hash) {
             Ok(idx) => {
                 if idx < hand.len() {
@@ -515,8 +515,7 @@ impl PlayerController for NetworkController {
     }
 
     fn get_controller_type(&self) -> ControllerType {
-        // For now, use Zero as a placeholder since there's no Network variant
-        // TODO: Add ControllerType::Network
+        // FIXME-UNFINISHED: Add ControllerType::Network variant
         ControllerType::Zero
     }
 }

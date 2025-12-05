@@ -894,6 +894,27 @@ pub trait PlayerController {
         true
     }
 
+    /// Choose from a list of string options (for network games)
+    ///
+    /// This is a simplified choice interface for network games where the server
+    /// provides pre-formatted string options. The controller returns an index
+    /// into the options array.
+    ///
+    /// Default implementation reads from stdin for human players.
+    /// AI controllers should override to make index-based decisions.
+    fn choose_from_options(&mut self, options: &[String]) -> usize {
+        use std::io::{self, Write};
+        print!("Enter choice (0-{}): ", options.len().saturating_sub(1));
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_ok() {
+            input.trim().parse().unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
     /// Get the controller type for snapshot persistence
     ///
     /// Returns the controller type so snapshots can record which controller

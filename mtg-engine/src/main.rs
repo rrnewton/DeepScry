@@ -456,6 +456,29 @@ enum Commands {
         /// Path to cardsfolder (default: cardsfolder)
         #[arg(long, default_value = "cardsfolder")]
         cardsfolder: PathBuf,
+
+        /// Controller type (default: tui for human play)
+        /// Available: zero, random, tui, fancy, heuristic, fixed
+        #[arg(long, value_enum, default_value = "tui")]
+        controller: ControllerType,
+
+        /// Fixed script input (space or comma separated indices, e.g., "1 1 2" or "1,1,2")
+        /// Required when --controller=fixed
+        #[arg(long, value_name = "CHOICES")]
+        fixed_inputs: Option<String>,
+
+        /// Random seed for controller (for deterministic AI behavior)
+        /// Can be a number or "from_entropy" for non-deterministic behavior
+        #[arg(long)]
+        seed_player: Option<SeedArg>,
+
+        /// Enable visual stacking with diagonal offsets for fancy TUI (default: simple stacking)
+        #[arg(long)]
+        visual_stacks: bool,
+
+        /// Verbosity level for game output (0=silent, 1=minimal, 2=normal, 3=verbose)
+        #[arg(long, default_value = "normal", short = 'v')]
+        verbosity: VerbosityArg,
     },
 }
 
@@ -697,10 +720,32 @@ async fn main() -> Result<()> {
             password,
             name,
             cardsfolder,
+            controller: controller_type,
+            fixed_inputs,
+            seed_player,
+            visual_stacks,
+            verbosity,
         } => {
             use mtg_forge_rs::core::PlayerId;
-            use mtg_forge_rs::game::HeuristicController;
+            use mtg_forge_rs::game::{HeuristicController, RichInputController, VerbosityLevel};
             use mtg_forge_rs::network::{ClientConfig, NetworkClient};
+
+            // Validate controller type - FancyFixed not supported for network
+            if matches!(controller_type, ControllerType::FancyFixed) {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "--controller=fancy-fixed is not supported for network games".to_string(),
+                ));
+            }
+
+            // Validate fixed controller has inputs
+            if matches!(controller_type, ControllerType::Fixed) && fixed_inputs.is_none() {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "--fixed-inputs is required when --controller=fixed".to_string(),
+                ));
+            }
+
+            // Resolve seed
+            let seed_resolved = seed_player.map(|s| s.resolve());
 
             let config = ClientConfig {
                 server,
@@ -710,7 +755,12 @@ async fn main() -> Result<()> {
                 cardsfolder,
             };
 
+            let verbosity_level: VerbosityLevel = verbosity.into();
+
             let mut client = NetworkClient::new(config);
+            client.set_verbosity(verbosity_level);
+            client.set_visual_stacks(visual_stacks);
+
             client
                 .connect()
                 .await
@@ -721,15 +771,56 @@ async fn main() -> Result<()> {
                 .await
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game start error: {}", e)))?;
 
-            // Use heuristic AI controller for now (could add --controller option later)
-            let controller = HeuristicController::new(PlayerId::new(0));
-            let result: Option<PlayerId> = client
-                .run_game(controller)
-                .await
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
+            // Get our player ID from the client state
+            let our_player_id = client.our_player_id().unwrap_or(PlayerId::new(0));
+
+            // Create controller based on type
+            let result: Option<PlayerId> = match controller_type {
+                ControllerType::Zero => {
+                    let ctrl = ZeroController::new(our_player_id);
+                    client.run_game(ctrl).await
+                }
+                ControllerType::Random => {
+                    let ctrl = if let Some(seed) = seed_resolved {
+                        RandomController::with_seed(our_player_id, seed)
+                    } else {
+                        let entropy_seed = SeedArg::FromEntropy.resolve();
+                        log::warn!("No seed provided for Random controller, using entropy: {}", entropy_seed);
+                        RandomController::with_seed(our_player_id, entropy_seed)
+                    };
+                    client.run_game(ctrl).await
+                }
+                ControllerType::Tui => {
+                    let ctrl = InteractiveController::new(our_player_id);
+                    client.run_game(ctrl).await
+                }
+                ControllerType::Fancy => {
+                    let ctrl = FancyTuiController::new(our_player_id, visual_stacks)
+                        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to init Fancy TUI: {}", e)))?;
+                    client.run_game(ctrl).await
+                }
+                ControllerType::Heuristic => {
+                    let ctrl = HeuristicController::new(our_player_id);
+                    client.run_game(ctrl).await
+                }
+                ControllerType::Fixed => {
+                    let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap())
+                        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e)))?;
+                    let ctrl = RichInputController::new(our_player_id, script);
+                    client.run_game(ctrl).await
+                }
+                ControllerType::FancyFixed => unreachable!(), // Already validated above
+            }
+            .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
 
             match result {
-                Some(winner) => log::info!("Game ended. Winner: {:?}", winner),
+                Some(winner) => {
+                    if winner == our_player_id {
+                        log::info!("Game ended. You won!");
+                    } else {
+                        log::info!("Game ended. You lost.");
+                    }
+                }
                 None => log::info!("Game ended in a draw"),
             }
 

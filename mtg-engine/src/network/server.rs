@@ -529,8 +529,8 @@ async fn run_game(
         Ok(winner) => {
             log::info!("Game {}: Completed, winner = {:?}", game_id, winner);
 
-            // Determine the reason based on game state
-            // For now, use PlayerDeath if there's a winner, Draw otherwise
+            // FIXME-UNFINISHED: Should get actual reason from GameLoop (decking, concession, etc.)
+            // Currently just uses PlayerDeath if there's a winner, Draw otherwise
             let reason = match winner {
                 Some(winner_id) => {
                     // The loser is the other player
@@ -753,8 +753,8 @@ fn draw_opening_hand(game: &mut GameState, player_id: PlayerId) -> Result<Vec<Ca
 
 /// Compute network-safe state hash
 fn compute_network_hash(game: &GameState) -> u64 {
-    // Use simplified hash for now - just turn number and life totals
-    // TODO: Use proper network hash that excludes hidden info
+    // FIXME-UNFINISHED: Use proper network hash from state_hash::compute_hash with HashMode::Network
+    // Currently only hashes turn number and life totals, missing battlefield state etc.
     let mut hash: u64 = game.turn.turn_number as u64;
     for player in &game.players {
         hash = hash.wrapping_mul(31).wrapping_add(player.life as u64);

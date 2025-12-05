@@ -7,7 +7,7 @@
 //! - Proxies choices to local PlayerController
 
 use crate::core::{CardId, PlayerId};
-use crate::game::{GameState, PlayerController};
+use crate::game::{GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 use anyhow::{anyhow, Result};
@@ -237,15 +237,18 @@ impl ClientGameState {
         description: &str,
     ) -> Result<()> {
         log::debug!("Opponent chose: {}", description);
-        // In a full implementation, we'd replay the choice on our shadow state
-        // to keep it in sync with the server
+        // FIXME-UNFINISHED: Should replay the choice on our shadow state to keep
+        // it in sync with the server. Currently the client shadow state diverges
+        // from server state after opponent choices. Need to integrate with GameLoop
+        // to actually execute the choice locally.
         Ok(())
     }
 
     /// Verify state hash matches expected
     pub fn verify_hash(&mut self, expected: u64) -> bool {
-        // Compute our local hash and compare
-        // For now, just accept (full impl would compute network-safe hash)
+        // FIXME-UNFINISHED: Should compute local network-safe hash and compare.
+        // Currently just accepts server hash without verification.
+        // Need to use HashMode::Network from state_hash module.
         self.expected_hash = expected;
         true
     }
@@ -265,6 +268,10 @@ pub struct NetworkClient {
     state: Option<ClientGameState>,
     /// Card database
     card_db: Option<Arc<AsyncCardDatabase>>,
+    /// Verbosity level for output
+    verbosity: VerbosityLevel,
+    /// Visual stacks mode for display
+    visual_stacks: bool,
 }
 
 impl NetworkClient {
@@ -275,7 +282,107 @@ impl NetworkClient {
             ws: None,
             state: None,
             card_db: None,
+            verbosity: VerbosityLevel::Normal,
+            visual_stacks: false,
         }
+    }
+
+    /// Set verbosity level
+    pub fn set_verbosity(&mut self, verbosity: VerbosityLevel) {
+        self.verbosity = verbosity;
+    }
+
+    /// Set visual stacks mode
+    pub fn set_visual_stacks(&mut self, visual_stacks: bool) {
+        self.visual_stacks = visual_stacks;
+    }
+
+    /// Get our player ID (after game start)
+    pub fn our_player_id(&self) -> Option<PlayerId> {
+        self.state.as_ref().map(|s| s.our_player_id)
+    }
+
+    /// Print the current game state (battlefield, life totals, etc.)
+    ///
+    /// FIXME-UNFINISHED: This duplicates GameLoop::print_battlefield_state from logging.rs.
+    /// Should refactor to share code, ideally by using GameLoop for client-side game
+    /// execution rather than this separate shadow state management.
+    fn print_game_state(&self) {
+        if self.verbosity < VerbosityLevel::Normal {
+            return;
+        }
+
+        let state = match &self.state {
+            Some(s) => s,
+            None => return,
+        };
+
+        println!("\n════════════════════════════════════════════════════════════════");
+        println!("                      GAME STATE");
+        println!("════════════════════════════════════════════════════════════════");
+
+        // Print each player's state
+        for player in state.game.players.iter() {
+            let is_us = player.id == state.our_player_id;
+            let marker = if is_us { " (You)" } else { "" };
+
+            println!("\n{}{}: Life {}", player.name, marker, player.life);
+
+            if let Some(zones) = state.game.get_player_zones(player.id) {
+                println!(
+                    "  Hand: {} | Library: {} | Graveyard: {} | Exile: {}",
+                    zones.hand.len(),
+                    zones.library.len(),
+                    zones.graveyard.len(),
+                    zones.exile.len()
+                );
+
+                // Show our hand contents
+                if is_us && !zones.hand.is_empty() {
+                    println!("  Hand contents:");
+                    for &card_id in &zones.hand.cards {
+                        if let Ok(card) = state.game.cards.get(card_id) {
+                            println!("    - {} ({})", card.name, card.mana_cost);
+                        }
+                    }
+                }
+            }
+
+            // Battlefield permanents controlled by this player
+            let player_permanents: Vec<_> = state
+                .game
+                .battlefield
+                .cards
+                .iter()
+                .filter_map(|&card_id| {
+                    state.game.cards.get(card_id).ok().and_then(|card| {
+                        if card.controller == player.id {
+                            Some((card_id, card))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            if player_permanents.is_empty() {
+                println!("  Battlefield: (empty)");
+            } else {
+                println!("  Battlefield:");
+                for (card_id, card) in player_permanents {
+                    let tap_status = if card.tapped { " (tapped)" } else { "" };
+                    if card.is_creature() {
+                        let power = card.current_power();
+                        let toughness = card.current_toughness();
+                        println!("    {} ({}) - {}/{}{}", card.name, card_id, power, toughness, tap_status);
+                    } else {
+                        println!("    {} ({}){}", card.name, card_id, tap_status);
+                    }
+                }
+            }
+        }
+
+        println!("════════════════════════════════════════════════════════════════\n");
     }
 
     /// Connect to the server and authenticate
@@ -391,6 +498,9 @@ impl NetworkClient {
     pub async fn run_game<C: PlayerController>(&mut self, mut controller: C) -> Result<Option<PlayerId>> {
         let card_db = self.card_db.clone().expect("Card DB not loaded");
 
+        // Print initial game state
+        self.print_game_state();
+
         loop {
             let msg = self.receive_message().await?;
 
@@ -408,6 +518,9 @@ impl NetworkClient {
                         choice_type,
                         options.len()
                     );
+
+                    // Print current game state before choice
+                    self.print_game_state();
 
                     // Verify state hash
                     if let Some(ref mut state) = self.state {
@@ -427,9 +540,22 @@ impl NetworkClient {
                         choice_index,
                     };
                     self.send_message(&response).await?;
+
+                    // Log the choice made
+                    if self.verbosity >= VerbosityLevel::Normal && choice_index < options.len() {
+                        println!("  → You chose: {}", options[choice_index]);
+                    }
                 }
 
                 ServerMessage::CardRevealed { owner, card, reason } => {
+                    if self.verbosity >= VerbosityLevel::Normal {
+                        let owner_str = if self.state.as_ref().map(|s| s.our_player_id) == Some(owner) {
+                            "You"
+                        } else {
+                            "Opponent"
+                        };
+                        println!("  Card revealed ({:?}): {} - {}", reason, owner_str, card.name);
+                    }
                     if let Some(ref mut state) = self.state {
                         state.process_card_revealed(owner, card, reason, &card_db)?;
                     }
@@ -441,6 +567,9 @@ impl NetworkClient {
                     choice_index,
                     description,
                 } => {
+                    if self.verbosity >= VerbosityLevel::Normal {
+                        println!("  Opponent chose: {}", description);
+                    }
                     if let Some(ref mut state) = self.state {
                         state.process_opponent_choice(choice_seq, choice_type, choice_index, &description)?;
                     }
@@ -451,6 +580,8 @@ impl NetworkClient {
                     reason,
                     final_state_hash,
                 } => {
+                    // Print final game state
+                    self.print_game_state();
                     log::info!("Game ended: {:?} - Winner: {:?}", reason, winner);
                     if let Some(ref mut state) = self.state {
                         state.expected_hash = final_state_hash;
@@ -477,30 +608,30 @@ impl NetworkClient {
     }
 
     /// Get a choice from the local controller
+    ///
+    /// Note: The network protocol uses simplified string-based options, so we can't
+    /// directly use the full PlayerController interface which expects CardIds and
+    /// detailed game state. Instead, we provide a simple index-based choice.
     fn get_choice_from_controller<C: PlayerController>(
         &self,
-        _controller: &mut C,
+        controller: &mut C,
         choice_type: &ChoiceType,
         options: &[String],
         _context: Option<&crate::network::protocol::ChoiceContext>,
     ) -> Result<usize> {
         // Display options to user
-        println!("\n=== Your Turn ===");
-        println!("Choice type: {:?}", choice_type);
-        println!("Options:");
-        for (i, opt) in options.iter().enumerate() {
-            println!("  {}: {}", i, opt);
+        if self.verbosity >= VerbosityLevel::Normal {
+            println!("\n=== Your Turn ===");
+            println!("Choice type: {:?}", choice_type);
+            println!("Options:");
+            for (i, opt) in options.iter().enumerate() {
+                println!("  {}: {}", i, opt);
+            }
         }
 
-        // For now, use a simple stdin-based choice
-        // In full implementation, we'd delegate to the controller
-        use std::io::{self, Write};
-        print!("Enter choice (0-{}): ", options.len() - 1);
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let choice: usize = input.trim().parse().unwrap_or(0);
+        // For AI controllers, use their simple choice from index
+        // For human controllers, read from stdin
+        let choice = controller.choose_from_options(options);
 
         if choice >= options.len() {
             log::warn!("Invalid choice {}, defaulting to 0", choice);

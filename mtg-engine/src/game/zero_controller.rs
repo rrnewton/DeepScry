@@ -136,6 +136,11 @@ impl PlayerController for ZeroController {
         // Zero controller doesn't need to log
     }
 
+    fn choose_from_options(&mut self, _options: &[String]) -> usize {
+        // Always choose the first option (index 0)
+        0
+    }
+
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Zero
     }

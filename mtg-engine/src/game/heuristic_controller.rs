@@ -4124,6 +4124,46 @@ impl PlayerController for HeuristicController {
         // Could collect statistics here
     }
 
+    fn choose_from_options(&mut self, options: &[String]) -> usize {
+        // For network mode, heuristic controller doesn't have access to full game state
+        // to make intelligent decisions. Use simple heuristics based on option text.
+
+        if options.is_empty() {
+            return 0;
+        }
+
+        // Prefer playing lands (usually first option is pass, second is land)
+        for (i, opt) in options.iter().enumerate() {
+            let opt_lower = opt.to_lowercase();
+            if opt_lower.contains("play") && opt_lower.contains("land") {
+                return i;
+            }
+        }
+
+        // Prefer casting spells
+        for (i, opt) in options.iter().enumerate() {
+            let opt_lower = opt.to_lowercase();
+            if opt_lower.contains("cast") {
+                return i;
+            }
+        }
+
+        // Prefer attacking
+        for (i, opt) in options.iter().enumerate() {
+            let opt_lower = opt.to_lowercase();
+            if opt_lower.contains("attack") && !opt_lower.contains("don't") && !opt_lower.contains("no ") {
+                return i;
+            }
+        }
+
+        // Default: choose first non-pass option if available, otherwise pass
+        if options.len() > 1 {
+            1 // Skip "pass" which is usually option 0
+        } else {
+            0
+        }
+    }
+
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Heuristic
     }
