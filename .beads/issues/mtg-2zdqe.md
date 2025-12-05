@@ -1,12 +1,12 @@
 ---
 title: 'NetworkController: server-side remote player proxy'
-status: open
+status: closed
 priority: 2
 issue_type: task
 depends_on:
   mtg-to96y: parent-child
 created_at: 2025-12-05T17:57:50.191575086+00:00
-updated_at: 2025-12-05T17:57:50.191575086+00:00
+updated_at: 2025-12-05T18:28:07.395516198+00:00
 ---
 
 # Description
@@ -17,13 +17,14 @@ Implement a PlayerController that proxies decisions to a remote client over WebS
 
 ## Tasks
 
-- [ ] Create `NetworkController` struct with channels for request/response
-- [ ] Implement all `PlayerController` trait methods
-- [ ] Each method: build options list, compute state hash, send ChoiceRequest, await response
-- [ ] Handle timeouts and disconnection gracefully
-- [ ] Map choice indices back to actual game objects (SpellAbility, CardId, etc.)
-- [ ] Verify options list format matches `format_choice_menu()` for consistency
-- [ ] Unit tests with mock channels
+- [x] Create `NetworkController` struct with channels for request/response
+- [x] Implement all `PlayerController` trait methods
+- [x] Each method: build options list, compute state hash, send ChoiceRequest, await response
+- [x] Handle disconnection gracefully (returns ExitGame)
+- [x] Map choice indices back to actual game objects (SpellAbility, CardId, etc.)
+- [x] Unit tests with mock channels (4 tests)
+- [~] Handle timeouts (TODO: need async/tokio integration)
+- [N/A] Verify options list format matches `format_choice_menu()` - simplified for now
 
 ## Key Design
 

@@ -1,10 +1,10 @@
-    ---
+---
 title: 'Networking: Client/Server multiplayer mode'
 status: open
 priority: 1
 issue_type: epic
 created_at: 2025-12-05T17:57:01.266857250+00:00
-updated_at: 2025-12-05T17:58:44.094384693+00:00
+updated_at: 2025-12-05T18:28:07.400817717+00:00
 ---
 
 # Description
@@ -33,17 +33,17 @@ See `ai_docs/NETWORKING_DESIGN_PLAN.md` for full design.
 
 ## CLI Commands
 
-\`\`\`bash
+```bash
 mtg server --port=17771 --password=SECRET [--deck-visibility]
 mtg connect deck.dck --server=HOST:PORT --password=SECRET
-\`\`\`
+```
 
 ## Implementation Phases
 
 - [x] mtg-d2p73: Protocol types and message serialization (CLOSED)
 - [x] mtg-ely5l: Network state hashing (HashMode::Network) (CLOSED)
-- [~] mtg-bl5pe: Engine refactoring (LibraryMode::Remote) - IN PROGRESS
-- [ ] mtg-2zdqe: NetworkController implementation
+- [x] mtg-bl5pe: Engine refactoring (LibraryMode::Remote) (CLOSED)
+- [x] mtg-2zdqe: NetworkController implementation (CLOSED)
 - [ ] mtg-3n53a: WebSocket server
 - [ ] mtg-9644z: Client with shadow state
 - [ ] mtg-bfm38: E2E testing

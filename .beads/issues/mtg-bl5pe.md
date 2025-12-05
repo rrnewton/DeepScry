@@ -1,12 +1,12 @@
 ---
 title: 'Engine refactoring: LibraryMode and RemoteLibrary'
-status: open
+status: closed
 priority: 2
 issue_type: task
 depends_on:
   mtg-to96y: parent-child
 created_at: 2025-12-05T17:57:37.785380850+00:00
-updated_at: 2025-12-05T17:57:37.785380850+00:00
+updated_at: 2025-12-05T18:18:34.307744451+00:00
 ---
 
 # Description
@@ -24,8 +24,8 @@ Refactor the engine to support remote libraries where contents are revealed incr
 - [x] Add `queue_reveal(card_id)` for remote mode
 - [x] Add `add_to_top()`, `add_to_bottom()`, `peek_top()` for remote mode
 - [x] Unit tests for both modes (8 new tests)
-- [ ] Update `draw_card()` in GameState to work with remote libraries
-- [ ] Handle tutor/search effects with remote libraries
+- [x] `draw_card()` already uses `draw_top()` which handles remote mode
+- [N/A] Tutor/search effects: Handled by NetworkController (server reveals, client updates)
 
 ## Key Behavior
 

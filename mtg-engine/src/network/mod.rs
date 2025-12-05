@@ -20,8 +20,10 @@
 //!
 //! The default port is 17771.
 
+mod controller;
 mod protocol;
 
+pub use controller::*;
 pub use protocol::*;
 
 /// Default port for MTG network games
