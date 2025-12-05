@@ -479,6 +479,11 @@ enum Commands {
         /// Verbosity level for game output (0=silent, 1=minimal, 2=normal, 3=verbose)
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
+
+        /// Use real GameLoop on client side (experimental)
+        /// Runs a synchronized GameLoop that replays opponent choices locally
+        #[arg(long)]
+        real_gameloop: bool,
     },
 }
 
@@ -725,6 +730,7 @@ async fn main() -> Result<()> {
             seed_player,
             visual_stacks,
             verbosity,
+            real_gameloop,
         } => {
             use mtg_forge_rs::core::PlayerId;
             use mtg_forge_rs::game::{HeuristicController, RichInputController, VerbosityLevel};
@@ -775,10 +781,15 @@ async fn main() -> Result<()> {
             let our_player_id = client.our_player_id().unwrap_or(PlayerId::new(0));
 
             // Create controller based on type
+            // When real_gameloop is true, use run_game_real which runs a synchronized GameLoop
             let result: Option<PlayerId> = match controller_type {
                 ControllerType::Zero => {
                     let ctrl = ZeroController::new(our_player_id);
-                    client.run_game(ctrl).await
+                    if real_gameloop {
+                        client.run_game_real(ctrl).await
+                    } else {
+                        client.run_game(ctrl).await
+                    }
                 }
                 ControllerType::Random => {
                     let ctrl = if let Some(seed) = seed_resolved {
@@ -791,13 +802,26 @@ async fn main() -> Result<()> {
                         );
                         RandomController::with_seed(our_player_id, entropy_seed)
                     };
-                    client.run_game(ctrl).await
+                    if real_gameloop {
+                        client.run_game_real(ctrl).await
+                    } else {
+                        client.run_game(ctrl).await
+                    }
                 }
                 ControllerType::Tui => {
                     let ctrl = InteractiveController::new(our_player_id);
-                    client.run_game(ctrl).await
+                    if real_gameloop {
+                        client.run_game_real(ctrl).await
+                    } else {
+                        client.run_game(ctrl).await
+                    }
                 }
                 ControllerType::Fancy => {
+                    if real_gameloop {
+                        return Err(mtg_forge_rs::MtgError::InvalidAction(
+                            "--real-gameloop is not supported with --controller=fancy".to_string(),
+                        ));
+                    }
                     let ctrl = FancyTuiController::new(our_player_id, visual_stacks).map_err(|e| {
                         mtg_forge_rs::MtgError::InvalidAction(format!("Failed to init Fancy TUI: {}", e))
                     })?;
@@ -805,14 +829,22 @@ async fn main() -> Result<()> {
                 }
                 ControllerType::Heuristic => {
                     let ctrl = HeuristicController::new(our_player_id);
-                    client.run_game(ctrl).await
+                    if real_gameloop {
+                        client.run_game_real(ctrl).await
+                    } else {
+                        client.run_game(ctrl).await
+                    }
                 }
                 ControllerType::Fixed => {
                     let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap()).map_err(|e| {
                         mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
                     })?;
                     let ctrl = RichInputController::new(our_player_id, script);
-                    client.run_game(ctrl).await
+                    if real_gameloop {
+                        client.run_game_real(ctrl).await
+                    } else {
+                        client.run_game(ctrl).await
+                    }
                 }
                 ControllerType::FancyFixed => unreachable!(), // Already validated above
             }
