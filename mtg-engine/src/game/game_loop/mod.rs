@@ -62,7 +62,8 @@ pub struct GameResult {
 }
 
 /// Reason the game ended
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GameEndReason {
     /// A player won by reducing opponent's life to 0 or less
     PlayerDeath(PlayerId),

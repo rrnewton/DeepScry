@@ -1,8 +1,14 @@
-//! Deterministic state hashing for debugging snapshot/resume
+//! Deterministic state hashing for debugging snapshot/resume and network sync
 //!
 //! This module provides functionality to compute a deterministic hash of game state,
-//! excluding metadata and ephemeral fields. Useful for tracking exactly when game
-//! states diverge during stop-go replay.
+//! excluding metadata and ephemeral fields. Supports multiple hash modes:
+//!
+//! - **Replay**: For snapshot/resume debugging (excludes metadata, lands_played_this_turn)
+//! - **UndoTest**: For undo verification (excludes only true metadata)
+//! - **Network**: For network sync verification (excludes hidden information)
+//!
+//! The network hash is designed to produce identical results on server and client
+//! even though the client doesn't know opponent's hand contents or library order.
 
 use crate::game::GameState;
 use std::collections::hash_map::DefaultHasher;
@@ -43,6 +49,44 @@ const EXCLUDED_FIELDS_UNDO_TEST: &[&str] = &[
     "step_header_printed", // Display state
     "mana_state_version",  // Cache invalidation counter for ManaEngine memoization
 ];
+
+/// Fields to exclude for NETWORK hash (excludes hidden information)
+///
+/// Network hashes must produce identical results on server and all clients,
+/// even though clients don't know opponent's hand contents or library order.
+/// This means we exclude:
+/// - All metadata fields (same as undo test)
+/// - RNG state (server-only)
+/// - Hand contents (private - but SIZE is public)
+/// - Library contents (private - but SIZE is public)
+const EXCLUDED_FIELDS_NETWORK: &[&str] = &[
+    // Metadata (same as undo test)
+    "choice_id",
+    "undo_log",
+    "logger",
+    "token_definitions",
+    "show_choice_menu",
+    "output_mode",
+    "output_format",
+    "numeric_choices",
+    "step_header_printed",
+    "mana_state_version",
+    "lands_played_this_turn", // Turn-scoped counter
+    // Hidden information
+    "rng", // Server-only RNG state
+           // Note: "hand" and "library" are handled specially - we keep SIZE but not contents
+];
+
+/// Hash mode determines which fields are excluded and how zones are handled
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashMode {
+    /// For snapshot/resume debugging (excludes metadata, lands_played_this_turn)
+    Replay,
+    /// For undo verification (excludes only true metadata)
+    UndoTest,
+    /// For network sync (excludes hidden information: hand/library contents, RNG)
+    Network,
+}
 
 /// Compute a deterministic hash of game state
 ///
@@ -165,6 +209,156 @@ pub fn format_hash(hash: u64) -> String {
     format!("{:08x}", (hash >> 32) as u32)
 }
 
+/// Compute a state hash with configurable mode
+///
+/// This is the unified hash function that supports all modes:
+/// - Replay: For snapshot/resume (same as compute_state_hash)
+/// - UndoTest: For undo verification (same as compute_undo_test_hash)
+/// - Network: For network sync (excludes hidden info, keeps zone sizes)
+pub fn compute_state_hash_with_mode(game: &GameState, mode: HashMode) -> u64 {
+    // Serialize to JSON
+    let json_value = match serde_json::to_value(game) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Warning: Failed to serialize game state for hashing: {}", e);
+            return 0;
+        }
+    };
+
+    // Strip fields based on mode
+    let cleaned = strip_fields_for_mode(json_value, mode);
+
+    // For network mode, inject zone sizes (since we stripped contents)
+    let final_value = if mode == HashMode::Network {
+        inject_zone_sizes(cleaned, game)
+    } else {
+        cleaned
+    };
+
+    // Convert to canonical string representation
+    let canonical = match serde_json::to_string(&final_value) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Warning: Failed to canonicalize cleaned state: {}", e);
+            return 0;
+        }
+    };
+
+    // Hash the canonical string
+    let mut hasher = DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Compute a network-safe state hash (excludes hidden information)
+///
+/// This hash includes only PUBLIC information that both server and client know:
+/// - Battlefield state (all cards, tapped status, counters, attachments)
+/// - Stack contents
+/// - Graveyard contents (public zone)
+/// - Exile contents
+/// - Life totals
+/// - Turn/step info
+/// - Hand SIZES (not contents)
+/// - Library SIZES (not contents or order)
+///
+/// Excluded (hidden info):
+/// - Hand contents
+/// - Library order and contents
+/// - RNG state
+pub fn compute_network_state_hash(game: &GameState) -> u64 {
+    compute_state_hash_with_mode(game, HashMode::Network)
+}
+
+/// Recursively strip fields based on hash mode
+fn strip_fields_for_mode(value: serde_json::Value, mode: HashMode) -> serde_json::Value {
+    let excluded_fields: &[&str] = match mode {
+        HashMode::Replay => EXCLUDED_FIELDS,
+        HashMode::UndoTest => EXCLUDED_FIELDS_UNDO_TEST,
+        HashMode::Network => EXCLUDED_FIELDS_NETWORK,
+    };
+
+    strip_fields_recursive(value, excluded_fields, mode)
+}
+
+/// Recursively strip specified fields from JSON value
+fn strip_fields_recursive(value: serde_json::Value, excluded: &[&str], mode: HashMode) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(mut map) => {
+            // Remove excluded fields
+            for field in excluded {
+                map.remove(*field);
+            }
+
+            // Mode-specific handling
+            match mode {
+                HashMode::Replay => {
+                    // Also remove lands_played_this_turn which can differ after rewind
+                    map.remove("lands_played_this_turn");
+                }
+                HashMode::UndoTest => {
+                    // Keep lands_played_this_turn - it's gameplay state
+                }
+                HashMode::Network => {
+                    // For network mode, we need to handle hand and library specially
+                    // We want to keep their SIZE but not their contents
+                    // The "cards" array inside hand/library zones is what we strip
+                    // This is handled by inject_zone_sizes() after this function
+                    if map.contains_key("zone_type") {
+                        // This is a CardZone object
+                        if let Some(serde_json::Value::String(zone_type)) = map.get("zone_type") {
+                            if zone_type == "Hand" || zone_type == "Library" {
+                                // Replace cards array with empty array
+                                // (size will be injected separately)
+                                map.insert("cards".to_string(), serde_json::Value::Array(vec![]));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Recursively clean nested objects
+            for (_, v) in map.iter_mut() {
+                *v = strip_fields_recursive(v.clone(), excluded, mode);
+            }
+
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.into_iter()
+                .map(|v| strip_fields_recursive(v, excluded, mode))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Inject zone sizes into the hash input (for network mode)
+///
+/// After stripping hand/library contents, we add back just the sizes
+/// since those are public information per MTG rules.
+fn inject_zone_sizes(mut value: serde_json::Value, game: &GameState) -> serde_json::Value {
+    if let serde_json::Value::Object(ref mut map) = value {
+        let mut zone_sizes = serde_json::Map::new();
+
+        // Add hand and library sizes for each player
+        // player_zones is Vec<(PlayerId, PlayerZones)>
+        for (i, (_player_id, zones)) in game.player_zones.iter().enumerate() {
+            zone_sizes.insert(
+                format!("p{}_hand_size", i),
+                serde_json::Value::Number(zones.hand.cards.len().into()),
+            );
+            zone_sizes.insert(
+                format!("p{}_library_size", i),
+                serde_json::Value::Number(zones.library.len().into()),
+            );
+        }
+
+        map.insert("_network_zone_sizes".to_string(), serde_json::Value::Object(zone_sizes));
+    }
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +403,63 @@ mod tests {
         let hash2 = hasher2.finish();
 
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_network_mode_strips_hidden_info() {
+        // Test that network mode strips hidden information
+        let json = serde_json::json!({
+            "turn_number": 5,
+            "rng": "some_rng_state",
+            "player_zones": [{
+                "zone_type": "Hand",
+                "owner": 0,
+                "cards": [1, 2, 3]  // Should be stripped
+            }, {
+                "zone_type": "Library",
+                "owner": 0,
+                "cards": [4, 5, 6, 7]  // Should be stripped
+            }, {
+                "zone_type": "Graveyard",
+                "owner": 0,
+                "cards": [8, 9]  // Should NOT be stripped
+            }]
+        });
+
+        let cleaned = strip_fields_recursive(json, EXCLUDED_FIELDS_NETWORK, HashMode::Network);
+
+        // Check that RNG was removed
+        assert!(cleaned.get("rng").is_none());
+
+        // Check zones
+        if let Some(serde_json::Value::Array(zones)) = cleaned.get("player_zones") {
+            for zone in zones {
+                let zone_type = zone.get("zone_type").and_then(|v| v.as_str()).unwrap_or("");
+                let cards = zone.get("cards").and_then(|v| v.as_array());
+
+                if zone_type == "Hand" || zone_type == "Library" {
+                    // Should have empty cards array
+                    assert!(
+                        cards.map(|c| c.is_empty()).unwrap_or(false),
+                        "Expected empty cards for {} zone",
+                        zone_type
+                    );
+                } else if zone_type == "Graveyard" {
+                    // Should still have cards
+                    assert!(
+                        cards.map(|c| !c.is_empty()).unwrap_or(false),
+                        "Expected non-empty cards for Graveyard zone"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_hash_mode_enum() {
+        // Verify all hash modes are distinct
+        assert_ne!(HashMode::Replay, HashMode::UndoTest);
+        assert_ne!(HashMode::UndoTest, HashMode::Network);
+        assert_ne!(HashMode::Network, HashMode::Replay);
     }
 }

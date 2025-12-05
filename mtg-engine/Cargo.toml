@@ -75,6 +75,10 @@ mimalloc = { version = "0.1", optional = true }
 # File globbing (native only, for export command)
 glob = { version = "0.3", optional = true }
 
+# Networking (native only)
+tokio-tungstenite = { version = "0.26", optional = true }
+futures-util = { version = "0.3", optional = true }
+
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
@@ -147,5 +151,12 @@ wasm-tui = [
     "soft_ratatui",
     "eframe",
     "wasm-bindgen-futures",
+]
+
+# Networking features (native only - WebSocket client/server)
+network = [
+    "tokio-tungstenite",
+    "futures-util",
+    "tokio",  # Needs async runtime
 ]
 
