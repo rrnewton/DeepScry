@@ -33,6 +33,16 @@ pub enum MtgError {
     #[error("Task join error: {0}")]
     #[cfg(feature = "native")]
     JoinError(#[from] tokio::task::JoinError),
+
+    /// Game needs human input to continue (WASM only)
+    ///
+    /// This is not really an error - it's a signal that the game loop
+    /// should pause and wait for human input. The contained ChoiceContext
+    /// describes what input is needed.
+    ///
+    /// Used by `run_until_input()` to implement the interrupt pattern.
+    #[error("Game needs input: waiting for human player")]
+    NeedInput(crate::game::controller::ChoiceContext),
 }
 
 pub type Result<T> = std::result::Result<T, MtgError>;

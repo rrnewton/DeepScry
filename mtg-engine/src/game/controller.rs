@@ -751,12 +751,11 @@ macro_rules! handle_choice_result {
             $crate::game::controller::ChoiceResult::Error(msg) => {
                 return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
             }
-            $crate::game::controller::ChoiceResult::NeedInput(_) => {
-                // NeedInput is only valid in WASM context with run_until_input()
-                // Standard game loop doesn't support async human input
-                return Err($crate::MtgError::InvalidAction(
-                    "NeedInput returned in synchronous game loop (use run_until_input for WASM)".to_string(),
-                ));
+            $crate::game::controller::ChoiceResult::NeedInput(context) => {
+                // Signal that game needs human input
+                // This error propagates up to run_until_input() which converts it
+                // to GameLoopState::AwaitingInput
+                return Err($crate::MtgError::NeedInput(context));
             }
         }
     };
@@ -819,12 +818,11 @@ macro_rules! handle_choice_result_break {
             $crate::game::controller::ChoiceResult::Error(msg) => {
                 return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
             }
-            $crate::game::controller::ChoiceResult::NeedInput(_) => {
-                // NeedInput is only valid in WASM context with run_until_input()
-                // Standard game loop doesn't support async human input
-                return Err($crate::MtgError::InvalidAction(
-                    "NeedInput returned in synchronous game loop (use run_until_input for WASM)".to_string(),
-                ));
+            $crate::game::controller::ChoiceResult::NeedInput(context) => {
+                // Signal that game needs human input
+                // This error propagates up to run_until_input() which converts it
+                // to GameLoopState::AwaitingInput
+                return Err($crate::MtgError::NeedInput(context));
             }
         }
     };

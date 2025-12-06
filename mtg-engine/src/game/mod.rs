@@ -56,7 +56,7 @@ pub use fancy_tui_events::{handle_key_event, handle_mouse_click, EventResult, Ke
 #[cfg(feature = "ratatui")]
 pub use fancy_tui_renderer::FancyTuiRenderer;
 pub use fixed_script_controller::FixedScriptController;
-pub use game_loop::{GameEndReason, GameLoop, GameResult, VerbosityLevel};
+pub use game_loop::{GameEndReason, GameLoop, GameLoopState, GameResult, VerbosityLevel};
 pub use game_state_evaluator::{GameStateEvaluator, Score};
 pub use hand_setup::{setup_opening_hands, HandSetup};
 pub use heuristic_controller::HeuristicController;

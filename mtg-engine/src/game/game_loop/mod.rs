@@ -90,6 +90,23 @@ pub enum GameEndReason {
     Snapshot,
 }
 
+/// State of the game loop when running with human input support
+///
+/// Used by `run_until_input()` to signal whether the game completed
+/// or is waiting for human input.
+#[derive(Debug, Clone)]
+pub enum GameLoopState {
+    /// Game completed (win, loss, draw, or turn limit)
+    Complete(GameResult),
+
+    /// Game is waiting for human input
+    ///
+    /// The UI should display the choice context to the player,
+    /// set the pending choice on the WasmHumanController, and
+    /// call `run_until_input()` again to continue.
+    AwaitingInput(crate::game::controller::ChoiceContext),
+}
+
 /// Game loop manager
 ///
 /// Handles turn progression, priority, and win condition checking
@@ -515,6 +532,62 @@ impl<'a> GameLoop<'a> {
             end_reason: GameEndReason::Manual,
             action_count: self.game.action_count(),
         })
+    }
+
+    /// Run game until completion or human input is needed
+    ///
+    /// This is the main entry point for WASM games with human players.
+    /// It runs the game loop until either:
+    /// - The game ends (returns `GameLoopState::Complete`)
+    /// - A human player needs to make a choice (returns `GameLoopState::AwaitingInput`)
+    ///
+    /// ## Usage Pattern (WASM)
+    ///
+    /// ```ignore
+    /// // Initial run
+    /// let state = game_loop.run_until_input(&mut human, &mut ai)?;
+    ///
+    /// match state {
+    ///     GameLoopState::Complete(result) => {
+    ///         // Game ended, show result
+    ///     }
+    ///     GameLoopState::AwaitingInput(context) => {
+    ///         // Display choices to user
+    ///         // Wait for user input...
+    ///         // When user chooses:
+    ///         human.set_pending_choice(PendingChoice::SpellAbility(Some(idx)));
+    ///         // Call run_until_input again to continue
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ## How It Works
+    ///
+    /// When a `WasmHumanController` returns `ChoiceResult::NeedInput`, the macros
+    /// convert this to `MtgError::NeedInput`. This method catches that error and
+    /// returns `GameLoopState::AwaitingInput` instead.
+    ///
+    /// The caller should:
+    /// 1. Display the choice context to the user
+    /// 2. Wait for user input (via JavaScript events)
+    /// 3. Set the pending choice on the controller
+    /// 4. Call this method again to continue
+    ///
+    /// Returns:
+    /// - `Ok(GameLoopState::Complete(result))` when game ends
+    /// - `Ok(GameLoopState::AwaitingInput(context))` when human input is needed
+    /// - `Err(_)` on actual errors
+    pub fn run_until_input(
+        &mut self,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<GameLoopState> {
+        // Try to run the game, catching NeedInput as a special case
+        match self.run_game(controller1, controller2) {
+            Ok(result) => Ok(GameLoopState::Complete(result)),
+            Err(MtgError::NeedInput(context)) => Ok(GameLoopState::AwaitingInput(context)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Set up a game for two-player gameplay
