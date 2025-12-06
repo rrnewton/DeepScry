@@ -191,17 +191,15 @@ def main():
     server_proc = subprocess.Popen(
         server_cmd,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL,  # Discard server output to prevent blocking
+        stderr=subprocess.DEVNULL,
     )
 
     # Wait for server to start
-    time.sleep(1.5)
+    time.sleep(1.0)
 
     if server_proc.poll() is not None:
         print("ERROR: Server failed to start", file=sys.stderr)
-        stdout, _ = server_proc.communicate()
-        print(stdout.decode(), file=sys.stderr)
         sys.exit(1)
 
     processes = [server_proc]
