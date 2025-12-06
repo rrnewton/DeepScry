@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-test
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test
 
 # Default target - show available commands
 help:
@@ -442,6 +442,28 @@ wasm:
 wasm-serve: wasm
 	@echo ""
 	@echo "=== Starting web server ==="
+	@echo "Open http://localhost:8080 in your browser"
+	@echo "Press Ctrl+C to stop"
+	@echo ""
+	@cd web && python3 -m http.server 8080
+
+# Quick dev build - skips wasm-opt optimization for faster iteration
+wasm-dev:
+	@echo "=== Building WebAssembly (dev mode - no optimization) ==="
+	@if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "Installing wasm-pack..."; \
+		cargo install wasm-pack; \
+	fi
+	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-tui
+	@rm -rf web/pkg
+	@cp -r mtg-engine/pkg web/pkg
+	@echo ""
+	@echo "=== WASM dev build complete! ==="
+
+# Quick dev build and serve
+wasm-dev-serve: wasm-dev
+	@echo ""
+	@echo "=== Starting web server (dev build) ==="
 	@echo "Open http://localhost:8080 in your browser"
 	@echo "Press Ctrl+C to stop"
 	@echo ""
