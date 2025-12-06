@@ -881,6 +881,9 @@ impl NetworkClient {
         let ws_handler = tokio::spawn(async move {
             let mut last_sent_action_count: Option<u64> = None;
             let mut last_sent_actions: Option<String> = None;
+            // Store the server's authoritative action_count from the last ChoiceRequest
+            // This MUST be used instead of the client's shadow state action_count
+            let mut server_action_count: Option<u64> = None;
 
             loop {
                 tokio::select! {
@@ -903,10 +906,13 @@ impl NetworkClient {
                                             description,
                                         });
                                     }
-                                    Ok(ServerMessage::ChoiceRequest { .. }) => {
+                                    Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
                                         // Server is asking for a choice - the game loop will handle this
                                         // The inner controller will make a decision and send it
-                                        log::debug!("Received ChoiceRequest, game loop will handle");
+                                        // CRITICAL: Store the server's authoritative action_count
+                                        // We MUST echo this back in SubmitChoice, not our shadow state's count
+                                        server_action_count = Some(action_count);
+                                        log::debug!("Received ChoiceRequest #{}, server action_count={}", choice_seq, action_count);
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count }) => {
                                         // Server accepted our choice - validate action_count in debug mode
@@ -980,19 +986,40 @@ impl NetworkClient {
                     // Send our choices to server
                     choice = local_choice_rx.recv() => {
                         if let Some(choice) = choice {
-                            log::trace!(
-                                "WebSocket: sending choice {} (action_count={}) to server",
-                                choice.choice_index,
+                            // CRITICAL: Use server's action_count, not the client's shadow state count
+                            // The client's shadow state can drift from server due to timing/reveal issues
+                            // The server's action_count from ChoiceRequest is the authoritative source
+                            let action_count_to_send = server_action_count.unwrap_or_else(|| {
+                                log::warn!(
+                                    "WebSocket: No server action_count received yet, using client's {} (may cause sync error)",
+                                    choice.action_count
+                                );
                                 choice.action_count
+                            });
+
+                            // Log comparison for debugging (only when they differ)
+                            if debug_mode && choice.action_count != action_count_to_send {
+                                log::debug!(
+                                    "WebSocket: action_count differs - client shadow={} server={}",
+                                    choice.action_count, action_count_to_send
+                                );
+                            }
+
+                            log::trace!(
+                                "WebSocket: sending choice {} (server_action_count={}) to server",
+                                choice.choice_index,
+                                action_count_to_send
                             );
                             // Track for debug validation
-                            last_sent_action_count = Some(choice.action_count);
+                            last_sent_action_count = Some(action_count_to_send);
                             last_sent_actions = choice.last_actions;
+                            // Clear server_action_count after use (it's only valid for one choice)
+                            server_action_count = None;
 
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: 0, // TODO: Track sequence numbers
                                 choice_index: choice.choice_index,
-                                action_count: choice.action_count,
+                                action_count: action_count_to_send,
                             };
                             let text = serde_json::to_string(&msg).unwrap();
                             if ws_sink.send(Message::Text(text.into())).await.is_err() {
@@ -1058,7 +1085,40 @@ impl NetworkClient {
                         log::info!("Client GameLoop finished: winner={:?}, action_count={}", game_result.winner, game_result.action_count);
                         Ok(game_result.winner)
                     }
-                    Ok(Err(e)) => Err(anyhow!("Game error: {}", e)),
+                    Ok(Err(e)) => {
+                        // Check if this was a legitimate game-end signal
+                        // The GameLoop returns error when RemoteController gets GameEnded and returns ExitGame
+                        // In that case, we should try to get the winner from game_end_rx
+                        let error_msg = e.to_string();
+                        if error_msg.contains("Game exit requested") {
+                            // Try to receive game end signal with short timeout
+                            match tokio::time::timeout(
+                                std::time::Duration::from_millis(100),
+                                game_end_rx.recv()
+                            ).await {
+                                Ok(Some((winner, server_action_count))) => {
+                                    log::info!(
+                                        "Game ended gracefully via ExitGame signal: winner={:?}, server_action_count={}",
+                                        winner, server_action_count
+                                    );
+                                    Ok(winner)
+                                }
+                                Ok(None) => {
+                                    // Channel closed without sending winner - treat as graceful exit
+                                    log::info!("Game ended gracefully (channel closed)");
+                                    Ok(None)
+                                }
+                                Err(_) => {
+                                    // Timeout - no game end signal, but still treat as graceful exit
+                                    // since we received ExitGame from controller
+                                    log::info!("Game ended gracefully (no server signal within timeout)");
+                                    Ok(None)
+                                }
+                            }
+                        } else {
+                            Err(anyhow!("Game error: {}", e))
+                        }
+                    }
                     Err(e) => Err(anyhow!("Game thread panic: {}", e)),
                 }
             }

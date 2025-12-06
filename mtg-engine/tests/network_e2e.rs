@@ -1192,11 +1192,13 @@ mod websocket_integration {
     /// 1. Server sends GameEnded to both clients
     /// 2. One client's WebSocket handler exits, dropping remote_choice_tx
     /// 3. Other client's GameLoop may still be waiting for opponent choice
-    /// 4. RemoteController returns ExitGame when channel closes
-    /// The fix requires coordinating graceful shutdown between async WebSocket handler
-    /// and blocking game thread.
+    /// 4. RemoteController returns ExitGame when channel closes (FIXED)
+    ///
+    /// Fixed by:
+    /// - Using server's authoritative action_count from ChoiceRequest (not client shadow state)
+    /// - Treating "Game exit requested" errors as graceful shutdown when game has ended
+    /// - Trying to receive winner from game_end_rx before reporting error
     #[tokio::test]
-    #[ignore = "flaky - race condition in game-end shutdown (action_count sync fixed)"]
     async fn test_run_game_with_random_controllers() {
         use mtg_forge_rs::game::RandomController;
         use mtg_forge_rs::network::{ClientConfig, NetworkClient};

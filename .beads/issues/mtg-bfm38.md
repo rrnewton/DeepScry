@@ -24,6 +24,7 @@ End-to-end tests for networked gameplay.
 - [x] Test: Server authentication flow (test_server_auth_flow)
 - [x] Test: Wrong password rejected (test_wrong_password_rejected)
 - [x] Test: Full game with automated controllers over network (test_full_game_always_pass)
+- [x] Test: Full game with random controllers over network (test_run_game_with_random_controllers)
 - [ ] Test: Hash verification detects intentional desync
 - [x] Test: Deck visibility flag sends/hides deck lists (test_deck_visibility_enabled/disabled)
 - [x] Test: Graceful handling of client disconnect (test_client_disconnect_handling)
@@ -124,23 +125,23 @@ See markers in code for stubbed functionality:
 
 ## Known Issues
 
-### Flaky test_run_game_with_random_controllers (2025-12-06)
+### FIXED: test_run_game_with_random_controllers (2025-12-06)
 
-The `test_run_game_with_random_controllers` test is flaky (~40% pass rate) due to timing issues.
+The `test_run_game_with_random_controllers` test was flaky due to two timing issues. Both have been fixed.
 
-**Implemented fix (2025-12-06_#1251)**: Added `RemoteMessage::GameEnded` signal
-- `RemoteMessage` enum replaces struct with `Choice` and `GameEnded` variants
+**Fix #1 (2025-12-06_#1251)**: Added `RemoteMessage::GameEnded` signal
+- `RemoteMessage` enum with `Choice` and `GameEnded` variants
 - WebSocket handler sends `RemoteMessage::GameEnded` through `remote_choice_tx` before exiting
 - `RemoteController` handles `GameEnded` gracefully (no disconnect warning)
-- This fixes the game-end race condition when server announces winner
 
-**Remaining issue**: The test still fails sometimes during gameplay (before game ends).
-The root cause appears to be timing between concurrent client GameLoops and the server's
-message routing. When one client's GameLoop aborts its WebSocket handler (e.g., when
-the game_result future wins the select! race), it can drop the channel before the
-other client receives all expected `OpponentChoice` messages.
+**Fix #2 (2025-12-06_#1252)**: action_count sync and graceful shutdown
+- WebSocket handler now stores server's `action_count` from `ChoiceRequest` and uses it
+  when sending `SubmitChoice`, instead of using client's shadow state action_count
+- When GameLoop returns "Game exit requested" error, the client tries to receive winner
+  from `game_end_rx` before reporting error - treats it as graceful shutdown
+- Test now passes consistently (20/20 runs in testing)
 
-The test remains marked with `#[ignore]` while we investigate further.
+The test is now enabled (no `#[ignore]` attribute).
 
 ## Test Strategy
 
