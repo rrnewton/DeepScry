@@ -1,0 +1,531 @@
+//! Shared event handling for FancyTUI (native and WASM)
+//!
+//! This module provides common input handling logic that can be used by both
+//! the native TUI controller and the WASM browser implementation.
+//!
+//! ## Design
+//!
+//! The event handler operates on `FancyTuiState` and `GameStateView`, returning
+//! an `EventResult` that the caller can use to determine what action to take.
+//!
+//! This allows both native (crossterm) and WASM (RatZilla) implementations to
+//! share the same navigation and selection logic.
+
+use crate::core::{CardId, PlayerId};
+use crate::game::controller::GameStateView;
+use crate::game::fancy_tui_renderer::{FancyTuiRenderer, FancyTuiState, FocusedPane};
+
+/// Result of handling a keyboard event
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventResult {
+    /// Event was handled, UI should be redrawn
+    Handled,
+    /// Event was not handled (unknown key)
+    NotHandled,
+    /// User wants to pass/cancel
+    Pass,
+    /// User wants to exit
+    Exit,
+    /// User wants to undo
+    Undo,
+    /// User wants to make a random choice
+    RandomChoice,
+    /// User selected a specific choice index (for Actions pane)
+    SelectChoice(usize),
+}
+
+/// Abstract key code for cross-platform input handling
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyInput {
+    // Navigation
+    Up,
+    Down,
+    Left,
+    Right,
+    Tab,
+    Enter,
+    Escape,
+    Space,
+
+    // Pane focus shortcuts
+    FocusHand,        // H
+    FocusInfo,        // I
+    FocusYourBf,      // Y
+    FocusOpponentBf,  // O
+    FocusActions,     // A
+    FocusStack,       // S
+
+    // Actions
+    Pass,       // P or Q
+    Undo,       // Z (uppercase)
+    Random,     // R
+    CtrlC,      // Exit
+    Digit(u8),  // 0-9 for quick choice selection
+}
+
+/// Constants for 2D battlefield navigation
+const CARDS_PER_ROW: usize = 4;
+
+/// Handle a key input event, updating state and returning result
+///
+/// This is the main entry point for shared event handling.
+/// Both native and WASM implementations should call this.
+pub fn handle_key_event(
+    state: &mut FancyTuiState,
+    key: KeyInput,
+    view: &GameStateView,
+    num_choices: usize,
+) -> EventResult {
+    match key {
+        // Pane focus shortcuts
+        KeyInput::FocusHand => {
+            state.focused_pane = FocusedPane::Hand;
+            // Initialize selection to first card if hand not empty
+            let hand = view.hand();
+            if !hand.is_empty() && state.selected_card_in_hand.is_none() {
+                state.selected_card_in_hand = Some(0);
+                state.selected_card_id = Some(hand[0]);
+            }
+            EventResult::Handled
+        }
+        KeyInput::FocusInfo => {
+            state.focused_pane = FocusedPane::Info;
+            EventResult::Handled
+        }
+        KeyInput::FocusYourBf => {
+            state.focused_pane = FocusedPane::YourBattlefield;
+            // Initialize selection to first card if battlefield not empty
+            let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
+            if !bf_cards.is_empty() && state.selected_card_in_your_bf.is_none() {
+                state.selected_card_in_your_bf = Some(bf_cards[0]);
+                state.selected_card_id = Some(bf_cards[0]);
+            }
+            EventResult::Handled
+        }
+        KeyInput::FocusOpponentBf => {
+            state.focused_pane = FocusedPane::OpponentBattlefield;
+            // Initialize selection to first card if battlefield not empty
+            if let Some(opp_id) = view.opponents().next() {
+                let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
+                if !bf_cards.is_empty() && state.selected_card_in_opp_bf.is_none() {
+                    state.selected_card_in_opp_bf = Some(bf_cards[0]);
+                    state.selected_card_id = Some(bf_cards[0]);
+                }
+            }
+            EventResult::Handled
+        }
+        KeyInput::FocusActions => {
+            state.focused_pane = FocusedPane::Actions;
+            EventResult::Handled
+        }
+        KeyInput::FocusStack => {
+            state.focused_pane = FocusedPane::Stack;
+            EventResult::Handled
+        }
+        KeyInput::Tab => {
+            // Cycle through panes
+            state.focused_pane = match state.focused_pane {
+                FocusedPane::Hand => FocusedPane::Info,
+                FocusedPane::Info => FocusedPane::YourBattlefield,
+                FocusedPane::YourBattlefield => FocusedPane::OpponentBattlefield,
+                FocusedPane::OpponentBattlefield => FocusedPane::Stack,
+                FocusedPane::Stack => FocusedPane::Actions,
+                FocusedPane::Actions => FocusedPane::Hand,
+            };
+            EventResult::Handled
+        }
+
+        // Arrow key navigation - route based on focused pane
+        KeyInput::Up => handle_up_navigation(state, view, num_choices),
+        KeyInput::Down => handle_down_navigation(state, view, num_choices),
+        KeyInput::Left => handle_left_navigation(state, view),
+        KeyInput::Right => handle_right_navigation(state, view),
+
+        // Enter key
+        KeyInput::Enter => handle_enter(state, view),
+
+        // Pass/Cancel
+        KeyInput::Pass | KeyInput::Escape => EventResult::Pass,
+
+        // Exit
+        KeyInput::CtrlC => EventResult::Exit,
+
+        // Undo
+        KeyInput::Undo => EventResult::Undo,
+
+        // Random choice
+        KeyInput::Random => EventResult::RandomChoice,
+
+        // Digit selection (only in Actions pane)
+        KeyInput::Digit(d) => {
+            if state.focused_pane == FocusedPane::Actions {
+                let digit = d as usize;
+                if digit < num_choices {
+                    EventResult::SelectChoice(digit)
+                } else {
+                    EventResult::NotHandled
+                }
+            } else {
+                EventResult::NotHandled
+            }
+        }
+
+        // Space - for WASM this advances turn, for native it depends on context
+        KeyInput::Space => EventResult::NotHandled,
+    }
+}
+
+/// Handle Up arrow key navigation
+fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_choices: usize) -> EventResult {
+    match state.focused_pane {
+        FocusedPane::Actions => {
+            if state.highlighted_choice > 0 {
+                state.highlighted_choice -= 1;
+            }
+            EventResult::Handled
+        }
+        FocusedPane::Hand => {
+            let hand = view.hand();
+            if !hand.is_empty() {
+                let current = state.selected_card_in_hand.unwrap_or(0);
+                if current > 0 {
+                    state.selected_card_in_hand = Some(current - 1);
+                    state.selected_card_id = Some(hand[current - 1]);
+                }
+            }
+            EventResult::Handled
+        }
+        FocusedPane::YourBattlefield => {
+            navigate_battlefield_up(
+                &mut state.selected_card_in_your_bf,
+                &mut state.selected_card_id,
+                view,
+                view.player_id(),
+            );
+            EventResult::Handled
+        }
+        FocusedPane::OpponentBattlefield => {
+            if let Some(opp_id) = view.opponents().next() {
+                navigate_battlefield_up(
+                    &mut state.selected_card_in_opp_bf,
+                    &mut state.selected_card_id,
+                    view,
+                    opp_id,
+                );
+            }
+            EventResult::Handled
+        }
+        _ => EventResult::Handled,
+    }
+}
+
+/// Handle Down arrow key navigation
+fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_choices: usize) -> EventResult {
+    match state.focused_pane {
+        FocusedPane::Actions => {
+            if state.highlighted_choice + 1 < num_choices {
+                state.highlighted_choice += 1;
+            }
+            EventResult::Handled
+        }
+        FocusedPane::Hand => {
+            let hand = view.hand();
+            if !hand.is_empty() {
+                let current = state.selected_card_in_hand.unwrap_or(0);
+                if current + 1 < hand.len() {
+                    state.selected_card_in_hand = Some(current + 1);
+                    state.selected_card_id = Some(hand[current + 1]);
+                }
+            }
+            EventResult::Handled
+        }
+        FocusedPane::YourBattlefield => {
+            navigate_battlefield_down(
+                &mut state.selected_card_in_your_bf,
+                &mut state.selected_card_id,
+                view,
+                view.player_id(),
+            );
+            EventResult::Handled
+        }
+        FocusedPane::OpponentBattlefield => {
+            if let Some(opp_id) = view.opponents().next() {
+                navigate_battlefield_down(
+                    &mut state.selected_card_in_opp_bf,
+                    &mut state.selected_card_id,
+                    view,
+                    opp_id,
+                );
+            }
+            EventResult::Handled
+        }
+        _ => EventResult::Handled,
+    }
+}
+
+/// Handle Left arrow key navigation
+fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
+    match state.focused_pane {
+        FocusedPane::YourBattlefield => {
+            navigate_battlefield_left(
+                &mut state.selected_card_in_your_bf,
+                &mut state.selected_card_id,
+                view,
+                view.player_id(),
+            );
+            EventResult::Handled
+        }
+        FocusedPane::OpponentBattlefield => {
+            if let Some(opp_id) = view.opponents().next() {
+                navigate_battlefield_left(
+                    &mut state.selected_card_in_opp_bf,
+                    &mut state.selected_card_id,
+                    view,
+                    opp_id,
+                );
+            }
+            EventResult::Handled
+        }
+        _ => EventResult::Handled,
+    }
+}
+
+/// Handle Right arrow key navigation
+fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
+    match state.focused_pane {
+        FocusedPane::YourBattlefield => {
+            navigate_battlefield_right(
+                &mut state.selected_card_in_your_bf,
+                &mut state.selected_card_id,
+                view,
+                view.player_id(),
+            );
+            EventResult::Handled
+        }
+        FocusedPane::OpponentBattlefield => {
+            if let Some(opp_id) = view.opponents().next() {
+                navigate_battlefield_right(
+                    &mut state.selected_card_in_opp_bf,
+                    &mut state.selected_card_id,
+                    view,
+                    opp_id,
+                );
+            }
+            EventResult::Handled
+        }
+        _ => EventResult::Handled,
+    }
+}
+
+/// Handle Enter key
+fn handle_enter(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
+    // In Actions pane, select the highlighted choice
+    if state.focused_pane == FocusedPane::Actions {
+        return EventResult::SelectChoice(state.highlighted_choice);
+    }
+
+    // In other panes, Enter selects a card to view in Card Details
+    match state.focused_pane {
+        FocusedPane::Hand => {
+            if let Some(idx) = state.selected_card_in_hand {
+                let hand = view.hand();
+                if idx < hand.len() {
+                    state.selected_card_id = Some(hand[idx]);
+                }
+            }
+        }
+        FocusedPane::YourBattlefield => {
+            if let Some(card_id) = state.selected_card_in_your_bf {
+                state.selected_card_id = Some(card_id);
+            }
+        }
+        FocusedPane::OpponentBattlefield => {
+            if let Some(card_id) = state.selected_card_in_opp_bf {
+                state.selected_card_id = Some(card_id);
+            }
+        }
+        FocusedPane::Stack => {
+            let stack = view.stack();
+            if !stack.is_empty() {
+                state.selected_card_id = Some(stack[stack.len() - 1]);
+            }
+        }
+        _ => {}
+    }
+
+    EventResult::Handled
+}
+
+// Battlefield navigation helpers
+
+fn navigate_battlefield_up(
+    selected: &mut Option<CardId>,
+    selected_card_id: &mut Option<CardId>,
+    view: &GameStateView,
+    owner: PlayerId,
+) {
+    let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, owner);
+    if bf_cards.is_empty() {
+        return;
+    }
+
+    if let Some(current_idx) = selected.and_then(|id| bf_cards.iter().position(|&c| c == id)) {
+        if current_idx >= CARDS_PER_ROW {
+            let new_idx = current_idx - CARDS_PER_ROW;
+            let new_card = bf_cards[new_idx];
+            *selected = Some(new_card);
+            *selected_card_id = Some(new_card);
+        }
+    }
+}
+
+fn navigate_battlefield_down(
+    selected: &mut Option<CardId>,
+    selected_card_id: &mut Option<CardId>,
+    view: &GameStateView,
+    owner: PlayerId,
+) {
+    let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, owner);
+    if bf_cards.is_empty() {
+        return;
+    }
+
+    if let Some(current_idx) = selected.and_then(|id| bf_cards.iter().position(|&c| c == id)) {
+        let new_idx = current_idx + CARDS_PER_ROW;
+        if new_idx < bf_cards.len() {
+            let new_card = bf_cards[new_idx];
+            *selected = Some(new_card);
+            *selected_card_id = Some(new_card);
+        }
+    }
+}
+
+fn navigate_battlefield_left(
+    selected: &mut Option<CardId>,
+    selected_card_id: &mut Option<CardId>,
+    view: &GameStateView,
+    owner: PlayerId,
+) {
+    let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, owner);
+    if bf_cards.is_empty() {
+        return;
+    }
+
+    if let Some(current_idx) = selected.and_then(|id| bf_cards.iter().position(|&c| c == id)) {
+        let row = current_idx / CARDS_PER_ROW;
+        let col = current_idx % CARDS_PER_ROW;
+
+        let new_idx = if col > 0 {
+            // Move left within the row
+            current_idx - 1
+        } else {
+            // Wrap to end of current row
+            let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
+            row_end - 1
+        };
+
+        let new_card = bf_cards[new_idx];
+        *selected = Some(new_card);
+        *selected_card_id = Some(new_card);
+    }
+}
+
+fn navigate_battlefield_right(
+    selected: &mut Option<CardId>,
+    selected_card_id: &mut Option<CardId>,
+    view: &GameStateView,
+    owner: PlayerId,
+) {
+    let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, owner);
+    if bf_cards.is_empty() {
+        return;
+    }
+
+    if let Some(current_idx) = selected.and_then(|id| bf_cards.iter().position(|&c| c == id)) {
+        let row = current_idx / CARDS_PER_ROW;
+        let row_start = row * CARDS_PER_ROW;
+        let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
+
+        let new_idx = if current_idx + 1 < row_end {
+            // Move right within the row
+            current_idx + 1
+        } else {
+            // Wrap to start of current row
+            row_start
+        };
+
+        let new_card = bf_cards[new_idx];
+        *selected = Some(new_card);
+        *selected_card_id = Some(new_card);
+    }
+}
+
+/// Handle a mouse click event, updating state
+///
+/// Returns true if the click was handled and the UI should be redrawn.
+pub fn handle_mouse_click(
+    state: &mut FancyTuiState,
+    x: u16,
+    y: u16,
+    view: &GameStateView,
+) -> bool {
+    // Check if Actions pane was clicked
+    if let Some(actions_area) = state.actions_pane_area {
+        if x >= actions_area.x
+            && x < actions_area.x + actions_area.width
+            && y >= actions_area.y
+            && y < actions_area.y + actions_area.height
+        {
+            state.focused_pane = FocusedPane::Actions;
+            return true;
+        }
+    }
+
+    // Check if Hand pane was clicked
+    if let Some(hand_area) = state.hand_pane_area {
+        if x >= hand_area.x
+            && x < hand_area.x + hand_area.width
+            && y >= hand_area.y
+            && y < hand_area.y + hand_area.height
+        {
+            state.focused_pane = FocusedPane::Hand;
+            // Initialize selection to first card if hand not empty
+            let hand = view.hand();
+            if !hand.is_empty() && state.selected_card_in_hand.is_none() {
+                state.selected_card_in_hand = Some(0);
+                state.selected_card_id = Some(hand[0]);
+            }
+            return true;
+        }
+    }
+
+    // Check if any entity was clicked
+    for entity_pos in &state.entity_positions {
+        if x >= entity_pos.area.x
+            && x < entity_pos.area.x + entity_pos.area.width
+            && y >= entity_pos.area.y
+            && y < entity_pos.area.y + entity_pos.area.height
+        {
+            use crate::game::fancy_tui_renderer::BattlefieldEntity;
+
+            // Entity clicked! Select its representative card and show details
+            let representative = entity_pos.entity.representative_card();
+            state.selected_card_id = Some(representative);
+
+            // Update battlefield selection if it's in a battlefield
+            if let Some(card) = view.get_card(representative) {
+                if card.controller == view.player_id() {
+                    state.selected_card_in_your_bf = Some(representative);
+                    state.focused_pane = FocusedPane::YourBattlefield;
+                } else {
+                    state.selected_card_in_opp_bf = Some(representative);
+                    state.focused_pane = FocusedPane::OpponentBattlefield;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    false
+}

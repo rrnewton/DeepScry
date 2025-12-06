@@ -11,13 +11,14 @@
 
 use crate::core::PlayerId;
 use crate::game::controller::GameStateView;
-use crate::game::fancy_tui_renderer::FocusedPane;
+use crate::game::fancy_tui_events::{handle_key_event, EventResult, KeyInput};
 use crate::game::logger::OutputMode;
 use crate::game::{FancyTuiRenderer, GameLoop, GameState, VerbosityLevel};
 use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
 use crate::loader::CardDefinition;
+use ratzilla::event::KeyCode;
 use ratzilla::ratatui::Terminal;
-use ratzilla::{event::KeyCode, DomBackend, WebRenderer};
+use ratzilla::{DomBackend, WebRenderer};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -176,51 +177,78 @@ pub fn launch_fancy_tui(
     let terminal =
         Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
 
-    // Set up keyboard event handling
+    // Set up keyboard event handling using shared event handler
     terminal.on_key_event({
         let state = state.clone();
         move |key_event| {
             let mut state = state.borrow_mut();
-            match key_event.code {
-                KeyCode::Char(' ') => {
-                    // Space: run one turn
-                    state.run_one_turn();
-                }
+
+            // Convert RatZilla KeyCode to our abstract KeyInput
+            let key_input = match key_event.code {
+                KeyCode::Char(' ') => Some(KeyInput::Space),
                 KeyCode::Char('a') | KeyCode::Char('A') => {
-                    // A: toggle auto-run
+                    // A: toggle auto-run (WASM-specific, not shared)
                     state.auto_run = !state.auto_run;
+                    return;
                 }
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                    // Q/Esc: exit (call JavaScript)
-                    let _ = js_sys::eval("window.exitFancyTui && window.exitFancyTui()");
+                KeyCode::Char('q') | KeyCode::Char('Q') => Some(KeyInput::Pass),
+                KeyCode::Esc => Some(KeyInput::Escape),
+                KeyCode::Char('h') | KeyCode::Char('H') => Some(KeyInput::FocusHand),
+                KeyCode::Char('i') | KeyCode::Char('I') => Some(KeyInput::FocusInfo),
+                KeyCode::Char('y') | KeyCode::Char('Y') => Some(KeyInput::FocusYourBf),
+                KeyCode::Char('o') | KeyCode::Char('O') => Some(KeyInput::FocusOpponentBf),
+                KeyCode::Char('s') | KeyCode::Char('S') => Some(KeyInput::FocusStack),
+                KeyCode::Char('c') | KeyCode::Char('C') => {
+                    // C: toggle controls panel visibility (WASM-specific)
+                    let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
+                    return;
                 }
-                KeyCode::Char('h') | KeyCode::Char('H') => {
-                    state.renderer.state.focused_pane = FocusedPane::Hand;
+                KeyCode::Tab => Some(KeyInput::Tab),
+                KeyCode::Up => Some(KeyInput::Up),
+                KeyCode::Down => Some(KeyInput::Down),
+                KeyCode::Left => Some(KeyInput::Left),
+                KeyCode::Right => Some(KeyInput::Right),
+                KeyCode::Enter => Some(KeyInput::Enter),
+                KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
+                _ => None,
+            };
+
+            if let Some(key) = key_input {
+                // Get values we need before creating the view
+                let num_choices = state.current_choices.len();
+
+                // Use shared event handler
+                // Split borrows: we need &game and &mut renderer.state
+                let WasmFancyTuiState {
+                    ref game,
+                    ref mut renderer,
+                    ..
+                } = *state;
+
+                let view = GameStateView::new(game, renderer.player_id);
+                let result = handle_key_event(&mut renderer.state, key, &view, num_choices);
+                drop(view); // Explicitly drop view to end borrow
+
+                match result {
+                    EventResult::Handled => {
+                        // State was updated, will redraw on next frame
+                    }
+                    EventResult::NotHandled => {
+                        // For Space key (not handled by shared handler), run one turn
+                        if matches!(key, KeyInput::Space) {
+                            state.run_one_turn();
+                        }
+                    }
+                    EventResult::Pass | EventResult::Exit => {
+                        // Exit the TUI
+                        let _ = js_sys::eval("window.exitFancyTui && window.exitFancyTui()");
+                    }
+                    EventResult::SelectChoice(_idx) => {
+                        // Choice selection - not currently used in AI-only mode
+                        // but would be used for human player interaction
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('i') | KeyCode::Char('I') => {
-                    state.renderer.state.focused_pane = FocusedPane::Info;
-                }
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    state.renderer.state.focused_pane = FocusedPane::YourBattlefield;
-                }
-                KeyCode::Char('o') | KeyCode::Char('O') => {
-                    state.renderer.state.focused_pane = FocusedPane::OpponentBattlefield;
-                }
-                KeyCode::Char('s') | KeyCode::Char('S') => {
-                    state.renderer.state.focused_pane = FocusedPane::Stack;
-                }
-                KeyCode::Tab => {
-                    // Tab: cycle through panes
-                    state.renderer.state.focused_pane = match state.renderer.state.focused_pane {
-                        FocusedPane::Hand => FocusedPane::Info,
-                        FocusedPane::Info => FocusedPane::YourBattlefield,
-                        FocusedPane::YourBattlefield => FocusedPane::OpponentBattlefield,
-                        FocusedPane::OpponentBattlefield => FocusedPane::Stack,
-                        FocusedPane::Stack => FocusedPane::Actions,
-                        FocusedPane::Actions => FocusedPane::Hand,
-                    };
-                }
-                _ => {}
             }
         }
     });

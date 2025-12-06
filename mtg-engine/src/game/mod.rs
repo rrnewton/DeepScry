@@ -10,6 +10,8 @@ pub mod fancy_fixed_controller;
 #[cfg(feature = "native-tui")]
 pub mod fancy_tui_controller;
 #[cfg(feature = "ratatui")]
+pub mod fancy_tui_events;
+#[cfg(feature = "ratatui")]
 pub mod fancy_tui_renderer;
 pub mod fixed_script_controller;
 pub mod game_loop;
@@ -49,6 +51,8 @@ pub use controller::{format_choice_menu, GameStateView, PlayerController};
 pub use fancy_fixed_controller::FancyFixedController;
 #[cfg(feature = "native-tui")]
 pub use fancy_tui_controller::FancyTuiController;
+#[cfg(feature = "ratatui")]
+pub use fancy_tui_events::{handle_key_event, handle_mouse_click, EventResult, KeyInput};
 #[cfg(feature = "ratatui")]
 pub use fancy_tui_renderer::FancyTuiRenderer;
 pub use fixed_script_controller::FixedScriptController;

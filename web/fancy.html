@@ -92,15 +92,39 @@
             padding: 0;
             background: #000;
             overflow: hidden;
+            /* When header is hidden, take full viewport */
+            min-height: 0;
         }
         /* RatZilla renders terminal content here */
         #ratzilla-terminal {
-            width: 100%;
-            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
             font-family: 'Consolas', 'Monaco', 'Fira Mono', monospace;
+            /* RatZilla calculates terminal size using window.innerWidth/10 and window.innerHeight/20
+               These magic numbers assume roughly 10px wide and 20px tall characters.
+               Match font metrics to RatZilla's expectations for optimal fill. */
             font-size: 14px;
-            line-height: 1.2;
+            line-height: 1.25;
             background: #000;
+            /* Ensure content fills viewport - RatZilla's grid will expand to container */
+            display: flex;
+            flex-direction: column;
+        }
+        /* RatZilla creates a div.grid child - make it fill the container */
+        #ratzilla-terminal > div {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        /* Each row should contribute equally to filling the viewport */
+        #ratzilla-terminal > div > div {
+            flex: 1;
+            display: flex;
+            align-items: stretch;
         }
         .loading {
             text-align: center;
@@ -122,16 +146,28 @@
     </style>
 </head>
 <body>
-    <div class="header">
+    <div class="header" id="header-bar">
         <h1>MTG Forge - Fancy TUI</h1>
         <a href="index.html">Back to simple view</a>
         <span id="status">Loading...</span>
-        <!-- Game controls shown during gameplay -->
-        <div id="game-controls" style="display: none; margin-left: auto;">
-            <button id="btn-run-turn" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 0 5px;">Run 1 Turn</button>
-            <button id="btn-auto" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 0 5px;">Auto Run</button>
-            <button id="btn-exit" style="background: #a03030; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 0 5px;">Exit Game</button>
-            <span id="turn-info" style="color: #ffd700; margin-left: 15px;"></span>
+    </div>
+    <!-- Floating game controls - collapsible widget in corner -->
+    <div id="game-controls" style="display: none; position: fixed; top: 10px; right: 10px; z-index: 100;">
+        <!-- Collapsed state: small toggle button -->
+        <button id="btn-toggle-controls" style="background: rgba(22, 33, 62, 0.9); color: #ffd700; border: 1px solid #4361ee; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Toggle Controls (C)">
+            <span id="toggle-icon">&#9776;</span> <span id="turn-info-mini">T1</span>
+        </button>
+        <!-- Expanded controls panel -->
+        <div id="controls-panel" style="display: none; margin-top: 5px; background: rgba(22, 33, 62, 0.95); padding: 10px; border-radius: 8px; border: 1px solid #4361ee;">
+            <div style="margin-bottom: 8px;">
+                <button id="btn-run-turn" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Run 1 Turn</button>
+                <button id="btn-auto" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Auto Run</button>
+            </div>
+            <div>
+                <button id="btn-exit" style="background: #a03030; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Exit Game</button>
+                <span id="turn-info" style="color: #ffd700; margin-left: 10px;"></span>
+            </div>
+            <div style="color: #888; font-size: 11px; margin-top: 8px;">Keys: Space=turn, A=auto, Q=exit, C=toggle</div>
         </div>
     </div>
 
@@ -287,8 +323,10 @@
             }
 
             try {
-                // Hide setup bar
+                // Hide setup bar and header to give full viewport to TUI
+                // RatZilla calculates terminal size from window dimensions, so we need full viewport
                 document.getElementById('setup-bar').style.display = 'none';
+                document.getElementById('header-bar').style.display = 'none';
 
                 // Show the terminal container (RatZilla will render into body by default)
                 const terminal = document.getElementById('ratzilla-terminal');
@@ -315,8 +353,8 @@
 
                 tuiLaunched = true;
 
-                // Show game controls in header
-                document.getElementById('game-controls').style.display = 'flex';
+                // Show game controls widget (collapsed by default)
+                document.getElementById('game-controls').style.display = 'block';
 
                 console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
             } catch (error) {
@@ -330,14 +368,29 @@
         // Update turn info display (called from WASM)
         window.updateTurnInfo = function(turnNumber, gameOver) {
             const info = document.getElementById('turn-info');
+            const miniInfo = document.getElementById('turn-info-mini');
             if (gameOver) {
                 info.textContent = 'Game Over!';
                 info.style.color = '#ff6b6b';
+                miniInfo.textContent = 'END';
+                miniInfo.style.color = '#ff6b6b';
             } else {
                 info.textContent = `Turn ${turnNumber}`;
                 info.style.color = '#ffd700';
+                miniInfo.textContent = `T${turnNumber}`;
+                miniInfo.style.color = '#ffd700';
             }
         };
+
+        // Toggle controls panel visibility
+        let controlsExpanded = false;
+        document.getElementById('btn-toggle-controls').addEventListener('click', function() {
+            controlsExpanded = !controlsExpanded;
+            const panel = document.getElementById('controls-panel');
+            const icon = document.getElementById('toggle-icon');
+            panel.style.display = controlsExpanded ? 'block' : 'none';
+            icon.innerHTML = controlsExpanded ? '&#10005;' : '&#9776;';  // X or hamburger
+        });
 
         // Button handlers - call WASM functions directly
         document.getElementById('btn-run-turn').addEventListener('click', function() {
@@ -358,9 +411,10 @@
         // Expose exit function globally for WASM to call
         window.exitFancyTui = function() {
             tuiLaunched = false;
-            // Hide terminal and show setup bar
+            // Hide terminal and show setup bar + header
             document.getElementById('ratzilla-terminal').style.display = 'none';
             document.getElementById('game-controls').style.display = 'none';
+            document.getElementById('header-bar').style.display = 'flex';
             document.getElementById('setup-bar').style.display = 'flex';
             // Reload the page to cleanly reset RatZilla state
             location.reload();

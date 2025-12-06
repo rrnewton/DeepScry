@@ -156,6 +156,11 @@ async function runTest() {
         });
         log(`Initial turn info: ${turnInfo}`);
 
+        // Expand the controls panel (it starts collapsed)
+        await page.click('#btn-toggle-controls');
+        await page.waitForSelector('#controls-panel', { state: 'visible', timeout: 5000 });
+        log('Expanded controls panel');
+
         // Step through several turns
         const turnsToRun = 5;
         for (let i = 1; i <= turnsToRun; i++) {
