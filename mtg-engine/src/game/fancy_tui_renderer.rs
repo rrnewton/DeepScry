@@ -85,6 +85,11 @@ pub enum Entity {
         card_name: String,
         tapped_count: usize, // How many are tapped (tapped ones on top)
     },
+    /// A card in hand - used for mouse click detection
+    HandCard {
+        card_id: CardId,
+        index: usize, // Index in hand for selection
+    },
 }
 
 /// Trait for entities that can be rendered on the battlefield
@@ -114,6 +119,7 @@ impl BattlefieldEntity for Entity {
             Entity::SingleCard { card_id } => std::slice::from_ref(card_id),
             Entity::SimpleStack { card_ids, .. } => card_ids,
             Entity::VisualStack { card_ids, .. } => card_ids,
+            Entity::HandCard { card_id, .. } => std::slice::from_ref(card_id),
         }
     }
 
@@ -122,6 +128,7 @@ impl BattlefieldEntity for Entity {
             Entity::SingleCard { card_id } => *card_id,
             Entity::SimpleStack { card_ids, .. } => card_ids[0],
             Entity::VisualStack { card_ids, .. } => card_ids[0],
+            Entity::HandCard { card_id, .. } => *card_id,
         }
     }
 
@@ -130,6 +137,7 @@ impl BattlefieldEntity for Entity {
             Entity::SingleCard { .. } => 1,
             Entity::SimpleStack { card_ids, .. } => card_ids.len(),
             Entity::VisualStack { card_ids, .. } => card_ids.len(),
+            Entity::HandCard { .. } => 1,
         }
     }
 
@@ -158,6 +166,9 @@ impl BattlefieldEntity for Entity {
                     card_name.clone()
                 }
             }
+            Entity::HandCard { card_id, .. } => {
+                view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id))
+            }
         }
     }
 
@@ -166,6 +177,7 @@ impl BattlefieldEntity for Entity {
             Entity::SingleCard { card_id } => view.is_tapped(*card_id),
             Entity::SimpleStack { is_tapped, .. } => *is_tapped,
             Entity::VisualStack { tapped_count, .. } => *tapped_count > 0,
+            Entity::HandCard { .. } => false, // Hand cards are never tapped
         }
     }
 
@@ -428,10 +440,12 @@ impl FancyTuiRenderer {
             .collect();
 
         // Sort for consistent ordering: single cards first, then stacks
+        // Note: HandCard is not used in battlefield grouping, but we handle it for completeness
         entities.sort_by_key(|e| match e {
             Entity::SingleCard { card_id } => (0, *card_id),
             Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
             Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
+            Entity::HandCard { card_id, .. } => (2, *card_id), // Shouldn't appear in battlefield
         });
 
         entities
@@ -494,6 +508,10 @@ impl FancyTuiRenderer {
                 let (base_w, base_h) = Self::get_dimensions_for_tapped_state(any_tapped, base_width, base_height);
 
                 (base_w + offset_total, base_h + offset_total)
+            }
+            Entity::HandCard { .. } => {
+                // Hand cards use base dimensions (never tapped, no stacking)
+                (base_width, base_height)
             }
         }
     }
@@ -1387,7 +1405,7 @@ impl FancyTuiRenderer {
     }
 
     /// Draw the hand panel
-    fn draw_hand(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+    fn draw_hand(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let is_focused = self.state.focused_pane == FocusedPane::Hand;
 
         let hand = view.hand();
@@ -1415,6 +1433,24 @@ impl FancyTuiRenderer {
                 .alignment(Alignment::Center);
             f.render_widget(empty_msg, inner_area);
             return;
+        }
+
+        // Track entity positions for each hand card (for mouse click detection)
+        // Each list item is 1 row tall, positioned starting from inner_area.y
+        for (i, &card_id) in hand.iter().enumerate() {
+            let card_area = Rect {
+                x: inner_area.x,
+                y: inner_area.y + i as u16,
+                width: inner_area.width,
+                height: 1,
+            };
+            // Only track if within visible area
+            if card_area.y < inner_area.y + inner_area.height {
+                self.state.entity_positions.push(EntityPosition {
+                    entity: Entity::HandCard { card_id, index: i },
+                    area: card_area,
+                });
+            }
         }
 
         let items: Vec<ListItem> = hand

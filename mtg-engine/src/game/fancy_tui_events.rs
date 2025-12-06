@@ -506,20 +506,31 @@ pub fn handle_mouse_click(
             && y >= entity_pos.area.y
             && y < entity_pos.area.y + entity_pos.area.height
         {
-            use crate::game::fancy_tui_renderer::BattlefieldEntity;
+            use crate::game::fancy_tui_renderer::{BattlefieldEntity, Entity};
 
-            // Entity clicked! Select its representative card and show details
-            let representative = entity_pos.entity.representative_card();
-            state.selected_card_id = Some(representative);
+            // Entity clicked! Handle based on entity type
+            match &entity_pos.entity {
+                Entity::HandCard { card_id, index } => {
+                    // Hand card clicked - select it and focus hand pane
+                    state.selected_card_in_hand = Some(*index);
+                    state.selected_card_id = Some(*card_id);
+                    state.focused_pane = FocusedPane::Hand;
+                }
+                _ => {
+                    // Battlefield entity clicked
+                    let representative = entity_pos.entity.representative_card();
+                    state.selected_card_id = Some(representative);
 
-            // Update battlefield selection if it's in a battlefield
-            if let Some(card) = view.get_card(representative) {
-                if card.controller == view.player_id() {
-                    state.selected_card_in_your_bf = Some(representative);
-                    state.focused_pane = FocusedPane::YourBattlefield;
-                } else {
-                    state.selected_card_in_opp_bf = Some(representative);
-                    state.focused_pane = FocusedPane::OpponentBattlefield;
+                    // Update battlefield selection
+                    if let Some(card) = view.get_card(representative) {
+                        if card.controller == view.player_id() {
+                            state.selected_card_in_your_bf = Some(representative);
+                            state.focused_pane = FocusedPane::YourBattlefield;
+                        } else {
+                            state.selected_card_in_opp_bf = Some(representative);
+                            state.focused_pane = FocusedPane::OpponentBattlefield;
+                        }
+                    }
                 }
             }
 

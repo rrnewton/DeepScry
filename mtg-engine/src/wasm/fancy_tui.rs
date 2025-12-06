@@ -11,14 +11,18 @@
 
 use crate::core::PlayerId;
 use crate::game::controller::GameStateView;
-use crate::game::fancy_tui_events::{handle_key_event, EventResult, KeyInput};
+use crate::game::fancy_tui_events::{handle_key_event, handle_mouse_click, EventResult, KeyInput};
 use crate::game::logger::OutputMode;
 use crate::game::{FancyTuiRenderer, GameLoop, GameState, VerbosityLevel};
 use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
 use crate::loader::CardDefinition;
-use ratzilla::event::KeyCode;
+use ratzilla::event::{KeyCode, MouseButton, MouseEventKind};
 use ratzilla::ratatui::Terminal;
 use ratzilla::{DomBackend, WebRenderer};
+
+/// RatZilla uses these magic numbers for pixel-to-cell conversion
+const CELL_WIDTH_PX: u32 = 10;
+const CELL_HEIGHT_PX: u32 = 20;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -250,6 +254,37 @@ pub fn launch_fancy_tui(
                     _ => {}
                 }
             }
+        }
+    });
+
+    // Set up mouse event handling
+    terminal.on_mouse_event({
+        let state = state.clone();
+        move |mouse_event| {
+            // Only handle left mouse button press
+            if mouse_event.button != MouseButton::Left
+                || mouse_event.event != MouseEventKind::Pressed
+            {
+                return;
+            }
+
+            let mut state = state.borrow_mut();
+
+            // Convert pixel coordinates to terminal cell coordinates
+            // RatZilla uses window.innerWidth / 10 for cols and innerHeight / 20 for rows
+            let cell_x = (mouse_event.x / CELL_WIDTH_PX) as u16;
+            let cell_y = (mouse_event.y / CELL_HEIGHT_PX) as u16;
+
+            // Split borrows for mouse handling
+            let WasmFancyTuiState {
+                ref game,
+                ref mut renderer,
+                ..
+            } = *state;
+
+            let view = GameStateView::new(game, renderer.player_id);
+            handle_mouse_click(&mut renderer.state, cell_x, cell_y, &view);
+            // State was updated, will redraw on next frame
         }
     });
 
