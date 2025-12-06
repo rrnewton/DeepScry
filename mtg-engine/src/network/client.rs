@@ -743,7 +743,13 @@ impl NetworkClient {
                                         });
                                     }
                                     Ok(ServerMessage::ChoiceRequest { .. }) => {
-                                        // We're being asked for a choice - acknowledge to local controller
+                                        // Server is asking for a choice - the game loop will handle this
+                                        // The inner controller will make a decision and send it
+                                        log::debug!("Received ChoiceRequest, game loop will handle");
+                                    }
+                                    Ok(ServerMessage::ChoiceAccepted { choice_seq }) => {
+                                        // Server accepted our choice - unblock the NetworkLocalController
+                                        log::debug!("Choice {} accepted by server", choice_seq);
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
                                     }
                                     Ok(ServerMessage::GameEnded { winner, .. }) => {

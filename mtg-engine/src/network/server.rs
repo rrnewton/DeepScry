@@ -653,6 +653,9 @@ async fn handle_player_websocket(
                                     log::error!("Failed to send choice response");
                                     break;
                                 }
+
+                                // Send acknowledgment back to client (for run_game mode)
+                                conn.send(&ServerMessage::ChoiceAccepted { choice_seq }).await?;
                             }
                             Ok(ClientMessage::Ping { timestamp_ms }) => {
                                 conn.send(&ServerMessage::Pong { timestamp_ms }).await?;

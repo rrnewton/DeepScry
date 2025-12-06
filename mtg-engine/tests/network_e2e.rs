@@ -1165,4 +1165,126 @@ mod websocket_integration {
         let _ = ws2.close(None).await;
         server_handle.abort();
     }
+
+    /// Test a full game using NetworkClient::run_game() with RandomControllers
+    ///
+    /// This is the key integration test for the synchronized GameLoop mode.
+    /// It runs actual GameLoops on both server and client sides, with RandomControllers
+    /// making decisions. The client uses the reveal drainer hook to receive card reveals
+    /// from the server before each draw.
+    ///
+    /// This tests:
+    /// - NetworkClient connects and authenticates
+    /// - GameStarted message is processed correctly
+    /// - Shadow game state is initialized with remote libraries
+    /// - Reveal drainer hook processes CardRevealed messages
+    /// - RandomController makes decisions through NetworkLocalController
+    /// - RemoteController receives opponent choices
+    /// - Game runs to completion and returns a winner
+    ///
+    /// TODO(mtg-bfm38): This test is ignored because the server doesn't yet broadcast
+    /// OpponentChoice messages to the other player. When player 1 makes a choice, player 2's
+    /// client RemoteController blocks waiting for OpponentChoice which never arrives.
+    /// Need to add inter-player choice broadcasting to the server.
+    #[ignore = "Server doesn't broadcast OpponentChoice - see mtg-bfm38"]
+    #[tokio::test]
+    async fn test_run_game_with_random_controllers() {
+        use mtg_forge_rs::game::RandomController;
+        use mtg_forge_rs::network::{ClientConfig, NetworkClient};
+
+        let port = allocate_random_port();
+        let password = "rungametest";
+
+        let config = ServerConfig {
+            port,
+            password: password.to_string(),
+            cardsfolder: cardsfolder_path(),
+            starting_life: 20,
+            ..Default::default()
+        };
+
+        let mut server = GameServer::new(config);
+        let server_handle = tokio::spawn(async move {
+            let _ = timeout(Duration::from_secs(180), server.run()).await;
+        });
+
+        assert!(
+            wait_for_server(port, 20).await,
+            "Server did not start accepting connections within timeout"
+        );
+
+        // Get deck path for clients
+        let deck_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("decks")
+            .join("monored_simple.dck");
+        let cardsfolder_path_buf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("cardsfolder");
+
+        // Create two clients with RandomControllers
+        let mut client1_config = ClientConfig::new(
+            format!("localhost:{}", port),
+            password.to_string(),
+            "RandomBot1".to_string(),
+            deck_path.clone(),
+        );
+        client1_config.cardsfolder = cardsfolder_path_buf.clone();
+
+        let mut client2_config = ClientConfig::new(
+            format!("localhost:{}", port),
+            password.to_string(),
+            "RandomBot2".to_string(),
+            deck_path.clone(),
+        );
+        client2_config.cardsfolder = cardsfolder_path_buf;
+
+        // Run both clients concurrently with RandomControllers
+        let client1_handle = tokio::spawn(async move {
+            let mut client = NetworkClient::new(client1_config);
+            client.connect().await?;
+            client.wait_for_game_start().await?;
+
+            let controller = RandomController::with_seed(client.our_player_id().unwrap(), 12345);
+            client.run_game(controller).await
+        });
+
+        let client2_handle = tokio::spawn(async move {
+            let mut client = NetworkClient::new(client2_config);
+            client.connect().await?;
+            client.wait_for_game_start().await?;
+
+            let controller = RandomController::with_seed(client.our_player_id().unwrap(), 67890);
+            client.run_game(controller).await
+        });
+
+        // Wait for both clients to finish (with timeout)
+        let timeout_duration = Duration::from_secs(120);
+        let (result1, result2) = tokio::join!(
+            timeout(timeout_duration, client1_handle),
+            timeout(timeout_duration, client2_handle)
+        );
+
+        // Check results
+        let winner1 = result1
+            .expect("Client 1 timed out")
+            .expect("Client 1 task panicked")
+            .expect("Client 1 error");
+
+        let winner2 = result2
+            .expect("Client 2 timed out")
+            .expect("Client 2 task panicked")
+            .expect("Client 2 error");
+
+        // Both clients should see the same winner
+        assert_eq!(
+            winner1, winner2,
+            "Clients disagree on winner: {:?} vs {:?}",
+            winner1, winner2
+        );
+
+        log::info!("Game completed with RandomControllers, winner: {:?}", winner1);
+
+        server_handle.abort();
+    }
 }

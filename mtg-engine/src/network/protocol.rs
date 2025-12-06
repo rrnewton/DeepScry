@@ -152,6 +152,15 @@ pub enum ServerMessage {
         description: String,
     },
 
+    /// Acknowledge receipt of a submitted choice
+    ///
+    /// Sent by server after receiving a valid SubmitChoice, allowing the client's
+    /// NetworkLocalController to unblock and continue processing.
+    ChoiceAccepted {
+        /// Echo of the choice sequence for correlation
+        choice_seq: u32,
+    },
+
     /// Game has ended
     GameEnded {
         /// Winner (None for draw)
