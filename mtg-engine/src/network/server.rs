@@ -131,6 +131,10 @@ struct PlayerConnection {
     opponent_choice_rx: tokio_mpsc::Receiver<OpponentChoiceInfo>,
     /// Current choice type being requested (for broadcasting)
     current_choice_type: Option<ChoiceType>,
+    /// Expected action_count from the last ChoiceRequest sent to this client.
+    /// Used for sync validation when the client responds with SubmitChoice.
+    /// This is the authoritative source - NOT the shared game state (which is stale).
+    expected_action_count: Option<u64>,
 }
 
 impl PlayerConnection {
@@ -438,6 +442,7 @@ async fn run_game(
         opponent_choice_tx: p1_choice_tx, // P1 sends their choices on this channel
         opponent_choice_rx: p2_choice_rx, // P1 receives P2's choices from this channel
         current_choice_type: None,
+        expected_action_count: None,
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
@@ -448,6 +453,7 @@ async fn run_game(
         opponent_choice_tx: p2_choice_tx, // P2 sends their choices on this channel
         opponent_choice_rx: p1_choice_rx, // P2 receives P1's choices from this channel
         current_choice_type: None,
+        expected_action_count: None,
     };
 
     // Convert deck submissions to DeckList format
@@ -709,6 +715,11 @@ async fn handle_player_websocket(
                         // Track the choice type for broadcasting to opponent
                         conn.current_choice_type = Some(choice_request.choice_type.clone());
 
+                        // Track the action_count from this ChoiceRequest for validation
+                        // when the client responds with SubmitChoice.
+                        // This is the authoritative source - NOT the stale game state mutex.
+                        conn.expected_action_count = Some(choice_request.action_count);
+
                         // Send ChoiceRequest to client (action_count from NetworkController)
                         conn.send(&ServerMessage::ChoiceRequest {
                             choice_seq: choice_request.choice_seq,
@@ -732,24 +743,34 @@ async fn handle_player_websocket(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
                             Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count }) => {
-                                // Get server's action_count from GameState for validation
-                                let server_action_count = {
-                                    let game_guard = game.lock().await;
-                                    game_guard.undo_log.len() as u64
-                                };
+                                // Use the action_count from the ChoiceRequest we sent (tracked in expected_action_count)
+                                // NOT the stale game state mutex (which only has opening hand draws).
+                                // The GameLoop runs on a cloned game state, so the mutex is stale.
+                                let expected_action_count = conn.expected_action_count.take();
 
                                 log::trace!(
-                                    "Player {:?}: received choice {} (client_action_count={}, server_action_count={})",
-                                    conn.player_id, choice_seq, client_action_count, server_action_count
+                                    "Player {:?}: received choice {} (client_action_count={}, expected_action_count={:?})",
+                                    conn.player_id, choice_seq, client_action_count, expected_action_count
                                 );
 
-                                // Validate action_count (warn but don't fail - mismatch indicates desync)
-                                if client_action_count != server_action_count {
+                                // Validate action_count against what we sent in the ChoiceRequest
+                                if let Some(expected) = expected_action_count {
+                                    if client_action_count != expected {
+                                        log::warn!(
+                                            "SYNC WARNING: Player {:?} action_count mismatch! client={} expected={}",
+                                            conn.player_id, client_action_count, expected
+                                        );
+                                    }
+                                } else {
                                     log::warn!(
-                                        "SYNC WARNING: Player {:?} action_count mismatch! client={} server={}",
-                                        conn.player_id, client_action_count, server_action_count
+                                        "SYNC WARNING: Player {:?} sent choice without expected_action_count tracking (choice_seq={})",
+                                        conn.player_id, choice_seq
                                     );
                                 }
+
+                                // The action_count to send back should be the expected value (from ChoiceRequest)
+                                // or fall back to client's value if tracking failed
+                                let server_action_count = expected_action_count.unwrap_or(client_action_count);
 
                                 // Send response to NetworkController
                                 let response = ChoiceResponse { choice_seq, choice_index };

@@ -150,6 +150,12 @@ pub struct GameLoop<'a> {
     /// When set, this function is called before each draw to process pending card
     /// reveals from the server and queue them into the appropriate player's library.
     reveal_drainer: Option<RevealDrainer>,
+    /// Skip opening hand setup (for network clients)
+    ///
+    /// When true, run_game skips shuffling and drawing opening hands.
+    /// Network clients use this because the server has already performed setup
+    /// and the client draws cards via the reveal drainer mechanism.
+    skip_opening_hands: bool,
 }
 
 impl<'a> GameLoop<'a> {
@@ -180,6 +186,7 @@ impl<'a> GameLoop<'a> {
             deck_seed: None,
             game_seed: None,
             reveal_drainer: None,
+            skip_opening_hands: false,
         }
     }
 
@@ -334,6 +341,25 @@ impl<'a> GameLoop<'a> {
         F: Fn(&mut GameState) + Send + 'static,
     {
         self.reveal_drainer = Some(Box::new(drainer));
+        self
+    }
+
+    /// Skip opening hand setup (for network clients)
+    ///
+    /// When enabled, `run_game` will not shuffle libraries or draw opening hands.
+    /// This is used by network clients where the server has already performed game
+    /// setup and the client receives opening hands via CardRevealed messages.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Network client skips local opening hand draw
+    /// let mut game_loop = GameLoop::new(&mut game)
+    ///     .with_reveal_drainer(drain_reveals)
+    ///     .skip_opening_hands();
+    /// ```
+    pub fn skip_opening_hands(mut self) -> Self {
+        self.skip_opening_hands = true;
         self
     }
 
@@ -528,6 +554,7 @@ impl<'a> GameLoop<'a> {
         // Skip for:
         // - Snapshot resume (has actions in undo log)
         // - Puzzle-loaded games (hands/battlefield already set up)
+        // - Network mode (server handles setup, skip_opening_hands is true)
         let is_resuming_from_snapshot = !self.game.undo_log.actions().is_empty();
 
         // Detect puzzle-loaded games: they have turn > 1 or cards already in zones other than library
@@ -543,27 +570,47 @@ impl<'a> GameLoop<'a> {
         let is_puzzle_game = self.game.turn.turn_number > 1 || has_cards_in_play;
 
         if !is_resuming_from_snapshot && !is_puzzle_game {
-            // If a separate deck seed is configured, apply it before shuffling
-            // This allows sampling different games (via --seed) with the same initial hands (--deck-seed)
-            if let Some(deck_seed) = self.deck_seed {
-                self.game.seed_rng(deck_seed);
-            }
+            if self.skip_opening_hands {
+                // Network mode: server already shuffled and drew cards.
+                // We need to draw from pre-queued reveals to create matching undo_log entries.
+                // Drain reveals first to populate the reveal queue.
+                self.drain_reveals();
 
-            // Setup opening hands using unified hand setup logic (MTG Rules 103.2-103.4)
-            // This handles shuffling, drawing, and optional controlled hand setup for testing
-            // TODO(mtg-102): Implement mulligan system (MTG Rules 103.5)
-            let player_ids: [PlayerId; 2] = [player1_id, player2_id];
-            crate::game::setup_opening_hands(
-                self.game,
-                &player_ids,
-                self.p1_hand_setup.as_ref(),
-                self.p2_hand_setup.as_ref(),
-            )?;
+                log::debug!("Network mode: undo_log before draws = {}", self.game.undo_log.len());
 
-            // If a game seed is configured (different from deck seed), re-seed after shuffling
-            // This allows the game to proceed with a different RNG stream than was used for shuffling
-            if let Some(game_seed) = self.game_seed {
-                self.game.seed_rng(game_seed);
+                // Draw 7 cards for each player from the reveal queue
+                for &player_id in &[player1_id, player2_id] {
+                    for _ in 0..7 {
+                        self.game.draw_card(player_id)?;
+                    }
+                }
+
+                log::debug!("Network mode: undo_log after draws = {}", self.game.undo_log.len());
+            } else {
+                // Normal mode: shuffle and draw opening hands locally
+
+                // If a separate deck seed is configured, apply it before shuffling
+                // This allows sampling different games (via --seed) with the same initial hands (--deck-seed)
+                if let Some(deck_seed) = self.deck_seed {
+                    self.game.seed_rng(deck_seed);
+                }
+
+                // Setup opening hands using unified hand setup logic (MTG Rules 103.2-103.4)
+                // This handles shuffling, drawing, and optional controlled hand setup for testing
+                // TODO(mtg-102): Implement mulligan system (MTG Rules 103.5)
+                let player_ids: [PlayerId; 2] = [player1_id, player2_id];
+                crate::game::setup_opening_hands(
+                    self.game,
+                    &player_ids,
+                    self.p1_hand_setup.as_ref(),
+                    self.p2_hand_setup.as_ref(),
+                )?;
+
+                // If a game seed is configured (different from deck seed), re-seed after shuffling
+                // This allows the game to proceed with a different RNG stream than was used for shuffling
+                if let Some(game_seed) = self.game_seed {
+                    self.game.seed_rng(game_seed);
+                }
             }
 
             // Log the start of Turn 1 (for fresh games only)

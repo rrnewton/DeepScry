@@ -1016,7 +1016,10 @@ impl NetworkClient {
             drain_reveals(&mut game);
 
             // Create game loop with reveal drainer hook
-            let mut game_loop = GameLoop::new(&mut game).with_reveal_drainer(drain_reveals);
+            // Skip opening hand setup since server already drew hands and sent reveals
+            let mut game_loop = GameLoop::new(&mut game)
+                .with_reveal_drainer(drain_reveals)
+                .skip_opening_hands();
 
             // Pass controllers in the correct order based on which player we are
             // GameLoop.run_game expects (controller_for_p1, controller_for_p2)

@@ -64,12 +64,33 @@ This confirms the clients running their own GameLoops can diverge from
 the server's authoritative state. The debug mode is working correctly
 to surface these issues early.
 
+## Completed (2025-12-06_#1188)
+
+- [x] Fixed server validation to use action_count from ChoiceRequest, not stale game state
+
+### Root Cause Analysis
+
+The server's WebSocket handler was reading `action_count` from a stale shared game
+state mutex, but the GameLoop runs on a **cloned** copy of the game state. The
+mutex-protected original game only had 14 entries (opening hand draws) while
+the cloned game state being used by the GameLoop had advanced to 17 entries.
+
+### Fix
+
+Added `expected_action_count: Option<u64>` field to `PlayerConnection` struct.
+When sending a `ChoiceRequest`, the server now stores the action_count in this
+field. When validating `SubmitChoice`, the server uses this stored value instead
+of reading from the stale game state mutex.
+
+This ensures the server validates against the actual action_count that was
+communicated to the client, not the stale value from before the GameLoop started.
+
 ## Remaining Tasks
 
-- [ ] Fix the underlying sync mechanism causing client/server divergence
 - [ ] Remove the unconditional broadcast hack from server.rs
 - [ ] Implement proper synchronization points based on action counts
 - [ ] Add tests for action count synchronization
+- [ ] Enable the `test_run_game_with_random_controllers` test (synchronized GameLoop mode)
 
 ## Related Files
 
