@@ -802,13 +802,14 @@ impl NetworkClient {
         });
 
         // Run game loop in blocking thread
-        // The game thread will periodically drain the reveal_queue into the game's libraries
+        // The game loop has a reveal drainer that will drain the queue before each draw
         let mut local_controller = local_controller;
         let mut remote_controller = remote_controller;
         let game_result = tokio::task::spawn_blocking(move || {
-            // Helper to drain reveal queue into game state
-            let drain_reveals = |game: &mut GameState| {
-                if let Ok(mut queue) = reveal_queue.lock() {
+            // Create drain function that will be called before each draw
+            let reveal_queue_clone = reveal_queue.clone();
+            let drain_reveals = move |game: &mut GameState| {
+                if let Ok(mut queue) = reveal_queue_clone.lock() {
                     while let Some((owner, card_id, reason)) = queue.pop_front() {
                         if matches!(reason, RevealReason::Draw) {
                             if let Some(zones) = game.get_player_zones_mut(owner) {
@@ -822,12 +823,11 @@ impl NetworkClient {
                 }
             };
 
-            // Process any reveals before starting
+            // Process any reveals before starting (for opening hand)
             drain_reveals(&mut game);
 
-            let mut game_loop = GameLoop::new(&mut game);
-            // TODO: Ideally we'd hook into GameLoop to drain reveals before each draw
-            // For now, this processes reveals queued during game setup
+            // Create game loop with reveal drainer hook
+            let mut game_loop = GameLoop::new(&mut game).with_reveal_drainer(drain_reveals);
             game_loop.run_game(&mut local_controller, &mut remote_controller)
         });
 

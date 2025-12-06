@@ -26,6 +26,15 @@ use crate::game::GameState;
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
 
+/// Type alias for the reveal drainer function
+///
+/// This function is called before each draw to process pending card reveals.
+/// It takes a mutable reference to the game state so it can queue reveals
+/// into the appropriate player's library.
+///
+/// Used by network clients to drain reveals from the server before each draw.
+type RevealDrainer = Box<dyn Fn(&mut GameState) + Send>;
+
 // Module structure
 mod actions;
 mod combat;
@@ -136,6 +145,11 @@ pub struct GameLoop<'a> {
     deck_seed: Option<u64>,
     /// The main game seed to use after shuffling (only needed when deck_seed is set)
     game_seed: Option<u64>,
+    /// Optional reveal drainer for network mode
+    ///
+    /// When set, this function is called before each draw to process pending card
+    /// reveals from the server and queue them into the appropriate player's library.
+    reveal_drainer: Option<RevealDrainer>,
 }
 
 impl<'a> GameLoop<'a> {
@@ -165,6 +179,7 @@ impl<'a> GameLoop<'a> {
             p2_hand_setup: None,
             deck_seed: None,
             game_seed: None,
+            reveal_drainer: None,
         }
     }
 
@@ -288,6 +303,48 @@ impl<'a> GameLoop<'a> {
         self.deck_seed = Some(deck_seed);
         self.game_seed = game_seed;
         self
+    }
+
+    /// Set a reveal drainer for network mode
+    ///
+    /// The reveal drainer is called before each draw to process pending card reveals
+    /// from a network server. It takes a closure that receives `&mut GameState` and
+    /// should queue any pending reveals into the appropriate player's library.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let reveal_queue: Arc<Mutex<VecDeque<(PlayerId, CardId, RevealReason)>>> = ...;
+    /// let queue_clone = reveal_queue.clone();
+    ///
+    /// game_loop.with_reveal_drainer(move |game| {
+    ///     if let Ok(mut queue) = queue_clone.lock() {
+    ///         while let Some((owner, card_id, reason)) = queue.pop_front() {
+    ///             if matches!(reason, RevealReason::Draw) {
+    ///                 if let Some(zones) = game.get_player_zones_mut(owner) {
+    ///                     zones.library.queue_reveal(card_id);
+    ///                 }
+    ///             }
+    ///         }
+    ///     }
+    /// });
+    /// ```
+    pub fn with_reveal_drainer<F>(mut self, drainer: F) -> Self
+    where
+        F: Fn(&mut GameState) + Send + 'static,
+    {
+        self.reveal_drainer = Some(Box::new(drainer));
+        self
+    }
+
+    /// Drain pending reveals if a drainer is configured
+    ///
+    /// This is called automatically before draws to ensure card reveals from
+    /// the network are queued into the library before the draw occurs.
+    pub(super) fn drain_reveals(&mut self) {
+        if let Some(ref drainer) = self.reveal_drainer {
+            drainer(self.game);
+        }
     }
 
     /// Set replay mode for resuming from snapshot
