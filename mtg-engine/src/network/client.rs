@@ -277,6 +277,8 @@ pub struct NetworkClient {
     verbosity: VerbosityLevel,
     /// Visual stacks mode for display
     visual_stacks: bool,
+    /// Debug mode: validate action_count synchronization at each choice point
+    debug_mode: bool,
 }
 
 impl NetworkClient {
@@ -291,6 +293,7 @@ impl NetworkClient {
             opponent_deck: None,
             verbosity: VerbosityLevel::Normal,
             visual_stacks: false,
+            debug_mode: false,
         }
     }
 
@@ -302,6 +305,17 @@ impl NetworkClient {
     /// Set visual stacks mode
     pub fn set_visual_stacks(&mut self, visual_stacks: bool) {
         self.visual_stacks = visual_stacks;
+    }
+
+    /// Enable debug mode for action_count synchronization validation
+    ///
+    /// When enabled, the client validates action_count at each choice point
+    /// and fails with a detailed error if a mismatch is detected.
+    pub fn set_debug_mode(&mut self, debug: bool) {
+        self.debug_mode = debug;
+        if debug {
+            log::info!("Debug mode ENABLED: action_count sync validation active");
+        }
     }
 
     /// Get our player ID (after game start)
@@ -822,6 +836,9 @@ impl NetworkClient {
         let reveal_queue: SharedRevealQueue = Arc::new(Mutex::new(VecDeque::new()));
         let reveal_queue_ws = reveal_queue.clone();
 
+        // Debug mode flag for sync validation
+        let debug_mode = self.debug_mode;
+
         // Create controllers
         let local_controller = NetworkLocalController::new(
             controller,
@@ -853,7 +870,10 @@ impl NetworkClient {
         let mut game = client_state.game;
 
         // Spawn WebSocket handler task
+        // Track last sent action_count for validation
         let ws_handler = tokio::spawn(async move {
+            let mut last_sent_action_count: Option<u64> = None;
+
             loop {
                 tokio::select! {
                     // Receive messages from server
@@ -880,9 +900,30 @@ impl NetworkClient {
                                         // The inner controller will make a decision and send it
                                         log::debug!("Received ChoiceRequest, game loop will handle");
                                     }
-                                    Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count }) => {
-                                        // Server accepted our choice - unblock the NetworkLocalController
-                                        log::trace!("WebSocket: choice {} accepted (action_count={}), sending ack", choice_seq, action_count);
+                                    Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count }) => {
+                                        // Server accepted our choice - validate action_count in debug mode
+                                        if debug_mode {
+                                            if let Some(client_action_count) = last_sent_action_count {
+                                                if client_action_count != server_action_count {
+                                                    log::error!(
+                                                        "SYNC ERROR: action_count mismatch! client={} server={}",
+                                                        client_action_count, server_action_count
+                                                    );
+                                                    let _ = local_msg_tx.send(LocalControllerMessage::Error(
+                                                        format!(
+                                                            "Action count sync failure: client={} server={}",
+                                                            client_action_count, server_action_count
+                                                        )
+                                                    ));
+                                                    return;
+                                                }
+                                                log::debug!(
+                                                    "SYNC OK: action_count={} (choice {})",
+                                                    server_action_count, choice_seq
+                                                );
+                                            }
+                                        }
+                                        log::trace!("WebSocket: choice {} accepted (action_count={}), sending ack", choice_seq, server_action_count);
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
                                     }
                                     Ok(ServerMessage::GameEnded { winner, .. }) => {
@@ -930,6 +971,9 @@ impl NetworkClient {
                                 choice.choice_index,
                                 choice.action_count
                             );
+                            // Track for debug validation
+                            last_sent_action_count = Some(choice.action_count);
+
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: 0, // TODO: Track sequence numbers
                                 choice_index: choice.choice_index,

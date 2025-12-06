@@ -731,11 +731,25 @@ async fn handle_player_websocket(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count }) => {
+                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count }) => {
+                                // Get server's action_count from GameState for validation
+                                let server_action_count = {
+                                    let game_guard = game.lock().await;
+                                    game_guard.undo_log.len() as u64
+                                };
+
                                 log::trace!(
-                                    "Player {:?}: received choice {} with action_count={}",
-                                    conn.player_id, choice_seq, action_count
+                                    "Player {:?}: received choice {} (client_action_count={}, server_action_count={})",
+                                    conn.player_id, choice_seq, client_action_count, server_action_count
                                 );
+
+                                // Validate action_count (warn but don't fail - mismatch indicates desync)
+                                if client_action_count != server_action_count {
+                                    log::warn!(
+                                        "SYNC WARNING: Player {:?} action_count mismatch! client={} server={}",
+                                        conn.player_id, client_action_count, server_action_count
+                                    );
+                                }
 
                                 // Send response to NetworkController
                                 let response = ChoiceResponse { choice_seq, choice_index };
@@ -744,10 +758,11 @@ async fn handle_player_websocket(
                                     break;
                                 }
 
-                                // Send acknowledgment back to client with echoed action_count
+                                // Send acknowledgment back to client with SERVER's action_count
+                                // This allows the client to validate sync in debug mode
                                 conn.send(&ServerMessage::ChoiceAccepted {
                                     choice_seq,
-                                    action_count,
+                                    action_count: server_action_count,
                                 }).await?;
 
                                 // Broadcast this choice to the opponent (for run_game mode)
@@ -761,7 +776,7 @@ async fn handle_player_websocket(
                                     choice_type,
                                     choice_index,
                                     description: format!("Choice #{}", choice_seq), // TODO: Get actual description
-                                    action_count,
+                                    action_count: server_action_count,
                                 };
                                 log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
                                 if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {

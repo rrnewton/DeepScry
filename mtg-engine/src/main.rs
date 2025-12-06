@@ -485,6 +485,12 @@ enum Commands {
         /// Default is to run a synchronized GameLoop on the client side.
         #[arg(long)]
         message_based: bool,
+
+        /// Enable debug mode for action_count synchronization validation.
+        /// When enabled, the client validates action_count at each choice point
+        /// and fails fast if a mismatch is detected.
+        #[arg(long)]
+        debug: bool,
     },
 }
 
@@ -732,6 +738,7 @@ async fn main() -> Result<()> {
             visual_stacks,
             verbosity,
             message_based,
+            debug,
         } => {
             use mtg_forge_rs::core::PlayerId;
             use mtg_forge_rs::game::{HeuristicController, RichInputController, VerbosityLevel};
@@ -767,6 +774,7 @@ async fn main() -> Result<()> {
             let mut client = NetworkClient::new(config);
             client.set_verbosity(verbosity_level);
             client.set_visual_stacks(visual_stacks);
+            client.set_debug_mode(debug);
 
             client
                 .connect()
