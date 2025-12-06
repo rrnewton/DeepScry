@@ -114,6 +114,19 @@ struct OpponentChoiceInfo {
     action_count: u64,
 }
 
+/// A SubmitChoice that arrived before the corresponding ChoiceRequest.
+/// This can happen in synchronized GameLoop mode due to timing differences.
+/// We store it and process it once the ChoiceRequest arrives.
+#[derive(Debug)]
+struct PendingChoice {
+    /// Choice sequence number from the client
+    choice_seq: u32,
+    /// Index of the chosen option
+    choice_index: usize,
+    /// Action count the client claims (for validation)
+    action_count: u64,
+}
+
 struct PlayerConnection {
     /// Player ID in the game
     player_id: PlayerId,
@@ -135,6 +148,11 @@ struct PlayerConnection {
     /// Used for sync validation when the client responds with SubmitChoice.
     /// This is the authoritative source - NOT the shared game state (which is stale).
     expected_action_count: Option<u64>,
+    /// A choice that arrived before the corresponding ChoiceRequest.
+    /// In synchronized GameLoop mode, the client may submit a choice before
+    /// the server's NetworkController sends its ChoiceRequest due to timing.
+    /// We store it here and process it once the ChoiceRequest arrives.
+    pending_choice: Option<PendingChoice>,
 }
 
 impl PlayerConnection {
@@ -443,6 +461,7 @@ async fn run_game(
         opponent_choice_rx: p2_choice_rx, // P1 receives P2's choices from this channel
         current_choice_type: None,
         expected_action_count: None,
+        pending_choice: None,
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
@@ -454,6 +473,7 @@ async fn run_game(
         opponent_choice_rx: p1_choice_rx, // P2 receives P1's choices from this channel
         current_choice_type: None,
         expected_action_count: None,
+        pending_choice: None,
     };
 
     // Convert deck submissions to DeckList format
@@ -723,15 +743,64 @@ async fn handle_player_websocket(
                         // This is the authoritative source - NOT the stale game state mutex.
                         conn.expected_action_count = Some(choice_request.action_count);
 
-                        // Send ChoiceRequest to client (action_count from NetworkController)
-                        conn.send(&ServerMessage::ChoiceRequest {
-                            choice_seq: choice_request.choice_seq,
-                            choice_type: choice_request.choice_type,
-                            options: choice_request.options,
-                            state_hash: choice_request.state_hash,
-                            action_count: choice_request.action_count,
-                            context: None,
-                        }).await?;
+                        // Check if client already sent a choice (pending_choice)
+                        // This happens in synchronized GameLoop mode when client is faster
+                        if let Some(pending) = conn.pending_choice.take() {
+                            log::debug!(
+                                "Player {:?}: Processing pending choice {} (arrived before ChoiceRequest)",
+                                conn.player_id, pending.choice_seq
+                            );
+
+                            // Validate action_count
+                            if pending.action_count != choice_request.action_count {
+                                log::warn!(
+                                    "SYNC WARNING: Player {:?} pending choice action_count mismatch! pending={} expected={}",
+                                    conn.player_id, pending.action_count, choice_request.action_count
+                                );
+                            }
+
+                            // Send response to NetworkController
+                            let response = ChoiceResponse {
+                                choice_seq: pending.choice_seq,
+                                choice_index: pending.choice_index,
+                            };
+                            if conn.response_tx.send(response).is_err() {
+                                log::error!("Failed to send choice response for pending choice");
+                                break;
+                            }
+
+                            // Send acknowledgment back to client
+                            conn.send(&ServerMessage::ChoiceAccepted {
+                                choice_seq: pending.choice_seq,
+                                action_count: choice_request.action_count,
+                            }).await?;
+
+                            // Broadcast to opponent with proper choice_type
+                            let opponent_info = OpponentChoiceInfo {
+                                choice_seq: pending.choice_seq,
+                                choice_type: conn.current_choice_type.take().unwrap(),
+                                choice_index: pending.choice_index,
+                                description: format!("Choice #{}", pending.choice_seq),
+                                action_count: choice_request.action_count,
+                            };
+                            log::info!(
+                                "Player {:?}: Broadcasting pending choice {} to opponent",
+                                conn.player_id, pending.choice_seq
+                            );
+                            if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
+                                log::error!("Failed to broadcast pending choice: {:?}", e);
+                            }
+                        } else {
+                            // Normal case: send ChoiceRequest to client
+                            conn.send(&ServerMessage::ChoiceRequest {
+                                choice_seq: choice_request.choice_seq,
+                                choice_type: choice_request.choice_type,
+                                options: choice_request.options,
+                                state_hash: choice_request.state_hash,
+                                action_count: choice_request.action_count,
+                                context: None,
+                            }).await?;
+                        }
                     }
                     None => {
                         // Channel closed - game ended but we should wait for game_end_rx
@@ -746,65 +815,63 @@ async fn handle_player_websocket(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
                             Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count }) => {
-                                // Use the action_count from the ChoiceRequest we sent (tracked in expected_action_count)
-                                // NOT the stale game state mutex (which only has opening hand draws).
-                                // The GameLoop runs on a cloned game state, so the mutex is stale.
-                                let expected_action_count = conn.expected_action_count.take();
+                                // Check if we've sent a ChoiceRequest yet (tracked by expected_action_count)
+                                // If not, the client is ahead of us (synchronized GameLoop timing)
+                                // and we need to queue this choice for later processing.
+                                if let Some(expected) = conn.expected_action_count.take() {
+                                    // Normal case: we sent ChoiceRequest and client is responding
+                                    log::trace!(
+                                        "Player {:?}: received choice {} (client_action_count={}, expected={})",
+                                        conn.player_id, choice_seq, client_action_count, expected
+                                    );
 
-                                log::trace!(
-                                    "Player {:?}: received choice {} (client_action_count={}, expected_action_count={:?})",
-                                    conn.player_id, choice_seq, client_action_count, expected_action_count
-                                );
-
-                                // Validate action_count against what we sent in the ChoiceRequest
-                                if let Some(expected) = expected_action_count {
+                                    // Validate action_count
                                     if client_action_count != expected {
                                         log::warn!(
                                             "SYNC WARNING: Player {:?} action_count mismatch! client={} expected={}",
                                             conn.player_id, client_action_count, expected
                                         );
                                     }
+
+                                    // Send response to NetworkController
+                                    let response = ChoiceResponse { choice_seq, choice_index };
+                                    if conn.response_tx.send(response).is_err() {
+                                        log::error!("Failed to send choice response");
+                                        break;
+                                    }
+
+                                    // Send acknowledgment back to client with SERVER's action_count
+                                    conn.send(&ServerMessage::ChoiceAccepted {
+                                        choice_seq,
+                                        action_count: expected,
+                                    }).await?;
+
+                                    // Broadcast to opponent with proper choice_type
+                                    // current_choice_type should always be set since we processed ChoiceRequest
+                                    let choice_type = conn.current_choice_type.take()
+                                        .expect("current_choice_type should be set when expected_action_count is set");
+                                    let opponent_info = OpponentChoiceInfo {
+                                        choice_seq,
+                                        choice_type,
+                                        choice_index,
+                                        description: format!("Choice #{}", choice_seq),
+                                        action_count: expected,
+                                    };
+                                    log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
+                                    if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
+                                        log::error!("Failed to broadcast choice to opponent: {:?}", e);
+                                    }
                                 } else {
-                                    log::warn!(
-                                        "SYNC WARNING: Player {:?} sent choice without expected_action_count tracking (choice_seq={})",
-                                        conn.player_id, choice_seq
+                                    // Client is ahead: queue this choice for processing when ChoiceRequest arrives
+                                    log::debug!(
+                                        "Player {:?}: Queueing early choice {} (action_count={}) - waiting for ChoiceRequest",
+                                        conn.player_id, choice_seq, client_action_count
                                     );
-                                }
-
-                                // The action_count to send back should be the expected value (from ChoiceRequest)
-                                // or fall back to client's value if tracking failed
-                                let server_action_count = expected_action_count.unwrap_or(client_action_count);
-
-                                // Send response to NetworkController
-                                let response = ChoiceResponse { choice_seq, choice_index };
-                                if conn.response_tx.send(response).is_err() {
-                                    log::error!("Failed to send choice response");
-                                    break;
-                                }
-
-                                // Send acknowledgment back to client with SERVER's action_count
-                                // This allows the client to validate sync in debug mode
-                                conn.send(&ServerMessage::ChoiceAccepted {
-                                    choice_seq,
-                                    action_count: server_action_count,
-                                }).await?;
-
-                                // Broadcast this choice to the opponent (for run_game mode)
-                                // Always broadcast - in synchronized mode, clients run their own GameLoops
-                                // and may submit choices before the server sends ChoiceRequest.
-                                // Use the current_choice_type if available, otherwise default.
-                                let choice_type = conn.current_choice_type.take()
-                                    .unwrap_or(ChoiceType::Priority { available_count: 0 });
-                                let opponent_info = OpponentChoiceInfo {
-                                    choice_seq,
-                                    choice_type,
-                                    choice_index,
-                                    description: format!("Choice #{}", choice_seq), // TODO: Get actual description
-                                    action_count: server_action_count,
-                                };
-                                log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
-                                if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
-                                    log::error!("Failed to broadcast choice to opponent: {:?}", e);
+                                    conn.pending_choice = Some(PendingChoice {
+                                        choice_seq,
+                                        choice_index,
+                                        action_count: client_action_count,
+                                    });
                                 }
                             }
                             Ok(ClientMessage::Ping { timestamp_ms }) => {

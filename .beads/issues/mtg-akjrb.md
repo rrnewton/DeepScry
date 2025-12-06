@@ -126,9 +126,36 @@ of the action_count divergence (client=17 vs server=14) remained. Investigation 
 
 This ensures both server and client GameLoops produce identical undo_logs.
 
+## Completed (2025-12-06_#1190)
+
+- [x] Remove the unconditional broadcast hack from server.rs
+
+### Fix: Principled Choice Ordering
+
+The "unconditional broadcast hack" was broadcasting opponent choices with a default
+`ChoiceType::Priority { available_count: 0 }` when the client submitted a choice before
+the server had processed its corresponding `ChoiceRequest`.
+
+**Root Cause**: In synchronized GameLoop mode, the client's GameLoop might reach a choice
+point slightly before the server's GameLoop due to timing differences. When this happens,
+the client sends `SubmitChoice` before the server has even sent `ChoiceRequest`.
+
+**Solution**: Added `pending_choice: Option<PendingChoice>` field to `PlayerConnection`:
+
+1. **When SubmitChoice arrives before ChoiceRequest**: Queue it in `pending_choice`
+2. **When ChoiceRequest arrives and there's a pending_choice**: Process immediately
+   with proper `choice_type` from the request, then broadcast to opponent
+3. **Normal case (SubmitChoice after ChoiceRequest)**: Process directly with the
+   already-known `choice_type`
+
+This ensures:
+- No more fallback default `ChoiceType` - always use the correct type from `ChoiceRequest`
+- No race conditions - choices are matched by order (ChoiceRequest sets context,
+  SubmitChoice provides answer)
+- Clean separation: server doesn't need to guess what type of choice it's processing
+
 ## Remaining Tasks
 
-- [ ] Remove the unconditional broadcast hack from server.rs
 - [ ] Implement 3-way action log verification at end of game (server + 2 clients)
 
 ## Related Files
