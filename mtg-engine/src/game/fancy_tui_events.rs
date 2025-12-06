@@ -48,19 +48,19 @@ pub enum KeyInput {
     Space,
 
     // Pane focus shortcuts
-    FocusHand,        // H
-    FocusInfo,        // I
-    FocusYourBf,      // Y
-    FocusOpponentBf,  // O
-    FocusActions,     // A
-    FocusStack,       // S
+    FocusHand,       // H
+    FocusInfo,       // I
+    FocusYourBf,     // Y
+    FocusOpponentBf, // O
+    FocusActions,    // A
+    FocusStack,      // S
 
     // Actions
-    Pass,       // P or Q
-    Undo,       // Z (uppercase)
-    Random,     // R
-    CtrlC,      // Exit
-    Digit(u8),  // 0-9 for quick choice selection
+    Pass,      // P or Q
+    Undo,      // Z (uppercase)
+    Random,    // R
+    CtrlC,     // Exit
+    Digit(u8), // 0-9 for quick choice selection
 }
 
 /// Constants for 2D battlefield navigation
@@ -463,43 +463,9 @@ fn navigate_battlefield_right(
 /// Handle a mouse click event, updating state
 ///
 /// Returns true if the click was handled and the UI should be redrawn.
-pub fn handle_mouse_click(
-    state: &mut FancyTuiState,
-    x: u16,
-    y: u16,
-    view: &GameStateView,
-) -> bool {
-    // Check if Actions pane was clicked
-    if let Some(actions_area) = state.actions_pane_area {
-        if x >= actions_area.x
-            && x < actions_area.x + actions_area.width
-            && y >= actions_area.y
-            && y < actions_area.y + actions_area.height
-        {
-            state.focused_pane = FocusedPane::Actions;
-            return true;
-        }
-    }
-
-    // Check if Hand pane was clicked
-    if let Some(hand_area) = state.hand_pane_area {
-        if x >= hand_area.x
-            && x < hand_area.x + hand_area.width
-            && y >= hand_area.y
-            && y < hand_area.y + hand_area.height
-        {
-            state.focused_pane = FocusedPane::Hand;
-            // Initialize selection to first card if hand not empty
-            let hand = view.hand();
-            if !hand.is_empty() && state.selected_card_in_hand.is_none() {
-                state.selected_card_in_hand = Some(0);
-                state.selected_card_id = Some(hand[0]);
-            }
-            return true;
-        }
-    }
-
-    // Check if any entity was clicked
+pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &GameStateView) -> bool {
+    // Check entity positions FIRST (more specific than pane areas)
+    // This allows clicking on individual cards within panes
     for entity_pos in &state.entity_positions {
         if x >= entity_pos.area.x
             && x < entity_pos.area.x + entity_pos.area.width
@@ -534,6 +500,37 @@ pub fn handle_mouse_click(
                 }
             }
 
+            return true;
+        }
+    }
+
+    // Check pane areas (fallback for clicks on empty areas within panes)
+    // Check Actions pane
+    if let Some(actions_area) = state.actions_pane_area {
+        if x >= actions_area.x
+            && x < actions_area.x + actions_area.width
+            && y >= actions_area.y
+            && y < actions_area.y + actions_area.height
+        {
+            state.focused_pane = FocusedPane::Actions;
+            return true;
+        }
+    }
+
+    // Check Hand pane (for clicks on empty space in hand)
+    if let Some(hand_area) = state.hand_pane_area {
+        if x >= hand_area.x
+            && x < hand_area.x + hand_area.width
+            && y >= hand_area.y
+            && y < hand_area.y + hand_area.height
+        {
+            state.focused_pane = FocusedPane::Hand;
+            // Initialize selection to first card if hand not empty
+            let hand = view.hand();
+            if !hand.is_empty() && state.selected_card_in_hand.is_none() {
+                state.selected_card_in_hand = Some(0);
+                state.selected_card_id = Some(hand[0]);
+            }
             return true;
         }
     }

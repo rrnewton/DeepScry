@@ -95,36 +95,21 @@
             /* When header is hidden, take full viewport */
             min-height: 0;
         }
-        /* RatZilla renders terminal content here */
+        /* RatZilla renders terminal content here
+           RatZilla hardcodes: cols = innerWidth/10, rows = innerHeight/20
+           Font 16px with 20px line-height matches RatZilla's 10x20 cell assumption.
+           TIP: Use browser zoom (Ctrl+/-) to get more/fewer rows and columns! */
         #ratzilla-terminal {
             position: absolute;
             top: 0;
             left: 0;
             width: 100vw;
             height: 100vh;
-            font-family: 'Consolas', 'Monaco', 'Fira Mono', monospace;
-            /* RatZilla calculates terminal size using window.innerWidth/10 and window.innerHeight/20
-               These magic numbers assume roughly 10px wide and 20px tall characters.
-               Match font metrics to RatZilla's expectations for optimal fill. */
-            font-size: 14px;
-            line-height: 1.25;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 16px;
+            line-height: 20px;
             background: #000;
-            /* Ensure content fills viewport - RatZilla's grid will expand to container */
-            display: flex;
-            flex-direction: column;
-        }
-        /* RatZilla creates a div.grid child - make it fill the container */
-        #ratzilla-terminal > div {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-        }
-        /* Each row should contribute equally to filling the viewport */
-        #ratzilla-terminal > div > div {
-            flex: 1;
-            display: flex;
-            align-items: stretch;
+            overflow: hidden;
         }
         .loading {
             text-align: center;
@@ -197,7 +182,7 @@
             </select>
         </div>
         <button id="btn-launch">Launch Fancy TUI</button>
-        <span class="help-text">Keys: Space=turn, A=auto, Q=exit, Tab=cycle panes</span>
+        <span class="help-text">Keys: Space=turn, A=auto, Q=exit, Tab=cycle | Zoom: Ctrl+/- for more/less space</span>
     </div>
 
     <div class="tui-container">

@@ -84,11 +84,7 @@ struct WasmFancyTuiState {
 
 impl WasmFancyTuiState {
     /// Create a new WASM fancy TUI state from a GameState
-    fn new(
-        game: GameState,
-        p1_controller_type: WasmControllerType,
-        p2_controller_type: WasmControllerType,
-    ) -> Self {
+    fn new(game: GameState, p1_controller_type: WasmControllerType, p2_controller_type: WasmControllerType) -> Self {
         // Create renderer for player 1's perspective
         let player_id = game.players[0].id;
         let renderer = FancyTuiRenderer::new(player_id, true);
@@ -137,11 +133,7 @@ impl WasmFancyTuiState {
     }
 
     /// Create a controller based on type
-    fn create_controller(
-        &self,
-        controller_type: WasmControllerType,
-        player_id: PlayerId,
-    ) -> Box<dyn PlayerController> {
+    fn create_controller(&self, controller_type: WasmControllerType, player_id: PlayerId) -> Box<dyn PlayerController> {
         match controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
@@ -169,11 +161,7 @@ pub fn launch_fancy_tui(
     let game = create_game_from_database(card_db, p1_deck_name, p2_deck_name, starting_life, seed)?;
 
     // Create the shared state
-    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(
-        game,
-        p1_controller,
-        p2_controller,
-    )));
+    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(game, p1_controller, p2_controller)));
 
     // Create the RatZilla backend, targeting our specific container element
     let backend = DomBackend::new_by_id("ratzilla-terminal")
@@ -262,9 +250,7 @@ pub fn launch_fancy_tui(
         let state = state.clone();
         move |mouse_event| {
             // Only handle left mouse button press
-            if mouse_event.button != MouseButton::Left
-                || mouse_event.event != MouseEventKind::Pressed
-            {
+            if mouse_event.button != MouseButton::Left || mouse_event.event != MouseEventKind::Pressed {
                 return;
             }
 

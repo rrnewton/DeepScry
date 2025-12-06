@@ -166,9 +166,7 @@ impl BattlefieldEntity for Entity {
                     card_name.clone()
                 }
             }
-            Entity::HandCard { card_id, .. } => {
-                view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id))
-            }
+            Entity::HandCard { card_id, .. } => view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id)),
         }
     }
 
