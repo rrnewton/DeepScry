@@ -2,5 +2,5 @@ pkg/
 node_modules/
 package-lock.json
 data/
-screenshots/*.png
+screenshots/
 server.log

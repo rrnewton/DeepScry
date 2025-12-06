@@ -71,3 +71,15 @@ screenshots/*.txt
 # WASM builds
 web/
 rustc-ice-*.txt
+
+# Vendor directory (external dependencies copied locally)
+vendor/
+
+# Font files (large binaries, should use system fonts or CDN)
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# Temporary image files
+bad_fonts_mtg_tui.png
