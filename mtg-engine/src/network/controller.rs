@@ -8,8 +8,31 @@ use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use crate::network::protocol::ChoiceType;
+use crate::undo::GameAction;
+use crate::zones::Zone;
 use smallvec::SmallVec;
 use std::sync::mpsc;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CARD REVEAL INFO
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Information about a card that was revealed since the player's last choice
+///
+/// This captures card movements from hidden zones (library) to visible zones.
+/// The server uses this to send `CardRevealed` messages to the client before
+/// sending the next `ChoiceRequest`.
+#[derive(Debug, Clone)]
+pub struct CardRevealInfo {
+    /// The card that was revealed
+    pub card_id: CardId,
+    /// Who owns the card
+    pub owner: PlayerId,
+    /// Zone the card moved from (typically Library)
+    pub from_zone: Zone,
+    /// Zone the card moved to
+    pub to_zone: Zone,
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CHANNEL TYPES
@@ -26,6 +49,11 @@ pub struct ChoiceRequest {
     pub options: Vec<String>,
     /// Game state hash (excluding hidden info)
     pub state_hash: u64,
+    /// Cards revealed since this player's last choice
+    ///
+    /// The server should send `CardRevealed` messages for these before
+    /// sending the `ChoiceRequest` to the client.
+    pub reveals: Vec<CardRevealInfo>,
 }
 
 /// Response received from the network handler
@@ -113,19 +141,25 @@ impl NetworkController {
     }
 
     /// Send a choice request and wait for response
+    ///
+    /// This also collects any card reveals since this player's last choice
+    /// and includes them in the request.
     fn request_choice(
-        &mut self,
+        &self,
+        view: &GameStateView,
         choice_type: ChoiceType,
         options: Vec<String>,
         state_hash: u64,
     ) -> Result<usize, NetworkError> {
-        self.choice_seq += 1;
+        // Collect reveals since last choice
+        let reveals = self.collect_reveals_since_last_choice(view);
 
         let request = ChoiceRequest {
-            choice_seq: self.choice_seq,
+            choice_seq: self.choice_seq + 1,
             choice_type,
             options: options.clone(),
             state_hash,
+            reveals,
         };
 
         // Send request
@@ -140,9 +174,9 @@ impl NetworkController {
             .map_err(|e| NetworkError::ChannelError(e.to_string()))?;
 
         // Verify sequence number
-        if response.choice_seq != self.choice_seq {
+        if response.choice_seq != self.choice_seq + 1 {
             return Err(NetworkError::SequenceMismatch {
-                expected: self.choice_seq,
+                expected: self.choice_seq + 1,
                 got: response.choice_seq,
             });
         }
@@ -156,6 +190,11 @@ impl NetworkController {
         }
 
         Ok(response.choice_index)
+    }
+
+    /// Increment choice sequence after a successful choice
+    fn increment_choice_seq(&mut self) {
+        self.choice_seq += 1;
     }
 
     /// Format a SpellAbility for display (matching format_choice_menu)
@@ -180,6 +219,58 @@ impl NetworkController {
     fn format_card(&self, view: &GameStateView, card_id: CardId) -> String {
         view.card_name(card_id)
             .unwrap_or_else(|| format!("Card #{}", card_id.as_u32()))
+    }
+
+    /// Collect card reveals since this player's last choice
+    ///
+    /// Scans the undo log backwards from the current position until we find
+    /// a `ChoicePoint` for this player (or reach the start of the log).
+    /// Returns all `MoveCard` actions from Library that this player should see.
+    ///
+    /// A player sees a reveal if:
+    /// - They own the card (e.g., their own draw)
+    /// - The card moved to a public zone (battlefield, graveyard, stack, exile)
+    fn collect_reveals_since_last_choice(&self, view: &GameStateView) -> Vec<CardRevealInfo> {
+        let actions = view.undo_log_actions();
+        let mut reveals = Vec::new();
+
+        // Scan backwards from the end of the log
+        for action in actions.iter().rev() {
+            match action {
+                // Stop when we hit this player's last choice
+                GameAction::ChoicePoint { player_id, .. } if *player_id == self.player_id => {
+                    break;
+                }
+                // Collect card moves from library
+                GameAction::MoveCard {
+                    card_id,
+                    from_zone: Zone::Library,
+                    to_zone,
+                    owner,
+                } => {
+                    // Player sees reveal if:
+                    // 1. They own the card (their draw)
+                    // 2. Card went to a public zone (all players see)
+                    let is_public_zone =
+                        matches!(to_zone, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
+                    let is_own_card = *owner == self.player_id;
+
+                    if is_own_card || is_public_zone {
+                        reveals.push(CardRevealInfo {
+                            card_id: *card_id,
+                            owner: *owner,
+                            from_zone: Zone::Library,
+                            to_zone: *to_zone,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Reverse to get chronological order
+        reveals.reverse();
+        reveals
     }
 
     /// Compute a simple state hash for verification
@@ -221,9 +312,13 @@ impl PlayerController for NetworkController {
             available_count: available.len(),
         };
 
-        match self.request_choice(choice_type, options, state_hash) {
-            Ok(0) => ChoiceResult::Ok(None), // Pass priority
+        match self.request_choice(view, choice_type, options, state_hash) {
+            Ok(0) => {
+                self.increment_choice_seq();
+                ChoiceResult::Ok(None) // Pass priority
+            }
             Ok(idx) => {
+                self.increment_choice_seq();
                 // Subtract 1 because option 0 is "Pass priority"
                 let ability_idx = idx - 1;
                 if ability_idx < available.len() {
@@ -262,8 +357,9 @@ impl PlayerController for NetworkController {
             target_count: 1, // FIXME-UNFINISHED: Support multiple targets
         };
 
-        match self.request_choice(choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash) {
             Ok(idx) => {
+                self.increment_choice_seq();
                 if idx < valid_targets.len() {
                     ChoiceResult::Ok(SmallVec::from_slice(&[valid_targets[idx]]))
                 } else {
@@ -294,8 +390,9 @@ impl PlayerController for NetworkController {
         let choice_type = ChoiceType::ManaSources { cost: *cost };
 
         // FIXME-UNFINISHED: Needs multi-select for paying costs with multiple sources
-        match self.request_choice(choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash) {
             Ok(idx) => {
+                self.increment_choice_seq();
                 if idx < available_sources.len() {
                     ChoiceResult::Ok(SmallVec::from_slice(&[available_sources[idx]]))
                 } else {
@@ -327,9 +424,13 @@ impl PlayerController for NetworkController {
         };
 
         // FIXME-UNFINISHED: Support multi-select for attackers (currently single selection)
-        match self.request_choice(choice_type, options, state_hash) {
-            Ok(0) => ChoiceResult::Ok(SmallVec::new()), // No attackers
+        match self.request_choice(view, choice_type, options, state_hash) {
+            Ok(0) => {
+                self.increment_choice_seq();
+                ChoiceResult::Ok(SmallVec::new()) // No attackers
+            }
             Ok(idx) => {
+                self.increment_choice_seq();
                 let creature_idx = idx - 1;
                 if creature_idx < available_creatures.len() {
                     ChoiceResult::Ok(SmallVec::from_slice(&[available_creatures[creature_idx]]))
@@ -370,9 +471,13 @@ impl PlayerController for NetworkController {
         };
 
         // FIXME-UNFINISHED: Support multi-select for blockers (currently single selection)
-        match self.request_choice(choice_type, options, state_hash) {
-            Ok(0) => ChoiceResult::Ok(SmallVec::new()), // No blockers
+        match self.request_choice(view, choice_type, options, state_hash) {
+            Ok(0) => {
+                self.increment_choice_seq();
+                ChoiceResult::Ok(SmallVec::new()) // No blockers
+            }
             Ok(idx) => {
+                self.increment_choice_seq();
                 // Decode blocker-attacker pair from index
                 let pair_idx = idx - 1;
                 let blocker_idx = pair_idx / attackers.len();
@@ -413,8 +518,9 @@ impl PlayerController for NetworkController {
         };
 
         // FIXME-UNFINISHED: Support full ordering of all blockers (only picks first currently)
-        match self.request_choice(choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash) {
             Ok(idx) => {
+                self.increment_choice_seq();
                 if idx < blockers.len() {
                     // Return all blockers with the chosen one first
                     let mut result = SmallVec::new();
@@ -453,8 +559,9 @@ impl PlayerController for NetworkController {
         let choice_type = ChoiceType::Discard { count };
 
         // FIXME-UNFINISHED: Support multi-select for discarding multiple cards
-        match self.request_choice(choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash) {
             Ok(idx) => {
+                self.increment_choice_seq();
                 if idx < hand.len() {
                     ChoiceResult::Ok(SmallVec::from_slice(&[hand[idx]]))
                 } else {
@@ -481,9 +588,13 @@ impl PlayerController for NetworkController {
             valid_count: valid_cards.len(),
         };
 
-        match self.request_choice(choice_type, options, state_hash) {
-            Ok(0) => ChoiceResult::Ok(None), // Declined to find
+        match self.request_choice(view, choice_type, options, state_hash) {
+            Ok(0) => {
+                self.increment_choice_seq();
+                ChoiceResult::Ok(None) // Declined to find
+            }
             Ok(idx) => {
+                self.increment_choice_seq();
                 let card_idx = idx - 1;
                 if card_idx < valid_cards.len() {
                     ChoiceResult::Ok(Some(valid_cards[card_idx]))
@@ -527,6 +638,17 @@ impl PlayerController for NetworkController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::GameState;
+
+    /// Create a minimal game state for testing
+    fn create_test_game_state() -> GameState {
+        GameState::new_two_player_with_capacity(
+            "TestPlayer1".to_string(),
+            "TestPlayer2".to_string(),
+            20,
+            60, // deck capacity
+        )
+    }
 
     #[test]
     fn test_network_controller_creation() {
@@ -544,13 +666,19 @@ mod tests {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
 
-        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+
+        // Create a test game state and view
+        let game = create_test_game_state();
+        let view = GameStateView::new(&game, PlayerId::new(1));
 
         // Spawn a thread to simulate the network handler
         std::thread::spawn(move || {
             let request: ChoiceRequest = request_rx.recv().unwrap();
             assert_eq!(request.choice_seq, 1);
             assert_eq!(request.options.len(), 3);
+            // Verify reveals field exists (should be empty for this test)
+            assert!(request.reveals.is_empty());
 
             response_tx
                 .send(ChoiceResponse {
@@ -562,10 +690,9 @@ mod tests {
 
         let options = vec!["Option A".to_string(), "Option B".to_string(), "Option C".to_string()];
 
-        let result = controller.request_choice(ChoiceType::Priority { available_count: 2 }, options, 0x12345678);
+        let result = controller.request_choice(&view, ChoiceType::Priority { available_count: 2 }, options, 0x12345678);
 
         assert_eq!(result.unwrap(), 2);
-        assert_eq!(controller.choice_seq, 1);
     }
 
     #[test]
@@ -573,7 +700,11 @@ mod tests {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
 
-        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+
+        // Create a test game state and view
+        let game = create_test_game_state();
+        let view = GameStateView::new(&game, PlayerId::new(1));
 
         std::thread::spawn(move || {
             let _request: ChoiceRequest = request_rx.recv().unwrap();
@@ -586,8 +717,12 @@ mod tests {
                 .unwrap();
         });
 
-        let result =
-            controller.request_choice(ChoiceType::Priority { available_count: 0 }, vec!["Pass".to_string()], 0);
+        let result = controller.request_choice(
+            &view,
+            ChoiceType::Priority { available_count: 0 },
+            vec!["Pass".to_string()],
+            0,
+        );
 
         match result {
             Err(NetworkError::SequenceMismatch { expected: 1, got: 999 }) => {}
@@ -600,7 +735,11 @@ mod tests {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
 
-        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+
+        // Create a test game state and view
+        let game = create_test_game_state();
+        let view = GameStateView::new(&game, PlayerId::new(1));
 
         std::thread::spawn(move || {
             let _request: ChoiceRequest = request_rx.recv().unwrap();
@@ -613,6 +752,7 @@ mod tests {
         });
 
         let result = controller.request_choice(
+            &view,
             ChoiceType::Priority { available_count: 1 },
             vec!["Pass".to_string(), "Play land".to_string()],
             0,

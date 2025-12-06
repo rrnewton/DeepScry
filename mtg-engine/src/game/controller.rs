@@ -493,6 +493,14 @@ impl<'a> GameStateView<'a> {
         self.game.undo_log.len()
     }
 
+    /// Get read-only access to undo log actions
+    ///
+    /// Used by NetworkController to scan for card reveals since last choice.
+    /// Returns a slice of all game actions in chronological order.
+    pub fn undo_log_actions(&self) -> &[crate::undo::GameAction] {
+        self.game.undo_log.actions()
+    }
+
     /// Get the number of controller choices made
     ///
     /// Returns the count of times a controller has made a choice.

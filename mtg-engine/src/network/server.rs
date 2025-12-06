@@ -10,8 +10,9 @@
 use crate::core::PlayerId;
 use crate::game::{GameEndReason, GameLoop, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
-use crate::network::protocol::{CardReveal, ClientMessage, DeckListInfo, DeckSubmission, ServerMessage};
-use crate::network::{ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
+use crate::network::protocol::{CardReveal, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage};
+use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
+use crate::zones::Zone;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
@@ -581,7 +582,7 @@ async fn run_game(
 async fn handle_player_websocket(
     mut conn: PlayerConnection,
     mut ws_rx: futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
-    _game: Arc<Mutex<GameState>>,
+    game: Arc<Mutex<GameState>>,
     _opponent_id: PlayerId,
 ) -> Result<()> {
     loop {
@@ -609,6 +610,21 @@ async fn handle_player_websocket(
             request = conn.request_rx.recv() => {
                 match request {
                     Some(choice_request) => {
+                        // Send CardRevealed messages for each reveal before the choice
+                        if !choice_request.reveals.is_empty() {
+                            let game_guard = game.lock().await;
+                            for reveal_info in &choice_request.reveals {
+                                if let Some(card_reveal) = build_card_reveal(&game_guard, reveal_info) {
+                                    let reason = zone_to_reveal_reason(reveal_info.to_zone);
+                                    conn.send(&ServerMessage::CardRevealed {
+                                        owner: reveal_info.owner,
+                                        card: card_reveal,
+                                        reason,
+                                    }).await?;
+                                }
+                            }
+                        }
+
                         // Send ChoiceRequest to client
                         conn.send(&ServerMessage::ChoiceRequest {
                             choice_seq: choice_request.choice_seq,
@@ -758,6 +774,52 @@ fn compute_network_hash(game: &GameState) -> u64 {
         hash = hash.wrapping_mul(31).wrapping_add(player.life as u64);
     }
     hash
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REVEAL HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Build a CardReveal from a CardRevealInfo by looking up card details in game state
+fn build_card_reveal(game: &GameState, info: &CardRevealInfo) -> Option<CardReveal> {
+    let card = game.cards.try_get(info.card_id)?;
+
+    // Build type line from types and subtypes
+    let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
+    let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
+    let type_line = if subtypes_str.is_empty() {
+        types_str.join(" ")
+    } else {
+        format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
+    };
+
+    Some(CardReveal {
+        card_id: info.card_id,
+        name: card.name.to_string(),
+        mana_cost: card.mana_cost.to_string(),
+        type_line,
+        text: card.text.clone(),
+        pt: if card.is_creature() {
+            match (card.base_power(), card.base_toughness()) {
+                (Some(p), Some(t)) => Some((p as i32, t as i32)),
+                _ => None,
+            }
+        } else {
+            None
+        },
+    })
+}
+
+/// Convert a zone to the appropriate RevealReason
+fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
+    match zone {
+        Zone::Hand => RevealReason::Draw,
+        Zone::Battlefield | Zone::Stack => RevealReason::Played,
+        Zone::Graveyard => RevealReason::Effect, // Mill or other effects
+        Zone::Exile => RevealReason::Effect,
+        Zone::Library => RevealReason::Searched, // Returned to library (unusual)
+        Zone::Command => RevealReason::Effect,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
