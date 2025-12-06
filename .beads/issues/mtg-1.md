@@ -23,6 +23,7 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-121: Fancy TUI enhancements and polish
 - mtg-143: Missing player choice opportunities tracking
 - mtg-147: Affected$ selector parsing improvements
+- mtg-hcahb: Web GUI implementation with shared TUI/GUI architecture
 
 **Current status as of 2025-12-04_#1141(00682bc):**
 - Tests: 597 passing (nextest, all categories)
