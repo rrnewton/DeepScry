@@ -85,12 +85,51 @@ of reading from the stale game state mutex.
 This ensures the server validates against the actual action_count that was
 communicated to the client, not the stale value from before the GameLoop started.
 
+## Completed (2025-12-06_#1189)
+
+- [x] Fixed server initialization to match client pattern for synchronized GameLoops
+- [x] Enable the `test_run_game_with_random_controllers` test (synchronized GameLoop mode)
+
+### Root Cause Analysis
+
+The previous fix (#1188) addressed the stale game state mutex issue, but the root cause
+of the action_count divergence (client=17 vs server=14) remained. Investigation showed:
+
+**Server flow** (before fix):
+1. `draw_opening_hand()` called BEFORE GameLoop starts
+2. Adds 14 `MoveCard` actions to undo_log
+3. Game cloned for GameLoop (undo_log has 14 entries)
+4. GameLoop sees non-empty undo_log → `is_resuming_from_snapshot = true`
+5. GameLoop **skips** setup block entirely
+
+**Client flow**:
+1. Fresh GameState with empty undo_log
+2. Libraries converted to Remote mode
+3. GameLoop with `.skip_opening_hands()` flag
+4. GameLoop sees empty undo_log → `is_resuming_from_snapshot = false`
+5. GameLoop **enters** setup block, draws 14 cards from reveal queue
+6. Also logs step advance actions (Untap→Upkeep, Upkeep→Draw, Draw→Main1)
+
+**The difference of 3 (17 - 14)** = step advance actions logged only by client.
+
+### Fix
+
+1. Changed `draw_opening_hand()` to `peek_opening_hand()` in server.rs
+   - Server now **peeks** at top 7 cards without drawing
+   - Game state remains unchanged (empty undo_log)
+
+2. Added `.skip_opening_hands()` to server's GameLoop builder
+   - Both server and client GameLoops now use the same initialization path
+   - Both start with empty undo_log
+   - Both draw opening hands during `setup_game()`
+   - Both log identical actions
+
+This ensures both server and client GameLoops produce identical undo_logs.
+
 ## Remaining Tasks
 
 - [ ] Remove the unconditional broadcast hack from server.rs
-- [ ] Implement proper synchronization points based on action counts
-- [ ] Add tests for action count synchronization
-- [ ] Enable the `test_run_game_with_random_controllers` test (synchronized GameLoop mode)
+- [ ] Implement 3-way action log verification at end of game (server + 2 clients)
 
 ## Related Files
 

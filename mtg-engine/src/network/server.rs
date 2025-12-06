@@ -482,9 +482,12 @@ async fn run_game(
     game.shuffle_library(p1_id);
     game.shuffle_library(p2_id);
 
-    // Draw opening hands
-    let p1_hand = draw_opening_hand(&mut game, p1_id)?;
-    let p2_hand = draw_opening_hand(&mut game, p2_id)?;
+    // Peek at opening hands WITHOUT drawing
+    // We don't draw yet because that would add actions to undo_log before GameLoop starts.
+    // Both server and client GameLoops need to start with identical (empty) undo_logs
+    // so they can draw synchronously and produce matching action sequences.
+    let p1_hand = peek_opening_hand(&game, p1_id)?;
+    let p2_hand = peek_opening_hand(&game, p2_id)?;
 
     // Compute initial state hash
     let initial_hash = compute_network_hash(&game);
@@ -894,8 +897,15 @@ fn run_game_loop(
         guard.clone()
     };
 
-    // Create game loop
-    let mut game_loop = GameLoop::new(&mut game);
+    log::debug!(
+        "Server GameLoop: undo_log.len() = {} (should be 0 for synchronized mode)",
+        game.undo_log.len()
+    );
+
+    // Create game loop with skip_opening_hands() to match client behavior.
+    // Both server and client will draw opening hands during GameLoop::setup_game(),
+    // ensuring identical undo_log entries and synchronized action_counts.
+    let mut game_loop = GameLoop::new(&mut game).skip_opening_hands();
 
     // Run until game ends
     let result = game_loop.run_game(&mut p1_controller, &mut p2_controller);
@@ -906,40 +916,50 @@ fn run_game_loop(
     }
 }
 
-/// Draw opening hand for a player and return CardReveals
-fn draw_opening_hand(game: &mut GameState, player_id: PlayerId) -> Result<Vec<CardReveal>> {
+/// Peek at opening hand for a player and return CardReveals WITHOUT drawing
+///
+/// This looks at the top 7 cards of the library without actually drawing them.
+/// The drawing will happen later when the GameLoop runs with skip_opening_hands().
+/// This ensures both server and client GameLoops start with identical empty undo_logs.
+fn peek_opening_hand(game: &GameState, player_id: PlayerId) -> Result<Vec<CardReveal>> {
     let mut hand = Vec::new();
 
-    // Draw 7 cards
-    for _ in 0..7 {
-        if let Ok(Some(card_id)) = game.draw_card(player_id) {
-            // Get card info for reveal
-            if let Ok(card) = game.cards.get(card_id) {
-                // Build type line from types and subtypes
-                let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-                let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
-                let type_line = if subtypes_str.is_empty() {
-                    types_str.join(" ")
-                } else {
-                    format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
-                };
+    // Get the library for this player
+    let zones = game
+        .get_player_zones(player_id)
+        .ok_or_else(|| anyhow!("Player {:?} not found", player_id))?;
 
-                hand.push(CardReveal {
-                    card_id,
-                    name: card.name.to_string(),
-                    mana_cost: card.mana_cost.to_string(),
-                    type_line,
-                    text: card.text.clone(),
-                    pt: if card.is_creature() {
-                        match (card.base_power(), card.base_toughness()) {
-                            (Some(p), Some(t)) => Some((p as i32, t as i32)),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    },
-                });
-            }
+    // Peek at top 7 cards (library.cards stores bottom-to-top, so we take from the end)
+    let lib_cards = &zones.library.cards;
+    let start_idx = lib_cards.len().saturating_sub(7);
+
+    for &card_id in lib_cards[start_idx..].iter().rev() {
+        // Get card info for reveal
+        if let Ok(card) = game.cards.get(card_id) {
+            // Build type line from types and subtypes
+            let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
+            let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
+            let type_line = if subtypes_str.is_empty() {
+                types_str.join(" ")
+            } else {
+                format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
+            };
+
+            hand.push(CardReveal {
+                card_id,
+                name: card.name.to_string(),
+                mana_cost: card.mana_cost.to_string(),
+                type_line,
+                text: card.text.clone(),
+                pt: if card.is_creature() {
+                    match (card.base_power(), card.base_toughness()) {
+                        (Some(p), Some(t)) => Some((p as i32, t as i32)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                },
+            });
         }
     }
 

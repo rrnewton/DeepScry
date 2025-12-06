@@ -1185,22 +1185,7 @@ mod websocket_integration {
     /// - RandomController makes decisions through NetworkLocalController
     /// - RemoteController receives opponent choices
     /// - Game runs to completion and returns a winner
-    ///
-    /// NOTE: This test is in progress for the synchronized GameLoop mode.
-    ///
-    /// Current status:
-    /// - Controller ordering is now correct (P1/P2 controllers passed in right order)
-    /// - OpponentChoice broadcasting works for choice synchronization
-    /// - Test progresses through early turns (Turn 1-2 work)
-    ///
-    /// Remaining issues for synchronized GameLoop mode:
-    /// 1. Server doesn't send CardRevealed during normal gameplay draws
-    /// 2. Client's remote library can't draw without queued reveals
-    /// 3. Shadow game state shows opponent hand as 0 (display only, not blocking)
-    ///
-    /// The message-based mode (`run_game_message_based`) is the simpler alternative
-    /// that works correctly - see `test_full_game_always_pass` for a working example.
-    #[ignore = "In progress - synchronized GameLoop mode needs CardRevealed for draws"]
+    /// - Action count synchronization between server and clients
     #[tokio::test]
     async fn test_run_game_with_random_controllers() {
         use mtg_forge_rs::game::RandomController;
