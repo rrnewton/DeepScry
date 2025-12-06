@@ -810,7 +810,7 @@ impl NetworkClient {
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
         use crate::network::{
-            LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteChoice, RemoteController,
+            LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteController, RemoteMessage,
         };
         use std::sync::mpsc;
         use tokio::sync::mpsc as tokio_mpsc;
@@ -834,7 +834,7 @@ impl NetworkClient {
         // WebSocket -> Local controller (acknowledgments)
         let (local_msg_tx, local_msg_rx) = mpsc::channel::<LocalControllerMessage>();
         // WebSocket -> Remote controller (opponent choices)
-        let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteChoice>();
+        let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteMessage>();
         // Game end signal: (winner, server_action_count)
         let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<(Option<PlayerId>, u64)>(1);
 
@@ -898,7 +898,7 @@ impl NetworkClient {
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_index, description, .. }) => {
                                         log::debug!("WebSocket: opponent chose {} (idx={})", description, choice_index);
-                                        let _ = remote_choice_tx.send(RemoteChoice {
+                                        let _ = remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_index,
                                             description,
                                         });
@@ -940,6 +940,8 @@ impl NetworkClient {
                                     }
                                     Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
                                         log::info!("Game ended, winner: {:?}, action_count: {}", winner, action_count);
+                                        // Signal RemoteController to exit gracefully before we drop the channel
+                                        let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
                                         let _ = game_end_tx.send((winner, action_count)).await;
                                         return;
                                     }

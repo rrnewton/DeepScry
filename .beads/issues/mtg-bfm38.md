@@ -126,19 +126,21 @@ See markers in code for stubbed functionality:
 
 ### Flaky test_run_game_with_random_controllers (2025-12-06)
 
-The `test_run_game_with_random_controllers` test is flaky due to a race condition in game-end handling:
+The `test_run_game_with_random_controllers` test is flaky (~40% pass rate) due to timing issues.
 
-1. Server sends `GameEnded` to both clients
-2. One client's WebSocket handler exits, dropping `remote_choice_tx`
-3. Other client's GameLoop may still be waiting for opponent choice via RemoteController
-4. RemoteController returns `ExitGame` when its channel closes
-5. This manifests as "Game exit requested by controller" error
+**Implemented fix (2025-12-06_#1251)**: Added `RemoteMessage::GameEnded` signal
+- `RemoteMessage` enum replaces struct with `Choice` and `GameEnded` variants
+- WebSocket handler sends `RemoteMessage::GameEnded` through `remote_choice_tx` before exiting
+- `RemoteController` handles `GameEnded` gracefully (no disconnect warning)
+- This fixes the game-end race condition when server announces winner
 
-The action_count sync issue (mtg-akjrb) is fully fixed - the infrastructure correctly
-validates action counts between server and clients. The remaining issue is coordinating
-graceful shutdown between the async WebSocket handler and blocking game thread.
+**Remaining issue**: The test still fails sometimes during gameplay (before game ends).
+The root cause appears to be timing between concurrent client GameLoops and the server's
+message routing. When one client's GameLoop aborts its WebSocket handler (e.g., when
+the game_result future wins the select! race), it can drop the channel before the
+other client receives all expected `OpponentChoice` messages.
 
-The test is marked with `#[ignore]` until this race condition is fixed.
+The test remains marked with `#[ignore]` while we investigate further.
 
 ## Test Strategy
 

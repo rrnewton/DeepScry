@@ -26,14 +26,29 @@ use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
 use std::sync::mpsc;
 
-/// A choice received from the server for the opponent
+/// A message received from the server for the opponent controller.
+///
+/// This can be either an actual choice from the opponent, or a signal
+/// that the game has ended (allowing graceful shutdown without treating
+/// channel close as a disconnect error).
 #[derive(Debug, Clone)]
-pub struct RemoteChoice {
-    /// The choice index selected by the opponent
-    pub choice_index: usize,
-    /// Human-readable description of the choice
-    pub description: String,
+pub enum RemoteMessage {
+    /// An actual choice from the opponent
+    Choice {
+        /// The choice index selected by the opponent
+        choice_index: usize,
+        /// Human-readable description of the choice
+        description: String,
+    },
+    /// Signal that the game has ended normally
+    ///
+    /// This allows the RemoteController to exit gracefully without
+    /// logging a disconnect warning or treating it as an error.
+    GameEnded,
 }
+
+/// Legacy type alias for backward compatibility
+pub type RemoteChoice = RemoteMessage;
 
 /// A controller that receives opponent choices from the network.
 ///
@@ -43,9 +58,11 @@ pub struct RemoteChoice {
 pub struct RemoteController {
     player_id: PlayerId,
     /// Receiver for opponent choices from the WebSocket handler
-    choice_rx: mpsc::Receiver<RemoteChoice>,
+    choice_rx: mpsc::Receiver<RemoteMessage>,
     /// Whether we've been disconnected from the server
     disconnected: bool,
+    /// Whether the game has ended normally (not a disconnect)
+    game_ended: bool,
 }
 
 impl RemoteController {
@@ -54,11 +71,12 @@ impl RemoteController {
     /// # Arguments
     /// * `player_id` - The player ID this controller represents (the opponent)
     /// * `choice_rx` - Channel to receive opponent choices from the server
-    pub fn new(player_id: PlayerId, choice_rx: mpsc::Receiver<RemoteChoice>) -> Self {
+    pub fn new(player_id: PlayerId, choice_rx: mpsc::Receiver<RemoteMessage>) -> Self {
         Self {
             player_id,
             choice_rx,
             disconnected: false,
+            game_ended: false,
         }
     }
 
@@ -66,22 +84,33 @@ impl RemoteController {
     ///
     /// Returns the choice index, or signals disconnect if channel is closed.
     fn wait_for_choice(&mut self) -> ChoiceResult<usize> {
-        if self.disconnected {
+        if self.disconnected || self.game_ended {
             return ChoiceResult::ExitGame;
         }
 
         log::trace!("RemoteController {:?}: waiting for opponent choice", self.player_id);
         match self.choice_rx.recv() {
-            Ok(remote_choice) => {
+            Ok(RemoteMessage::Choice {
+                choice_index,
+                description,
+            }) => {
                 log::debug!(
                     "RemoteController: Opponent chose index {} ({})",
-                    remote_choice.choice_index,
-                    remote_choice.description
+                    choice_index,
+                    description
                 );
-                ChoiceResult::Ok(remote_choice.choice_index)
+                ChoiceResult::Ok(choice_index)
+            }
+            Ok(RemoteMessage::GameEnded) => {
+                log::debug!("RemoteController: Received game end signal, exiting gracefully");
+                self.game_ended = true;
+                ChoiceResult::ExitGame
             }
             Err(_) => {
-                log::warn!("RemoteController: Channel closed, opponent disconnected");
+                // Channel closed without GameEnded signal - this is an unexpected disconnect
+                if !self.game_ended {
+                    log::warn!("RemoteController: Channel closed unexpectedly, opponent disconnected");
+                }
                 self.disconnected = true;
                 ChoiceResult::ExitGame
             }
@@ -328,7 +357,7 @@ mod tests {
         let mut controller = RemoteController::new(EntityId::new(1), rx);
 
         // Send a choice
-        tx.send(RemoteChoice {
+        tx.send(RemoteMessage::Choice {
             choice_index: 2,
             description: "Cast Lightning Bolt".to_string(),
         })
@@ -337,6 +366,21 @@ mod tests {
         // Controller should receive it
         let result = controller.wait_for_choice();
         assert!(matches!(result, ChoiceResult::Ok(2)));
+    }
+
+    #[test]
+    fn test_remote_controller_game_ended() {
+        let (tx, rx) = mpsc::channel();
+        let mut controller = RemoteController::new(EntityId::new(1), rx);
+
+        // Send game ended signal
+        tx.send(RemoteMessage::GameEnded).unwrap();
+
+        // Controller should exit gracefully
+        let result = controller.wait_for_choice();
+        assert!(matches!(result, ChoiceResult::ExitGame));
+        assert!(controller.game_ended);
+        assert!(!controller.disconnected);
     }
 
     #[test]
