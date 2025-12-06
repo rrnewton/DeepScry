@@ -49,7 +49,7 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 - [x] mtg-3n53a: WebSocket server (CLOSED)
 - [x] mtg-9644z: Client with shadow state (CLOSED)
 - [ ] mtg-bfm38: E2E testing
-- [ ] mtg-akjrb: Action-count timestamped synchronization (protocol refactoring)
+- [x] mtg-akjrb: Action-count timestamped synchronization (protocol refactoring) (CLOSED)
 
 ## Dependencies
 

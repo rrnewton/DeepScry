@@ -1187,11 +1187,16 @@ mod websocket_integration {
     /// - Game runs to completion and returns a winner
     /// - Action count synchronization between server and clients
     ///
-    /// TODO(mtg-akjrb): Ignored due to action_count sync issue between server and client
-    /// when clients run their own GameLoops. The issue manifests as client=17 vs server=14.
-    /// See issue mtg-akjrb for details on the synchronization protocol.
+    /// NOTE: This test is flaky due to a race condition in game-end handling.
+    /// The action_count sync issue (mtg-akjrb) has been fixed, but there's a timing issue where:
+    /// 1. Server sends GameEnded to both clients
+    /// 2. One client's WebSocket handler exits, dropping remote_choice_tx
+    /// 3. Other client's GameLoop may still be waiting for opponent choice
+    /// 4. RemoteController returns ExitGame when channel closes
+    /// The fix requires coordinating graceful shutdown between async WebSocket handler
+    /// and blocking game thread.
     #[tokio::test]
-    #[ignore = "action_count sync issue - see mtg-akjrb"]
+    #[ignore = "flaky - race condition in game-end shutdown (action_count sync fixed)"]
     async fn test_run_game_with_random_controllers() {
         use mtg_forge_rs::game::RandomController;
         use mtg_forge_rs::network::{ClientConfig, NetworkClient};
