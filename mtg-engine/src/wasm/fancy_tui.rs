@@ -8,12 +8,13 @@
 //! - Uses RatZilla's DomBackend for fast DOM-based terminal rendering
 //! - Uses FancyTuiRenderer (shared with native) for all TUI drawing
 //! - Game state is managed via Rc<RefCell<>> for the render callback
+//! - Human input uses the interrupt pattern via run_until_input()
 
 use crate::core::PlayerId;
-use crate::game::controller::GameStateView;
+use crate::game::controller::{ChoiceContext, GameStateView};
 use crate::game::fancy_tui_events::{handle_key_event, handle_mouse_click, EventResult, KeyInput};
 use crate::game::logger::OutputMode;
-use crate::game::{FancyTuiRenderer, GameLoop, GameState, VerbosityLevel};
+use crate::game::{FancyTuiRenderer, GameLoop, GameLoopState, GameState, VerbosityLevel};
 use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
 use crate::loader::CardDefinition;
 use ratzilla::event::{KeyCode, MouseButton, MouseEventKind};
@@ -29,6 +30,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
+use super::human_controller::{PendingChoice, WasmHumanController};
 use super::{WasmCardDatabase, WasmControllerType};
 
 // Thread-local storage for the global TUI state (for button callbacks)
@@ -36,12 +38,42 @@ thread_local! {
     static GLOBAL_TUI_STATE: RefCell<Option<Rc<RefCell<WasmFancyTuiState>>>> = const { RefCell::new(None) };
 }
 
-/// Run one turn - called from JavaScript button
+/// Run one turn or continue game - called from JavaScript button
 #[wasm_bindgen]
 pub fn tui_run_turn() {
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
-            state.borrow_mut().run_one_turn();
+            state.borrow_mut().run_until_choice();
+        }
+    });
+}
+
+/// Select current choice - called from JavaScript or keyboard Enter
+#[wasm_bindgen]
+pub fn tui_select_choice() {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            state.borrow_mut().select_current_choice();
+        }
+    });
+}
+
+/// Move to previous choice in the list
+#[wasm_bindgen]
+pub fn tui_prev_choice() {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            state.borrow_mut().select_previous_choice();
+        }
+    });
+}
+
+/// Move to next choice in the list
+#[wasm_bindgen]
+pub fn tui_next_choice() {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            state.borrow_mut().select_next_choice();
         }
     });
 }
@@ -70,16 +102,24 @@ struct WasmFancyTuiState {
     p1_controller_type: WasmControllerType,
     /// Player 2 controller type
     p2_controller_type: WasmControllerType,
+    /// Human controller for player 1 (only if p1 is Human)
+    p1_human_controller: Option<WasmHumanController>,
     /// Current prompt text
     current_prompt: Option<String>,
     /// Current choices (text, is_highlighted)
     current_choices: Vec<(String, bool)>,
+    /// Pending choice context from game loop (waiting for human input)
+    pending_context: Option<ChoiceContext>,
+    /// Currently selected choice index (for keyboard navigation)
+    selected_choice_idx: usize,
     /// Whether the game is over
     game_over: bool,
     /// Error message if any
     error_message: Option<String>,
     /// Auto-run mode (AI vs AI)
     auto_run: bool,
+    /// Whether game setup (shuffle, draw opening hands) is done
+    setup_done: bool,
 }
 
 impl WasmFancyTuiState {
@@ -89,21 +129,41 @@ impl WasmFancyTuiState {
         let player_id = game.players[0].id;
         let renderer = FancyTuiRenderer::new(player_id, true);
 
+        // Create human controller if player 1 is human
+        let p1_human_controller = if p1_controller_type == WasmControllerType::Human {
+            Some(WasmHumanController::new(player_id))
+        } else {
+            None
+        };
+
+        let prompt = if p1_controller_type == WasmControllerType::Human {
+            "Game ready. Your turn to play!".to_string()
+        } else {
+            "Game ready. Press Space to advance turn.".to_string()
+        };
+
         Self {
             game,
             renderer,
             p1_controller_type,
             p2_controller_type,
-            current_prompt: Some("Game ready. Press Space to advance turn.".to_string()),
+            p1_human_controller,
+            current_prompt: Some(prompt),
             current_choices: Vec::new(),
+            pending_context: None,
+            selected_choice_idx: 0,
             game_over: false,
             error_message: None,
             auto_run: false,
+            setup_done: false,
         }
     }
 
-    /// Run one turn of the game with AI controllers
-    fn run_one_turn(&mut self) {
+    /// Run the game until input is needed or game ends
+    ///
+    /// For AI vs AI games, this runs one full turn.
+    /// For human player games, this runs until a choice is needed.
+    fn run_until_choice(&mut self) {
         if self.game_over {
             return;
         }
@@ -112,18 +172,49 @@ impl WasmFancyTuiState {
         let p2_id = self.game.players[1].id;
 
         // Create controllers based on type
-        let mut p1_controller = self.create_controller(self.p1_controller_type, p1_id);
-        let mut p2_controller = self.create_controller(self.p2_controller_type, p2_id);
+        // If player 1 is human, we use the stored controller to preserve pending_choice
+        let mut p2_controller = self.create_ai_controller(self.p2_controller_type, p2_id);
 
-        // Run one turn using the GameLoop
-        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+        // Run using run_until_input for proper human input support
+        let result = if self.p1_controller_type == WasmControllerType::Human {
+            // Human player - use run_until_input with stored controller
+            if let Some(ref mut human) = self.p1_human_controller {
+                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                game_loop.run_until_input(human, p2_controller.as_mut())
+            } else {
+                // Shouldn't happen, but handle gracefully
+                self.error_message = Some("Human controller not initialized".to_string());
+                return;
+            }
+        } else {
+            // AI vs AI - run one turn at a time
+            let mut p1_controller = self.create_ai_controller(self.p1_controller_type, p1_id);
+            let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+            game_loop.run_until_input(p1_controller.as_mut(), p2_controller.as_mut())
+        };
 
-        match game_loop.run_turns(p1_controller.as_mut(), p2_controller.as_mut(), 1) {
-            Ok(result) => {
-                if result.winner.is_some() {
-                    self.game_over = true;
-                    self.current_prompt = Some("Game Over!".to_string());
+        match result {
+            Ok(GameLoopState::Complete(game_result)) => {
+                // Game ended
+                self.game_over = true;
+                self.pending_context = None;
+                self.current_choices.clear();
+                if let Some(winner) = game_result.winner {
+                    let winner_name = self
+                        .game
+                        .get_player(winner)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|_| "Unknown".to_string());
+                    self.current_prompt = Some(format!("Game Over! {} wins!", winner_name));
+                } else {
+                    self.current_prompt = Some("Game Over! Draw!".to_string());
                 }
+            }
+            Ok(GameLoopState::AwaitingInput(context)) => {
+                // Need human input - display choices
+                self.pending_context = Some(context.clone());
+                self.selected_choice_idx = 0;
+                self.update_choices_from_context(&context);
             }
             Err(e) => {
                 self.error_message = Some(format!("Game error: {}", e));
@@ -132,13 +223,169 @@ impl WasmFancyTuiState {
         }
     }
 
-    /// Create a controller based on type
-    fn create_controller(&self, controller_type: WasmControllerType, player_id: PlayerId) -> Box<dyn PlayerController> {
+    /// Update the current_choices display from a ChoiceContext
+    fn update_choices_from_context(&mut self, context: &ChoiceContext) {
+        self.current_choices.clear();
+        let choices: Vec<String> = match context {
+            ChoiceContext::SpellAbility { formatted_choices, .. } => formatted_choices.clone(),
+            ChoiceContext::Targets { formatted_targets, .. } => formatted_targets.clone(),
+            ChoiceContext::ManaSources { formatted_sources, .. } => formatted_sources.clone(),
+            ChoiceContext::Attackers {
+                formatted_creatures, ..
+            } => {
+                let mut choices = vec!["Done (no more attackers)".to_string()];
+                choices.extend(formatted_creatures.clone());
+                choices
+            }
+            ChoiceContext::Blockers {
+                formatted_blockers,
+                formatted_attackers,
+                ..
+            } => {
+                let mut choices = vec!["Done (no blockers)".to_string()];
+                for (i, blocker) in formatted_blockers.iter().enumerate() {
+                    for (j, attacker) in formatted_attackers.iter().enumerate() {
+                        choices.push(format!("{} blocks {} (b{}a{})", blocker, attacker, i, j));
+                    }
+                }
+                choices
+            }
+            ChoiceContext::DamageOrder { formatted_blockers, .. } => formatted_blockers.clone(),
+            ChoiceContext::Discard {
+                formatted_hand, count, ..
+            } => {
+                self.current_prompt = Some(format!("Discard {} card(s):", count));
+                formatted_hand.clone()
+            }
+            ChoiceContext::LibrarySearch { formatted_cards, .. } => {
+                let mut choices = vec!["Fail to find".to_string()];
+                choices.extend(formatted_cards.clone());
+                choices
+            }
+        };
+
+        // Set prompt based on context type
+        let prompt = match context {
+            ChoiceContext::SpellAbility { .. } => "Choose an action:".to_string(),
+            ChoiceContext::Targets { .. } => "Choose a target:".to_string(),
+            ChoiceContext::ManaSources { .. } => "Choose mana sources:".to_string(),
+            ChoiceContext::Attackers { .. } => "Declare attackers:".to_string(),
+            ChoiceContext::Blockers { .. } => "Declare blockers:".to_string(),
+            ChoiceContext::DamageOrder { .. } => "Choose damage order:".to_string(),
+            ChoiceContext::Discard { count, .. } => format!("Discard {} card(s):", count),
+            ChoiceContext::LibrarySearch { .. } => "Search library:".to_string(),
+        };
+        self.current_prompt = Some(prompt);
+
+        // Add choices with highlight on first one
+        for (idx, choice) in choices.iter().enumerate() {
+            self.current_choices
+                .push((choice.clone(), idx == self.selected_choice_idx));
+        }
+    }
+
+    /// Handle selection of current choice index
+    fn select_current_choice(&mut self) {
+        if self.pending_context.is_none() {
+            return;
+        }
+
+        let context = self.pending_context.take().unwrap();
+        let idx = self.selected_choice_idx;
+
+        // Convert selection index to PendingChoice based on context type
+        let pending = match context {
+            ChoiceContext::SpellAbility { .. } => {
+                // idx 0 = pass, idx 1+ = ability index - 1
+                if idx == 0 {
+                    PendingChoice::SpellAbility(None)
+                } else {
+                    PendingChoice::SpellAbility(Some(idx))
+                }
+            }
+            ChoiceContext::Targets { .. } => PendingChoice::Targets(vec![idx]),
+            ChoiceContext::ManaSources { .. } => PendingChoice::ManaSources(vec![idx]),
+            ChoiceContext::Attackers { .. } => {
+                if idx == 0 {
+                    PendingChoice::Attackers(vec![]) // Done
+                } else {
+                    PendingChoice::Attackers(vec![idx - 1])
+                }
+            }
+            ChoiceContext::Blockers { attackers, .. } => {
+                if idx == 0 {
+                    PendingChoice::Blockers(vec![]) // Done
+                } else {
+                    // Decode blocker-attacker pair from index
+                    let num_attackers = attackers.len();
+                    let pair_idx = idx - 1;
+                    let blocker_idx = pair_idx / num_attackers;
+                    let attacker_idx = pair_idx % num_attackers;
+                    PendingChoice::Blockers(vec![(blocker_idx, attacker_idx)])
+                }
+            }
+            ChoiceContext::DamageOrder { .. } => PendingChoice::DamageOrder(vec![idx]),
+            ChoiceContext::Discard { .. } => PendingChoice::Discard(vec![idx]),
+            ChoiceContext::LibrarySearch { .. } => {
+                if idx == 0 {
+                    PendingChoice::LibrarySearch(None)
+                } else {
+                    PendingChoice::LibrarySearch(Some(idx - 1))
+                }
+            }
+        };
+
+        // Set the pending choice on the human controller
+        if let Some(ref mut human) = self.p1_human_controller {
+            human.set_pending_choice(pending);
+        }
+
+        // Clear choices display
+        self.current_choices.clear();
+        self.selected_choice_idx = 0;
+
+        // Continue running the game
+        self.run_until_choice();
+    }
+
+    /// Move selection up in the choice list
+    fn select_previous_choice(&mut self) {
+        if !self.current_choices.is_empty() && self.selected_choice_idx > 0 {
+            self.selected_choice_idx -= 1;
+            self.update_choice_highlights();
+        }
+    }
+
+    /// Move selection down in the choice list
+    fn select_next_choice(&mut self) {
+        if !self.current_choices.is_empty() && self.selected_choice_idx < self.current_choices.len() - 1 {
+            self.selected_choice_idx += 1;
+            self.update_choice_highlights();
+        }
+    }
+
+    /// Update highlight state in current_choices based on selected_choice_idx
+    fn update_choice_highlights(&mut self) {
+        for (idx, (_, highlighted)) in self.current_choices.iter_mut().enumerate() {
+            *highlighted = idx == self.selected_choice_idx;
+        }
+    }
+
+    /// Create an AI controller based on type
+    fn create_ai_controller(
+        &self,
+        controller_type: WasmControllerType,
+        player_id: PlayerId,
+    ) -> Box<dyn PlayerController> {
         match controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
-            WasmControllerType::Human => todo!("Human controller not yet implemented for fancy TUI"),
+            WasmControllerType::Human => {
+                // For P2 as human, we'd need a separate controller
+                // For now, fall back to Zero
+                Box::new(ZeroController::new(player_id))
+            }
         }
     }
 }
@@ -207,6 +454,38 @@ pub fn launch_fancy_tui(
             };
 
             if let Some(key) = key_input {
+                // Handle human player input for choice selection
+                let has_pending_choice = state.pending_context.is_some();
+
+                if has_pending_choice {
+                    // Human player making a choice - handle navigation and selection
+                    match key {
+                        KeyInput::Up => {
+                            state.select_previous_choice();
+                            return;
+                        }
+                        KeyInput::Down => {
+                            state.select_next_choice();
+                            return;
+                        }
+                        KeyInput::Enter | KeyInput::Space => {
+                            state.select_current_choice();
+                            return;
+                        }
+                        KeyInput::Digit(n) => {
+                            // Direct number selection (1-9 for choices 0-8)
+                            let idx = if n == 0 { 9 } else { (n - 1) as usize };
+                            if idx < state.current_choices.len() {
+                                state.selected_choice_idx = idx;
+                                state.update_choice_highlights();
+                                state.select_current_choice();
+                            }
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Get values we need before creating the view
                 let num_choices = state.current_choices.len();
 
@@ -227,18 +506,22 @@ pub fn launch_fancy_tui(
                         // State was updated, will redraw on next frame
                     }
                     EventResult::NotHandled => {
-                        // For Space key (not handled by shared handler), run one turn
+                        // For Space key (not handled by shared handler), run game
                         if matches!(key, KeyInput::Space) {
-                            state.run_one_turn();
+                            state.run_until_choice();
                         }
                     }
                     EventResult::Pass | EventResult::Exit => {
                         // Exit the TUI
                         let _ = js_sys::eval("window.exitFancyTui && window.exitFancyTui()");
                     }
-                    EventResult::SelectChoice(_idx) => {
-                        // Choice selection - not currently used in AI-only mode
-                        // but would be used for human player interaction
+                    EventResult::SelectChoice(idx) => {
+                        // Choice selection from hand click - set selection and confirm
+                        if idx < state.current_choices.len() {
+                            state.selected_choice_idx = idx;
+                            state.update_choice_highlights();
+                            state.select_current_choice();
+                        }
                     }
                     _ => {}
                 }
@@ -286,9 +569,10 @@ pub fn launch_fancy_tui(
         move |f| {
             let mut state = state.borrow_mut();
 
-            // Auto-run: advance one turn per frame if enabled
-            if state.auto_run && !state.game_over {
-                state.run_one_turn();
+            // Auto-run: advance game per frame if enabled (only for AI vs AI)
+            // Don't auto-run if there's a pending choice (waiting for human)
+            if state.auto_run && !state.game_over && state.pending_context.is_none() {
+                state.run_until_choice();
             }
 
             // Update the turn info in the header
