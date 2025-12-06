@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2025-12-06T12:01:39.912045109+00:00
-updated_at: 2025-12-06T12:01:39.912045109+00:00
+updated_at: 2025-12-06T13:06:38.391410303+00:00
 ---
 
 # Description
@@ -38,12 +38,16 @@ The current network protocol has a race-prone design with the "unconditional bro
    - Server and clients exchange action sequences periodically
    - Any mismatch triggers immediate error with diagnostic info
 
-## Tasks
+## Completed Tasks (2025-12-06)
 
-- [ ] Add `action_count: u64` field to protocol messages (ChoiceRequest, SubmitChoice, OpponentChoice)
-- [ ] Track action count in NetworkController (server-side)
-- [ ] Track action count in NetworkLocalController and RemoteController (client-side)
-- [ ] Validate action count consistency in server message handler
+- [x] Add `action_count: u64` field to protocol messages (ChoiceRequest, SubmitChoice, OpponentChoice, ChoiceAccepted)
+- [x] Track action count in NetworkController (server-side) - uses GameState::action_count() via GameStateView
+- [x] Track action count in NetworkLocalController (client-side) - passes action_count with each choice
+- [x] Wire action_count through entire message flow (client → server → opponent)
+
+## Remaining Tasks
+
+- [ ] Validate action count consistency in server message handler (currently logged but not enforced)
 - [ ] Remove the unconditional broadcast hack from server.rs
 - [ ] Implement proper synchronization points based on action counts
 - [ ] Add `--debug` flag to `mtg connect` command
@@ -57,3 +61,12 @@ The current network protocol has a race-prone design with the "unconditional bro
 - `mtg-engine/src/network/local_controller.rs` - NetworkLocalController
 - `mtg-engine/src/network/remote_controller.rs` - RemoteController
 - `mtg-engine/src/network/protocol.rs` - Protocol message definitions
+
+## Implementation Notes
+
+The action_count is sourced from `GameState::action_count()` which returns the undo log position. This value is:
+- Set by NetworkController when creating ChoiceRequest (via `view.action_count()`)
+- Passed through server to client in ChoiceRequest
+- Echoed back by passive client in SubmitChoice
+- Tracked by NetworkLocalController in run_game mode (gets from GameStateView)
+- Broadcast to opponent in OpponentChoice message
