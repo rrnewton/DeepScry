@@ -42,6 +42,10 @@
 #[cfg(all(feature = "wasm-tui", target_arch = "wasm32"))]
 pub mod fancy_tui;
 
+pub mod human_controller;
+
+pub use human_controller::{PendingChoice, WasmHumanController};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
