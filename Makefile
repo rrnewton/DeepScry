@@ -438,14 +438,18 @@ wasm:
 	@echo "Output: web/pkg/"
 	@echo "To test: make wasm-serve"
 
+# Web server log file location
+WASM_SERVER_LOG := web/server.log
+
 # Build WASM and start local web server
 wasm-serve: wasm
 	@echo ""
 	@echo "=== Starting web server ==="
 	@echo "Open http://localhost:8080 in your browser"
+	@echo "Log file: $(WASM_SERVER_LOG)"
 	@echo "Press Ctrl+C to stop"
 	@echo ""
-	@cd web && python3 -m http.server 8080
+	@cd web && python3 -m http.server 8080 2>&1 | tee server.log
 
 # Quick dev build - skips wasm-opt optimization for faster iteration
 wasm-dev:
@@ -465,9 +469,10 @@ wasm-dev-serve: wasm-dev
 	@echo ""
 	@echo "=== Starting web server (dev build) ==="
 	@echo "Open http://localhost:8080 in your browser"
+	@echo "Log file: $(WASM_SERVER_LOG)"
 	@echo "Press Ctrl+C to stop"
 	@echo ""
-	@cd web && python3 -m http.server 8080
+	@cd web && python3 -m http.server 8080 2>&1 | tee server.log
 
 # Test WASM module in headless browser
 wasm-test: wasm

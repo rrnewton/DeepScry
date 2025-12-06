@@ -12,7 +12,7 @@
         }
         body {
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: #1a1a2e;
+            background: #000;
             color: #eee;
             min-height: 100vh;
             display: flex;
@@ -79,19 +79,28 @@
             flex-direction: column;
             gap: 3px;
         }
-        .canvas-container {
+        .help-text {
+            color: #888;
+            font-size: 12px;
+            margin-left: auto;
+        }
+        .tui-container {
             flex: 1;
             display: flex;
             justify-content: stretch;
             align-items: stretch;
             padding: 0;
-            background: #0a0a1a;
+            background: #000;
             overflow: hidden;
         }
-        #mtg-fancy-tui-canvas {
-            width: 100% !important;
-            height: 100% !important;
-            display: block;
+        /* RatZilla renders terminal content here */
+        #ratzilla-terminal {
+            width: 100%;
+            height: 100%;
+            font-family: 'Consolas', 'Monaco', 'Fira Mono', monospace;
+            font-size: 14px;
+            line-height: 1.2;
+            background: #000;
         }
         .loading {
             text-align: center;
@@ -117,6 +126,13 @@
         <h1>MTG Forge - Fancy TUI</h1>
         <a href="index.html">Back to simple view</a>
         <span id="status">Loading...</span>
+        <!-- Game controls shown during gameplay -->
+        <div id="game-controls" style="display: none; margin-left: auto;">
+            <button id="btn-run-turn" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 0 5px;">Run 1 Turn</button>
+            <button id="btn-auto" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 0 5px;">Auto Run</button>
+            <button id="btn-exit" style="background: #a03030; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 0 5px;">Exit Game</button>
+            <span id="turn-info" style="color: #ffd700; margin-left: 15px;"></span>
+        </div>
     </div>
 
     <div id="setup-bar" class="setup-bar" style="display: none;">
@@ -145,15 +161,16 @@
             </select>
         </div>
         <button id="btn-launch">Launch Fancy TUI</button>
+        <span class="help-text">Keys: Space=turn, A=auto, Q=exit, Tab=cycle panes</span>
     </div>
 
-    <div class="canvas-container">
+    <div class="tui-container">
         <div id="loading" class="loading">
             <div>Loading WebAssembly module...</div>
             <div id="loading-progress"></div>
         </div>
-        <!-- Canvas for egui/eframe rendering -->
-        <canvas id="mtg-fancy-tui-canvas" style="display: none;"></canvas>
+        <!-- RatZilla renders DOM-based terminal here -->
+        <div id="ratzilla-terminal" style="display: none;"></div>
     </div>
 
     <script type="module">
@@ -162,7 +179,9 @@
             is_ready,
             WasmCardDatabase,
             WasmControllerType,
-            launch_fancy_tui
+            launch_fancy_tui,
+            tui_run_turn,
+            tui_toggle_auto
         } from './pkg/mtg_forge_rs.js';
 
         let cardDb = null;
@@ -236,9 +255,9 @@
                         <strong>Failed to load:</strong><br>
                         ${error.message}<br><br>
                         Make sure you've:<br>
-                        1. Built with wasm-tui: <code>wasm-pack build --target web --features wasm-tui --no-default-features</code><br>
+                        1. Built with wasm-tui: <code>make wasm-dev</code><br>
                         2. Exported card data: <code>cargo run --bin mtg -- export-wasm</code><br>
-                        3. Started a web server: <code>python -m http.server 8765</code>
+                        3. Started a web server: <code>make wasm-dev-serve</code>
                     </div>
                 `;
                 console.error('Failed to initialize:', error);
@@ -256,16 +275,6 @@
 
         let tuiLaunched = false;
 
-        function getCanvasDimensions() {
-            const container = document.querySelector('.canvas-container');
-            const headerHeight = document.querySelector('.header').offsetHeight;
-            // Use full container dimensions
-            return {
-                width: container.clientWidth || window.innerWidth,
-                height: container.clientHeight || (window.innerHeight - headerHeight)
-            };
-        }
-
         function launchTui() {
             const p1Deck = document.getElementById('p1-deck').value;
             const p2Deck = document.getElementById('p2-deck').value;
@@ -281,21 +290,16 @@
                 // Hide setup bar
                 document.getElementById('setup-bar').style.display = 'none';
 
-                // Get full container dimensions
-                const dims = getCanvasDimensions();
-                const canvasWidth = dims.width;
-                const canvasHeight = dims.height;
+                // Show the terminal container (RatZilla will render into body by default)
+                const terminal = document.getElementById('ratzilla-terminal');
+                terminal.style.display = 'block';
 
-                console.log(`Container size: ${canvasWidth}x${canvasHeight}`);
+                // Get container dimensions (not used by RatZilla DOM backend, but kept for API compatibility)
+                const container = document.querySelector('.tui-container');
+                const canvasWidth = container.clientWidth || window.innerWidth;
+                const canvasHeight = container.clientHeight || window.innerHeight;
 
-                // Show the canvas - CSS will make it fill the container
-                const canvas = document.getElementById('mtg-fancy-tui-canvas');
-                canvas.style.display = 'block';
-                // Set internal resolution to match display size for sharp rendering
-                canvas.width = canvasWidth;
-                canvas.height = canvasHeight;
-
-                // Launch the fancy TUI with calculated dimensions
+                // Launch the fancy TUI
                 const seed = BigInt(Date.now());
                 launch_fancy_tui(
                     cardDb,
@@ -310,26 +314,56 @@
                 );
 
                 tuiLaunched = true;
-                console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck} at ${canvasWidth}x${canvasHeight}`);
+
+                // Show game controls in header
+                document.getElementById('game-controls').style.display = 'flex';
+
+                console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
             } catch (error) {
                 alert(`Failed to launch TUI: ${error}`);
                 console.error('Failed to launch TUI:', error);
             }
         }
 
+        let autoRunning = false;
+
+        // Update turn info display (called from WASM)
+        window.updateTurnInfo = function(turnNumber, gameOver) {
+            const info = document.getElementById('turn-info');
+            if (gameOver) {
+                info.textContent = 'Game Over!';
+                info.style.color = '#ff6b6b';
+            } else {
+                info.textContent = `Turn ${turnNumber}`;
+                info.style.color = '#ffd700';
+            }
+        };
+
+        // Button handlers - call WASM functions directly
+        document.getElementById('btn-run-turn').addEventListener('click', function() {
+            tui_run_turn();
+        });
+
+        document.getElementById('btn-auto').addEventListener('click', function() {
+            autoRunning = !autoRunning;
+            this.textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
+            this.style.background = autoRunning ? '#30a030' : '#4361ee';
+            tui_toggle_auto();
+        });
+
+        document.getElementById('btn-exit').addEventListener('click', function() {
+            window.exitFancyTui();
+        });
+
         // Expose exit function globally for WASM to call
         window.exitFancyTui = function() {
             tuiLaunched = false;
-            // Hide canvas and show setup bar
-            document.getElementById('mtg-fancy-tui-canvas').style.display = 'none';
+            // Hide terminal and show setup bar
+            document.getElementById('ratzilla-terminal').style.display = 'none';
+            document.getElementById('game-controls').style.display = 'none';
             document.getElementById('setup-bar').style.display = 'flex';
-            // Clear the canvas context to free resources
-            const canvas = document.getElementById('mtg-fancy-tui-canvas');
-            const ctx = canvas.getContext('webgl2') || canvas.getContext('webgl');
-            if (ctx && ctx.getExtension) {
-                // WebGL context - will be recreated on next launch
-            }
-            console.log('Exited fancy TUI - ready to launch new game');
+            // Reload the page to cleanly reset RatZilla state
+            location.reload();
         };
 
         main();
