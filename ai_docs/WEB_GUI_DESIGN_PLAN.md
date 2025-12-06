@@ -8,11 +8,11 @@ This document outlines the design plan for adding a real web-based GUI to MTG Fo
 2. **Card image support** (fetched from Scryfall, like Java Forge)
 3. **Maximum code sharing** between TUI and GUI modes
 
-## Current Architecture Analysis
+## Current Architecture Analysis (Updated 2025-12)
 
 ### Existing TUI Structure
 
-The project already has a well-abstracted TUI architecture that shares code between native and WASM:
+The project has a well-abstracted TUI architecture that shares code between native and WASM:
 
 - **`FancyTuiRenderer`** (`src/game/fancy_tui_renderer.rs`): ~2045 lines of shared rendering logic
   - All rendering methods take `&mut Frame` from ratatui (backend-agnostic)
@@ -20,16 +20,94 @@ The project already has a well-abstracted TUI architecture that shares code betw
   - State management kept simple for serialization across JS boundary
 
 - **`FancyTuiController`** (native): Uses crossterm + blocking event loop
-- **`WasmFancyTui`** (`src/wasm/fancy_tui.rs`): Uses egui_ratatui + browser event loop
+- **`WasmFancyTuiState`** (`src/wasm/fancy_tui.rs`): Uses **RatZilla** + browser event loop
 
-### Current WASM TUI Implementation
+### Current WASM TUI Implementation - RatZilla
 
-The WASM TUI uses:
-- **eframe** (egui application framework, v0.33)
-- **egui_ratatui** (RataguiBackend for terminal rendering within egui, v2.0)
-- **soft_ratatui** (CosmicText font rendering)
+The WASM TUI now uses **RatZilla** (v0.2) instead of the previous egui/eframe approach:
 
-This renders ratatui terminal output as pixels in an egui canvas.
+```toml
+# Cargo.toml features
+wasm-tui = [
+    "wasm",
+    "ratatui",  # Needed for FancyTuiRenderer shared code
+    "ratzilla",
+]
+```
+
+**RatZilla** provides:
+- **`DomBackend`**: Fast DOM-based terminal rendering directly to HTML elements
+- **WebGL2 rendering** option for enhanced performance
+- **Direct event handling**: `terminal.on_key_event()` and `terminal.on_mouse_event()`
+- **Render callback pattern**: `terminal.draw_web(|f| { ... })`
+
+**Key constants for pixel-to-cell conversion:**
+```rust
+const CELL_WIDTH_PX: u32 = 10;
+const CELL_HEIGHT_PX: u32 = 20;
+```
+
+### WASM TUI Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     JavaScript / HTML                            │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  <div id="ratzilla-terminal">  (RatZilla renders here)     ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    RatZilla Backend                              │
+│  - DomBackend::new_by_id("ratzilla-terminal")                   │
+│  - Terminal<DomBackend>                                          │
+│  - Keyboard/Mouse event callbacks                                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 WasmFancyTuiState (Rc<RefCell<>>)               │
+│  - game: GameState                                               │
+│  - renderer: FancyTuiRenderer (shared with native)              │
+│  - p1/p2_controller_type: WasmControllerType                    │
+│  - p1_human_controller: Option<WasmHumanController>             │
+│  - current_prompt, current_choices                               │
+│  - pending_context: Option<ChoiceContext>                        │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                FancyTuiRenderer (shared code)                    │
+│  - draw_ui(frame, view, prompt, choices)                        │
+│  - All pane rendering methods                                    │
+│  - Layout calculations, entity grouping                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Human Input Pattern
+
+The WASM implementation uses the **interrupt pattern** for human input:
+
+1. `GameLoop::run_until_input()` returns `GameLoopState::AwaitingInput(ChoiceContext)`
+2. UI displays choices in `current_choices` vector
+3. User makes selection via keyboard/mouse
+4. `WasmHumanController::set_pending_choice(PendingChoice)` stores the choice
+5. Game continues with `run_until_choice()` which resumes the loop
+
+### Global State Pattern
+
+JavaScript button callbacks use thread-local storage:
+```rust
+thread_local! {
+    static GLOBAL_TUI_STATE: RefCell<Option<Rc<RefCell<WasmFancyTuiState>>>> = ...;
+}
+
+#[wasm_bindgen]
+pub fn tui_run_turn() { ... }
+pub fn tui_select_choice() { ... }
+pub fn tui_toggle_auto() { ... }
+```
 
 ### Layout Structure (Shared)
 
@@ -51,33 +129,38 @@ This renders ratatui terminal output as pixels in an egui canvas.
 
 ## 2D Graphics Options for Browser/WASM
 
-### Recommended Approach: **Canvas2D via web-sys**
+### Current State: RatZilla TUI is Excellent
 
-After research, the recommended approach is to use the HTML Canvas 2D API directly via `web-sys`, similar to what the TUI already does through egui. This is the most pragmatic choice because:
+The RatZilla-based TUI is already fast and functional. For the GUI enhancement:
 
-1. **Performance**: Canvas2D is extremely fast for 2D rendering (< 1ms per frame)
-2. **Simplicity**: No need for WebGL/WebGPU shader complexity for a card game
-3. **Text support**: Native text rendering is excellent
-4. **Image support**: Built-in image loading and drawing
-5. **Already partially in use**: egui/eframe already uses Canvas2D under the hood
+**Option A: Extend RatZilla with Image Support**
+- RatZilla renders to DOM elements
+- Could inject `<img>` elements for card images alongside the terminal
+- Hybrid approach: text TUI + floating image overlays
 
-### Alternative Options Evaluated
+**Option B: Parallel Canvas-based GUI**
+- Create a separate Canvas2D or WebGL-based renderer
+- Share layout logic with TUI (same pane structure)
+- Different rendering backend (pixel graphics vs terminal cells)
 
-| Library | Pros | Cons |
-|---------|------|------|
-| **wgpu** | Modern, cross-platform (WebGPU/WebGL2) | Overkill for 2D, shader complexity |
-| **Quicksilver** | WASM support, 2D focused | Less maintained recently |
-| **tiny-skia** | Skia port, nice API | Slowest option tested |
-| **piet-web** | Ergonomic API | Another abstraction layer |
+**Option C: WebGL2 Overlay on RatZilla**
+- RatZilla supports WebGL2 rendering mode
+- Could overlay card images as WebGL textures
+- More complex but potentially smoothest
 
-### Recommendation: Hybrid Approach
+### Recommended Approach: Option A (DOM/Image Hybrid)
 
-Use a **hybrid approach**:
+Given that RatZilla already works well, the simplest path is:
 
-1. **Continue using egui/eframe** as the application framework (already working)
-2. **Add a new GUI render mode** that draws cards as images/shapes instead of terminal characters
-3. **Share the same layout logic** (pane structure, sizing) between TUI and GUI
-4. **Use egui's image handling** for card images (it already supports texture loading)
+1. **Keep RatZilla TUI** as the primary interface
+2. **Add image support via DOM injection**:
+   - When rendering a card, inject an `<img>` element positioned over the card's terminal area
+   - Images float above the terminal text
+   - Fallback to text when images not loaded
+3. **Use web-sys for fetch/image loading**
+4. **Cache images in IndexedDB**
+
+This preserves all existing functionality while adding visual enhancement.
 
 ## Card Image Sources
 
@@ -109,104 +192,130 @@ File naming:
 
 1. **Fallback first**: Always show text-based rendering while images load
 2. **Lazy loading**: Only fetch images for cards in current decks
-3. **Background fetching**: Use `wasm-bindgen-futures` for async image loading
-4. **IndexedDB caching**: Store fetched images in browser IndexedDB for persistence
-5. **Progressive enhancement**: Show text -> show low-res -> show full-res
+3. **Background fetching**: Use browser Fetch API via `web-sys`
+4. **IndexedDB caching**: Store fetched images for persistence across sessions
+5. **Progressive enhancement**: Show text -> show image when ready
 
 ## Abstraction Architecture
 
-### Proposed Trait Hierarchy
+### Current Shared Code (Keep As-Is)
+
+The existing `FancyTuiRenderer` is already well-abstracted:
 
 ```rust
-/// Core layout trait - shared between all renderers
-pub trait GameLayout {
-    /// Get the layout areas for the main panes
-    fn compute_layout(&self, total_area: Rect) -> LayoutAreas;
+// Already backend-agnostic - takes Frame<impl Backend>
+pub fn draw_ui(
+    &mut self,
+    f: &mut Frame,
+    view: &GameStateView,
+    current_prompt: Option<&str>,
+    choices: &[(String, bool)],
+)
+```
 
-    /// Group battlefield cards into entities (stacking logic)
-    fn group_entities(&self, cards: &[CardId], view: &GameStateView) -> Vec<Entity>;
+### New Components for Image Support
 
-    /// Calculate optimal card size for a given area
-    fn calculate_card_size(&self, area: Rect, card_count: usize) -> (u16, u16);
+```rust
+/// Image cache for card artwork
+pub struct CardImageCache {
+    /// Loaded images keyed by card name + set
+    images: HashMap<String, ImageData>,
+    /// Pending fetch requests
+    pending: HashSet<String>,
 }
 
-/// Backend-agnostic rendering primitives
-pub trait RenderPrimitives {
-    type Color;
-    type Area;
-
-    fn draw_rect(&mut self, area: Self::Area, color: Self::Color, border: Option<Self::Color>);
-    fn draw_text(&mut self, area: Self::Area, text: &str, style: TextStyle);
-    fn draw_image(&mut self, area: Self::Area, image: &ImageHandle);
+/// Image overlay manager for DOM injection
+pub struct ImageOverlayManager {
+    /// Currently displayed image elements
+    overlays: HashMap<CardId, web_sys::HtmlImageElement>,
 }
 
-/// High-level game UI renderer
-pub trait GameRenderer: RenderPrimitives {
-    fn render_card(&mut self, area: Self::Area, card: &CardView, show_image: bool);
-    fn render_battlefield(&mut self, area: Self::Area, entities: &[Entity], view: &GameStateView);
-    fn render_hand(&mut self, area: Self::Area, cards: &[CardId], view: &GameStateView);
-    fn render_stack(&mut self, area: Self::Area, stack: &[CardId], view: &GameStateView);
-    fn render_prompt(&mut self, area: Self::Area, prompt: &str, choices: &[Choice]);
+impl ImageOverlayManager {
+    /// Create or update an image overlay for a card
+    fn set_card_image(&mut self, card_id: CardId, area: Rect, image_url: &str);
+
+    /// Remove image overlay (card left battlefield, etc.)
+    fn remove_overlay(&mut self, card_id: CardId);
+
+    /// Convert terminal cell coordinates to CSS pixels
+    fn cell_to_pixels(x: u16, y: u16) -> (f32, f32) {
+        (x as f32 * CELL_WIDTH_PX as f32, y as f32 * CELL_HEIGHT_PX as f32)
+    }
 }
 ```
 
-### Concrete Implementations
+### Scryfall URL Builder
 
-1. **`TuiRenderer`** (existing, refactored)
-   - Implements `RenderPrimitives` for ratatui `Frame`
-   - Text-based card rendering with ASCII boxes
-   - Works in both native terminal and WASM egui_ratatui
-
-2. **`GuiRenderer`** (new)
-   - Implements `RenderPrimitives` for egui `Ui` or direct Canvas2D
-   - Draws cards as colored rectangles with text overlay
-   - Optional: draws actual card images when available
-
-3. **`HybridRenderer`** (optional)
-   - Combines TUI aesthetic with GUI capabilities
-   - Text-based by default, images as enhancement
+```rust
+/// Build Scryfall image URL for a card
+pub fn scryfall_url(set_code: &str, collector_number: &str, version: ImageVersion) -> String {
+    let version_str = match version {
+        ImageVersion::Normal => "normal",
+        ImageVersion::ArtCrop => "art_crop",
+        ImageVersion::Small => "small",
+    };
+    format!(
+        "https://api.scryfall.com/cards/{}/{}?format=image&version={}",
+        set_code.to_lowercase(),
+        collector_number,
+        version_str
+    )
+}
+```
 
 ## Implementation Phases
 
-### Phase 1: Abstract Shared Layout Logic
-- Extract `GameLayout` trait from `FancyTuiRenderer`
-- Move pane sizing, card grouping, entity logic to shared module
-- Keep `FancyTuiRenderer` working unchanged
+### Phase 1: Image Infrastructure (No Visual Changes)
+- [ ] Add `CardImageCache` module with IndexedDB storage
+- [ ] Implement Scryfall URL builder
+- [ ] Add async image fetching via `web-sys` fetch
+- [ ] Store set/collector_number in card metadata (if not already present)
 
-### Phase 2: Create RenderPrimitives Trait
-- Define `RenderPrimitives` for drawing rectangles, text, images
-- Create `TuiRenderPrimitives` wrapping ratatui `Frame`
-- Refactor `FancyTuiRenderer` to use primitives
+### Phase 2: Image Overlay System
+- [ ] Create `ImageOverlayManager` for DOM image elements
+- [ ] Hook into `FancyTuiRenderer::render_entity()` to create overlays
+- [ ] Position images correctly over terminal card boxes
+- [ ] Handle image loading states (pending, loaded, error)
 
-### Phase 3: Implement GUI Renderer (No Images)
-- Create `GuiRenderPrimitives` using egui directly
-- Draw cards as colored shapes with text
-- Same layout as TUI, different rendering
+### Phase 3: UI Integration
+- [ ] Add "Show Images" toggle to UI
+- [ ] Update card detail pane to show full card image
+- [ ] Add loading indicators for pending images
+- [ ] Handle hover/click to show larger image
 
-### Phase 4: Add Card Image Support
-- Implement Scryfall URL construction (port from Java)
-- Add async image fetching via `web-sys` fetch API
-- Add IndexedDB caching layer
-- Integrate images into `GuiRenderer`
-
-### Phase 5: Polish and Optimize
-- Loading indicators while images fetch
-- Progressive image quality (thumbnail -> full)
-- Memory management for image cache
-- Cross-browser testing
+### Phase 4: Polish and Optimization
+- [ ] Implement image preloading for deck cards
+- [ ] Add memory management (LRU cache eviction)
+- [ ] Progressive image quality (small -> normal)
+- [ ] Cross-browser testing
 
 ## Technical Considerations
 
 ### WASM-Specific Constraints
 
-1. **No std::thread**: Use `wasm-bindgen-futures` for async operations
-2. **No filesystem**: Use IndexedDB or localStorage for caching
-3. **Single-threaded**: All rendering must be non-blocking
-4. **CORS**: Scryfall API supports CORS, should work directly
+1. **No std::thread**: Use browser async APIs via `web-sys`
+2. **No filesystem**: Use IndexedDB via `web-sys` for caching
+3. **Single-threaded**: All operations non-blocking
+4. **CORS**: Scryfall API supports CORS, direct fetch works
+
+### RatZilla-Specific Integration Points
+
+```rust
+// RatZilla provides these hooks:
+terminal.on_key_event(|key_event| { ... });
+terminal.on_mouse_event(|mouse_event| { ... });
+terminal.draw_web(|frame| {
+    // This is where we render AND where we'd update image overlays
+    renderer.draw_ui(frame, ...);
+
+    // After TUI render, update image positions to match card locations
+    image_manager.sync_overlays(&renderer.state.entity_positions);
+});
+```
 
 ### Performance Targets
 
-- **60 FPS** for smooth animations
+- **60 FPS** for smooth UI (RatZilla already achieves this)
 - **< 16ms** per frame render time
 - **< 100ms** initial load (excluding images)
 - **Background image loading** should not block UI
@@ -215,23 +324,29 @@ pub trait GameRenderer: RenderPrimitives {
 
 - Normal card image: ~100-200KB each
 - Art crop: ~50-100KB each
-- Typical deck (60 cards, ~40 unique): ~4-8MB total
-- Should implement lazy loading, not preload everything
+- Small: ~10-20KB each
+- Typical deck (60 cards, ~40 unique): ~4-8MB total with normal images
+- Should use "small" for in-game, "normal" for detail view
 
 ## Open Questions
 
-1. **Image resolution**: Use "normal" (488x680) or "small" (146x204) for game view?
-2. **Zoom support**: Should users be able to zoom in on cards?
-3. **Animation**: Any card movement animations desired?
-4. **Mobile support**: Touch-friendly UI considerations?
-5. **Offline mode**: How much to cache for offline play?
+1. **Image resolution**: Use "small" (146x204) for battlefield, "normal" for detail view?
+2. **Zoom support**: Hover to show full-size card?
+3. **Animation**: Fade-in when images load?
+4. **Mobile support**: Touch-friendly image viewing?
+5. **Offline mode**: IndexedDB should persist, but how to handle cache limits?
 
 ## References
 
-### Search Results - Rust WASM 2D Graphics
-- [wgpu](https://wgpu.rs/) - Cross-platform WebGPU implementation
-- [egui_ratatui](https://docs.rs/egui_ratatui) - Already in use
-- [Quicksilver](https://github.com/ryanisaacg/quicksilver) - 2D game framework
+### RatZilla
+- [RatZilla on crates.io](https://crates.io/crates/ratzilla)
+- DOM-based and WebGL2 ratatui backend for WASM
+- Version 0.2 currently in use
+
+### Scryfall API
+- [Scryfall API Docs](https://scryfall.com/docs/api)
+- Image endpoint: `GET /cards/:code/:number?format=image`
+- Supports CORS
 
 ### Java Forge Image Sources
 - Primary: `https://api.scryfall.com/cards/{set}/{collector_number}?format=image`
@@ -239,6 +354,11 @@ pub trait GameRenderer: RenderPrimitives {
 - Storage: `{cache}/pics/cards/{SET}/{cardname}.fullborder.jpg`
 
 ### Related Files in This Codebase
-- `mtg-engine/src/game/fancy_tui_renderer.rs` - Shared TUI rendering
-- `mtg-engine/src/wasm/fancy_tui.rs` - WASM TUI implementation
-- `mtg-engine/src/wasm/mod.rs` - WASM module exports
+- `mtg-engine/src/game/fancy_tui_renderer.rs` - Shared TUI rendering (~2045 lines)
+- `mtg-engine/src/wasm/fancy_tui.rs` - RatZilla WASM TUI implementation (~680 lines)
+- `mtg-engine/src/wasm/human_controller.rs` - Human input pattern (~366 lines)
+- `mtg-engine/src/wasm/mod.rs` - WASM module exports and WasmGame API
+- `mtg-engine/Cargo.toml` - Feature flags: `wasm-tui` (RatZilla), `wasm-tui-egui` (legacy)
+
+### Legacy Implementation (Deprecated)
+The previous egui/eframe-based approach is still available under the `wasm-tui-egui` feature flag but is no longer the primary implementation. The RatZilla approach is faster and simpler.
