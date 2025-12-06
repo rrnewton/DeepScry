@@ -433,6 +433,10 @@ enum Commands {
         /// Share deck lists between players (tournament mode)
         #[arg(long)]
         deck_visibility: bool,
+
+        /// Fixed seed for game RNG (deterministic games). If not specified, uses random seed.
+        #[arg(long)]
+        seed: Option<u64>,
     },
 
     /// Connect to a multiplayer game server
@@ -707,6 +711,7 @@ async fn main() -> Result<()> {
             cardsfolder,
             starting_life,
             deck_visibility,
+            seed,
         } => {
             use mtg_forge_rs::network::{GameServer, ServerConfig};
 
@@ -716,6 +721,7 @@ async fn main() -> Result<()> {
                 cardsfolder,
                 starting_life,
                 deck_visibility,
+                seed,
                 ..Default::default()
             };
 

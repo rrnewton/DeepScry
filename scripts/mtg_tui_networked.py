@@ -13,9 +13,14 @@ Environment variables:
     MTG_CARDSFOLDER: Path to cardsfolder (default: mtg-engine/cardsfolder)
     RUST_LOG: Passed through to all processes
 
+Supported options:
+    - --seed (passed to server for deterministic games)
+    - --p1, --p2 (controller types)
+    - --seed-p1, --seed-p2 (controller seeds)
+    - --verbosity, --visual-stacks, etc.
+
 Limitations (will error if used):
-    - --seed (game RNG not supported over network)
-    - --deck-seed (same reason)
+    - --deck-seed (library ordering not supported)
     - --stop-on-choice (not implemented in network mode)
     - --start-state, --start-from (puzzles/snapshots not supported)
     - --p1-draw, --p2-draw (controlled draws not supported)
@@ -98,6 +103,7 @@ def parse_args():
     if args.help:
         print(__doc__)
         print("\nThis is a network drop-in replacement. Supported options:")
+        print("  --seed: Game RNG seed (passed to server)")
         print("  --p1, --p2: Controller types (zero, random, heuristic, fixed)")
         print("  --p1-name, --p2-name: Player names")
         print("  --p1-fixed-inputs, --p2-fixed-inputs: Fixed script inputs")
@@ -108,8 +114,7 @@ def parse_args():
 
     # Check for unsupported options
     unsupported = []
-    if args.seed:
-        unsupported.append(f'--seed={args.seed}')
+    # Note: --seed IS supported (passed to server)
     if args.deck_seed:
         unsupported.append(f'--deck-seed={args.deck_seed}')
     if args.start_state:
@@ -179,6 +184,8 @@ def main():
         '--password', password,
         '--cardsfolder', cardsfolder,
     ]
+    if args.seed:
+        server_cmd.extend(['--seed', args.seed])
 
     print(f"[mtg_tui_networked] Starting server: {' '.join(server_cmd)}")
     server_proc = subprocess.Popen(

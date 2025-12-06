@@ -43,6 +43,8 @@ pub struct ServerConfig {
     pub deck_visibility: bool,
     /// Path to cardsfolder for loading cards
     pub cardsfolder: PathBuf,
+    /// Fixed seed for RNG (None = random seed each game)
+    pub seed: Option<u64>,
 }
 
 impl Default for ServerConfig {
@@ -54,6 +56,7 @@ impl Default for ServerConfig {
             starting_life: 20,
             deck_visibility: false,
             cardsfolder: PathBuf::from("cardsfolder"),
+            seed: None,
         }
     }
 }
@@ -494,7 +497,7 @@ async fn run_game(
         .await?;
 
     // Seed RNG and shuffle libraries
-    let seed = rand::random::<u64>();
+    let seed = config.seed.unwrap_or_else(rand::random::<u64>);
     game.seed_rng(seed);
     log::info!("Game {}: Using seed {}", game_id, seed);
 
