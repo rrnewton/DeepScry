@@ -1224,11 +1224,13 @@ mod websocket_integration {
             "Server did not start accepting connections within timeout"
         );
 
-        // Get deck path for clients
+        // Get deck path for clients - use the robots deck (same as benchmark)
+        // This exercises more game mechanics than simple_bolt
         let deck_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("decks")
-            .join("monored_simple.dck");
+            .join("old_school")
+            .join("03_robots_jesseisbak.dck");
         let cardsfolder_path_buf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("cardsfolder");
 
         // Create two clients with RandomControllers
