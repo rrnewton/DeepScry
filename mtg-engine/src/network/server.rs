@@ -110,6 +110,8 @@ struct OpponentChoiceInfo {
     choice_index: usize,
     /// Human-readable description
     description: String,
+    /// Action count at time of choice (for sync validation)
+    action_count: u64,
 }
 
 struct PlayerConnection {
@@ -707,8 +709,7 @@ async fn handle_player_websocket(
                         // Track the choice type for broadcasting to opponent
                         conn.current_choice_type = Some(choice_request.choice_type.clone());
 
-                        // Send ChoiceRequest to client
-                        // TODO(mtg-akjrb): Get actual action_count from GameState undo log
+                        // Send ChoiceRequest to client (action_count from NetworkController)
                         conn.send(&ServerMessage::ChoiceRequest {
                             choice_seq: choice_request.choice_seq,
                             choice_type: choice_request.choice_type,
@@ -731,8 +732,10 @@ async fn handle_player_websocket(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
                             Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count }) => {
-                                // TODO(mtg-akjrb): Validate action_count matches server's GameState
-                                log::trace!("Player {:?}: received choice {} with action_count={}", conn.player_id, choice_seq, action_count);
+                                log::trace!(
+                                    "Player {:?}: received choice {} with action_count={}",
+                                    conn.player_id, choice_seq, action_count
+                                );
 
                                 // Send response to NetworkController
                                 let response = ChoiceResponse { choice_seq, choice_index };
@@ -741,9 +744,11 @@ async fn handle_player_websocket(
                                     break;
                                 }
 
-                                // Send acknowledgment back to client (for run_game mode)
-                                // TODO(mtg-akjrb): Include server's action_count for verification
-                                conn.send(&ServerMessage::ChoiceAccepted { choice_seq, action_count: 0 }).await?;
+                                // Send acknowledgment back to client with echoed action_count
+                                conn.send(&ServerMessage::ChoiceAccepted {
+                                    choice_seq,
+                                    action_count,
+                                }).await?;
 
                                 // Broadcast this choice to the opponent (for run_game mode)
                                 // Always broadcast - in synchronized mode, clients run their own GameLoops
@@ -756,6 +761,7 @@ async fn handle_player_websocket(
                                     choice_type,
                                     choice_index,
                                     description: format!("Choice #{}", choice_seq), // TODO: Get actual description
+                                    action_count,
                                 };
                                 log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
                                 if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
@@ -823,13 +829,12 @@ async fn handle_player_websocket(
                     }
                     drop(game_guard);
 
-                    // TODO(mtg-akjrb): Include actual action_count for synchronization
                     conn.send(&ServerMessage::OpponentChoice {
                         choice_seq: info.choice_seq,
                         choice_type: info.choice_type,
                         choice_index: info.choice_index,
                         description: info.description,
-                        action_count: 0,
+                        action_count: info.action_count,
                     }).await?;
                 }
             }

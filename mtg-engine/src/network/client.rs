@@ -571,12 +571,12 @@ impl NetworkClient {
                     action_count,
                     context,
                 } => {
-                    let _ = action_count; // TODO(mtg-akjrb): Validate action count
                     log::debug!(
-                        "Choice request #{}: {:?} with {} options",
+                        "Choice request #{}: {:?} with {} options (action_count={})",
                         choice_seq,
                         choice_type,
-                        options.len()
+                        options.len(),
+                        action_count
                     );
 
                     // Print current game state before choice
@@ -594,12 +594,11 @@ impl NetworkClient {
                     let choice_index =
                         self.get_choice_from_controller(&mut controller, &choice_type, &options, context.as_ref())?;
 
-                    // Send response
-                    // TODO(mtg-akjrb): Track and send actual action_count
+                    // Send response with echoed action_count (server provides the authoritative value)
                     let response = ClientMessage::SubmitChoice {
                         choice_seq,
                         choice_index,
-                        action_count: 0,
+                        action_count,
                     };
                     self.send_message(&response).await?;
 
@@ -630,7 +629,12 @@ impl NetworkClient {
                     description,
                     action_count,
                 } => {
-                    let _ = action_count; // TODO(mtg-akjrb): Validate action count
+                    log::trace!(
+                        "Opponent choice #{}: {} (action_count={})",
+                        choice_seq,
+                        description,
+                        action_count
+                    );
                     if self.verbosity >= VerbosityLevel::Normal {
                         println!("  Opponent chose: {}", description);
                     }
@@ -921,12 +925,15 @@ impl NetworkClient {
                     // Send our choices to server
                     choice = local_choice_rx.recv() => {
                         if let Some(choice) = choice {
-                            log::trace!("WebSocket: sending choice {} to server", choice.choice_index);
-                            // TODO(mtg-akjrb): Track and send actual action_count
+                            log::trace!(
+                                "WebSocket: sending choice {} (action_count={}) to server",
+                                choice.choice_index,
+                                choice.action_count
+                            );
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: 0, // TODO: Track sequence numbers
                                 choice_index: choice.choice_index,
-                                action_count: 0,
+                                action_count: choice.action_count,
                             };
                             let text = serde_json::to_string(&msg).unwrap();
                             if ws_sink.send(Message::Text(text.into())).await.is_err() {

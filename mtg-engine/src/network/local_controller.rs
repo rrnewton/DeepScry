@@ -30,6 +30,9 @@ pub struct LocalChoice {
     pub choice_index: usize,
     /// Human-readable description
     pub description: String,
+    /// Action count (undo log position) at the time of choice
+    /// This is used for synchronization validation with the server
+    pub action_count: u64,
 }
 
 /// Message types for the local controller
@@ -81,15 +84,21 @@ impl<C: PlayerController> NetworkLocalController<C> {
     }
 
     /// Send a choice to the server and wait for acknowledgment
-    fn send_choice(&mut self, choice_index: usize, description: String) -> Result<(), String> {
+    ///
+    /// # Arguments
+    /// * `choice_index` - The selected choice index
+    /// * `description` - Human-readable description of the choice
+    /// * `action_count` - Current action count (undo log position) for sync validation
+    fn send_choice(&mut self, choice_index: usize, description: String, action_count: u64) -> Result<(), String> {
         if self.disconnected {
             return Err("Disconnected from server".to_string());
         }
 
         log::trace!(
-            "NetworkLocalController: sending choice {} ({})",
+            "NetworkLocalController: sending choice {} ({}) at action_count={}",
             choice_index,
-            description
+            description,
+            action_count
         );
 
         // Send choice
@@ -98,6 +107,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             .send(LocalChoice {
                 choice_index,
                 description,
+                action_count,
             })
             .is_err()
         {
@@ -175,17 +185,18 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_spell_ability_to_play(view, available);
 
         // Send choice to server
+        let action_count = view.action_count() as u64;
         match &result {
             ChoiceResult::Ok(Some(ability)) => {
                 let idx = available.iter().position(|a| a == ability).unwrap_or(0) + 1;
                 let desc = format!("Play: {:?}", ability);
-                if let Err(e) = self.send_choice(idx, desc) {
+                if let Err(e) = self.send_choice(idx, desc, action_count) {
                     log::error!("Failed to send choice: {}", e);
                     return ChoiceResult::ExitGame;
                 }
             }
             ChoiceResult::Ok(None) => {
-                if let Err(e) = self.send_choice(0, "Pass".to_string()) {
+                if let Err(e) = self.send_choice(0, "Pass".to_string(), action_count) {
                     log::error!("Failed to send choice: {}", e);
                     return ChoiceResult::ExitGame;
                 }
@@ -217,7 +228,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 valid_targets.iter().position(|&t| t == targets[0]).unwrap_or(0)
             };
             let desc = format!("Target: {:?}", targets);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -248,7 +260,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 available_sources.iter().position(|&s| s == sources[0]).unwrap_or(0)
             };
             let desc = format!("Mana source: {:?}", sources);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -277,7 +290,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 available_creatures.iter().position(|&a| a == attackers[0]).unwrap_or(0) + 1
             };
             let desc = format!("Attackers: {:?}", attackers);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -311,7 +325,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 blocker_idx * attackers.len() + attacker_idx + 1
             };
             let desc = format!("Blocks: {:?}", blocks);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -341,7 +356,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 blockers.iter().position(|&b| b == order[0]).unwrap_or(0)
             };
             let desc = format!("Damage order: {:?}", order);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -371,7 +387,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 hand.iter().position(|&c| c == discards[0]).unwrap_or(0)
             };
             let desc = format!("Discard: {:?}", discards);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -395,7 +412,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 None => valid_cards.len(),
             };
             let desc = format!("From library: {:?}", card);
-            if let Err(e) = self.send_choice(idx, desc) {
+            let action_count = view.action_count() as u64;
+            if let Err(e) = self.send_choice(idx, desc, action_count) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
