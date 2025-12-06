@@ -10,7 +10,9 @@
 use crate::core::PlayerId;
 use crate::game::{GameEndReason, GameLoop, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
-use crate::network::protocol::{CardReveal, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage};
+use crate::network::protocol::{
+    CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
+};
 use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
@@ -97,6 +99,19 @@ struct GameEndInfo {
     final_hash: u64,
 }
 
+/// Info about an opponent's choice, broadcast to the other player
+#[derive(Clone)]
+struct OpponentChoiceInfo {
+    /// Choice sequence number
+    choice_seq: u32,
+    /// Type of choice
+    choice_type: ChoiceType,
+    /// Index of the chosen option
+    choice_index: usize,
+    /// Human-readable description
+    description: String,
+}
+
 struct PlayerConnection {
     /// Player ID in the game
     player_id: PlayerId,
@@ -108,6 +123,12 @@ struct PlayerConnection {
     response_tx: std::sync::mpsc::Sender<ChoiceResponse>,
     /// Channel to receive game end notification
     game_end_rx: oneshot::Receiver<GameEndInfo>,
+    /// Channel to send our choices to opponent (for run_game mode)
+    opponent_choice_tx: tokio_mpsc::Sender<OpponentChoiceInfo>,
+    /// Channel to receive opponent's choices (for run_game mode)
+    opponent_choice_rx: tokio_mpsc::Receiver<OpponentChoiceInfo>,
+    /// Current choice type being requested (for broadcasting)
+    current_choice_type: Option<ChoiceType>,
 }
 
 impl PlayerConnection {
@@ -399,6 +420,11 @@ async fn run_game(
     let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
     let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
 
+    // Create cross-player channels for opponent choice broadcasting (for run_game mode)
+    // P1 sends choices to P2, P2 sends choices to P1
+    let (p1_to_p2_tx, p1_from_p2_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
+    let (p2_to_p1_tx, p2_from_p1_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
+
     // Create PlayerConnections with tokio receivers
     let mut p1_conn = PlayerConnection {
         player_id: PlayerId::new(0),
@@ -406,6 +432,9 @@ async fn run_game(
         request_rx: p1_async_request_rx,
         response_tx: p1_response_tx,
         game_end_rx: p1_game_end_rx,
+        opponent_choice_tx: p2_to_p1_tx,   // P1 broadcasts to P2's receiver
+        opponent_choice_rx: p1_from_p2_rx, // P1 receives from P2's broadcasts
+        current_choice_type: None,
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
@@ -413,6 +442,9 @@ async fn run_game(
         request_rx: p2_async_request_rx,
         response_tx: p2_response_tx,
         game_end_rx: p2_game_end_rx,
+        opponent_choice_tx: p1_to_p2_tx,   // P2 broadcasts to P1's receiver
+        opponent_choice_rx: p2_from_p1_rx, // P2 receives from P1's broadcasts
+        current_choice_type: None,
     };
 
     // Convert deck submissions to DeckList format
@@ -625,6 +657,9 @@ async fn handle_player_websocket(
                             }
                         }
 
+                        // Track the choice type for broadcasting to opponent
+                        conn.current_choice_type = Some(choice_request.choice_type.clone());
+
                         // Send ChoiceRequest to client
                         conn.send(&ServerMessage::ChoiceRequest {
                             choice_seq: choice_request.choice_seq,
@@ -656,6 +691,18 @@ async fn handle_player_websocket(
 
                                 // Send acknowledgment back to client (for run_game mode)
                                 conn.send(&ServerMessage::ChoiceAccepted { choice_seq }).await?;
+
+                                // Broadcast this choice to the opponent (for run_game mode)
+                                if let Some(choice_type) = conn.current_choice_type.take() {
+                                    let opponent_info = OpponentChoiceInfo {
+                                        choice_seq,
+                                        choice_type,
+                                        choice_index,
+                                        description: format!("Choice #{}", choice_seq), // TODO: Get actual description
+                                    };
+                                    // Non-blocking send - if opponent isn't listening, that's ok
+                                    let _ = conn.opponent_choice_tx.try_send(opponent_info);
+                                }
                             }
                             Ok(ClientMessage::Ping { timestamp_ms }) => {
                                 conn.send(&ServerMessage::Pong { timestamp_ms }).await?;
@@ -694,6 +741,19 @@ async fn handle_player_websocket(
                         // Stream ended
                         break;
                     }
+                }
+            }
+
+            // Check for opponent's choice to forward (for run_game mode)
+            opponent_choice = conn.opponent_choice_rx.recv() => {
+                if let Some(info) = opponent_choice {
+                    log::debug!("Player {:?}: Forwarding opponent choice {}", conn.player_id, info.choice_seq);
+                    conn.send(&ServerMessage::OpponentChoice {
+                        choice_seq: info.choice_seq,
+                        choice_type: info.choice_type,
+                        choice_index: info.choice_index,
+                        description: info.description,
+                    }).await?;
                 }
             }
         }

@@ -675,8 +675,12 @@ impl NetworkClient {
         // Take ownership of WebSocket and state
         let ws = self.ws.take().ok_or_else(|| anyhow!("Not connected"))?;
         let client_state = self.state.take().ok_or_else(|| anyhow!("Game not started"))?;
-        let _our_player_id = client_state.our_player_id;
+        let our_player_id = client_state.our_player_id;
         let opponent_id = client_state.opponent_id;
+
+        // Determine if we're P1 (PlayerId(0)) or P2 (PlayerId(1))
+        // GameLoop.run_game expects (controller1, controller2) where controller1 is for P1
+        let we_are_p1 = our_player_id.as_u32() == 0;
 
         // Split WebSocket
         let (mut ws_sink, mut ws_stream) = ws.split();
@@ -834,7 +838,16 @@ impl NetworkClient {
 
             // Create game loop with reveal drainer hook
             let mut game_loop = GameLoop::new(&mut game).with_reveal_drainer(drain_reveals);
-            game_loop.run_game(&mut local_controller, &mut remote_controller)
+
+            // Pass controllers in the correct order based on which player we are
+            // GameLoop.run_game expects (controller_for_p1, controller_for_p2)
+            if we_are_p1 {
+                // We're P1: local controller is for P1, remote is for P2
+                game_loop.run_game(&mut local_controller, &mut remote_controller)
+            } else {
+                // We're P2: remote controller is for P1, local is for P2
+                game_loop.run_game(&mut remote_controller, &mut local_controller)
+            }
         });
 
         // Wait for game to end

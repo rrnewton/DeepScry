@@ -1182,11 +1182,21 @@ mod websocket_integration {
     /// - RemoteController receives opponent choices
     /// - Game runs to completion and returns a winner
     ///
-    /// TODO(mtg-bfm38): This test is ignored because the server doesn't yet broadcast
-    /// OpponentChoice messages to the other player. When player 1 makes a choice, player 2's
-    /// client RemoteController blocks waiting for OpponentChoice which never arrives.
-    /// Need to add inter-player choice broadcasting to the server.
-    #[ignore = "Server doesn't broadcast OpponentChoice - see mtg-bfm38"]
+    /// NOTE: This test is in progress for the synchronized GameLoop mode.
+    ///
+    /// Current status:
+    /// - Controller ordering is now correct (P1/P2 controllers passed in right order)
+    /// - OpponentChoice broadcasting works for choice synchronization
+    /// - Test progresses through early turns (Turn 1-2 work)
+    ///
+    /// Remaining issues for synchronized GameLoop mode:
+    /// 1. Server doesn't send CardRevealed during normal gameplay draws
+    /// 2. Client's remote library can't draw without queued reveals
+    /// 3. Shadow game state shows opponent hand as 0 (display only, not blocking)
+    ///
+    /// The message-based mode (`run_game_message_based`) is the simpler alternative
+    /// that works correctly - see `test_full_game_always_pass` for a working example.
+    #[ignore = "In progress - synchronized GameLoop mode needs CardRevealed for draws"]
     #[tokio::test]
     async fn test_run_game_with_random_controllers() {
         use mtg_forge_rs::game::RandomController;
@@ -1218,9 +1228,7 @@ mod websocket_integration {
             .join("..")
             .join("decks")
             .join("monored_simple.dck");
-        let cardsfolder_path_buf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("cardsfolder");
+        let cardsfolder_path_buf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("cardsfolder");
 
         // Create two clients with RandomControllers
         let mut client1_config = ClientConfig::new(
