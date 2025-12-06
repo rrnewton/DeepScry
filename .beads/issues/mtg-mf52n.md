@@ -1,6 +1,6 @@
 ---
 title: Unify Native/WASM TUI Event Handling and Add Mouse Support
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
@@ -8,7 +8,7 @@ labels:
 - wasm
 - refactoring
 created_at: 2025-12-06T15:30:42.084566029+00:00
-updated_at: 2025-12-06T15:30:42.084566029+00:00
+updated_at: 2025-12-06T16:07:20.591934059+00:00
 ---
 
 # Description
@@ -17,65 +17,42 @@ updated_at: 2025-12-06T15:30:42.084566029+00:00
 
 Analysis of native vs WASM TUI reveals significant code duplication and feature gaps. The shared `FancyTuiRenderer` (2,044 lines) is well-designed, but event handling has ~840 lines of duplication (25% waste).
 
-## Current State
+## Status: COMPLETED
 
-### What's Shared (Good)
-- `FancyTuiRenderer` module: Core UI types, rendering methods, layout logic, hit testing infrastructure
-- `FancyTuiState`, `FocusedPane`, `Entity`, `EntityPosition` types
-- Card rendering, grouping, optimal sizing calculations
+All priority items implemented in commits 297f304 and 9a26984:
 
-### What's Duplicated (Problem)
-1. **Keyboard handler (90 lines exact duplication)**: H/I/Y/O/S keys for pane focus exist in both native and WASM with nearly identical code
-2. **Navigation logic (275 lines)**: Arrow key routing, 2D grid navigation - exists in native only, missing in WASM
-3. **Mouse handling (45 lines)**: Hit test loop, pane boundary checking - completely absent in WASM
+### ✅ Priority 1: Extract Shared Event Handler (DONE)
+- Created `fancy_tui_events.rs` module with:
+  - `KeyInput` enum for cross-platform key abstraction
+  - `EventResult` enum for action outcomes
+  - `handle_key_event()` - shared keyboard processing
+  - `handle_mouse_click()` - shared mouse click handling
+  - 2D grid navigation helpers (CARDS_PER_ROW = 4)
 
-## Critical Feature Gap: Hand Card Clicking
+### ✅ Priority 2: Add Mouse Support to WASM (DONE)
+- Added `on_mouse_event` handler using RatZilla's API
+- Converts pixel coordinates to terminal cells (width/10, height/20)
+- Handles left mouse button press events
+- Calls shared `handle_mouse_click()` function
 
-**Observation**: In WASM browser TUI, clicking cards in the Hand pane shows them in Card Details. This feature does NOT exist in native TUI.
+### ✅ Priority 3: Hand Card Hit Testing (DONE)
+- Added `Entity::HandCard` variant with card_id and index
+- Modified `draw_hand()` to create `EntityPosition` entries for each card
+- Clicking hand cards now selects them and shows details in both platforms
 
-**Root cause**: 
-- WASM TUI doesn't actually have mouse click handling implemented
-- The "clicking works" observation may be incorrect, or there's hidden JS handling
-- Native has mouse handling but hand cards are rendered as `List` widget without individual `EntityPosition` entries
-- Only battlefield cards create hit-testable `EntityPosition` entries
+### Deferred: Backend Switching
+- Filed new issue mtg-fho9v for RatZilla backend switching (dom/canvas/webgl2)
+- DomBackend works well as default; other backends are optimization
 
-## Proposed Solution
+## Test Results
 
-### Goal: Common Infrastructure For
-1. Panes - all layout handling and geometry calculation (already shared)
-2. Common X/Y coordinate plane definition
-3. Click event handling with bounding boxes and geometry
-4. Shared object callbacks for handling events
+- 386 unit tests passed (native-tui)
+- Playwright e2e test: all steps passed (wasm-tui)
 
-### Priority 1: Extract Shared Event Handler
-- Create `fancy_tui_event_handler.rs` module
-- Functions: `handle_keyboard_event()`, `handle_mouse_click()`, `navigate_within_pane()`
-- ~200 lines deduplication
+## Files Changed
 
-### Priority 2: Add Mouse Support to WASM
-- Set up RatZilla mouse event listener
-- Call WASM function with click coordinates
-- Use shared handler to update state
-
-### Priority 3: Hand Card Hit Testing
-- Modify `draw_hand()` to create `EntityPosition` entries for individual cards
-- Enable clicking on hand cards in both native and WASM
-
-### Priority 4: Navigation Helpers
-- Extract 2D grid logic (CARDS_PER_ROW, wrapping) to shared static methods
-- ~50 lines additional deduplication
-
-## Files Involved
-
-- `mtg-engine/src/game/fancy_tui_renderer.rs` (2,044 lines - shared)
-- `mtg-engine/src/game/fancy_tui_controller.rs` (1,189 lines - native)
-- `mtg-engine/src/wasm/fancy_tui.rs` (349 lines - WASM)
-- `web/fancy.html` (browser interface)
-
-## Acceptance Criteria
-
-- [ ] Keyboard event handling extracted to shared module
-- [ ] Mouse click handling works identically in native and WASM
-- [ ] Clicking hand cards shows details in both platforms
-- [ ] Arrow key navigation works in WASM (currently missing)
-- [ ] No duplicate event handling code between native/WASM
+- `mtg-engine/src/game/fancy_tui_events.rs` (NEW - ~530 lines)
+- `mtg-engine/src/game/mod.rs` (module exports)
+- `mtg-engine/src/game/fancy_tui_renderer.rs` (Entity::HandCard, draw_hand)
+- `mtg-engine/src/wasm/fancy_tui.rs` (keyboard + mouse handlers)
+- `web/fancy.html` (14px font, collapsible controls)
