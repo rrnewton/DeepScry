@@ -884,6 +884,9 @@ impl NetworkClient {
             // Store the server's authoritative action_count from the last ChoiceRequest
             // This MUST be used instead of the client's shadow state action_count
             let mut server_action_count: Option<u64> = None;
+            // Store the server's choice_seq from the last ChoiceRequest
+            // We MUST echo this back in SubmitChoice
+            let mut server_choice_seq: Option<u32> = None;
 
             loop {
                 tokio::select! {
@@ -909,9 +912,10 @@ impl NetworkClient {
                                     Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
                                         // Server is asking for a choice - the game loop will handle this
                                         // The inner controller will make a decision and send it
-                                        // CRITICAL: Store the server's authoritative action_count
-                                        // We MUST echo this back in SubmitChoice, not our shadow state's count
+                                        // CRITICAL: Store the server's authoritative action_count and choice_seq
+                                        // We MUST echo these back in SubmitChoice, not our shadow state's values
                                         server_action_count = Some(action_count);
+                                        server_choice_seq = Some(choice_seq);
                                         log::debug!("Received ChoiceRequest #{}, server action_count={}", choice_seq, action_count);
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count }) => {
@@ -1013,11 +1017,21 @@ impl NetworkClient {
                             // Track for debug validation
                             last_sent_action_count = Some(action_count_to_send);
                             last_sent_actions = choice.last_actions;
-                            // Clear server_action_count after use (it's only valid for one choice)
+
+                            // Get server's choice_seq, falling back to 0 if not received
+                            let choice_seq_to_send = server_choice_seq.unwrap_or_else(|| {
+                                log::warn!(
+                                    "WebSocket: No server choice_seq received yet, using 0 (may cause sync error)"
+                                );
+                                0
+                            });
+
+                            // Clear server state after use (only valid for one choice)
                             server_action_count = None;
+                            server_choice_seq = None;
 
                             let msg = ClientMessage::SubmitChoice {
-                                choice_seq: 0, // TODO: Track sequence numbers
+                                choice_seq: choice_seq_to_send,
                                 choice_index: choice.choice_index,
                                 action_count: action_count_to_send,
                             };
