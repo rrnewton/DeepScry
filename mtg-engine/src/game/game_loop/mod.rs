@@ -590,6 +590,45 @@ impl<'a> GameLoop<'a> {
         }
     }
 
+    /// Run exactly one turn of the game
+    ///
+    /// This is used for step-through mode in WASM TUI (AI vs AI games).
+    ///
+    /// Returns:
+    /// - `Ok(Some(GameResult))` if the game ended during this turn
+    /// - `Ok(None)` if the turn completed and the game continues
+    /// - `Err(_)` on error
+    pub fn run_one_turn(
+        &mut self,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<Option<GameResult>> {
+        // Setup on first turn (when undo log is empty and not already set up)
+        let is_fresh_start = self.game.undo_log.actions().is_empty() && self.game.turn.turn_number <= 1;
+        if is_fresh_start {
+            // Verify controllers match players
+            let (player1_id, player2_id) = {
+                let mut players_iter = self.game.players.iter().map(|p| p.id);
+                let player1_id = players_iter
+                    .next()
+                    .ok_or_else(|| MtgError::InvalidAction("Game loop requires exactly 2 players".to_string()))?;
+                let player2_id = players_iter
+                    .next()
+                    .ok_or_else(|| MtgError::InvalidAction("Game loop requires exactly 2 players".to_string()))?;
+                (player1_id, player2_id)
+            };
+
+            if controller1.player_id() != player1_id || controller2.player_id() != player2_id {
+                return Err(MtgError::InvalidAction(
+                    "Controller player IDs don't match game players".to_string(),
+                ));
+            }
+        }
+
+        // Run one turn
+        self.run_turn_once(controller1, controller2)
+    }
+
     /// Set up a game for two-player gameplay
     ///
     /// This verifies that:

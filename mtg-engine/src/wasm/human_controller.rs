@@ -53,7 +53,8 @@ pub enum PendingChoice {
 pub struct WasmHumanController {
     player_id: PlayerId,
     /// The next choice to return (set by UI before resuming game)
-    pending_choice: Option<PendingChoice>,
+    /// Made pub(crate) so fancy_tui can access it for replay pattern
+    pub(crate) pending_choice: Option<PendingChoice>,
 }
 
 impl WasmHumanController {

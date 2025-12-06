@@ -168,6 +168,7 @@
         <div class="control-group">
             <label>P1 Controller</label>
             <select id="p1-controller">
+                <option value="human">Human (You)</option>
                 <option value="heuristic">Heuristic AI</option>
                 <option value="random">Random</option>
                 <option value="zero">Zero (Pass)</option>
@@ -182,7 +183,7 @@
             </select>
         </div>
         <button id="btn-launch">Launch Fancy TUI</button>
-        <span class="help-text">Keys: Space=turn, A=auto, Q=exit, Tab=cycle | Zoom: Ctrl+/- for more/less space</span>
+        <span class="help-text">Human: Up/Down=select, Enter=confirm, 1-9=quick select | AI: Space=turn, A=auto | Q=exit, Tab=cycle</span>
     </div>
 
     <div class="tui-container">
@@ -287,6 +288,7 @@
 
         function getControllerType(value) {
             switch (value) {
+                case 'human': return WasmControllerType.Human;
                 case 'zero': return WasmControllerType.Zero;
                 case 'random': return WasmControllerType.Random;
                 case 'heuristic': return WasmControllerType.Heuristic;

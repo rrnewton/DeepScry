@@ -32,6 +32,9 @@ use wasm_bindgen::prelude::*;
 
 use super::human_controller::{PendingChoice, WasmHumanController};
 use super::{WasmCardDatabase, WasmControllerType};
+use crate::game::replay_controller::ReplayChoice;
+use crate::game::ReplayController;
+use crate::undo::GameAction;
 
 // Thread-local storage for the global TUI state (for button callbacks)
 thread_local! {
@@ -118,8 +121,9 @@ struct WasmFancyTuiState {
     error_message: Option<String>,
     /// Auto-run mode (AI vs AI)
     auto_run: bool,
-    /// Whether game setup (shuffle, draw opening hands) is done
-    setup_done: bool,
+    /// Whether we need to replay choices after user makes a new choice
+    /// When true, we rewind to turn start and replay all choices including the new one
+    needs_replay: bool,
 }
 
 impl WasmFancyTuiState {
@@ -155,14 +159,207 @@ impl WasmFancyTuiState {
             game_over: false,
             error_message: None,
             auto_run: false,
-            setup_done: false,
+            needs_replay: false,
+        }
+    }
+
+    /// Extract ReplayChoice entries from undo log's ChoicePoint actions
+    fn extract_replay_choices(&self) -> Vec<ReplayChoice> {
+        self.game
+            .undo_log
+            .actions()
+            .iter()
+            .filter_map(|action| {
+                if let GameAction::ChoicePoint { choice: Some(c), .. } = action {
+                    Some(c.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Rewind game state to turn start and return choices made so far
+    ///
+    /// This undoes all game state changes since the start of the turn,
+    /// returning the ReplayChoice entries that were logged.
+    fn rewind_to_turn_start(&mut self) -> Vec<ReplayChoice> {
+        let mut undo_log = std::mem::take(&mut self.game.undo_log);
+        let result = undo_log.rewind_to_turn_start(&mut self.game);
+        self.game.undo_log = undo_log;
+
+        if let Some((_turn_number, choice_actions, _actions_rewound)) = result {
+            // Extract ReplayChoice from the ChoicePoint actions
+            choice_actions
+                .into_iter()
+                .filter_map(|action| {
+                    if let GameAction::ChoicePoint { choice: Some(c), .. } = action {
+                        Some(c)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            // No turn boundary found (we're in turn 1)
+            // Extract all choices from current undo log
+            self.extract_replay_choices()
+        }
+    }
+
+    /// Convert a PendingChoice to a ReplayChoice using the current pending_context
+    fn pending_choice_to_replay_choice(&self, pending: &PendingChoice) -> ReplayChoice {
+        match pending {
+            PendingChoice::SpellAbility(opt_idx) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::SpellAbility { available, .. } = context {
+                        match opt_idx {
+                            None | Some(0) => ReplayChoice::SpellAbility(None),
+                            Some(idx) => {
+                                let ability_idx = idx - 1;
+                                if ability_idx < available.len() {
+                                    ReplayChoice::SpellAbility(Some(available[ability_idx].clone()))
+                                } else {
+                                    ReplayChoice::SpellAbility(None)
+                                }
+                            }
+                        }
+                    } else {
+                        ReplayChoice::SpellAbility(None)
+                    }
+                } else {
+                    ReplayChoice::SpellAbility(None)
+                }
+            }
+            PendingChoice::Targets(indices) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::Targets { valid_targets, .. } = context {
+                        let targets: smallvec::SmallVec<[crate::core::CardId; 4]> =
+                            indices.iter().filter_map(|i| valid_targets.get(*i).copied()).collect();
+                        ReplayChoice::Targets(targets)
+                    } else {
+                        ReplayChoice::Targets(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::Targets(smallvec::SmallVec::new())
+                }
+            }
+            PendingChoice::ManaSources(indices) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::ManaSources { available_sources, .. } = context {
+                        let sources: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
+                            .iter()
+                            .filter_map(|i| available_sources.get(*i).copied())
+                            .collect();
+                        ReplayChoice::ManaSources(sources)
+                    } else {
+                        ReplayChoice::ManaSources(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::ManaSources(smallvec::SmallVec::new())
+                }
+            }
+            PendingChoice::Attackers(indices) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::Attackers {
+                        available_creatures, ..
+                    } = context
+                    {
+                        let attackers: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
+                            .iter()
+                            .filter_map(|i| available_creatures.get(*i).copied())
+                            .collect();
+                        ReplayChoice::Attackers(attackers)
+                    } else {
+                        ReplayChoice::Attackers(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::Attackers(smallvec::SmallVec::new())
+                }
+            }
+            PendingChoice::Blockers(pairs) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::Blockers {
+                        available_blockers,
+                        attackers,
+                        ..
+                    } = context
+                    {
+                        let blockers: smallvec::SmallVec<[(crate::core::CardId, crate::core::CardId); 8]> = pairs
+                            .iter()
+                            .filter_map(|(bi, ai)| {
+                                let blocker = available_blockers.get(*bi).copied()?;
+                                let attacker = attackers.get(*ai).copied()?;
+                                Some((blocker, attacker))
+                            })
+                            .collect();
+                        ReplayChoice::Blockers(blockers)
+                    } else {
+                        ReplayChoice::Blockers(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::Blockers(smallvec::SmallVec::new())
+                }
+            }
+            PendingChoice::DamageOrder(indices) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::DamageOrder { blockers, .. } = context {
+                        let order: smallvec::SmallVec<[crate::core::CardId; 4]> =
+                            indices.iter().filter_map(|i| blockers.get(*i).copied()).collect();
+                        ReplayChoice::DamageOrder(order)
+                    } else {
+                        ReplayChoice::DamageOrder(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::DamageOrder(smallvec::SmallVec::new())
+                }
+            }
+            PendingChoice::Discard(indices) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::Discard { hand, .. } = context {
+                        let cards: smallvec::SmallVec<[crate::core::CardId; 7]> =
+                            indices.iter().filter_map(|i| hand.get(*i).copied()).collect();
+                        ReplayChoice::Discard(cards)
+                    } else {
+                        ReplayChoice::Discard(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::Discard(smallvec::SmallVec::new())
+                }
+            }
+            PendingChoice::LibrarySearch(opt_idx) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::LibrarySearch { valid_cards, .. } = context {
+                        match opt_idx {
+                            None => ReplayChoice::LibrarySearch(None),
+                            Some(idx) => ReplayChoice::LibrarySearch(valid_cards.get(*idx).copied()),
+                        }
+                    } else {
+                        ReplayChoice::LibrarySearch(None)
+                    }
+                } else {
+                    ReplayChoice::LibrarySearch(None)
+                }
+            }
         }
     }
 
     /// Run the game until input is needed or game ends
     ///
-    /// For AI vs AI games, this runs one full turn.
-    /// For human player games, this runs until a choice is needed.
+    /// For AI vs AI games, this runs one turn at a time (for step-through mode).
+    /// For human player games, this uses the rewind/replay pattern:
+    ///
+    /// 1. If needs_replay is true (user just made a choice):
+    ///    - Rewind game state to the start of the current turn
+    ///    - Create a ReplayController with all choices from this turn (including new one)
+    ///    - Run the game - it will replay deterministically and continue
+    ///
+    /// 2. If needs_replay is false (initial run or after turn boundary):
+    ///    - Run until we hit NeedInput or game ends
+    ///
+    /// This pattern is necessary because when NeedInput is thrown, the call stack
+    /// unwinds completely. ChoiceContext is NOT a continuation - it doesn't capture
+    /// the stack state. To resume mid-turn, we must rewind and replay all choices.
     fn run_until_choice(&mut self) {
         if self.game_over {
             return;
@@ -171,28 +368,97 @@ impl WasmFancyTuiState {
         let p1_id = self.game.players[0].id;
         let p2_id = self.game.players[1].id;
 
-        // Create controllers based on type
-        // If player 1 is human, we use the stored controller to preserve pending_choice
+        // Create P2 controller
         let mut p2_controller = self.create_ai_controller(self.p2_controller_type, p2_id);
 
-        // Run using run_until_input for proper human input support
-        let result = if self.p1_controller_type == WasmControllerType::Human {
-            // Human player - use run_until_input with stored controller
-            if let Some(ref mut human) = self.p1_human_controller {
+        if self.p1_controller_type == WasmControllerType::Human {
+            // Human player - use rewind/replay pattern
+            if self.needs_replay {
+                // User just made a choice - rewind and replay
+                self.needs_replay = false;
+
+                // Get the new choice from the human controller
+                let new_choice = if let Some(ref mut human) = self.p1_human_controller {
+                    if let Some(pending) = human.pending_choice.take() {
+                        // Convert PendingChoice to ReplayChoice using current context
+                        Some(self.pending_choice_to_replay_choice(&pending))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Rewind game state and get previous choices from this turn
+                let mut replay_choices = self.rewind_to_turn_start();
+
+                // Add the new choice if we have one
+                if let Some(choice) = new_choice {
+                    replay_choices.push(choice);
+                }
+
+                // Create the base human controller for after replay exhaustion
+                let human_controller = WasmHumanController::new(p1_id);
+
+                // Create ReplayController that will replay choices then delegate to human
+                let mut replay_controller = ReplayController::new(p1_id, Box::new(human_controller), replay_choices);
+
+                // Run the game with replay controller
                 let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                game_loop.run_until_input(human, p2_controller.as_mut())
+                let result = game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut());
+
+                // Update our human controller from the result
+                // The inner human controller may have been asked for a new choice
+                self.handle_game_result(result);
             } else {
-                // Shouldn't happen, but handle gracefully
-                self.error_message = Some("Human controller not initialized".to_string());
-                return;
+                // Normal run - no replay needed
+                if let Some(ref mut human) = self.p1_human_controller {
+                    let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                    let result = game_loop.run_until_input(human, p2_controller.as_mut());
+                    self.handle_game_result(result);
+                } else {
+                    self.error_message = Some("Human controller not initialized".to_string());
+                }
             }
         } else {
-            // AI vs AI - run one turn at a time
+            // AI vs AI - run one turn at a time for step-through mode
             let mut p1_controller = self.create_ai_controller(self.p1_controller_type, p1_id);
             let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-            game_loop.run_until_input(p1_controller.as_mut(), p2_controller.as_mut())
-        };
 
+            // Run one turn only (for step mode)
+            let result = game_loop.run_one_turn(p1_controller.as_mut(), p2_controller.as_mut());
+            match result {
+                Ok(Some(game_result)) => {
+                    // Game ended
+                    self.game_over = true;
+                    self.pending_context = None;
+                    self.current_choices.clear();
+                    if let Some(winner) = game_result.winner {
+                        let winner_name = self
+                            .game
+                            .get_player(winner)
+                            .map(|p| p.name.to_string())
+                            .unwrap_or_else(|_| "Unknown".to_string());
+                        self.current_prompt = Some(format!("Game Over! {} wins!", winner_name));
+                    } else {
+                        self.current_prompt = Some("Game Over! Draw!".to_string());
+                    }
+                }
+                Ok(None) => {
+                    // Turn completed, game continues
+                    let turn = self.game.turn.turn_number;
+                    self.current_prompt = Some(format!("Turn {} complete. Press Space for next turn.", turn));
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("Game error: {}", e));
+                    self.game_over = true;
+                }
+            }
+        }
+    }
+
+    /// Handle game result after running (for human player games)
+    fn handle_game_result(&mut self, result: crate::Result<GameLoopState>) {
         match result {
             Ok(GameLoopState::Complete(game_result)) => {
                 // Game ended
@@ -203,7 +469,7 @@ impl WasmFancyTuiState {
                     let winner_name = self
                         .game
                         .get_player(winner)
-                        .map(|p| p.name.clone())
+                        .map(|p| p.name.to_string())
                         .unwrap_or_else(|_| "Unknown".to_string());
                     self.current_prompt = Some(format!("Game Over! {} wins!", winner_name));
                 } else {
@@ -285,52 +551,61 @@ impl WasmFancyTuiState {
     }
 
     /// Handle selection of current choice index
+    ///
+    /// When the user makes a selection:
+    /// 1. Convert the selection index to a PendingChoice
+    /// 2. Set it on the human controller
+    /// 3. Set needs_replay = true (we'll need to rewind and replay)
+    /// 4. Call run_until_choice() which will do the rewind/replay
     fn select_current_choice(&mut self) {
         if self.pending_context.is_none() {
             return;
         }
 
-        let context = self.pending_context.take().unwrap();
+        // Don't take the context yet - we need it for pending_choice_to_replay_choice
         let idx = self.selected_choice_idx;
 
         // Convert selection index to PendingChoice based on context type
-        let pending = match context {
-            ChoiceContext::SpellAbility { .. } => {
-                // idx 0 = pass, idx 1+ = ability index - 1
-                if idx == 0 {
-                    PendingChoice::SpellAbility(None)
-                } else {
-                    PendingChoice::SpellAbility(Some(idx))
+        let pending = {
+            let context = self.pending_context.as_ref().unwrap();
+            match context {
+                ChoiceContext::SpellAbility { .. } => {
+                    // idx 0 = pass, idx 1+ = ability index - 1
+                    if idx == 0 {
+                        PendingChoice::SpellAbility(None)
+                    } else {
+                        PendingChoice::SpellAbility(Some(idx))
+                    }
                 }
-            }
-            ChoiceContext::Targets { .. } => PendingChoice::Targets(vec![idx]),
-            ChoiceContext::ManaSources { .. } => PendingChoice::ManaSources(vec![idx]),
-            ChoiceContext::Attackers { .. } => {
-                if idx == 0 {
-                    PendingChoice::Attackers(vec![]) // Done
-                } else {
-                    PendingChoice::Attackers(vec![idx - 1])
+                ChoiceContext::Targets { .. } => PendingChoice::Targets(vec![idx]),
+                ChoiceContext::ManaSources { .. } => PendingChoice::ManaSources(vec![idx]),
+                ChoiceContext::Attackers { .. } => {
+                    if idx == 0 {
+                        PendingChoice::Attackers(vec![]) // Done
+                    } else {
+                        PendingChoice::Attackers(vec![idx - 1])
+                    }
                 }
-            }
-            ChoiceContext::Blockers { attackers, .. } => {
-                if idx == 0 {
-                    PendingChoice::Blockers(vec![]) // Done
-                } else {
-                    // Decode blocker-attacker pair from index
-                    let num_attackers = attackers.len();
-                    let pair_idx = idx - 1;
-                    let blocker_idx = pair_idx / num_attackers;
-                    let attacker_idx = pair_idx % num_attackers;
-                    PendingChoice::Blockers(vec![(blocker_idx, attacker_idx)])
+                ChoiceContext::Blockers { attackers, .. } => {
+                    if idx == 0 {
+                        PendingChoice::Blockers(vec![]) // Done
+                    } else {
+                        // Decode blocker-attacker pair from index
+                        let num_attackers = attackers.len();
+                        let pair_idx = idx - 1;
+                        let blocker_idx = pair_idx / num_attackers;
+                        let attacker_idx = pair_idx % num_attackers;
+                        PendingChoice::Blockers(vec![(blocker_idx, attacker_idx)])
+                    }
                 }
-            }
-            ChoiceContext::DamageOrder { .. } => PendingChoice::DamageOrder(vec![idx]),
-            ChoiceContext::Discard { .. } => PendingChoice::Discard(vec![idx]),
-            ChoiceContext::LibrarySearch { .. } => {
-                if idx == 0 {
-                    PendingChoice::LibrarySearch(None)
-                } else {
-                    PendingChoice::LibrarySearch(Some(idx - 1))
+                ChoiceContext::DamageOrder { .. } => PendingChoice::DamageOrder(vec![idx]),
+                ChoiceContext::Discard { .. } => PendingChoice::Discard(vec![idx]),
+                ChoiceContext::LibrarySearch { .. } => {
+                    if idx == 0 {
+                        PendingChoice::LibrarySearch(None)
+                    } else {
+                        PendingChoice::LibrarySearch(Some(idx - 1))
+                    }
                 }
             }
         };
@@ -340,11 +615,17 @@ impl WasmFancyTuiState {
             human.set_pending_choice(pending);
         }
 
-        // Clear choices display
+        // Mark that we need to rewind and replay when run_until_choice is called
+        // DON'T clear pending_context yet - we need it for pending_choice_to_replay_choice
+        self.needs_replay = true;
+
+        // Clear UI state
         self.current_choices.clear();
         self.selected_choice_idx = 0;
 
-        // Continue running the game
+        // Continue running the game with rewind/replay
+        // Note: run_until_choice() may set a NEW pending_context if we hit another choice point
+        // So we don't clear pending_context here - it will be overwritten or left as-is
         self.run_until_choice();
     }
 
