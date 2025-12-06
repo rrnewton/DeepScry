@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev
 
 # Default target - show available commands
 help:
@@ -27,7 +27,9 @@ help:
 	@echo "  make doc            - Generate documentation and open in browser"
 	@echo "  make docs           - Generate documentation (no browser)"
 	@echo "  make wasm           - Build WebAssembly module for browser"
+	@echo "  make wasm-dev       - Build WASM (dev mode, fast)"
 	@echo "  make wasm-serve     - Build WASM and start local web server"
+	@echo "  make wasm-test-fancy - Run Playwright e2e test with screenshots"
 	@echo ""
 
 # Build the project
@@ -474,7 +476,23 @@ wasm-dev-serve: wasm-dev
 	@echo ""
 	@cd web && python3 -m http.server 8080 2>&1 | tee server.log
 
-# Test WASM module in headless browser
+# Test WASM module in headless browser (basic API test)
 wasm-test: wasm
 	@echo "=== Testing WASM in headless browser ==="
 	@cd web && npm install --silent 2>/dev/null && node test_wasm.js
+
+# Test fancy TUI in browser with Playwright (e2e screenshot test)
+# Launches game, steps through turns, takes screenshots, logs performance
+wasm-test-fancy: wasm
+	@echo "=== Testing Fancy TUI in browser (Playwright e2e) ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_fancy_tui.js
+	@echo ""
+	@echo "Screenshots saved in web/screenshots/"
+	@echo "Test results: web/screenshots/test_results.json"
+
+# Quick fancy TUI test using dev build (faster iteration)
+wasm-test-fancy-dev: wasm-dev
+	@echo "=== Testing Fancy TUI (dev build, Playwright e2e) ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_fancy_tui.js
