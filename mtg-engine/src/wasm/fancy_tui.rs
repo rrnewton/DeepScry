@@ -138,6 +138,7 @@ impl WasmFancyTuiState {
             WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
+            WasmControllerType::Human => todo!("Human controller not yet implemented for fancy TUI"),
         }
     }
 }

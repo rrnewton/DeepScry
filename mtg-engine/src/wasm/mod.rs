@@ -195,7 +195,7 @@ impl Default for WasmCardDatabase {
 
 /// Controller type for WASM games
 #[wasm_bindgen]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmControllerType {
     /// Always passes priority (does nothing)
     Zero,
@@ -203,6 +203,8 @@ pub enum WasmControllerType {
     Random,
     /// Uses heuristic AI evaluation
     Heuristic,
+    /// Human player (interactive input via UI)
+    Human,
 }
 
 /// WASM-compatible game wrapper
@@ -415,12 +417,14 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
+            WasmControllerType::Human => todo!("Human controller not yet implemented for run_ai_game"),
         };
 
         let mut controller2: Box<dyn PlayerController> = match self.p2_controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
+            WasmControllerType::Human => todo!("Human controller not yet implemented for run_ai_game"),
         };
 
         let mut game_loop = GameLoop::new(&mut self.game)
@@ -455,12 +459,14 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
+            WasmControllerType::Human => todo!("Human controller not yet implemented for run_one_turn"),
         };
 
         let mut controller2: Box<dyn PlayerController> = match self.p2_controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
+            WasmControllerType::Human => todo!("Human controller not yet implemented for run_one_turn"),
         };
 
         let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
