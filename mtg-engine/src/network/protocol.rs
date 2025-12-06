@@ -30,6 +30,10 @@ pub enum ClientMessage {
         choice_seq: u32,
         /// The chosen option index (into the options array)
         choice_index: usize,
+        /// Action count at time of choice (undo log position)
+        /// Used for synchronization validation - server verifies this matches expected
+        #[serde(default)]
+        action_count: u64,
     },
 
     /// Request to disconnect gracefully
@@ -135,6 +139,9 @@ pub enum ServerMessage {
         options: Vec<String>,
         /// Game state hash at this decision point (excludes hidden info)
         state_hash: u64,
+        /// Action count at this decision point (undo log position)
+        /// Client should verify this matches their local action count
+        action_count: u64,
         /// Optional context for the choice
         #[serde(skip_serializing_if = "Option::is_none")]
         context: Option<ChoiceContext>,
@@ -150,6 +157,9 @@ pub enum ServerMessage {
         choice_index: usize,
         /// Human-readable description of what was chosen
         description: String,
+        /// Action count when this choice was made
+        /// Client uses this to verify they're at the same position
+        action_count: u64,
     },
 
     /// Acknowledge receipt of a submitted choice
@@ -159,6 +169,10 @@ pub enum ServerMessage {
     ChoiceAccepted {
         /// Echo of the choice sequence for correlation
         choice_seq: u32,
+        /// Server's action count after processing the choice
+        /// Client can verify this matches their expected count
+        #[serde(default)]
+        action_count: u64,
     },
 
     /// Game has ended
@@ -413,6 +427,7 @@ mod tests {
                 "Cast spell: Lightning Bolt".to_string(),
             ],
             state_hash: 0xDEADBEEF,
+            action_count: 0,
             context: None,
         };
 
@@ -532,6 +547,7 @@ mod tests {
                 choice_type: ChoiceType::Priority { available_count: 2 },
                 options: vec!["Pass".to_string(), "Play Mountain".to_string()],
                 state_hash: 0xABCDEF,
+                action_count: 0,
                 context: None,
             },
             ServerMessage::CardRevealed {
@@ -551,6 +567,7 @@ mod tests {
                 choice_type: ChoiceType::Priority { available_count: 0 },
                 choice_index: 0,
                 description: "Pass priority".to_string(),
+                action_count: 0,
             },
             ServerMessage::GameEnded {
                 winner: Some(player_id),
@@ -595,6 +612,7 @@ mod tests {
             ClientMessage::SubmitChoice {
                 choice_seq: 42,
                 choice_index: 1,
+                action_count: 0,
             },
             ClientMessage::Ping {
                 timestamp_ms: 9876543210,

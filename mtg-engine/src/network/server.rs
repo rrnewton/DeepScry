@@ -708,11 +708,13 @@ async fn handle_player_websocket(
                         conn.current_choice_type = Some(choice_request.choice_type.clone());
 
                         // Send ChoiceRequest to client
+                        // TODO(mtg-akjrb): Get actual action_count from GameState undo log
                         conn.send(&ServerMessage::ChoiceRequest {
                             choice_seq: choice_request.choice_seq,
                             choice_type: choice_request.choice_type,
                             options: choice_request.options,
                             state_hash: choice_request.state_hash,
+                            action_count: choice_request.action_count,
                             context: None,
                         }).await?;
                     }
@@ -728,7 +730,10 @@ async fn handle_player_websocket(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index }) => {
+                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count }) => {
+                                // TODO(mtg-akjrb): Validate action_count matches server's GameState
+                                log::trace!("Player {:?}: received choice {} with action_count={}", conn.player_id, choice_seq, action_count);
+
                                 // Send response to NetworkController
                                 let response = ChoiceResponse { choice_seq, choice_index };
                                 if conn.response_tx.send(response).is_err() {
@@ -737,7 +742,8 @@ async fn handle_player_websocket(
                                 }
 
                                 // Send acknowledgment back to client (for run_game mode)
-                                conn.send(&ServerMessage::ChoiceAccepted { choice_seq }).await?;
+                                // TODO(mtg-akjrb): Include server's action_count for verification
+                                conn.send(&ServerMessage::ChoiceAccepted { choice_seq, action_count: 0 }).await?;
 
                                 // Broadcast this choice to the opponent (for run_game mode)
                                 // Always broadcast - in synchronized mode, clients run their own GameLoops
@@ -817,11 +823,13 @@ async fn handle_player_websocket(
                     }
                     drop(game_guard);
 
+                    // TODO(mtg-akjrb): Include actual action_count for synchronization
                     conn.send(&ServerMessage::OpponentChoice {
                         choice_seq: info.choice_seq,
                         choice_type: info.choice_type,
                         choice_index: info.choice_index,
                         description: info.description,
+                        action_count: 0,
                     }).await?;
                 }
             }

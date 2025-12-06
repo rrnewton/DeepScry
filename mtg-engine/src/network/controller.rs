@@ -49,6 +49,9 @@ pub struct ChoiceRequest {
     pub options: Vec<String>,
     /// Game state hash (excluding hidden info)
     pub state_hash: u64,
+    /// Action count at this choice point (undo log position)
+    /// This is the source of truth for synchronization
+    pub action_count: u64,
     /// Cards revealed since this player's last choice
     ///
     /// The server should send `CardRevealed` messages for these before
@@ -154,11 +157,15 @@ impl NetworkController {
         // Collect reveals since last choice
         let reveals = self.collect_reveals_since_last_choice(view);
 
+        // Get action count from GameState undo log for synchronization
+        let action_count = view.action_count() as u64;
+
         let request = ChoiceRequest {
             choice_seq: self.choice_seq + 1,
             choice_type,
             options: options.clone(),
             state_hash,
+            action_count,
             reveals,
         };
 

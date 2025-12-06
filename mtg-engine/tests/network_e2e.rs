@@ -291,6 +291,7 @@ mod async_tests {
                 "Cast: Lightning Bolt".to_string(),
             ],
             state_hash: 0xDEADBEEF,
+            action_count: 0,
             context: None,
         };
 
@@ -301,6 +302,7 @@ mod async_tests {
         let response = ClientMessage::SubmitChoice {
             choice_seq: 42,
             choice_index: 2, // Cast Lightning Bolt
+            action_count: 0,
         };
 
         let response_json = serde_json::to_string(&response).expect("serialize response");
@@ -315,6 +317,7 @@ mod async_tests {
                 ClientMessage::SubmitChoice {
                     choice_seq: resp_seq,
                     choice_index,
+                    ..
                 },
             ) => {
                 assert_eq!(req_seq, resp_seq, "Choice sequence mismatch");
@@ -824,6 +827,7 @@ mod websocket_integration {
                         &ClientMessage::SubmitChoice {
                             choice_seq,
                             choice_index,
+                            action_count: 0,
                         },
                     )
                     .await

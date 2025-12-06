@@ -568,8 +568,10 @@ impl NetworkClient {
                     choice_type,
                     options,
                     state_hash,
+                    action_count,
                     context,
                 } => {
+                    let _ = action_count; // TODO(mtg-akjrb): Validate action count
                     log::debug!(
                         "Choice request #{}: {:?} with {} options",
                         choice_seq,
@@ -593,9 +595,11 @@ impl NetworkClient {
                         self.get_choice_from_controller(&mut controller, &choice_type, &options, context.as_ref())?;
 
                     // Send response
+                    // TODO(mtg-akjrb): Track and send actual action_count
                     let response = ClientMessage::SubmitChoice {
                         choice_seq,
                         choice_index,
+                        action_count: 0,
                     };
                     self.send_message(&response).await?;
 
@@ -624,7 +628,9 @@ impl NetworkClient {
                     choice_type,
                     choice_index,
                     description,
+                    action_count,
                 } => {
+                    let _ = action_count; // TODO(mtg-akjrb): Validate action count
                     if self.verbosity >= VerbosityLevel::Normal {
                         println!("  Opponent chose: {}", description);
                     }
@@ -870,9 +876,9 @@ impl NetworkClient {
                                         // The inner controller will make a decision and send it
                                         log::debug!("Received ChoiceRequest, game loop will handle");
                                     }
-                                    Ok(ServerMessage::ChoiceAccepted { choice_seq }) => {
+                                    Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count }) => {
                                         // Server accepted our choice - unblock the NetworkLocalController
-                                        log::trace!("WebSocket: choice {} accepted, sending ack", choice_seq);
+                                        log::trace!("WebSocket: choice {} accepted (action_count={}), sending ack", choice_seq, action_count);
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
                                     }
                                     Ok(ServerMessage::GameEnded { winner, .. }) => {
@@ -916,9 +922,11 @@ impl NetworkClient {
                     choice = local_choice_rx.recv() => {
                         if let Some(choice) = choice {
                             log::trace!("WebSocket: sending choice {} to server", choice.choice_index);
+                            // TODO(mtg-akjrb): Track and send actual action_count
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: 0, // TODO: Track sequence numbers
                                 choice_index: choice.choice_index,
+                                action_count: 0,
                             };
                             let text = serde_json::to_string(&msg).unwrap();
                             if ws_sink.send(Message::Text(text.into())).await.is_err() {
