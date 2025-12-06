@@ -29,7 +29,7 @@ End-to-end tests for networked gameplay.
 - [x] Test: Deck visibility flag sends/hides deck lists (test_deck_visibility_enabled/disabled)
 - [x] Test: Graceful handling of client disconnect (test_client_disconnect_handling)
 - [x] Test: Concurrent games on same server - NOT SUPPORTED (server handles connections sequentially)
-- [ ] Integration with existing agentplay scripts
+- [x] Integration with existing agentplay scripts (MTG_NETWORK_MODE=1 env var)
 
 ## Completed Tests
 
@@ -89,6 +89,33 @@ Integration tests requiring actual WebSocket connections:
 1. ~~Spawn server, connect two clients, verify game starts~~ (DONE: test_two_clients_game_start)
 2. ~~Run complete game with automated controllers~~ (DONE: test_full_game_always_pass)
 3. Detect desync by corrupting client state
+
+## Network Drop-in Replacement (2025-12-06)
+
+Added `scripts/mtg_tui_networked.py` - a drop-in replacement for `mtg tui` that runs
+games through the network stack (server + 2 clients). This enables testing the
+networking layer with existing E2E test scripts.
+
+### Features
+- **Automatic port allocation**: Uses random free port for concurrent safety
+- **Argument translation**: Maps `mtg tui` args to `mtg connect` equivalents
+- **Unsupported option detection**: Exits with code 2 for options like `--seed`, `--stop-on-choice`
+- **Uses `--message-based` mode**: Simpler protocol, avoids race conditions with GameLoop
+
+### Usage
+```bash
+# Direct invocation
+python3 scripts/mtg_tui_networked.py deck1.dck deck2.dck --p1 heuristic --p2 zero
+
+# Via test_helpers (automatic with env var)
+MTG_NETWORK_MODE=1 ./tests/some_e2e_test.sh
+```
+
+### Integration with test_helpers
+When `MTG_NETWORK_MODE=1` is set, `run_mtg tui ...` will:
+1. Try network mode first
+2. Fall back to local mode if unsupported options are used (exit code 2)
+3. Log clearly which mode is being used
 
 ## Client-Side UI Progress (2025-12-05)
 
