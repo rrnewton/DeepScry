@@ -45,13 +45,30 @@ The current network protocol has a race-prone design with the "unconditional bro
 - [x] Track action count in NetworkLocalController (client-side) - passes action_count with each choice
 - [x] Wire action_count through entire message flow (client → server → opponent)
 
+## Completed (2025-12-06_#1186)
+
+- [x] Add `--debug` flag to `mtg connect` command
+- [x] Validate action count in server (logs warning on mismatch)
+- [x] Validate action count in client debug mode (fails fast on mismatch)
+- [x] Server returns its own action_count in ChoiceAccepted (not echoed client value)
+
+### Debug Mode Test Results
+
+The `--debug` flag successfully detected a real synchronization issue:
+```
+SYNC WARNING: Player 0 action_count mismatch! client=17 server=14
+SYNC ERROR: action_count mismatch! client=17 server=14
+```
+
+This confirms the clients running their own GameLoops can diverge from
+the server's authoritative state. The debug mode is working correctly
+to surface these issues early.
+
 ## Remaining Tasks
 
-- [ ] Validate action count consistency in server message handler (currently logged but not enforced)
+- [ ] Fix the underlying sync mechanism causing client/server divergence
 - [ ] Remove the unconditional broadcast hack from server.rs
 - [ ] Implement proper synchronization points based on action counts
-- [ ] Add `--debug` flag to `mtg connect` command
-- [ ] Implement action log exchange for debug mode validation
 - [ ] Add tests for action count synchronization
 
 ## Related Files
