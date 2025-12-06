@@ -168,6 +168,11 @@ run-release:
 setup:
 	@echo "=== Installing development tools ==="
 	rustup component add rustfmt clippy
+	rustup target add wasm32-unknown-unknown
+	@if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "Installing wasm-pack..."; \
+		cargo install wasm-pack; \
+	fi
 
 # Show project info
 info:
