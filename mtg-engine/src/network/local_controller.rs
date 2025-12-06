@@ -86,6 +86,12 @@ impl<C: PlayerController> NetworkLocalController<C> {
             return Err("Disconnected from server".to_string());
         }
 
+        log::trace!(
+            "NetworkLocalController: sending choice {} ({})",
+            choice_index,
+            description
+        );
+
         // Send choice
         if self
             .choice_tx
@@ -101,7 +107,10 @@ impl<C: PlayerController> NetworkLocalController<C> {
 
         // Wait for acknowledgment
         match self.message_rx.recv() {
-            Ok(LocalControllerMessage::ChoiceAcknowledged) => Ok(()),
+            Ok(LocalControllerMessage::ChoiceAcknowledged) => {
+                log::trace!("NetworkLocalController: choice acknowledged");
+                Ok(())
+            }
             Ok(LocalControllerMessage::Error(e)) => Err(e),
             Ok(LocalControllerMessage::GameEnded) => {
                 self.disconnected = true;

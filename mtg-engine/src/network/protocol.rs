@@ -339,6 +339,30 @@ impl DeckListInfo {
             sideboard_size: deck.sideboard_size(),
         }
     }
+
+    /// Convert to a DeckList for game initialization
+    pub fn to_deck_list(&self) -> crate::loader::DeckList {
+        use crate::loader::DeckEntry;
+
+        crate::loader::DeckList {
+            main_deck: self
+                .main_deck
+                .iter()
+                .map(|(name, count)| DeckEntry {
+                    card_name: name.clone(),
+                    count: *count,
+                })
+                .collect(),
+            sideboard: self
+                .sideboard
+                .iter()
+                .map(|(name, count)| DeckEntry {
+                    card_name: name.clone(),
+                    count: *count,
+                })
+                .collect(),
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

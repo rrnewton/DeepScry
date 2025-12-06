@@ -421,9 +421,10 @@ async fn run_game(
     let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
 
     // Create cross-player channels for opponent choice broadcasting (for run_game mode)
-    // P1 sends choices to P2, P2 sends choices to P1
-    let (p1_to_p2_tx, p1_from_p2_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
-    let (p2_to_p1_tx, p2_from_p1_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
+    // When P1 makes a choice, it gets sent to P2. When P2 makes a choice, it gets sent to P1.
+    // Channel naming: (sender_tx, receiver_rx) - sender writes, receiver reads
+    let (p1_choice_tx, p1_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16); // P1's choices
+    let (p2_choice_tx, p2_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16); // P2's choices
 
     // Create PlayerConnections with tokio receivers
     let mut p1_conn = PlayerConnection {
@@ -432,8 +433,8 @@ async fn run_game(
         request_rx: p1_async_request_rx,
         response_tx: p1_response_tx,
         game_end_rx: p1_game_end_rx,
-        opponent_choice_tx: p2_to_p1_tx,   // P1 broadcasts to P2's receiver
-        opponent_choice_rx: p1_from_p2_rx, // P1 receives from P2's broadcasts
+        opponent_choice_tx: p1_choice_tx, // P1 sends their choices on this channel
+        opponent_choice_rx: p2_choice_rx, // P1 receives P2's choices from this channel
         current_choice_type: None,
     };
     let mut p2_conn = PlayerConnection {
@@ -442,8 +443,8 @@ async fn run_game(
         request_rx: p2_async_request_rx,
         response_tx: p2_response_tx,
         game_end_rx: p2_game_end_rx,
-        opponent_choice_tx: p1_to_p2_tx,   // P2 broadcasts to P1's receiver
-        opponent_choice_rx: p2_from_p1_rx, // P2 receives from P1's broadcasts
+        opponent_choice_tx: p2_choice_tx, // P2 sends their choices on this channel
+        opponent_choice_rx: p1_choice_rx, // P2 receives P1's choices from this channel
         current_choice_type: None,
     };
 
@@ -525,6 +526,52 @@ async fn run_game(
         .await?;
 
     log::info!("Game {}: Sent GameStarted to both players", game_id);
+
+    // Send CardRevealed messages for opening hands (for synchronized GameLoop mode)
+    // Each player needs to know BOTH players' opening hand card IDs so they can
+    // queue them in their shadow state before the local GameLoop draws them.
+
+    // P1 needs reveals for: own hand (p1_hand) + opponent's hand (p2_hand)
+    for card in &p1_hand {
+        p1_conn
+            .send(&ServerMessage::CardRevealed {
+                owner: p1_id,
+                card: card.clone(),
+                reason: RevealReason::Draw,
+            })
+            .await?;
+    }
+    for card in &p2_hand {
+        p1_conn
+            .send(&ServerMessage::CardRevealed {
+                owner: p2_id,
+                card: card.clone(),
+                reason: RevealReason::Draw,
+            })
+            .await?;
+    }
+
+    // P2 needs reveals for: own hand (p2_hand) + opponent's hand (p1_hand)
+    for card in &p2_hand {
+        p2_conn
+            .send(&ServerMessage::CardRevealed {
+                owner: p2_id,
+                card: card.clone(),
+                reason: RevealReason::Draw,
+            })
+            .await?;
+    }
+    for card in &p1_hand {
+        p2_conn
+            .send(&ServerMessage::CardRevealed {
+                owner: p1_id,
+                card: card.clone(),
+                reason: RevealReason::Draw,
+            })
+            .await?;
+    }
+
+    log::info!("Game {}: Sent opening hand CardRevealed messages", game_id);
 
     // Create NetworkControllers
     let p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx);
@@ -693,15 +740,20 @@ async fn handle_player_websocket(
                                 conn.send(&ServerMessage::ChoiceAccepted { choice_seq }).await?;
 
                                 // Broadcast this choice to the opponent (for run_game mode)
-                                if let Some(choice_type) = conn.current_choice_type.take() {
-                                    let opponent_info = OpponentChoiceInfo {
-                                        choice_seq,
-                                        choice_type,
-                                        choice_index,
-                                        description: format!("Choice #{}", choice_seq), // TODO: Get actual description
-                                    };
-                                    // Non-blocking send - if opponent isn't listening, that's ok
-                                    let _ = conn.opponent_choice_tx.try_send(opponent_info);
+                                // Always broadcast - in synchronized mode, clients run their own GameLoops
+                                // and may submit choices before the server sends ChoiceRequest.
+                                // Use the current_choice_type if available, otherwise default.
+                                let choice_type = conn.current_choice_type.take()
+                                    .unwrap_or(ChoiceType::Priority { available_count: 0 });
+                                let opponent_info = OpponentChoiceInfo {
+                                    choice_seq,
+                                    choice_type,
+                                    choice_index,
+                                    description: format!("Choice #{}", choice_seq), // TODO: Get actual description
+                                };
+                                log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
+                                if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
+                                    log::error!("Failed to broadcast choice to opponent: {:?}", e);
                                 }
                             }
                             Ok(ClientMessage::Ping { timestamp_ms }) => {
@@ -748,6 +800,23 @@ async fn handle_player_websocket(
             opponent_choice = conn.opponent_choice_rx.recv() => {
                 if let Some(info) = opponent_choice {
                     log::debug!("Player {:?}: Forwarding opponent choice {}", conn.player_id, info.choice_seq);
+
+                    // Collect and send CardRevealed messages for this player before the choice
+                    // This includes any cards that moved from library since this player's last choice
+                    let game_guard = game.lock().await;
+                    let reveals = collect_reveals_for_player(&game_guard, conn.player_id);
+                    for reveal_info in &reveals {
+                        if let Some(card_reveal) = build_card_reveal(&game_guard, reveal_info) {
+                            let reason = zone_to_reveal_reason(reveal_info.to_zone);
+                            conn.send(&ServerMessage::CardRevealed {
+                                owner: reveal_info.owner,
+                                card: card_reveal,
+                                reason,
+                            }).await?;
+                        }
+                    }
+                    drop(game_guard);
+
                     conn.send(&ServerMessage::OpponentChoice {
                         choice_seq: info.choice_seq,
                         choice_type: info.choice_type,
@@ -883,6 +952,58 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
         Zone::Library => RevealReason::Searched, // Returned to library (unusual)
         Zone::Command => RevealReason::Effect,
     }
+}
+
+/// Collect card reveals that a player should see since their last choice
+///
+/// Scans the undo log backwards until we find a `ChoicePoint` for this player.
+/// Returns all `MoveCard` actions from Library that this player should see.
+///
+/// For the synchronized GameLoop mode, we need to send ALL library movements
+/// so the client's shadow state stays synchronized. This includes:
+/// - Own cards (e.g., own draws)
+/// - Public zone movements (battlefield, graveyard, stack, exile)
+/// - Opponent's draws (so client can track opponent's library/hand sizes)
+fn collect_reveals_for_player(game: &GameState, player_id: PlayerId) -> Vec<CardRevealInfo> {
+    use crate::undo::GameAction;
+
+    let actions = game.undo_log.actions();
+    let mut reveals = Vec::new();
+
+    // Scan backwards from the end of the log
+    for action in actions.iter().rev() {
+        match action {
+            // Stop when we hit this player's last choice
+            GameAction::ChoicePoint {
+                player_id: choice_player,
+                ..
+            } if *choice_player == player_id => {
+                break;
+            }
+            // Collect ALL card moves from library (needed for synchronized GameLoop mode)
+            GameAction::MoveCard {
+                card_id,
+                from_zone: Zone::Library,
+                to_zone,
+                owner,
+            } => {
+                // For synchronized mode, include ALL library movements
+                // - Own cards: player needs to know what they drew
+                // - Opponent's cards: client needs card ID for shadow state tracking
+                reveals.push(CardRevealInfo {
+                    card_id: *card_id,
+                    owner: *owner,
+                    from_zone: Zone::Library,
+                    to_zone: *to_zone,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Reverse to get chronological order
+    reveals.reverse();
+    reveals
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

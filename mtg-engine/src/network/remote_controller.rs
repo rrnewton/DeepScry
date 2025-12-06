@@ -70,6 +70,7 @@ impl RemoteController {
             return ChoiceResult::ExitGame;
         }
 
+        log::trace!("RemoteController {:?}: waiting for opponent choice", self.player_id);
         match self.choice_rx.recv() {
             Ok(remote_choice) => {
                 log::debug!(

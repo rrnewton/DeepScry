@@ -136,20 +136,15 @@ impl ClientGameState {
             zones.library = crate::zones::CardZone::new_remote_library(opponent_id, info.opponent_library_size);
         }
 
-        // Process opening hand - add cards to our hand
+        // Process opening hand - register cards as known but DON'T add to hand yet
+        // For synchronized GameLoop mode, the cards will be drawn from library via
+        // the GameLoop after CardRevealed messages queue them. This avoids double-adding.
         let mut known_cards = HashMap::new();
         for reveal in info.opening_hand {
-            // Create card from reveal (simplified - in full impl would use card_db)
             if let Some(card_def) = Self::card_from_reveal(&reveal, card_db) {
                 known_cards.insert(reveal.card_id, card_def.clone());
-
-                // Add card to game and to our hand
-                let card = card_def.instantiate(reveal.card_id, our_player_id);
-                game.cards.insert(reveal.card_id, card);
-
-                if let Some(zones) = game.get_player_zones_mut(our_player_id) {
-                    zones.hand.add(reveal.card_id);
-                }
+                // Just register the card definition - don't add to game or hand
+                // The CardRevealed messages will handle zone placement
             }
         }
 
@@ -274,6 +269,10 @@ pub struct NetworkClient {
     state: Option<ClientGameState>,
     /// Card database
     card_db: Option<Arc<AsyncCardDatabase>>,
+    /// Our deck (loaded during connect, used for synchronized GameLoop mode)
+    our_deck: Option<DeckList>,
+    /// Opponent's deck (received from server if deck_visibility enabled)
+    opponent_deck: Option<DeckList>,
     /// Verbosity level for output
     verbosity: VerbosityLevel,
     /// Visual stacks mode for display
@@ -288,6 +287,8 @@ impl NetworkClient {
             ws: None,
             state: None,
             card_db: None,
+            our_deck: None,
+            opponent_deck: None,
             verbosity: VerbosityLevel::Normal,
             visual_stacks: false,
         }
@@ -334,9 +335,10 @@ impl NetworkClient {
         card_db.eager_load().await?;
         self.card_db = Some(Arc::new(card_db));
 
-        // Load deck
+        // Load deck and store for synchronized GameLoop mode
         log::info!("Loading deck from {:?}...", self.config.deck_path);
         let deck = crate::loader::DeckLoader::load_from_file(&self.config.deck_path)?;
+        self.our_deck = Some(deck.clone());
 
         // Build WebSocket URL
         let url = format!("ws://{}", self.config.server);
@@ -379,10 +381,28 @@ impl NetworkClient {
     }
 
     /// Wait for game to start and initialize shadow state
+    ///
+    /// For synchronized GameLoop mode:
+    /// 1. Receives GameStarted with opponent_decklist
+    /// 2. Uses GameInitializer to create game with matching card IDs
+    /// 3. Converts libraries to Remote mode
+    /// 4. Receives CardRevealed messages for opening hands (14 cards)
+    /// 5. Queues revealed card IDs for the shadow GameLoop to draw
     pub async fn wait_for_game_start(&mut self) -> Result<()> {
+        use crate::loader::GameInitializer;
+
         log::info!("Waiting for game to start...");
 
-        loop {
+        // First phase: wait for GameStarted
+        let (
+            our_hand_count,
+            opponent_hand_count,
+            our_player_id,
+            opponent_name,
+            starting_life,
+            initial_state_hash,
+            opponent_decklist,
+        ) = loop {
             let msg = self.receive_message().await?;
             match msg {
                 ServerMessage::WaitingForOpponent => {
@@ -394,10 +414,10 @@ impl NetworkClient {
                     opening_hand,
                     opponent_hand_count,
                     library_size,
-                    opponent_library_size,
+                    opponent_library_size: _,
                     starting_life,
                     initial_state_hash,
-                    ..
+                    opponent_decklist,
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(
@@ -406,21 +426,16 @@ impl NetworkClient {
                         library_size
                     );
 
-                    // Create shadow game state
-                    let card_db = self.card_db.as_ref().expect("Card DB not loaded");
-                    let info = GameStartInfo {
+                    let our_hand_count = opening_hand.len();
+                    break (
+                        our_hand_count,
+                        opponent_hand_count,
                         your_player_id,
                         opponent_name,
-                        opening_hand,
-                        opponent_hand_count,
-                        library_size,
-                        opponent_library_size,
                         starting_life,
                         initial_state_hash,
-                    };
-                    self.state = Some(ClientGameState::new(info, card_db)?);
-
-                    return Ok(());
+                        opponent_decklist,
+                    );
                 }
                 ServerMessage::Error { message, fatal } => {
                     if fatal {
@@ -432,7 +447,105 @@ impl NetworkClient {
                     log::debug!("Ignoring message while waiting for game start");
                 }
             }
+        };
+
+        // Store opponent deck if provided
+        if let Some(ref deck_info) = opponent_decklist {
+            self.opponent_deck = Some(deck_info.to_deck_list());
         }
+
+        // Get decks for initialization
+        let our_deck = self.our_deck.as_ref().ok_or_else(|| anyhow!("Our deck not loaded"))?;
+        // For opponent deck: use provided decklist, or fall back to our deck (mirror match)
+        let opponent_deck = self.opponent_deck.as_ref().unwrap_or(our_deck);
+
+        // Determine player order - GameInitializer expects P1's deck first, then P2's
+        let we_are_p1 = our_player_id.as_u32() == 0;
+        let (p1_deck, p2_deck, p1_name, p2_name) = if we_are_p1 {
+            (our_deck, opponent_deck, "You".to_string(), opponent_name.clone())
+        } else {
+            (opponent_deck, our_deck, opponent_name.clone(), "You".to_string())
+        };
+
+        // Initialize game using GameInitializer for deterministic card IDs
+        let card_db = self.card_db.as_ref().expect("Card DB not loaded");
+        let initializer = GameInitializer::new(card_db);
+        let mut game = initializer
+            .init_game(p1_name, p1_deck, p2_name, p2_deck, starting_life)
+            .await?;
+
+        // Get player IDs
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let opponent_id = if we_are_p1 { p2_id } else { p1_id };
+
+        // Convert libraries to Remote mode - we don't know the shuffle order
+        // The server has shuffled and drawn, we need to receive reveals to know card order
+        let our_lib_size = game
+            .get_player_zones(our_player_id)
+            .map(|z| z.library.len())
+            .unwrap_or(0);
+        let opp_lib_size = game.get_player_zones(opponent_id).map(|z| z.library.len()).unwrap_or(0);
+
+        // Clear the local libraries and set them to Remote mode
+        if let Some(zones) = game.get_player_zones_mut(our_player_id) {
+            zones.library = crate::zones::CardZone::new_remote_library(our_player_id, our_lib_size);
+        }
+        if let Some(zones) = game.get_player_zones_mut(opponent_id) {
+            zones.library = crate::zones::CardZone::new_remote_library(opponent_id, opp_lib_size);
+        }
+
+        // Create ClientGameState with the initialized game
+        self.state = Some(ClientGameState {
+            game,
+            our_player_id,
+            opponent_id,
+            known_cards: HashMap::new(),
+            expected_hash: initial_state_hash,
+            opponent_name: opponent_name.clone(),
+            choice_seq: 0,
+        });
+
+        // Second phase: receive CardRevealed messages for opening hands
+        // Server sends our_hand_count + opponent_hand_count CardRevealed messages
+        let expected_reveals = our_hand_count + opponent_hand_count;
+        let mut reveals_received = 0;
+
+        while reveals_received < expected_reveals {
+            let msg = self.receive_message().await?;
+            match msg {
+                ServerMessage::CardRevealed { owner, card, reason } => {
+                    log::debug!(
+                        "Opening hand reveal {}/{}: {} (id={:?}) for {:?}",
+                        reveals_received + 1,
+                        expected_reveals,
+                        card.name,
+                        card.card_id,
+                        owner
+                    );
+                    // Queue the card ID in the appropriate library for drawing
+                    if let Some(ref mut state) = self.state {
+                        if let Some(zones) = state.game.get_player_zones_mut(owner) {
+                            zones.library.queue_reveal(card.card_id);
+                        }
+                    }
+                    reveals_received += 1;
+                    let _ = reason; // Reason is always Draw for opening hand
+                }
+                ServerMessage::Error { message, fatal } => {
+                    if fatal {
+                        return Err(anyhow!("Server error: {}", message));
+                    }
+                    log::warn!("Server warning: {}", message);
+                }
+                _ => {
+                    log::debug!("Unexpected message while waiting for opening reveals: {:?}", msg);
+                }
+            }
+        }
+
+        log::info!("Received {} opening hand reveals, shadow state ready", reveals_received);
+        Ok(())
     }
 
     /// Run the game using message-based protocol (no local GameLoop)
@@ -704,15 +817,21 @@ impl NetworkClient {
             controller,
             // Convert tokio channel to std channel for blocking thread
             {
-                let (std_tx, std_rx) = mpsc::channel();
-                // Spawn a task to forward from std channel to tokio channel
+                let (std_tx, std_rx) = mpsc::channel::<LocalChoice>();
+                // Spawn a blocking task to forward from std channel to tokio channel
+                // IMPORTANT: Must use spawn_blocking because std_rx.recv() blocks
                 let local_choice_tx_clone = local_choice_tx.clone();
-                tokio::spawn(async move {
+                tokio::task::spawn_blocking(move || {
+                    let runtime = tokio::runtime::Handle::current();
                     while let Ok(choice) = std_rx.recv() {
-                        if local_choice_tx_clone.send(choice).await.is_err() {
+                        log::trace!("Bridge: forwarding choice {} to tokio channel", choice.choice_index);
+                        let result = runtime.block_on(local_choice_tx_clone.send(choice));
+                        if let Err(e) = result {
+                            log::debug!("Bridge: failed to forward choice: {:?}", e);
                             break;
                         }
                     }
+                    log::debug!("Bridge: task exiting (channel closed)");
                 });
                 std_tx
             },
@@ -740,7 +859,7 @@ impl NetworkClient {
                                         }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_index, description, .. }) => {
-                                        log::debug!("Opponent chose: {} ({})", description, choice_index);
+                                        log::debug!("WebSocket: opponent chose {} (idx={})", description, choice_index);
                                         let _ = remote_choice_tx.send(RemoteChoice {
                                             choice_index,
                                             description,
@@ -753,7 +872,7 @@ impl NetworkClient {
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq }) => {
                                         // Server accepted our choice - unblock the NetworkLocalController
-                                        log::debug!("Choice {} accepted by server", choice_seq);
+                                        log::trace!("WebSocket: choice {} accepted, sending ack", choice_seq);
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
                                     }
                                     Ok(ServerMessage::GameEnded { winner, .. }) => {
@@ -778,7 +897,7 @@ impl NetworkClient {
                                 }
                             }
                             Some(Ok(Message::Close(_))) | None => {
-                                log::info!("Connection closed");
+                                log::debug!("WebSocket: connection closed by server");
                                 let _ = local_msg_tx.send(LocalControllerMessage::GameEnded);
                                 return;
                             }
@@ -796,13 +915,14 @@ impl NetworkClient {
                     // Send our choices to server
                     choice = local_choice_rx.recv() => {
                         if let Some(choice) = choice {
+                            log::trace!("WebSocket: sending choice {} to server", choice.choice_index);
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: 0, // TODO: Track sequence numbers
                                 choice_index: choice.choice_index,
                             };
                             let text = serde_json::to_string(&msg).unwrap();
                             if ws_sink.send(Message::Text(text.into())).await.is_err() {
-                                log::error!("Failed to send choice to server");
+                                log::error!("WebSocket: failed to send choice to server");
                                 return;
                             }
                         }
@@ -841,6 +961,7 @@ impl NetworkClient {
 
             // Pass controllers in the correct order based on which player we are
             // GameLoop.run_game expects (controller_for_p1, controller_for_p2)
+            log::debug!("Client GameLoop: we_are_p1={}", we_are_p1);
             if we_are_p1 {
                 // We're P1: local controller is for P1, remote is for P2
                 game_loop.run_game(&mut local_controller, &mut remote_controller)
