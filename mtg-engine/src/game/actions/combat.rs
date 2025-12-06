@@ -265,6 +265,12 @@ impl GameState {
                         ChoiceResult::Error(msg) => {
                             return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
                         }
+                        ChoiceResult::NeedInput(_) => {
+                            // NeedInput is only valid in WASM context - not supported in synchronous combat
+                            return Err(MtgError::InvalidAction(
+                                "NeedInput returned in synchronous game loop".to_string(),
+                            ));
+                        }
                     };
 
                     damage_orders.insert(attacker_id, ordered_blockers);

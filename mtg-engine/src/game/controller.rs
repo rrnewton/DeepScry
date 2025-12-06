@@ -573,6 +573,93 @@ pub enum ChoiceResult<T> {
     ExitGame,
     /// Error in the controller
     Error(String),
+    /// Need human input - pause game loop and return control to caller
+    ///
+    /// This variant is used by WASM human controllers to signal that the game
+    /// should pause and wait for asynchronous user input. The ChoiceContext
+    /// contains all information needed to display the choice to the user.
+    ///
+    /// When the game loop encounters this, it saves its state (turn snapshot +
+    /// intra-turn choices) and returns to the caller, which can then display
+    /// the choice UI and resume later with the user's selection.
+    NeedInput(ChoiceContext),
+}
+
+/// Context for a pending choice that requires human input
+///
+/// This enum captures all the information needed to display a choice to a
+/// human player in a WASM/browser context. The game loop packages this up
+/// when a human controller returns `ChoiceResult::NeedInput`.
+#[derive(Debug, Clone)]
+pub enum ChoiceContext {
+    /// Choose a spell ability to play (or pass priority)
+    SpellAbility {
+        /// Available spell abilities (indexed 1..N, with 0 = pass)
+        available: Vec<SpellAbility>,
+        /// Pre-formatted choice strings for display
+        formatted_choices: Vec<String>,
+    },
+    /// Choose targets for a spell
+    Targets {
+        /// The spell being targeted
+        spell_id: CardId,
+        /// Valid target card IDs
+        valid_targets: Vec<CardId>,
+        /// Pre-formatted target strings for display
+        formatted_targets: Vec<String>,
+    },
+    /// Choose mana sources to tap
+    ManaSources {
+        /// The cost being paid
+        cost: ManaCost,
+        /// Available sources to tap
+        available_sources: Vec<CardId>,
+        /// Pre-formatted source strings for display
+        formatted_sources: Vec<String>,
+    },
+    /// Choose attackers
+    Attackers {
+        /// Creatures available to attack
+        available_creatures: Vec<CardId>,
+        /// Pre-formatted creature strings for display
+        formatted_creatures: Vec<String>,
+    },
+    /// Choose blockers
+    Blockers {
+        /// Creatures available to block
+        available_blockers: Vec<CardId>,
+        /// Attacking creatures to block
+        attackers: Vec<CardId>,
+        /// Pre-formatted blocker strings for display
+        formatted_blockers: Vec<String>,
+        /// Pre-formatted attacker strings for display
+        formatted_attackers: Vec<String>,
+    },
+    /// Choose damage assignment order
+    DamageOrder {
+        /// The attacking creature
+        attacker: CardId,
+        /// Blockers to order
+        blockers: Vec<CardId>,
+        /// Pre-formatted blocker strings for display
+        formatted_blockers: Vec<String>,
+    },
+    /// Choose cards to discard
+    Discard {
+        /// Cards in hand
+        hand: Vec<CardId>,
+        /// Number of cards to discard
+        count: usize,
+        /// Pre-formatted card strings for display
+        formatted_hand: Vec<String>,
+    },
+    /// Choose a card from library
+    LibrarySearch {
+        /// Valid cards to choose from
+        valid_cards: Vec<CardId>,
+        /// Pre-formatted card strings for display
+        formatted_cards: Vec<String>,
+    },
 }
 
 impl<T> ChoiceResult<T> {
@@ -596,7 +683,13 @@ impl<T> ChoiceResult<T> {
             ChoiceResult::Error(msg) => Err(msg),
             ChoiceResult::UndoRequest(n) => Err(format!("Undo request for {} actions", n)),
             ChoiceResult::ExitGame => Err("Exit game requested".to_string()),
+            ChoiceResult::NeedInput(_) => Err("Need human input".to_string()),
         }
+    }
+
+    /// Check if this is a NeedInput variant
+    pub fn is_need_input(&self) -> bool {
+        matches!(self, ChoiceResult::NeedInput(_))
     }
 }
 
@@ -658,6 +751,13 @@ macro_rules! handle_choice_result {
             $crate::game::controller::ChoiceResult::Error(msg) => {
                 return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
             }
+            $crate::game::controller::ChoiceResult::NeedInput(_) => {
+                // NeedInput is only valid in WASM context with run_until_input()
+                // Standard game loop doesn't support async human input
+                return Err($crate::MtgError::InvalidAction(
+                    "NeedInput returned in synchronous game loop (use run_until_input for WASM)".to_string(),
+                ));
+            }
         }
     };
 }
@@ -718,6 +818,13 @@ macro_rules! handle_choice_result_break {
             }
             $crate::game::controller::ChoiceResult::Error(msg) => {
                 return Err($crate::MtgError::InvalidAction(format!("Controller error: {}", msg)));
+            }
+            $crate::game::controller::ChoiceResult::NeedInput(_) => {
+                // NeedInput is only valid in WASM context with run_until_input()
+                // Standard game loop doesn't support async human input
+                return Err($crate::MtgError::InvalidAction(
+                    "NeedInput returned in synchronous game loop (use run_until_input for WASM)".to_string(),
+                ));
             }
         }
     };

@@ -141,6 +141,10 @@ impl RemoteController {
                 // Undo is not supported for network games
                 ChoiceResult::Error("Undo not supported in network games".to_string())
             }
+            ChoiceResult::NeedInput(_) => {
+                // NeedInput is not possible from wait_for_choice
+                ChoiceResult::Error("NeedInput not supported in network games".to_string())
+            }
         }
     }
 }
@@ -170,6 +174,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
@@ -192,6 +197,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
@@ -214,6 +220,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
@@ -237,6 +244,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
@@ -266,6 +274,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
@@ -295,6 +304,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
@@ -317,6 +327,7 @@ impl PlayerController for RemoteController {
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
         }
     }
 
