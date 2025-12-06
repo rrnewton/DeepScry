@@ -43,6 +43,7 @@ build-release:
 	cargo build --release
 
 # Run unit tests (including network tests)
+# Note: human_input_e2e tests for WASM pattern don't require wasm feature
 test:
 	@echo "=== Running unit tests ==="
 	cargo nextest run --features network
@@ -65,9 +66,11 @@ fmt-check:
 # Run clippy linter
 # Note: mtg-benchmarks has mutually exclusive features, so we run it separately without --all-features
 # Note: mtg-forge-rs network feature requires native deps, so we include it explicitly
+# Note: wasm feature is mutually exclusive with native TUI, so we run it separately
 clippy:
 	@echo "=== Running clippy ==="
 	cargo clippy -p mtg-forge-rs --all-targets --all-features --features network -- -D warnings
+	cargo clippy -p mtg-forge-rs --all-targets --features wasm,network -- -D warnings
 	cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
 
 # Detect code duplication
@@ -120,12 +123,15 @@ validate-impl-sequential:
 	@echo ""
 	@$(MAKE) validate-examples-step
 	@echo ""
+	@$(MAKE) validate-wasm-step
+	@echo ""
 	@echo "=== All validation steps completed ==="
 	@echo ""
 
 # Parallel validation steps - these will run concurrently when invoked with -j
-.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-test-step validate-examples-step
-validate-parallel-steps: validate-clippy-step validate-test-step validate-examples-step deck_list
+# WASM build has separate dependencies so it runs in parallel with other steps
+.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-test-step validate-examples-step validate-wasm-step
+validate-parallel-steps: validate-clippy-step validate-test-step validate-examples-step validate-wasm-step deck_list
 
 validate-clippy-step:
 	@$(MAKE) clippy
@@ -138,6 +144,10 @@ validate-test-step:
 validate-examples-step:
 	@$(MAKE) examples
 	@echo "✓ examples completed"
+
+validate-wasm-step:
+	@$(MAKE) wasm-dev
+	@echo "✓ wasm-dev build completed"
 
 # Generate documentation and open in browser
 doc:
