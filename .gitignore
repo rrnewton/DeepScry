@@ -70,3 +70,4 @@ screenshots/*.txt
 
 # WASM builds
 web/
+rustc-ice-*.txt

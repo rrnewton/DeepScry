@@ -1,0 +1,59 @@
+---
+title: 'Network protocol: Action-count timestamped synchronization'
+status: open
+priority: 1
+issue_type: task
+created_at: 2025-12-06T12:01:39.912045109+00:00
+updated_at: 2025-12-06T12:01:39.912045109+00:00
+---
+
+# Description
+
+## Protocol Refactoring for Synchronized Network Play
+
+## Problem
+
+The current network protocol has a race-prone design with the "unconditional broadcast" hack in `server.rs`. This needs to be refactored to a principled, fully synchronous model.
+
+## Design Principles
+
+1. **Fully Lazy, Fully Synchronous Communication**
+   - No race conditions by design
+   - Every message has a clear request/response pattern
+   - No speculative or "just in case" broadcasts
+
+2. **Action Log as Source of Truth**
+   - The undo log (action log) is the true notion of time
+   - All parties (server + clients) must have identical action logs
+   - Like a blockchain ledger - append-only, deterministic
+
+3. **Action Count Timestamps**
+   - Every protocol message includes the current action count
+   - ChoiceRequest includes: "At action count N, I need you to choose from..."
+   - SubmitChoice includes: "At action count N, I chose..."
+   - Server validates that action counts match before processing
+
+4. **Debug Mode Validation**
+   - `mtg connect --debug` flag enables full action log transmission
+   - Server and clients exchange action sequences periodically
+   - Any mismatch triggers immediate error with diagnostic info
+
+## Tasks
+
+- [ ] Add `action_count: u64` field to protocol messages (ChoiceRequest, SubmitChoice, OpponentChoice)
+- [ ] Track action count in NetworkController (server-side)
+- [ ] Track action count in NetworkLocalController and RemoteController (client-side)
+- [ ] Validate action count consistency in server message handler
+- [ ] Remove the unconditional broadcast hack from server.rs
+- [ ] Implement proper synchronization points based on action counts
+- [ ] Add `--debug` flag to `mtg connect` command
+- [ ] Implement action log exchange for debug mode validation
+- [ ] Add tests for action count synchronization
+
+## Related Files
+
+- `mtg-engine/src/network/server.rs` - Server message handling
+- `mtg-engine/src/network/client.rs` - Client WebSocket handler  
+- `mtg-engine/src/network/local_controller.rs` - NetworkLocalController
+- `mtg-engine/src/network/remote_controller.rs` - RemoteController
+- `mtg-engine/src/network/protocol.rs` - Protocol message definitions

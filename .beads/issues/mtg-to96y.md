@@ -3,8 +3,10 @@ title: 'Networking: Client/Server multiplayer mode'
 status: open
 priority: 1
 issue_type: epic
+depends_on:
+  mtg-akjrb: related
 created_at: 2025-12-05T17:57:01.266857250+00:00
-updated_at: 2025-12-05T18:28:07.400817717+00:00
+updated_at: 2025-12-06T12:02:21.828675101+00:00
 ---
 
 # Description
@@ -47,6 +49,7 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 - [x] mtg-3n53a: WebSocket server (CLOSED)
 - [x] mtg-9644z: Client with shadow state (CLOSED)
 - [ ] mtg-bfm38: E2E testing
+- [ ] mtg-akjrb: Action-count timestamped synchronization (protocol refactoring)
 
 ## Dependencies
 
