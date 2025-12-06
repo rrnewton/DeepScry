@@ -7,6 +7,7 @@ use crate::core::{CardId, CounterType, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use std::fmt;
 
 use crate::game::GameState;
 
@@ -120,6 +121,88 @@ pub enum GameAction {
         /// The actual choice made (for replay). None if choice hasn't been recorded yet.
         choice: Option<crate::game::replay_controller::ReplayChoice>,
     },
+}
+
+impl fmt::Display for GameAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GameAction::MoveCard {
+                card_id,
+                from_zone,
+                to_zone,
+                owner,
+            } => write!(
+                f,
+                "MoveCard({} {:?} -> {:?} owner=P{})",
+                card_id.as_u32(),
+                from_zone,
+                to_zone,
+                owner.as_u32()
+            ),
+            GameAction::TapCard { card_id, tapped } => {
+                if *tapped {
+                    write!(f, "Tap({})", card_id.as_u32())
+                } else {
+                    write!(f, "Untap({})", card_id.as_u32())
+                }
+            }
+            GameAction::ModifyLife { player_id, delta } => {
+                write!(f, "Life(P{} {:+})", player_id.as_u32(), delta)
+            }
+            GameAction::AddMana { player_id, mana } => {
+                write!(f, "AddMana(P{} {})", player_id.as_u32(), mana)
+            }
+            GameAction::EmptyManaPool { player_id, .. } => {
+                write!(f, "EmptyMana(P{})", player_id.as_u32())
+            }
+            GameAction::AddCounter {
+                card_id,
+                counter_type,
+                amount,
+            } => write!(f, "AddCounter({} {:?}x{})", card_id.as_u32(), counter_type, amount),
+            GameAction::RemoveCounter {
+                card_id,
+                counter_type,
+                amount,
+            } => write!(f, "RemoveCounter({} {:?}x{})", card_id.as_u32(), counter_type, amount),
+            GameAction::AdvanceStep { from_step, to_step } => {
+                write!(f, "Step({:?} -> {:?})", from_step, to_step)
+            }
+            GameAction::ChangeTurn {
+                from_player,
+                to_player,
+                turn_number,
+                ..
+            } => write!(
+                f,
+                "Turn({} P{} -> P{})",
+                turn_number,
+                from_player.as_u32(),
+                to_player.as_u32()
+            ),
+            GameAction::PumpCreature {
+                card_id,
+                power_delta,
+                toughness_delta,
+            } => write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta),
+            GameAction::SetTurnEnteredBattlefield { card_id, new_value, .. } => {
+                write!(f, "SetETB({} turn={:?})", card_id.as_u32(), new_value)
+            }
+            GameAction::SetLandsPlayedThisTurn {
+                player_id, new_value, ..
+            } => write!(f, "LandsPlayed(P{} = {})", player_id.as_u32(), new_value),
+            GameAction::SetAttachedTo {
+                equipment_id,
+                new_target,
+                ..
+            } => write!(f, "Attach({} -> {:?})", equipment_id.as_u32(), new_target),
+            GameAction::ChoicePoint {
+                player_id,
+                choice_id,
+                choice,
+            } => write!(f, "Choice(P{} #{} = {:?})", player_id.as_u32(), choice_id, choice),
+        }
+    }
 }
 
 impl GameAction {
@@ -497,6 +580,21 @@ impl UndoLog {
     /// Get all actions (for debugging/serialization)
     pub fn actions(&self) -> &[GameAction] {
         &self.actions
+    }
+
+    /// Format the last N actions as a multi-line string for debugging
+    ///
+    /// Returns a string with one action per line, most recent last.
+    /// Each line is prefixed with its index in the full action log.
+    pub fn format_last_n(&self, n: usize) -> String {
+        let len = self.actions.len();
+        let start = len.saturating_sub(n);
+        let mut result = String::new();
+        for (i, action) in self.actions[start..].iter().enumerate() {
+            use std::fmt::Write;
+            let _ = writeln!(result, "  [{:4}] {}", start + i, action);
+        }
+        result
     }
 }
 

@@ -173,6 +173,15 @@ impl GameState {
         *self.rng.borrow_mut() = ChaCha12Rng::seed_from_u64(seed);
     }
 
+    /// Get the action count (undo log length)
+    ///
+    /// Returns the number of reversible actions that have been performed.
+    /// Used for network synchronization verification.
+    #[inline]
+    pub fn action_count(&self) -> u64 {
+        self.undo_log.len() as u64
+    }
+
     /// Increment the mana state version to invalidate ManaEngine cache
     ///
     /// Call this whenever cards enter/leave the battlefield or tap/untap.

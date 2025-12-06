@@ -77,6 +77,7 @@ impl<'a> GameLoop<'a> {
                 winner: None,
                 turns_played: self.turns_elapsed,
                 end_reason: GameEndReason::Snapshot,
+                action_count: self.game.action_count(),
             }));
         }
 
@@ -93,6 +94,7 @@ impl<'a> GameLoop<'a> {
                         winner: None,
                         turns_played: self.turns_elapsed,
                         end_reason: GameEndReason::Snapshot,
+                        action_count: self.game.action_count(),
                     }));
                 }
             }
@@ -281,6 +283,7 @@ impl<'a> GameLoop<'a> {
             winner: None,
             turns_played: self.turns_elapsed,
             end_reason: GameEndReason::Snapshot,
+            action_count: self.game.action_count(),
         })
     }
 }

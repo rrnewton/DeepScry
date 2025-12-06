@@ -501,6 +501,14 @@ impl<'a> GameStateView<'a> {
         self.game.undo_log.actions()
     }
 
+    /// Format the last N actions as a multi-line string for debugging
+    ///
+    /// Used for sync debugging in network mode. Returns a string with
+    /// one action per line, most recent last, with index prefix.
+    pub fn format_last_n_actions(&self, n: usize) -> String {
+        self.game.undo_log.format_last_n(n)
+    }
+
     /// Get the number of controller choices made
     ///
     /// Returns the count of times a controller has made a choice.

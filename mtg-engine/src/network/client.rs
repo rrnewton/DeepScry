@@ -661,10 +661,16 @@ impl NetworkClient {
                     winner,
                     reason,
                     final_state_hash,
+                    action_count,
                 } => {
                     // Print final game state
                     self.print_game_state();
-                    log::info!("Game ended: {:?} - Winner: {:?}", reason, winner);
+                    log::info!(
+                        "Game ended: {:?} - Winner: {:?}, action_count: {}",
+                        reason,
+                        winner,
+                        action_count
+                    );
                     if let Some(ref mut state) = self.state {
                         state.expected_hash = final_state_hash;
                     }
@@ -829,8 +835,8 @@ impl NetworkClient {
         let (local_msg_tx, local_msg_rx) = mpsc::channel::<LocalControllerMessage>();
         // WebSocket -> Remote controller (opponent choices)
         let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteChoice>();
-        // Game end signal
-        let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<Option<PlayerId>>(1);
+        // Game end signal: (winner, server_action_count)
+        let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<(Option<PlayerId>, u64)>(1);
 
         // Shared queue for card reveals (WebSocket handler -> Game thread)
         let reveal_queue: SharedRevealQueue = Arc::new(Mutex::new(VecDeque::new()));
@@ -863,16 +869,18 @@ impl NetworkClient {
                 std_tx
             },
             local_msg_rx,
-        );
+        )
+        .with_debug_mode(debug_mode);
         let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
 
         // Get game state for the game thread
         let mut game = client_state.game;
 
         // Spawn WebSocket handler task
-        // Track last sent action_count for validation
+        // Track last sent action_count and action log for validation
         let ws_handler = tokio::spawn(async move {
             let mut last_sent_action_count: Option<u64> = None;
+            let mut last_sent_actions: Option<String> = None;
 
             loop {
                 tokio::select! {
@@ -909,6 +917,10 @@ impl NetworkClient {
                                                         "SYNC ERROR: action_count mismatch! client={} server={}",
                                                         client_action_count, server_action_count
                                                     );
+                                                    // Log the client's action log for debugging
+                                                    if let Some(ref actions) = last_sent_actions {
+                                                        log::error!("Client's last 20 actions:\n{}", actions);
+                                                    }
                                                     let _ = local_msg_tx.send(LocalControllerMessage::Error(
                                                         format!(
                                                             "Action count sync failure: client={} server={}",
@@ -926,9 +938,9 @@ impl NetworkClient {
                                         log::trace!("WebSocket: choice {} accepted (action_count={}), sending ack", choice_seq, server_action_count);
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
                                     }
-                                    Ok(ServerMessage::GameEnded { winner, .. }) => {
-                                        log::info!("Game ended, winner: {:?}", winner);
-                                        let _ = game_end_tx.send(winner).await;
+                                    Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
+                                        log::info!("Game ended, winner: {:?}, action_count: {}", winner, action_count);
+                                        let _ = game_end_tx.send((winner, action_count)).await;
                                         return;
                                     }
                                     Ok(ServerMessage::Error { message, fatal }) => {
@@ -973,6 +985,7 @@ impl NetworkClient {
                             );
                             // Track for debug validation
                             last_sent_action_count = Some(choice.action_count);
+                            last_sent_actions = choice.last_actions;
 
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: 0, // TODO: Track sequence numbers
@@ -1034,18 +1047,30 @@ impl NetworkClient {
         });
 
         // Wait for game to end
+        // debug_mode is used for action_count verification logging
         tokio::select! {
             result = game_result => {
                 ws_handler.abort();
                 match result {
-                    Ok(Ok(game_result)) => Ok(game_result.winner),
+                    Ok(Ok(game_result)) => {
+                        log::info!("Client GameLoop finished: winner={:?}, action_count={}", game_result.winner, game_result.action_count);
+                        Ok(game_result.winner)
+                    }
                     Ok(Err(e)) => Err(anyhow!("Game error: {}", e)),
                     Err(e) => Err(anyhow!("Game thread panic: {}", e)),
                 }
             }
-            winner = game_end_rx.recv() => {
+            server_end = game_end_rx.recv() => {
                 ws_handler.abort();
-                Ok(winner.flatten())
+                match server_end {
+                    Some((winner, server_action_count)) => {
+                        log::info!("Server signaled game end: winner={:?}, server_action_count={}", winner, server_action_count);
+                        // Note: Client GameLoop was aborted, so we can't compare action_counts here
+                        // The per-choice verification during the game should catch sync issues
+                        Ok(winner)
+                    }
+                    None => Ok(None),
+                }
             }
         }
     }

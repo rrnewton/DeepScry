@@ -68,6 +68,8 @@ pub struct GameResult {
     pub turns_played: u32,
     /// Reason the game ended
     pub end_reason: GameEndReason,
+    /// Final action count (undo log length) for synchronization verification
+    pub action_count: u64,
 }
 
 /// Reason the game ended
@@ -511,6 +513,7 @@ impl<'a> GameLoop<'a> {
             winner: None,
             turns_played: self.turns_elapsed,
             end_reason: GameEndReason::Manual,
+            action_count: self.game.action_count(),
         })
     }
 
@@ -692,6 +695,7 @@ impl<'a> GameLoop<'a> {
                 winner: None,
                 turns_played: self.turns_elapsed,
                 end_reason: GameEndReason::TurnLimit,
+                action_count: self.game.action_count(),
             }));
         }
 
@@ -886,6 +890,7 @@ impl<'a> GameLoop<'a> {
                     winner,
                     turns_played: self.turns_elapsed,
                     end_reason: GameEndReason::PlayerDeath(player.id),
+                    action_count: self.game.action_count(),
                 });
             }
         }
@@ -899,6 +904,7 @@ impl<'a> GameLoop<'a> {
                         winner,
                         turns_played: self.turns_elapsed,
                         end_reason: GameEndReason::Decking(player.id),
+                        action_count: self.game.action_count(),
                     });
                 }
             }

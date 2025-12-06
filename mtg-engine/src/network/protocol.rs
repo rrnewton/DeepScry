@@ -184,6 +184,9 @@ pub enum ServerMessage {
         reason: GameEndReason,
         /// Final state hash for verification
         final_state_hash: u64,
+        /// Final action count (undo log length) - used for sync verification
+        /// In debug mode, clients should compare this against their own action_count
+        action_count: u64,
     },
 
     /// Error message
@@ -573,11 +576,13 @@ mod tests {
                 winner: Some(player_id),
                 reason: GameEndReason::PlayerDeath(PlayerId::new(0)),
                 final_state_hash: 0xFEDCBA98,
+                action_count: 123,
             },
             ServerMessage::GameEnded {
                 winner: None,
                 reason: GameEndReason::Draw,
                 final_state_hash: 0,
+                action_count: 456,
             },
             ServerMessage::Error {
                 message: "Connection timeout".to_string(),

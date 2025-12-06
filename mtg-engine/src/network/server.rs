@@ -8,7 +8,7 @@
 //! - Broadcasts card reveals and opponent choices
 
 use crate::core::PlayerId;
-use crate::game::{GameEndReason, GameLoop, GameState};
+use crate::game::{GameEndReason, GameLoop, GameResult, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::protocol::{
     CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
@@ -97,6 +97,7 @@ struct GameEndInfo {
     winner: Option<PlayerId>,
     reason: GameEndReason,
     final_hash: u64,
+    action_count: u64,
 }
 
 /// Info about an opponent's choice, broadcast to the other player
@@ -628,6 +629,8 @@ async fn run_game(
     let result = game_loop_handle.await?;
 
     // Get final state hash for the GameEnded message
+    // Note: We use final_hash from the stale mutex (for hash continuity) but
+    // action_count comes from the GameResult (which has the actual count from the game loop)
     let final_hash = {
         let game_guard = game.lock().await;
         compute_network_hash(&game_guard)
@@ -635,28 +638,37 @@ async fn run_game(
 
     // Send game end notification to both handlers
     match &result {
-        Ok(winner) => {
-            log::info!("Game {}: Completed, winner = {:?}", game_id, winner);
+        Ok(game_result) => {
+            log::info!(
+                "Game {}: Completed, winner = {:?}, action_count = {}",
+                game_id,
+                game_result.winner,
+                game_result.action_count
+            );
 
-            // FIXME-UNFINISHED: Should get actual reason from GameLoop (decking, concession, etc.)
-            // Currently just uses PlayerDeath if there's a winner, Draw otherwise
-            let reason = match winner {
-                Some(winner_id) => {
-                    // The loser is the other player
-                    let loser_id = if *winner_id == PlayerId::new(0) {
-                        PlayerId::new(1)
-                    } else {
-                        PlayerId::new(0)
-                    };
-                    GameEndReason::PlayerDeath(loser_id)
-                }
-                None => GameEndReason::Draw,
+            // Use the end_reason from GameResult, or derive from winner
+            let reason = match game_result.end_reason {
+                // Use the actual reason if it's meaningful
+                GameEndReason::PlayerDeath(_) | GameEndReason::Decking(_) => game_result.end_reason.clone(),
+                // Otherwise derive from winner
+                _ => match game_result.winner {
+                    Some(winner_id) => {
+                        let loser_id = if winner_id == PlayerId::new(0) {
+                            PlayerId::new(1)
+                        } else {
+                            PlayerId::new(0)
+                        };
+                        GameEndReason::PlayerDeath(loser_id)
+                    }
+                    None => GameEndReason::Draw,
+                },
             };
 
             let end_info = GameEndInfo {
-                winner: *winner,
+                winner: game_result.winner,
                 reason,
                 final_hash,
+                action_count: game_result.action_count,
             };
 
             // Send to both players (ignore errors if handlers already closed)
@@ -666,10 +678,12 @@ async fn run_game(
         Err(e) => {
             log::error!("Game {}: Error - {}", game_id, e);
             // Still try to notify players of the error
+            // Use 0 for action_count on error (we don't have a valid count)
             let end_info = GameEndInfo {
                 winner: None,
                 reason: GameEndReason::Draw, // Use draw for errors
                 final_hash,
+                action_count: 0,
             };
             let _ = p1_game_end_tx.send(end_info.clone());
             let _ = p2_game_end_tx.send(end_info);
@@ -701,11 +715,12 @@ async fn handle_player_websocket(
             end_info = &mut conn.game_end_rx => {
                 match end_info {
                     Ok(info) => {
-                        log::info!("Player {:?}: Sending GameEnded", conn.player_id);
+                        log::info!("Player {:?}: Sending GameEnded (action_count={})", conn.player_id, info.action_count);
                         conn.send(&ServerMessage::GameEnded {
                             winner: info.winner,
                             reason: info.reason,
                             final_state_hash: info.final_hash,
+                            action_count: info.action_count,
                         }).await?;
                     }
                     Err(_) => {
@@ -955,7 +970,7 @@ fn run_game_loop(
     game: Arc<Mutex<GameState>>,
     mut p1_controller: NetworkController,
     mut p2_controller: NetworkController,
-) -> Result<Option<PlayerId>> {
+) -> Result<GameResult> {
     // Take ownership of game for the game loop
     let mut game = {
         // We need to get the game out of the mutex for the game loop
@@ -978,7 +993,7 @@ fn run_game_loop(
     let result = game_loop.run_game(&mut p1_controller, &mut p2_controller);
 
     match result {
-        Ok(game_result) => Ok(game_result.winner),
+        Ok(game_result) => Ok(game_result),
         Err(e) => Err(anyhow!("Game loop error: {}", e)),
     }
 }

@@ -33,6 +33,9 @@ pub struct LocalChoice {
     /// Action count (undo log position) at the time of choice
     /// This is used for synchronization validation with the server
     pub action_count: u64,
+    /// Last N actions from the undo log (for sync debugging)
+    /// Only populated when debug mode is enabled
+    pub last_actions: Option<String>,
 }
 
 /// Message types for the local controller
@@ -61,6 +64,8 @@ pub struct NetworkLocalController<C: PlayerController> {
     message_rx: mpsc::Receiver<LocalControllerMessage>,
     /// Whether we've been disconnected
     disconnected: bool,
+    /// Debug mode: include action log info in choices for sync validation
+    debug_mode: bool,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -80,7 +85,17 @@ impl<C: PlayerController> NetworkLocalController<C> {
             choice_tx,
             message_rx,
             disconnected: false,
+            debug_mode: false,
         }
+    }
+
+    /// Enable debug mode for action log transmission
+    ///
+    /// When enabled, the last N actions are included with each choice
+    /// for sync validation and debugging.
+    pub fn with_debug_mode(mut self, debug: bool) -> Self {
+        self.debug_mode = debug;
+        self
     }
 
     /// Send a choice to the server and wait for acknowledgment
@@ -89,7 +104,14 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// * `choice_index` - The selected choice index
     /// * `description` - Human-readable description of the choice
     /// * `action_count` - Current action count (undo log position) for sync validation
-    fn send_choice(&mut self, choice_index: usize, description: String, action_count: u64) -> Result<(), String> {
+    /// * `last_actions` - Formatted string of last N actions (debug mode only)
+    fn send_choice(
+        &mut self,
+        choice_index: usize,
+        description: String,
+        action_count: u64,
+        last_actions: Option<String>,
+    ) -> Result<(), String> {
         if self.disconnected {
             return Err("Disconnected from server".to_string());
         }
@@ -108,6 +130,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 choice_index,
                 description,
                 action_count,
+                last_actions,
             })
             .is_err()
         {
@@ -136,6 +159,18 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 self.disconnected = true;
                 Err("Lost connection to server".to_string())
             }
+        }
+    }
+
+    /// Get formatted last N actions from view for debug mode
+    ///
+    /// Returns Some(formatted_string) if debug_mode is enabled, None otherwise.
+    /// Shows the last 20 actions for context when sync errors occur.
+    fn get_debug_actions(&self, view: &GameStateView) -> Option<String> {
+        if self.debug_mode {
+            Some(view.format_last_n_actions(20))
+        } else {
+            None
         }
     }
 
@@ -186,17 +221,18 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
 
         // Send choice to server
         let action_count = view.action_count() as u64;
+        let last_actions = self.get_debug_actions(view);
         match &result {
             ChoiceResult::Ok(Some(ability)) => {
                 let idx = available.iter().position(|a| a == ability).unwrap_or(0) + 1;
                 let desc = format!("Play: {:?}", ability);
-                if let Err(e) = self.send_choice(idx, desc, action_count) {
+                if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                     log::error!("Failed to send choice: {}", e);
                     return ChoiceResult::ExitGame;
                 }
             }
             ChoiceResult::Ok(None) => {
-                if let Err(e) = self.send_choice(0, "Pass".to_string(), action_count) {
+                if let Err(e) = self.send_choice(0, "Pass".to_string(), action_count, last_actions) {
                     log::error!("Failed to send choice: {}", e);
                     return ChoiceResult::ExitGame;
                 }
@@ -229,7 +265,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("Target: {:?}", targets);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -261,7 +298,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("Mana source: {:?}", sources);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -291,7 +329,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("Attackers: {:?}", attackers);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -326,7 +365,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("Blocks: {:?}", blocks);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -357,7 +397,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("Damage order: {:?}", order);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -388,7 +429,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("Discard: {:?}", discards);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -413,7 +455,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let desc = format!("From library: {:?}", card);
             let action_count = view.action_count() as u64;
-            if let Err(e) = self.send_choice(idx, desc, action_count) {
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
