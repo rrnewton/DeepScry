@@ -80,6 +80,11 @@ jobs:
       - name: Build WASM (dev)
         run: make wasm-dev
 
+      - name: Export WASM data files
+        run: |
+          cargo build --release --bin mtg
+          ./target/release/mtg export-wasm
+
       - name: Install Playwright and dependencies
         run: |
           cd web
