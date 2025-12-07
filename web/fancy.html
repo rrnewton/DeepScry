@@ -214,7 +214,8 @@
             launch_fancy_tui,
             tui_run_turn,
             tui_toggle_auto,
-            tui_get_battlefield_cards
+            tui_get_battlefield_cards,
+            tui_get_card_positions
         } from './pkg/mtg_forge_rs.js';
 
         let cardDb = null;
@@ -413,64 +414,33 @@
                 return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${size}`;
             },
 
-            // Display all battlefield cards
+            // Display all battlefield cards using actual TUI positions
             displayBattlefieldCards() {
                 if (!this.enabled) return;
 
                 try {
-                    const cardsJson = tui_get_battlefield_cards();
-                    const cards = JSON.parse(cardsJson);
+                    // Get actual card positions from TUI renderer
+                    const positionsJson = tui_get_card_positions();
+                    const positions = JSON.parse(positionsJson);
 
-                    console.log(`Displaying ${cards.length} battlefield cards`);
+                    console.log(`Displaying ${positions.length} battlefield cards with actual TUI positions`);
 
                     // Clear existing overlays first
                     this.clearAll();
 
-                    // Better positioning: place cards within the battlefield panes
-                    // The TUI battlefield sections are roughly:
-                    // - Opponent battlefield: rows 2-20, cols 42-105
-                    // - Your battlefield: rows 21-39, cols 42-105
-                    // Position cards in a flowing grid within these areas
+                    // Use the actual positions from the TUI renderer
+                    positions.forEach((cardPos) => {
+                        const imageUrl = this.scryfallNamedUrl(cardPos.name, 'small');
 
-                    const cardWidth = 14;   // Slightly smaller: 14 cells (140px)
-                    const cardHeight = 18;  // 18 cells (360px)
-                    const spacing = 1;      // 1 cell gap
-
-                    // Split cards into two groups (assume first half = opponent, second half = yours)
-                    // This is a simplification - ideally we'd get owner info from WASM
-                    const midPoint = Math.ceil(cards.length / 2);
-                    const opponentCards = cards.slice(0, midPoint);
-                    const yourCards = cards.slice(midPoint);
-
-                    // Opponent battlefield: start at row 2, col 43
-                    const oppStartRow = 2;
-                    const oppStartCol = 43;
-                    const cardsPerRow = 4; // Fit 4 cards per row in the battlefield area
-
-                    opponentCards.forEach((card, index) => {
-                        const row = Math.floor(index / cardsPerRow);
-                        const col = index % cardsPerRow;
-
-                        const x = oppStartCol + col * (cardWidth + spacing);
-                        const y = oppStartRow + row * (cardHeight + spacing);
-
-                        const imageUrl = this.scryfallNamedUrl(card.name, 'small');
-                        this.setCardImage(card.instance_id, x, y, cardWidth, cardHeight, imageUrl);
-                    });
-
-                    // Your battlefield: start at row 21, col 43
-                    const yourStartRow = 21;
-                    const yourStartCol = 43;
-
-                    yourCards.forEach((card, index) => {
-                        const row = Math.floor(index / cardsPerRow);
-                        const col = index % cardsPerRow;
-
-                        const x = yourStartCol + col * (cardWidth + spacing);
-                        const y = yourStartRow + row * (cardHeight + spacing);
-
-                        const imageUrl = this.scryfallNamedUrl(card.name, 'small');
-                        this.setCardImage(card.instance_id, x, y, cardWidth, cardHeight, imageUrl);
+                        // Use the exact position and size from the TUI
+                        this.setCardImage(
+                            cardPos.card_id,
+                            cardPos.x,      // column position from TUI
+                            cardPos.y,      // row position from TUI
+                            cardPos.width,  // width in cells from TUI
+                            cardPos.height, // height in cells from TUI
+                            imageUrl
+                        );
                     });
                 } catch (error) {
                     console.error('Failed to display battlefield cards:', error);

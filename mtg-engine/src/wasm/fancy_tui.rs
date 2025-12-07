@@ -118,6 +118,67 @@ pub fn tui_get_battlefield_cards() -> String {
     })
 }
 
+/// Get battlefield card positions from the TUI renderer
+/// Returns JSON array of {card_id, name, x, y, width, height}[]
+/// These are the actual positions where the TUI renderer draws cards
+#[wasm_bindgen]
+pub fn tui_get_card_positions() -> String {
+    use crate::game::fancy_tui_renderer::Entity;
+
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let s = state.borrow();
+            let mut positions = Vec::new();
+
+            // Extract card positions from renderer state
+            // We'll include SingleCard entities (individual battlefield cards)
+            // and cards from VisualStack/SimpleStack (grouped cards on battlefield)
+            for entity_pos in &s.renderer.state.entity_positions {
+                match &entity_pos.entity {
+                    Entity::SingleCard { card_id, .. } => {
+                        // Check if this card is on the battlefield
+                        if s.game.battlefield.cards.contains(card_id) {
+                            if let Ok(card) = s.game.cards.get(*card_id) {
+                                positions.push(serde_json::json!({
+                                    "card_id": format!("{:?}", card_id),
+                                    "name": format!("{}", card.name),
+                                    "x": entity_pos.area.x,
+                                    "y": entity_pos.area.y,
+                                    "width": entity_pos.area.width,
+                                    "height": entity_pos.area.height,
+                                }));
+                            }
+                        }
+                    }
+                    Entity::VisualStack { card_ids, .. } | Entity::SimpleStack { card_ids, .. } => {
+                        // For stacks, we could either show all cards or just the top one
+                        // For now, let's show the top card of each stack
+                        if let Some(&card_id) = card_ids.first() {
+                            if s.game.battlefield.cards.contains(&card_id) {
+                                if let Ok(card) = s.game.cards.get(card_id) {
+                                    positions.push(serde_json::json!({
+                                        "card_id": format!("{:?}", card_id),
+                                        "name": format!("{}", card.name),
+                                        "x": entity_pos.area.x,
+                                        "y": entity_pos.area.y,
+                                        "width": entity_pos.area.width,
+                                        "height": entity_pos.area.height,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                    _ => {} // Skip hand cards and other entities
+                }
+            }
+
+            serde_json::to_string(&positions).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        }
+    })
+}
+
 /// WASM Fancy TUI Application State
 ///
 /// This struct holds all the game state and is shared via Rc<RefCell<>>
