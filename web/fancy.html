@@ -196,6 +196,11 @@ cast dark ritual</textarea>
             </select>
         </div>
         <div class="control-group">
+            <label>Seed (for determinism)</label>
+            <input type="number" id="game-seed" value="" placeholder="Random" style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 120px;">
+            <span style="color: #888; font-size: 11px;">Leave empty for random</span>
+        </div>
+        <div class="control-group">
             <label>
                 <input type="checkbox" id="show-card-images" style="margin-right: 5px;">
                 Show Card Images
@@ -226,8 +231,13 @@ cast dark ritual</textarea>
             tui_toggle_auto,
             tui_get_battlefield_cards,
             set_p1_fixed_script,
-            clear_p1_fixed_script
+            clear_p1_fixed_script,
+            set_log_level
         } from './pkg/mtg_forge_rs.js';
+
+        // Expose set_log_level globally for console use
+        // Usage: setLogLevel("debug") or setLogLevel("trace")
+        window.setLogLevel = set_log_level;
 
         let cardDb = null;
 
@@ -568,7 +578,9 @@ cast dark ritual</textarea>
                 const canvasHeight = container.clientHeight || window.innerHeight;
 
                 // Launch the fancy TUI
-                const seed = BigInt(Date.now());
+                const seedInput = document.getElementById('game-seed').value;
+                const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
+                console.log(`[GAME] Using seed: ${seed}`);
                 launch_fancy_tui(
                     cardDb,
                     p1Deck,

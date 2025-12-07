@@ -66,29 +66,12 @@ use crate::loader::{CardDefinition, DeckEntry, DeckList};
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     // Set up panic hook for better error messages in browser console
-    console_error_panic_hook_setup();
-}
+    console_error_panic_hook::set_once();
 
-/// Set up console_error_panic_hook for better WASM error messages
-fn console_error_panic_hook_setup() {
-    // This provides better error messages in the browser console
-    // when a panic occurs in Rust code
-    std::panic::set_hook(Box::new(|panic_info| {
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-
-        let location = panic_info
-            .location()
-            .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_default();
-
-        web_sys::console::error_1(&format!("MTG Forge panic: {}{}", message, location).into());
-    }));
+    // Initialize the log crate to output to browser console
+    // Default level is Info; can be changed with console_log::init_with_level()
+    // For debug output, use: console_log::init_with_level(log::Level::Debug)
+    console_log::init_with_level(log::Level::Info).ok();
 }
 
 /// Version information
@@ -101,6 +84,37 @@ pub fn version() -> String {
 #[wasm_bindgen]
 pub fn is_ready() -> bool {
     true
+}
+
+/// Set the logging level for the WASM module
+///
+/// Valid levels: "trace", "debug", "info", "warn", "error"
+/// Default level at startup is "info".
+///
+/// Example from JavaScript:
+/// ```js
+/// set_log_level("debug");  // Enable debug messages
+/// set_log_level("trace");  // Enable all messages including trace
+/// set_log_level("warn");   // Only warnings and errors
+/// ```
+#[wasm_bindgen]
+pub fn set_log_level(level: &str) {
+    let log_level = match level.to_lowercase().as_str() {
+        "trace" => log::Level::Trace,
+        "debug" => log::Level::Debug,
+        "info" => log::Level::Info,
+        "warn" | "warning" => log::Level::Warn,
+        "error" => log::Level::Error,
+        _ => {
+            web_sys::console::warn_1(&format!("Unknown log level '{}', using 'info'", level).into());
+            log::Level::Info
+        }
+    };
+    // Re-initialize the logger with the new level
+    // Note: console_log::init_with_level returns Err if already initialized,
+    // but the log crate's set_max_level works for runtime changes
+    log::set_max_level(log_level.to_level_filter());
+    log::info!("Log level set to: {}", level);
 }
 
 /// WASM-compatible card and deck database

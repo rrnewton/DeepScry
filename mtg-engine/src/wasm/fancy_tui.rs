@@ -329,19 +329,30 @@ impl WasmFancyTuiState {
     /// This undoes all game state changes since the start of the turn,
     /// returning the ReplayChoice entries that were logged.
     fn rewind_to_turn_start(&mut self) -> Vec<ReplayChoice> {
+        let log_len_before = self.game.undo_log.len();
+        log::debug!(target: "wasm_tui", "REWIND: Undo log has {} actions before rewind", log_len_before);
+
         let mut undo_log = std::mem::take(&mut self.game.undo_log);
         let result = undo_log.rewind_to_turn_start(&mut self.game);
         self.game.undo_log = undo_log;
 
+        let log_len_after = self.game.undo_log.len();
+
         // rewind_to_turn_start returns None only if undo log is disabled
         // (which shouldn't happen for WASM TUI, but handle gracefully)
-        let (_turn_number, choice_actions, _actions_rewound) = match result {
+        let (turn_number, choice_actions, actions_rewound) = match result {
             Some(r) => r,
             None => {
-                eprintln!("WARNING: Undo log is disabled, cannot replay choices");
+                log::warn!(target: "wasm_tui", "REWIND: Undo log disabled!");
                 return Vec::new();
             }
         };
+
+        log::debug!(
+            target: "wasm_tui",
+            "REWIND: Rewound to turn {}, {} actions undone, log now {} actions, {} choice points",
+            turn_number, actions_rewound, log_len_after, choice_actions.len()
+        );
 
         // Extract ReplayChoice from the ChoicePoint actions
         choice_actions
@@ -527,17 +538,17 @@ impl WasmFancyTuiState {
                 self.needs_replay = false;
 
                 let turn_before = self.game.turn.turn_number;
-                web_sys::console::log_1(&format!("[DEBUG] REPLAY: Starting replay on turn {}", turn_before).into());
+                log::debug!(target: "wasm_tui", "REPLAY: Starting replay on turn {}", turn_before);
 
                 // Get the new choice from the human controller
                 let new_choice = if let Some(ref mut human) = self.p1_human_controller {
                     if let Some(pending) = human.pending_choice.take() {
                         // Convert PendingChoice to ReplayChoice using current context
                         let choice = self.pending_choice_to_replay_choice(&pending);
-                        web_sys::console::log_1(&format!("[DEBUG] REPLAY: New choice = {:?}", choice).into());
+                        log::debug!(target: "wasm_tui", "REPLAY: New choice = {:?}", choice);
                         Some(choice)
                     } else {
-                        web_sys::console::log_1(&"[DEBUG] REPLAY: No pending choice".into());
+                        log::debug!(target: "wasm_tui", "REPLAY: No pending choice");
                         None
                     }
                 } else {
@@ -547,19 +558,17 @@ impl WasmFancyTuiState {
                 // Rewind game state and get previous choices from this turn
                 let mut replay_choices = self.rewind_to_turn_start();
                 let turn_after_rewind = self.game.turn.turn_number;
-                web_sys::console::log_1(&format!(
-                    "[DEBUG] REPLAY: After rewind - turn {}, {} existing choices to replay",
+                log::debug!(
+                    target: "wasm_tui",
+                    "REPLAY: After rewind - turn {}, {} existing choices to replay",
                     turn_after_rewind, replay_choices.len()
-                ).into());
+                );
 
                 // Add the new choice if we have one
                 if let Some(choice) = new_choice {
                     replay_choices.push(choice);
                 }
-                web_sys::console::log_1(&format!(
-                    "[DEBUG] REPLAY: Total choices to replay: {}",
-                    replay_choices.len()
-                ).into());
+                log::debug!(target: "wasm_tui", "REPLAY: Total choices to replay: {}", replay_choices.len());
 
                 // Create a fresh human controller for the replay.
                 // The WasmHumanController doesn't need persistent state - all choices
@@ -573,19 +582,20 @@ impl WasmFancyTuiState {
 
                 // Run the game with replay controller
                 let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                web_sys::console::log_1(&"[DEBUG] REPLAY: Running game loop with replay controller...".into());
+                log::debug!(target: "wasm_tui", "REPLAY: Running game loop with replay controller...");
                 let result = game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut());
 
                 let turn_after_run = self.game.turn.turn_number;
-                web_sys::console::log_1(&format!(
-                    "[DEBUG] REPLAY: Game loop returned on turn {}, result type: {}",
+                log::debug!(
+                    target: "wasm_tui",
+                    "REPLAY: Game loop returned on turn {}, result type: {}",
                     turn_after_run,
                     match &result {
                         Ok(GameLoopState::Complete(_)) => "Complete",
                         Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
                         Err(_) => "Error",
                     }
-                ).into());
+                );
 
                 // Note: We don't need to recover the inner controller because:
                 // 1. Any choices already made are captured in replay_choices
@@ -597,23 +607,25 @@ impl WasmFancyTuiState {
                 self.handle_game_result(result);
             } else {
                 // Normal run - no replay needed
-                web_sys::console::log_1(&format!(
-                    "[DEBUG] NORMAL: Running game loop (no replay), turn {}",
+                log::debug!(
+                    target: "wasm_tui",
+                    "NORMAL: Running game loop (no replay), turn {}",
                     self.game.turn.turn_number
-                ).into());
+                );
                 if let Some(ref mut human) = self.p1_human_controller {
                     let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
                     let result = game_loop.run_until_input(human, p2_controller.as_mut());
                     let turn_after = self.game.turn.turn_number;
-                    web_sys::console::log_1(&format!(
-                        "[DEBUG] NORMAL: Game loop returned on turn {}, result type: {}",
+                    log::debug!(
+                        target: "wasm_tui",
+                        "NORMAL: Game loop returned on turn {}, result type: {}",
                         turn_after,
                         match &result {
                             Ok(GameLoopState::Complete(_)) => "Complete",
                             Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
                             Err(_) => "Error",
                         }
-                    ).into());
+                    );
                     self.handle_game_result(result);
                 } else {
                     self.error_message = Some("Human controller not initialized".to_string());
@@ -740,11 +752,11 @@ impl WasmFancyTuiState {
                     ChoiceContext::Discard { .. } => "Discard".to_string(),
                     ChoiceContext::LibrarySearch { .. } => "LibrarySearch".to_string(),
                 };
-                let debug_msg = format!(
-                    "[DEBUG] Turn {}, {}, P1's turn: {}, choices: {}, context: {}",
+                log::debug!(
+                    target: "wasm_tui",
+                    "Turn {}, {}, P1's turn: {}, choices: {}, context: {}",
                     turn, phase, is_p1_turn, choice_count, context_type
                 );
-                web_sys::console::log_1(&debug_msg.into());
             }
             Err(e) => {
                 self.error_message = Some(format!("Game error: {}", e));
@@ -1230,11 +1242,18 @@ fn create_game_from_database(
     game.shuffle_library(p1_id);
     game.shuffle_library(p2_id);
 
-    // Mark the start of turn 1 BEFORE drawing opening hands.
+    // Draw opening hands (7 cards each) BEFORE the turn 1 marker
+    for _ in 0..7 {
+        let _ = game.draw_card(p1_id);
+        let _ = game.draw_card(p2_id);
+    }
+
+    // Mark the start of turn 1 AFTER drawing opening hands.
     // This is critical for the rewind/replay pattern: when the user makes their
     // first choice on turn 1, we call rewind_to_turn_start() which looks for a
-    // ChangeTurn action. Without this marker, turn 1 would have no stopping point
-    // and rewind would undo ALL actions, including the opening hand draws!
+    // ChangeTurn action. The rewind stops AT this marker, preserving everything
+    // before it (including opening hands). Actions AFTER this marker (during turn 1
+    // gameplay) get rewound.
     let prior_log_size = game.logger.log_count();
     game.undo_log.log(
         crate::undo::GameAction::ChangeTurn {
@@ -1245,12 +1264,6 @@ fn create_game_from_database(
         },
         prior_log_size,
     );
-
-    // Draw opening hands (7 cards each)
-    for _ in 0..7 {
-        let _ = game.draw_card(p1_id);
-        let _ = game.draw_card(p2_id);
-    }
 
     Ok(game)
 }
