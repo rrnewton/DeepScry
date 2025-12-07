@@ -221,6 +221,13 @@ cast dark ritual</textarea>
             </label>
             <span style="color: #888; font-size: 11px;">Load card art from Scryfall</span>
         </div>
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="debug-mode" style="margin-right: 5px;">
+                Debug Mode
+            </label>
+            <span style="color: #888; font-size: 11px;">Enable TRACE logging</span>
+        </div>
         <button id="btn-launch">Launch Fancy TUI</button>
         <span class="help-text">Human: Up/Down=select, Enter=confirm, 1-9=quick select | AI: Space=turn, A=auto | Q=exit, Tab=cycle</span>
     </div>
@@ -308,6 +315,9 @@ cast dark ritual</textarea>
                     p2DeckSelect.selectedIndex = 1;
                 }
 
+                // Restore saved settings from localStorage
+                restoreSettings();
+
                 status.textContent = `WASM v${version()} | ${cardCount} cards, ${deckCount} decks`;
 
                 // Hide loading, show setup
@@ -343,6 +353,92 @@ cast dark ritual</textarea>
                 default: return WasmControllerType.Heuristic;
             }
         }
+
+        // Settings persistence using localStorage
+        const SETTINGS_KEY = 'mtg-forge-fancy-settings';
+
+        function saveSettings() {
+            const settings = {
+                p1Deck: document.getElementById('p1-deck').value,
+                p2Deck: document.getElementById('p2-deck').value,
+                p1Controller: document.getElementById('p1-controller').value,
+                p2Controller: document.getElementById('p2-controller').value,
+                fixedScript: document.getElementById('fixed-script').value,
+                gameSeed: document.getElementById('game-seed').value,
+                showCardImages: document.getElementById('show-card-images').checked,
+                debugMode: document.getElementById('debug-mode').checked
+            };
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        }
+
+        function restoreSettings() {
+            try {
+                const saved = localStorage.getItem(SETTINGS_KEY);
+                if (!saved) return;
+
+                const settings = JSON.parse(saved);
+
+                // Restore deck selections (only if the deck exists in the dropdown)
+                if (settings.p1Deck) {
+                    const p1Option = document.querySelector(`#p1-deck option[value="${settings.p1Deck}"]`);
+                    if (p1Option) document.getElementById('p1-deck').value = settings.p1Deck;
+                }
+                if (settings.p2Deck) {
+                    const p2Option = document.querySelector(`#p2-deck option[value="${settings.p2Deck}"]`);
+                    if (p2Option) document.getElementById('p2-deck').value = settings.p2Deck;
+                }
+
+                // Restore controller selections
+                if (settings.p1Controller) {
+                    document.getElementById('p1-controller').value = settings.p1Controller;
+                    // Show/hide fixed script group based on restored controller
+                    document.getElementById('fixed-script-group').style.display =
+                        settings.p1Controller === 'fixed' ? 'flex' : 'none';
+                }
+                if (settings.p2Controller) {
+                    document.getElementById('p2-controller').value = settings.p2Controller;
+                }
+
+                // Restore other settings
+                if (settings.fixedScript) {
+                    document.getElementById('fixed-script').value = settings.fixedScript;
+                }
+                if (settings.gameSeed) {
+                    document.getElementById('game-seed').value = settings.gameSeed;
+                }
+                if (settings.showCardImages) {
+                    document.getElementById('show-card-images').checked = settings.showCardImages;
+                }
+                if (settings.debugMode) {
+                    document.getElementById('debug-mode').checked = settings.debugMode;
+                }
+
+                console.log('Restored settings from localStorage');
+            } catch (e) {
+                console.warn('Failed to restore settings:', e);
+            }
+        }
+
+        // Add change listeners to save settings automatically
+        function setupSettingsPersistence() {
+            const controls = [
+                'p1-deck', 'p2-deck', 'p1-controller', 'p2-controller',
+                'fixed-script', 'game-seed', 'show-card-images', 'debug-mode'
+            ];
+            controls.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('change', saveSettings);
+                    // Also save on input for text fields
+                    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                        el.addEventListener('input', saveSettings);
+                    }
+                }
+            });
+        }
+
+        // Initialize settings persistence after DOM is ready
+        setupSettingsPersistence();
 
         // Show/hide fixed script textarea when Fixed controller is selected
         document.getElementById('p1-controller').addEventListener('change', function() {
@@ -592,6 +688,15 @@ cast dark ritual</textarea>
             if (showImages) {
                 CardImageOverlay.enable();
                 cardImagesEnabled = true;
+            }
+
+            // Set log level based on debug mode checkbox
+            const debugMode = document.getElementById('debug-mode').checked;
+            if (debugMode) {
+                set_log_level('trace');
+                console.log('[DEBUG] TRACE logging enabled');
+            } else {
+                set_log_level('info');
             }
 
             try {

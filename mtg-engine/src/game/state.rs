@@ -955,7 +955,8 @@ impl GameState {
         while let Some((action, prior_log_size)) = self.undo_log.pop() {
             log::debug!(
                 "[UNDO]   Popped action (prior_log_size={}): {:?}",
-                prior_log_size, action
+                prior_log_size,
+                action
             );
             match action {
                 crate::undo::GameAction::ChoicePoint {
@@ -1194,7 +1195,8 @@ impl GameState {
         if let Some(log_size) = choice_log_size {
             log::debug!(
                 "[UNDO] Undo complete: actions_undone={}, choice_log_size={}",
-                actions_undone, log_size
+                actions_undone,
+                log_size
             );
             log::debug!(
                 "[UNDO]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",

@@ -416,8 +416,8 @@ enum Commands {
         #[arg(long, short = 'o', default_value = "web/data")]
         output: PathBuf,
 
-        /// Glob pattern(s) for deck files to include (default: decks/old_school*/*.dck)
-        #[arg(long, short = 'd', default_value = "decks/old_school*/*.dck")]
+        /// Glob pattern(s) for deck files to include (default: decks/**/*.dck)
+        #[arg(long, short = 'd', default_value = "decks/**/*.dck")]
         deck_glob: String,
     },
 
