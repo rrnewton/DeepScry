@@ -174,3 +174,38 @@ The test is now enabled (no `#[ignore]` attribute).
 
 Use localhost connections with fixed-script or heuristic controllers.
 Compare network game results with equivalent local games to verify determinism.
+
+## Analysis: Network Game Display Issues (2025-12-07)
+
+Running `network_game_e2e.sh` with Spiderman draft decks revealed display issues:
+
+### Observed Behavior
+- Game reported 418 choices, 209 "turns" (choice opportunities per player)
+- Client display shows **wrong game state**:
+  - `Hand: 0 | Library: 41` when cards should have been drawn
+  - `Battlefield: (empty)` when lands/creatures should be present
+  - Life totals static at 20/20 throughout game
+
+### Root Cause
+The `FIXME-UNFINISHED` items documented above:
+1. `process_opponent_choice()` in client.rs is a no-op - doesn't replay choices on shadow state
+2. Our own choices also don't update the shadow state display
+3. Only `CardRevealed` messages are processed (queueing for library draws)
+
+### Impact
+- **Display is cosmetic only** - shows initial state, not current state
+- **Game logic is correct** - server runs the real game, choices are valid
+- Game completes successfully with both clients exiting with code 0
+
+### Why This Works
+Despite broken display:
+1. Server runs authoritative game simulation
+2. Client sends choices based on options server provides (not local state)
+3. Server validates choices and executes them
+4. Game ends correctly when win condition met
+
+### To Fix
+Would need to:
+1. Replay opponent choices on shadow state (integrate with GameLoop)
+2. Track our own choice results on shadow state
+3. Or: receive full/delta state updates from server after each choice
