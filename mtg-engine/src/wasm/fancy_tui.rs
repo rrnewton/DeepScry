@@ -92,6 +92,32 @@ pub fn tui_toggle_auto() {
     });
 }
 
+/// Get current battlefield cards as JSON for image overlay
+/// Returns a JSON array of {name: string, instance_id: number}[]
+#[wasm_bindgen]
+pub fn tui_get_battlefield_cards() -> String {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let s = state.borrow();
+            let mut cards = Vec::new();
+
+            // Get all cards on the battlefield (shared zone)
+            for &card_id in &s.game.battlefield.cards {
+                if let Ok(card) = s.game.cards.get(card_id) {
+                    cards.push(serde_json::json!({
+                        "name": format!("{}", card.name),
+                        "instance_id": format!("{:?}", card_id),
+                    }));
+                }
+            }
+
+            serde_json::to_string(&cards).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        }
+    })
+}
+
 /// WASM Fancy TUI Application State
 ///
 /// This struct holds all the game state and is shared via Rc<RefCell<>>

@@ -148,11 +148,14 @@
                 <button id="btn-run-turn" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Run 1 Turn</button>
                 <button id="btn-auto" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Auto Run</button>
             </div>
+            <div style="margin-bottom: 8px;">
+                <button id="btn-toggle-images" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Show Images</button>
+            </div>
             <div>
                 <button id="btn-exit" style="background: #a03030; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Exit Game</button>
                 <span id="turn-info" style="color: #ffd700; margin-left: 10px;"></span>
             </div>
-            <div style="color: #888; font-size: 11px; margin-top: 8px;">Keys: Space=turn, A=auto, Q=exit, C=toggle</div>
+            <div style="color: #888; font-size: 11px; margin-top: 8px;">Keys: Space=turn, A=auto, Q=exit, C=toggle, I=images</div>
         </div>
     </div>
 
@@ -319,6 +322,16 @@
             disable() {
                 this.enabled = false;
                 this.clearAll();
+                console.log('Card image overlays disabled');
+            },
+
+            toggle() {
+                if (this.enabled) {
+                    this.disable();
+                } else {
+                    this.enable();
+                }
+                return this.enabled;
             },
 
             // Build Scryfall API URL for a card
@@ -513,6 +526,13 @@
 
         document.getElementById('btn-exit').addEventListener('click', function() {
             window.exitFancyTui();
+        });
+
+        document.getElementById('btn-toggle-images').addEventListener('click', function() {
+            const nowEnabled = CardImageOverlay.toggle();
+            cardImagesEnabled = nowEnabled;
+            this.textContent = nowEnabled ? 'Hide Images' : 'Show Images';
+            this.style.background = nowEnabled ? '#30a030' : '#4361ee';
         });
 
         // Expose exit function globally for WASM to call
