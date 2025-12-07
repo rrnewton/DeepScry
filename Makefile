@@ -4,6 +4,7 @@
 .PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev
 
 # Configuration variables
+# PORT: web server port (use: make PORT=7999 wasm-dev-serve)
 PORT ?= 8080
 
 # Default target - show available commands

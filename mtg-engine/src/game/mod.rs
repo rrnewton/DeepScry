@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod combat;
+pub mod command_parsing;
 pub mod continuous_effects;
 pub mod controller;
 pub mod display;

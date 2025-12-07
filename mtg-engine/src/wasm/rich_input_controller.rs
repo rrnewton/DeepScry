@@ -31,125 +31,12 @@
 //! ```
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
+use crate::game::command_parsing::{is_explicit_pass, parse_spell_ability_choice};
 use crate::game::controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
 
 use super::human_controller::PendingChoice;
-
-// Inline parsing helpers (from rich_input_controller, avoiding feature gate dependency)
-
-/// Normalize a string for comparison
-fn normalize(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_whitespace() && *c != '_')
-        .collect::<String>()
-        .to_lowercase()
-}
-
-/// Check if a card name matches a pattern (prefix matching)
-fn card_matches(card_name: &str, pattern: &str) -> bool {
-    let normalized_card = normalize(card_name);
-    let normalized_pattern = normalize(pattern);
-    normalized_card.starts_with(&normalized_pattern)
-}
-
-/// Parse a spell ability choice command
-///
-/// Examples: "play swamp", "cast lightning bolt", "0", "pass"
-fn parse_spell_ability_choice(
-    command: &str,
-    view: &GameStateView,
-    available: &[SpellAbility],
-) -> Option<SpellAbility> {
-    let cmd = command.trim().to_lowercase();
-
-    // Handle numeric choice
-    if let Ok(idx) = cmd.parse::<usize>() {
-        if idx == 0 {
-            return None; // [0] = Pass priority
-        } else if idx <= available.len() {
-            return Some(available[idx - 1].clone());
-        } else {
-            return None; // Out of bounds = pass priority
-        }
-    }
-
-    // Handle "pass" or "p"
-    if cmd == "pass" || cmd == "p" {
-        return None;
-    }
-
-    // Parse verb + card name
-    if let Some(card_pattern) = cmd.strip_prefix("play ") {
-        for ability in available {
-            if let SpellAbility::PlayLand { card_id } = ability {
-                if let Some(card_name) = view.card_name(*card_id) {
-                    if card_matches(&card_name, card_pattern) {
-                        return Some(ability.clone());
-                    }
-                }
-            }
-        }
-    } else if let Some(card_pattern) = cmd.strip_prefix("cast ") {
-        for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
-                if let Some(card_name) = view.card_name(*card_id) {
-                    if card_matches(&card_name, card_pattern) {
-                        return Some(ability.clone());
-                    }
-                }
-            }
-        }
-    } else if let Some(card_pattern) = cmd.strip_prefix("equip ") {
-        for ability in available {
-            if let SpellAbility::ActivateAbility { card_id, .. } = ability {
-                if let Some(card_name) = view.card_name(*card_id) {
-                    if card_matches(&card_name, card_pattern) {
-                        return Some(ability.clone());
-                    }
-                }
-            }
-        }
-    } else if let Some(card_pattern) = cmd.strip_prefix("activate ") {
-        // Check for indexed activation: "activate forest[2]"
-        let (pattern_part, ability_num) = if let Some(bracket_pos) = card_pattern.find('[') {
-            let pattern = &card_pattern[..bracket_pos];
-            let num_str = &card_pattern[bracket_pos + 1..];
-            if let Some(close_pos) = num_str.find(']') {
-                let num = num_str[..close_pos].parse::<usize>().ok();
-                (pattern, num)
-            } else {
-                (pattern, None)
-            }
-        } else {
-            (card_pattern, None)
-        };
-
-        let mut matches: Vec<&SpellAbility> = Vec::new();
-        for ability in available {
-            if let SpellAbility::ActivateAbility { card_id, .. } = ability {
-                if let Some(card_name) = view.card_name(*card_id) {
-                    if card_matches(&card_name, pattern_part) {
-                        matches.push(ability);
-                    }
-                }
-            }
-        }
-
-        if !matches.is_empty() {
-            if let Some(num) = ability_num {
-                if num > 0 && num <= matches.len() {
-                    return Some(matches[num - 1].clone());
-                }
-            } else {
-                return Some(matches[0].clone());
-            }
-        }
-    }
-
-    None
-}
 
 /// WASM Rich Input Controller
 ///
@@ -263,14 +150,13 @@ impl WasmRichInputController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> Option<Option<SpellAbility>> {
-        // Use inlined parsing logic
+        // Use shared parsing logic from command_parsing module
         let parsed = parse_spell_ability_choice(command, view, available);
 
-        // Check if this is an explicit pass command
-        let cmd_trimmed = command.trim().to_lowercase();
-        let is_explicit_pass = cmd_trimmed == "pass" || cmd_trimmed == "p" || cmd_trimmed == "0";
+        // Check if this is an explicit pass command using shared helper
+        let explicit_pass = is_explicit_pass(command);
 
-        if parsed.is_some() || is_explicit_pass {
+        if parsed.is_some() || explicit_pass {
             Some(parsed) // Return Some(Some(ability)) or Some(None) for pass
         } else {
             None // No match

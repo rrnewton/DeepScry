@@ -3,8 +3,8 @@
 //! Reads player choices from stdin and displays game state using GameStateView
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
+use crate::game::command_parsing::{card_matches, parse_spell_ability_choice};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
-use crate::game::RichInputController;
 use smallvec::SmallVec;
 use std::io::{self, Write};
 
@@ -494,7 +494,7 @@ impl PlayerController for InteractiveController {
                 }
 
                 // Try rich command parsing first
-                let rich_result = RichInputController::parse_spell_ability_choice(trimmed, view, available);
+                let rich_result = parse_spell_ability_choice(trimmed, view, available);
 
                 // Check if it was a valid command (pass or ability selection)
                 if trimmed == "p"
@@ -777,9 +777,7 @@ impl PlayerController for InteractiveController {
                     let mut found = false;
                     for &creature_id in available_creatures {
                         if let Some(card_name) = view.card_name(creature_id) {
-                            if RichInputController::card_matches(&card_name, card_pattern)
-                                && !attackers.contains(&creature_id)
-                            {
+                            if card_matches(&card_name, card_pattern) && !attackers.contains(&creature_id) {
                                 attackers.push(creature_id);
                                 println!("  Attacking with {}", card_name);
                                 found = true;
@@ -918,7 +916,7 @@ impl PlayerController for InteractiveController {
                         let mut blocker_id = None;
                         for &creature_id in available_blockers {
                             if let Some(card_name) = view.card_name(creature_id) {
-                                if RichInputController::card_matches(&card_name, blocker_pattern) {
+                                if card_matches(&card_name, blocker_pattern) {
                                     blocker_id = Some(creature_id);
                                     break;
                                 }
@@ -929,7 +927,7 @@ impl PlayerController for InteractiveController {
                         let mut attacker_id = None;
                         for &creature_id in attackers {
                             if let Some(card_name) = view.card_name(creature_id) {
-                                if RichInputController::card_matches(&card_name, attacker_pattern) {
+                                if card_matches(&card_name, attacker_pattern) {
                                     attacker_id = Some(creature_id);
                                     break;
                                 }

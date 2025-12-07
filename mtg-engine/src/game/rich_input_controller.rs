@@ -36,6 +36,7 @@
 //! Comma-separated clauses: `BlackKnight blocks WhiteKnight, SerraAngel blocks RoyalAssassin`
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
+use crate::game::command_parsing::{card_matches, is_explicit_pass, parse_spell_ability_choice};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
@@ -113,141 +114,6 @@ impl RichInputController {
             None
         }
     }
-
-    /// Normalize a string for comparison
-    ///
-    /// - Converts to lowercase
-    /// - Removes spaces and underscores
-    /// - Removes non-alphanumeric characters (except for basic punctuation)
-    pub fn normalize(s: &str) -> String {
-        s.chars()
-            .filter(|c| !c.is_whitespace() && *c != '_')
-            .collect::<String>()
-            .to_lowercase()
-    }
-
-    /// Check if a card name matches a pattern (prefix matching)
-    pub fn card_matches(card_name: &str, pattern: &str) -> bool {
-        let normalized_card = Self::normalize(card_name);
-        let normalized_pattern = Self::normalize(pattern);
-        normalized_card.starts_with(&normalized_pattern)
-    }
-
-    /// Parse a spell ability choice command
-    ///
-    /// Examples: "play swamp", "cast lightning bolt", "0", "pass"
-    pub fn parse_spell_ability_choice(
-        command: &str,
-        view: &GameStateView,
-        available: &[SpellAbility],
-    ) -> Option<SpellAbility> {
-        let cmd = command.trim().to_lowercase();
-
-        // Handle numeric choice (matching menu display format from format_choice_menu)
-        // [0] = Pass priority (return None)
-        // [1] to [N] = available[0] to available[N-1] (menu indices shifted by 1)
-        // Out of bounds values (idx > available.len()) also pass priority
-        if let Ok(idx) = cmd.parse::<usize>() {
-            if idx == 0 {
-                return None; // [0] = Pass priority
-            } else if idx <= available.len() {
-                return Some(available[idx - 1].clone()); // [1] = available[0], [2] = available[1], etc.
-            } else {
-                return None; // Out of bounds = pass priority
-            }
-        }
-
-        // Handle "pass" or "p"
-        if cmd == "pass" || cmd == "p" {
-            return None;
-        }
-
-        // Parse verb + card name
-        if let Some(card_pattern) = cmd.strip_prefix("play ") {
-            // Find matching PlayLand ability
-            for ability in available {
-                if let SpellAbility::PlayLand { card_id } = ability {
-                    if let Some(card_name) = view.card_name(*card_id) {
-                        if Self::card_matches(&card_name, card_pattern) {
-                            return Some(ability.clone());
-                        }
-                    }
-                }
-            }
-        } else if let Some(card_pattern) = cmd.strip_prefix("cast ") {
-            // Find matching CastSpell ability
-            for ability in available {
-                if let SpellAbility::CastSpell { card_id } = ability {
-                    if let Some(card_name) = view.card_name(*card_id) {
-                        if Self::card_matches(&card_name, card_pattern) {
-                            return Some(ability.clone());
-                        }
-                    }
-                }
-            }
-        } else if let Some(card_pattern) = cmd.strip_prefix("equip ") {
-            // Find matching ActivateAbility for Equipment
-            // Format: "equip [card_name]" activates the Equip ability on that Equipment
-            for ability in available {
-                if let SpellAbility::ActivateAbility { card_id, .. } = ability {
-                    if let Some(card_name) = view.card_name(*card_id) {
-                        if Self::card_matches(&card_name, card_pattern) {
-                            // TODO: Verify this is actually an Equip ability
-                            // For now, just match by card name
-                            return Some(ability.clone());
-                        }
-                    }
-                }
-            }
-        } else if let Some(card_pattern) = cmd.strip_prefix("activate ") {
-            // Find matching ActivateAbility
-            // Format: "activate [card_name]" or "activate [card_name][N]"
-            // N is 1-indexed (matching ability_index + 1)
-
-            // Check for indexed activation: "activate forest[2]"
-            let (pattern_part, ability_num) = if let Some(bracket_pos) = card_pattern.find('[') {
-                let pattern = &card_pattern[..bracket_pos];
-                let num_str = &card_pattern[bracket_pos + 1..];
-                // Extract number before closing bracket
-                if let Some(close_pos) = num_str.find(']') {
-                    let num = num_str[..close_pos].parse::<usize>().ok();
-                    (pattern, num)
-                } else {
-                    (pattern, None)
-                }
-            } else {
-                (card_pattern, None)
-            };
-
-            // Find all matching abilities
-            let mut matches: Vec<&SpellAbility> = Vec::new();
-            for ability in available {
-                if let SpellAbility::ActivateAbility { card_id, .. } = ability {
-                    if let Some(card_name) = view.card_name(*card_id) {
-                        if Self::card_matches(&card_name, pattern_part) {
-                            matches.push(ability);
-                        }
-                    }
-                }
-            }
-
-            // Select the right match
-            if !matches.is_empty() {
-                if let Some(num) = ability_num {
-                    // User specified which ability: 1-indexed
-                    if num > 0 && num <= matches.len() {
-                        return Some(matches[num - 1].clone());
-                    }
-                } else {
-                    // No number specified - take first match (most common case)
-                    return Some(matches[0].clone());
-                }
-            }
-        }
-
-        // Command not recognized or no match found - pass priority
-        None
-    }
 }
 
 impl PlayerController for RichInputController {
@@ -274,15 +140,14 @@ impl PlayerController for RichInputController {
             }
 
             // Try to parse it
-            let result = Self::parse_spell_ability_choice(&command, view, available);
+            let result = parse_spell_ability_choice(&command, view, available);
 
             // Check if this is an explicit pass command
-            let cmd_trimmed = command.trim().to_lowercase();
-            let is_explicit_pass = cmd_trimmed == "pass" || cmd_trimmed == "p" || cmd_trimmed == "0";
+            let explicit_pass = is_explicit_pass(&command);
 
             // In wildcard mode, only advance if we found a match or explicit pass
             if self.wildcard_mode {
-                if result.is_some() || is_explicit_pass {
+                if result.is_some() || explicit_pass {
                     // Found a match or explicit pass! Exit wildcard mode first, then consume
                     self.wildcard_mode = false;
                     self.next_command();
@@ -293,7 +158,7 @@ impl PlayerController for RichInputController {
                 }
             } else {
                 // Normal mode - command MUST match or error
-                if result.is_some() || is_explicit_pass {
+                if result.is_some() || explicit_pass {
                     // Valid command or explicit pass - consume and execute
                     self.next_command();
                     ChoiceResult::Ok(result)
@@ -392,7 +257,7 @@ impl PlayerController for RichInputController {
                 if let Some(card_pattern) = clause.strip_prefix("attack ") {
                     for &creature_id in available_creatures {
                         if let Some(card_name) = view.card_name(creature_id) {
-                            if Self::card_matches(&card_name, card_pattern) && !attackers.contains(&creature_id) {
+                            if card_matches(&card_name, card_pattern) && !attackers.contains(&creature_id) {
                                 attackers.push(creature_id);
                             }
                         }
@@ -445,7 +310,7 @@ impl PlayerController for RichInputController {
                         let mut blocker_id = None;
                         for &creature_id in available_blockers {
                             if let Some(card_name) = view.card_name(creature_id) {
-                                if Self::card_matches(&card_name, blocker_pattern) {
+                                if card_matches(&card_name, blocker_pattern) {
                                     blocker_id = Some(creature_id);
                                     break;
                                 }
@@ -456,7 +321,7 @@ impl PlayerController for RichInputController {
                         let mut attacker_id = None;
                         for &creature_id in attackers {
                             if let Some(card_name) = view.card_name(creature_id) {
-                                if Self::card_matches(&card_name, attacker_pattern) {
+                                if card_matches(&card_name, attacker_pattern) {
                                     attacker_id = Some(creature_id);
                                     break;
                                 }
@@ -586,21 +451,24 @@ impl<'de> serde::Deserialize<'de> for RichInputController {
 mod tests {
     use super::*;
     use crate::core::EntityId;
+    use crate::game::command_parsing::normalize;
     use crate::game::GameState;
 
     #[test]
     fn test_normalize() {
-        assert_eq!(RichInputController::normalize("Black Knight"), "blackknight");
-        assert_eq!(RichInputController::normalize("Serra_Angel"), "serraangel");
-        assert_eq!(RichInputController::normalize("Royal  Assassin"), "royalassassin");
+        // Tests now use shared normalize function from command_parsing module
+        assert_eq!(normalize("Black Knight"), "blackknight");
+        assert_eq!(normalize("Serra_Angel"), "serraangel");
+        assert_eq!(normalize("Royal  Assassin"), "royalassassin");
     }
 
     #[test]
     fn test_card_matches() {
-        assert!(RichInputController::card_matches("Black Knight", "black"));
-        assert!(RichInputController::card_matches("Black Knight", "blackkn"));
-        assert!(RichInputController::card_matches("Serra Angel", "serra"));
-        assert!(!RichInputController::card_matches("Black Knight", "white"));
+        // Tests now use shared card_matches function from command_parsing module
+        assert!(card_matches("Black Knight", "black"));
+        assert!(card_matches("Black Knight", "blackkn"));
+        assert!(card_matches("Serra Angel", "serra"));
+        assert!(!card_matches("Black Knight", "white"));
     }
 
     #[test]
