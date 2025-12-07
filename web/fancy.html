@@ -213,7 +213,8 @@
             WasmControllerType,
             launch_fancy_tui,
             tui_run_turn,
-            tui_toggle_auto
+            tui_toggle_auto,
+            tui_get_battlefield_cards
         } from './pkg/mtg_forge_rs.js';
 
         let cardDb = null;
@@ -407,6 +408,48 @@
                 this.overlays.clear();
             },
 
+            // Build Scryfall named card URL (doesn't require set/collector number)
+            scryfallNamedUrl(cardName, size = 'small') {
+                return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${size}`;
+            },
+
+            // Display all battlefield cards
+            displayBattlefieldCards() {
+                if (!this.enabled) return;
+
+                try {
+                    const cardsJson = tui_get_battlefield_cards();
+                    const cards = JSON.parse(cardsJson);
+
+                    console.log(`Displaying ${cards.length} battlefield cards`);
+
+                    // Clear existing overlays first
+                    this.clearAll();
+
+                    // Simple grid layout for battlefield cards
+                    // Start at (5, 10) to leave room for UI, arrange in rows of 8 cards
+                    const startCol = 5;
+                    const startRow = 10;
+                    const cardWidth = 15;  // 15 cells wide (150px)
+                    const cardHeight = 20; // 20 cells tall (400px)
+                    const spacing = 2;     // 2 cell gap between cards
+                    const cardsPerRow = 8;
+
+                    cards.forEach((card, index) => {
+                        const row = Math.floor(index / cardsPerRow);
+                        const col = index % cardsPerRow;
+
+                        const x = startCol + col * (cardWidth + spacing);
+                        const y = startRow + row * (cardHeight + spacing);
+
+                        const imageUrl = this.scryfallNamedUrl(card.name, 'small');
+                        this.setCardImage(card.instance_id, x, y, cardWidth, cardHeight, imageUrl);
+                    });
+                } catch (error) {
+                    console.error('Failed to display battlefield cards:', error);
+                }
+            },
+
             // Demo: show a test card image
             showTestCard() {
                 if (!this.enabled) return;
@@ -470,10 +513,10 @@
                 // Show game controls widget (collapsed by default)
                 document.getElementById('game-controls').style.display = 'block';
 
-                // Show test card image if enabled (proof-of-concept)
+                // Show battlefield card images if enabled
                 if (cardImagesEnabled) {
-                    // Wait a bit for the TUI to render, then show test image
-                    setTimeout(() => CardImageOverlay.showTestCard(), 500);
+                    // Wait a bit for the TUI to render and game to start, then show images
+                    setTimeout(() => CardImageOverlay.displayBattlefieldCards(), 1000);
                 }
 
                 console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
@@ -533,6 +576,11 @@
             cardImagesEnabled = nowEnabled;
             this.textContent = nowEnabled ? 'Hide Images' : 'Show Images';
             this.style.background = nowEnabled ? '#30a030' : '#4361ee';
+
+            // Refresh battlefield cards when enabled
+            if (nowEnabled) {
+                CardImageOverlay.displayBattlefieldCards();
+            }
         });
 
         // Expose exit function globally for WASM to call
