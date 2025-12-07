@@ -413,6 +413,8 @@ cast dark ritual</textarea>
                     img.style.transformOrigin = 'center center';
                 } else {
                     // UNTAPPED: Normal portrait card
+                    // Use 'cover' to completely hide the TUI card, accepting some spillover
+                    // This ensures the card image fully covers the textual representation
                     const widthPx = width * CELL_WIDTH_PX;
                     const heightPx = height * CELL_HEIGHT_PX;
 
@@ -420,7 +422,7 @@ cast dark ritual</textarea>
                     img.style.height = `${heightPx}px`;
                     img.style.left = `${pos.left}px`;
                     img.style.top = `${pos.top}px`;
-                    img.style.objectFit = 'contain';
+                    img.style.objectFit = 'cover';  // Changed from 'contain' to fully cover TUI card
                     img.style.transform = 'none';
                     img.style.border = '';
                     img.style.backgroundColor = '';
