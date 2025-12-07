@@ -472,7 +472,11 @@ impl WasmFancyTuiState {
                     replay_choices.push(choice);
                 }
 
-                // Create the base human controller for after replay exhaustion
+                // Create a fresh human controller for the replay.
+                // The WasmHumanController doesn't need persistent state - all choices
+                // are captured in the replay_choices, and any NEW choice will be
+                // handled via handle_game_result() setting pending_context, which
+                // then prompts the user for input via the UI.
                 let human_controller = WasmHumanController::new(p1_id);
 
                 // Create ReplayController that will replay choices then delegate to human
@@ -482,8 +486,13 @@ impl WasmFancyTuiState {
                 let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
                 let result = game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut());
 
-                // Update our human controller from the result
-                // The inner human controller may have been asked for a new choice
+                // Note: We don't need to recover the inner controller because:
+                // 1. Any choices already made are captured in replay_choices
+                // 2. New choices come through handle_game_result -> pending_context -> UI
+                // 3. The self.p1_human_controller is used for getting the pending_choice,
+                //    but we've already extracted it above
+
+                // Handle the game result - this may set pending_context for the next choice
                 self.handle_game_result(result);
             } else {
                 // Normal run - no replay needed

@@ -76,7 +76,7 @@ impl ReplayController {
     }
 
     /// Check if we have more replay choices to consume
-    fn has_replay_choice(&self) -> bool {
+    pub fn has_replay_choice(&self) -> bool {
         self.replay_index < self.replay_choices.len()
     }
 

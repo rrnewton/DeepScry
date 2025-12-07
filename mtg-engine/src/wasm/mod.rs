@@ -43,11 +43,13 @@
 pub mod fancy_tui;
 
 pub mod human_controller;
+pub mod rich_input_controller;
 
 #[cfg(target_arch = "wasm32")]
 pub mod image_overlay;
 
 pub use human_controller::{PendingChoice, WasmHumanController};
+pub use rich_input_controller::WasmRichInputController;
 
 use std::collections::HashMap;
 use std::sync::Arc;
