@@ -680,6 +680,12 @@ pub fn launch_fancy_tui(
     // Create the shared state
     let state = Rc::new(RefCell::new(WasmFancyTuiState::new(game, p1_controller, p2_controller)));
 
+    // For human controller games, run until the first choice point
+    // This populates the initial choice list for the player
+    if p1_controller == WasmControllerType::Human {
+        state.borrow_mut().run_until_choice();
+    }
+
     // Create the RatZilla backend, targeting our specific container element
     let backend = DomBackend::new_by_id("ratzilla-terminal")
         .map_err(|e| JsValue::from_str(&format!("Failed to create backend: {}", e)))?;
