@@ -57,7 +57,7 @@ echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 12345 (deterministic)"
 echo
 
-if timeout 30s "$MTG_BIN" tui \
+if timeout 30s run_mtg_prebuilt tui \
     --start-state "$WORKSPACE_ROOT/test_puzzles/grizzly_bears_should_attack.pzl" \
     --p1 heuristic \
     --p2 heuristic \
@@ -119,7 +119,7 @@ echo "Controllers: Heuristic vs Heuristic"
 echo "Seed: 42 (deterministic)"
 echo
 
-if timeout 30s "$MTG_BIN" tui \
+if timeout 30s run_mtg_prebuilt tui \
     --start-state "$WORKSPACE_ROOT/test_puzzles/royal_assassin_kills_attacker.pzl" \
     --p1 heuristic \
     --p2 heuristic \

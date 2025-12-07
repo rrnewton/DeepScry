@@ -50,7 +50,7 @@ echo "Running test..."
 echo ""
 
 # Run the game with wildcard multi-command scripts using release binary
-if OUTPUT=$(timeout 30s "$MTG_BIN" tui \
+if OUTPUT=$(timeout 30s run_mtg_prebuilt tui \
     --start-state "$WORKSPACE_ROOT/puzzles/wildcard_multicommand_e2e.pzl" \
     --p1=fixed \
     --p2=zero \

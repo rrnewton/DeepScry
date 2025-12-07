@@ -77,7 +77,7 @@ echo
 # P1 = tui (interactive with piped input)
 # P2 = zero (deterministic choices)
 # Redirect stderr to capture game output
-if echo -e "$INPUT_SEQUENCE" | timeout 30s "$MTG_BIN" tui \
+if echo -e "$INPUT_SEQUENCE" | timeout 30s run_mtg_prebuilt tui \
     "$WORKSPACE_ROOT/decks/simple_bolt.dck" \
     "$WORKSPACE_ROOT/decks/simple_bolt.dck" \
     --p1 tui \
