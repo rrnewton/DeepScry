@@ -31,6 +31,7 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use super::human_controller::{PendingChoice, WasmHumanController};
+use super::rich_input_controller::WasmRichInputController;
 use super::{WasmCardDatabase, WasmControllerType};
 use crate::game::replay_controller::ReplayChoice;
 use crate::game::ReplayController;
@@ -39,6 +40,38 @@ use crate::undo::GameAction;
 // Thread-local storage for the global TUI state (for button callbacks)
 thread_local! {
     static GLOBAL_TUI_STATE: RefCell<Option<Rc<RefCell<WasmFancyTuiState>>>> = const { RefCell::new(None) };
+    // Thread-local storage for the fixed script (set before launching TUI)
+    static FIXED_SCRIPT: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// Set the fixed script for player 1's Fixed controller
+///
+/// Call this before launch_fancy_tui() when using WasmControllerType::Fixed.
+/// The script is a list of commands, one per line. Commands include:
+/// - `play <land_name>` - Play a land
+/// - `cast <spell_name>` - Cast a spell
+/// - `activate <card_name>` - Activate an ability
+/// - `pass` or `p` or `0` - Pass priority
+/// - `*` - Enter wildcard mode (pass until next command matches)
+/// - `1`, `2`, etc. - Select by menu index
+#[wasm_bindgen]
+pub fn set_p1_fixed_script(script: &str) {
+    let commands: Vec<String> = script
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    FIXED_SCRIPT.with(|s| {
+        *s.borrow_mut() = Some(commands);
+    });
+}
+
+/// Clear the fixed script for player 1
+#[wasm_bindgen]
+pub fn clear_p1_fixed_script() {
+    FIXED_SCRIPT.with(|s| {
+        *s.borrow_mut() = None;
+    });
 }
 
 /// Run one turn or continue game - called from JavaScript button
@@ -216,6 +249,8 @@ struct WasmFancyTuiState {
     p2_controller_type: WasmControllerType,
     /// Human controller for player 1 (only if p1 is Human)
     p1_human_controller: Option<WasmHumanController>,
+    /// Fixed script controller for player 1 (only if p1 is Fixed)
+    p1_fixed_controller: Option<WasmRichInputController>,
     /// Current prompt text
     current_prompt: Option<String>,
     /// Current choices (text, is_highlighted)
@@ -249,8 +284,19 @@ impl WasmFancyTuiState {
             None
         };
 
+        // Create fixed script controller if player 1 is Fixed
+        let p1_fixed_controller = if p1_controller_type == WasmControllerType::Fixed {
+            // Get the script from thread-local storage (set via set_p1_fixed_script)
+            let commands = FIXED_SCRIPT.with(|s| s.borrow().clone()).unwrap_or_default();
+            Some(WasmRichInputController::new(player_id, commands))
+        } else {
+            None
+        };
+
         let prompt = if p1_controller_type == WasmControllerType::Human {
             "Game ready. Your turn to play!".to_string()
+        } else if p1_controller_type == WasmControllerType::Fixed {
+            "Game ready. Running fixed script...".to_string()
         } else {
             "Game ready. Press Space to advance turn.".to_string()
         };
@@ -261,6 +307,7 @@ impl WasmFancyTuiState {
             p1_controller_type,
             p2_controller_type,
             p1_human_controller,
+            p1_fixed_controller,
             current_prompt: Some(prompt),
             current_choices: Vec::new(),
             pending_context: None,
@@ -526,6 +573,48 @@ impl WasmFancyTuiState {
                     self.error_message = Some("Human controller not initialized".to_string());
                 }
             }
+        } else if self.p1_controller_type == WasmControllerType::Fixed {
+            // Fixed script controller - runs the script without user input
+            // Uses the same rewind/replay pattern but choices come from the script
+            if let Some(ref mut fixed) = self.p1_fixed_controller {
+                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+
+                // Fixed controller also uses run_until_input because WasmRichInputController
+                // may return NeedInput when it runs out of script or needs a turn break
+                let result = game_loop.run_until_input(fixed, p2_controller.as_mut());
+
+                match result {
+                    Ok(GameLoopState::Complete(game_result)) => {
+                        // Game ended
+                        self.game_over = true;
+                        self.pending_context = None;
+                        self.current_choices.clear();
+                        if let Some(winner) = game_result.winner {
+                            let winner_name = self
+                                .game
+                                .get_player(winner)
+                                .map(|p| p.name.to_string())
+                                .unwrap_or_else(|_| "Unknown".to_string());
+                            self.current_prompt = Some(format!("Game Over! {} wins!", winner_name));
+                        } else {
+                            self.current_prompt = Some("Game Over! Draw!".to_string());
+                        }
+                    }
+                    Ok(GameLoopState::AwaitingInput(context)) => {
+                        // Script paused - show the context to user (similar to human)
+                        self.pending_context = Some(context.clone());
+                        self.selected_choice_idx = 0;
+                        self.update_choices_from_context(&context);
+                        self.current_prompt = Some("Fixed script waiting - press Space to continue".to_string());
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Fixed script error: {}", e));
+                        self.game_over = true;
+                    }
+                }
+            } else {
+                self.error_message = Some("Fixed controller not initialized".to_string());
+            }
         } else {
             // AI vs AI - run one turn at a time for step-through mode
             let mut p1_controller = self.create_ai_controller(self.p1_controller_type, p1_id);
@@ -768,9 +857,9 @@ impl WasmFancyTuiState {
             WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
-            WasmControllerType::Human => {
-                // For P2 as human, we'd need a separate controller
-                // For now, fall back to Zero
+            WasmControllerType::Human | WasmControllerType::Fixed => {
+                // Human and Fixed controllers for P1 are handled separately in run_until_choice
+                // For P2 as human/fixed, fall back to Zero
                 Box::new(ZeroController::new(player_id))
             }
         }
@@ -800,7 +889,8 @@ pub fn launch_fancy_tui(
 
     // For human controller games, run until the first choice point
     // This populates the initial choice list for the player
-    if p1_controller == WasmControllerType::Human {
+    // For fixed controller, also run to start processing the script
+    if p1_controller == WasmControllerType::Human || p1_controller == WasmControllerType::Fixed {
         state.borrow_mut().run_until_choice();
     }
 
@@ -1070,6 +1160,22 @@ fn create_game_from_database(
     // Shuffle libraries
     game.shuffle_library(p1_id);
     game.shuffle_library(p2_id);
+
+    // Mark the start of turn 1 BEFORE drawing opening hands.
+    // This is critical for the rewind/replay pattern: when the user makes their
+    // first choice on turn 1, we call rewind_to_turn_start() which looks for a
+    // ChangeTurn action. Without this marker, turn 1 would have no stopping point
+    // and rewind would undo ALL actions, including the opening hand draws!
+    let prior_log_size = game.logger.log_count();
+    game.undo_log.log(
+        crate::undo::GameAction::ChangeTurn {
+            from_player: p1_id, // Doesn't matter for turn 1
+            to_player: p1_id,
+            turn_number: 1,
+            rng_state: None,
+        },
+        prior_log_size,
+    );
 
     // Draw opening hands (7 cards each)
     for _ in 0..7 {

@@ -172,10 +172,20 @@
             <label>P1 Controller</label>
             <select id="p1-controller">
                 <option value="human">Human (You)</option>
+                <option value="fixed">Fixed Script</option>
                 <option value="heuristic">Heuristic AI</option>
                 <option value="random">Random</option>
                 <option value="zero">Zero (Pass)</option>
             </select>
+        </div>
+        <div class="control-group" id="fixed-script-group" style="display: none;">
+            <label>Fixed Script (one command per line)</label>
+            <textarea id="fixed-script" rows="5" style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; resize: vertical; min-width: 250px;"># Example commands:
+*
+play swamp
+*
+cast dark ritual</textarea>
+            <span style="color: #888; font-size: 11px;">play, cast, activate, pass, *, 0-9</span>
         </div>
         <div class="control-group">
             <label>P2 Controller</label>
@@ -214,7 +224,10 @@
             launch_fancy_tui,
             tui_run_turn,
             tui_toggle_auto,
-            tui_get_battlefield_cards
+            tui_get_battlefield_cards,
+            tui_get_card_positions,
+            set_p1_fixed_script,
+            clear_p1_fixed_script
         } from './pkg/mtg_forge_rs.js';
 
         let cardDb = null;
@@ -300,12 +313,19 @@
         function getControllerType(value) {
             switch (value) {
                 case 'human': return WasmControllerType.Human;
+                case 'fixed': return WasmControllerType.Fixed;
                 case 'zero': return WasmControllerType.Zero;
                 case 'random': return WasmControllerType.Random;
                 case 'heuristic': return WasmControllerType.Heuristic;
                 default: return WasmControllerType.Heuristic;
             }
         }
+
+        // Show/hide fixed script textarea when Fixed controller is selected
+        document.getElementById('p1-controller').addEventListener('change', function() {
+            const scriptGroup = document.getElementById('fixed-script-group');
+            scriptGroup.style.display = this.value === 'fixed' ? 'flex' : 'none';
+        });
 
         let tuiLaunched = false;
         let cardImagesEnabled = false;
@@ -476,13 +496,28 @@
         function launchTui() {
             const p1Deck = document.getElementById('p1-deck').value;
             const p2Deck = document.getElementById('p2-deck').value;
-            const p1Controller = getControllerType(document.getElementById('p1-controller').value);
+            const p1ControllerValue = document.getElementById('p1-controller').value;
+            const p1Controller = getControllerType(p1ControllerValue);
             const p2Controller = getControllerType(document.getElementById('p2-controller').value);
             const showImages = document.getElementById('show-card-images').checked;
 
             if (!p1Deck || !p2Deck) {
                 alert('Please select decks for both players');
                 return;
+            }
+
+            // If using Fixed controller, set the script first
+            if (p1ControllerValue === 'fixed') {
+                const script = document.getElementById('fixed-script').value;
+                if (!script.trim()) {
+                    alert('Please enter a script for the Fixed controller');
+                    return;
+                }
+                set_p1_fixed_script(script);
+                console.log('Set fixed script:', script);
+            } else {
+                // Clear any previous fixed script
+                clear_p1_fixed_script();
             }
 
             // Initialize card image overlay if enabled

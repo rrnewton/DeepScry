@@ -214,6 +214,9 @@ pub enum WasmControllerType {
     Heuristic,
     /// Human player (interactive input via UI)
     Human,
+    /// Fixed script controller (uses WasmRichInputController)
+    /// Script must be set separately via set_p1_script() before launching
+    Fixed,
 }
 
 /// WASM-compatible game wrapper
@@ -426,14 +429,18 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-            WasmControllerType::Human => todo!("Human controller not yet implemented for run_ai_game"),
+            WasmControllerType::Human | WasmControllerType::Fixed => {
+                todo!("Human/Fixed controllers use fancy_tui, not run_ai_game")
+            }
         };
 
         let mut controller2: Box<dyn PlayerController> = match self.p2_controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-            WasmControllerType::Human => todo!("Human controller not yet implemented for run_ai_game"),
+            WasmControllerType::Human | WasmControllerType::Fixed => {
+                todo!("Human/Fixed controllers use fancy_tui, not run_ai_game")
+            }
         };
 
         let mut game_loop = GameLoop::new(&mut self.game)
@@ -468,14 +475,18 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-            WasmControllerType::Human => todo!("Human controller not yet implemented for run_one_turn"),
+            WasmControllerType::Human | WasmControllerType::Fixed => {
+                todo!("Human/Fixed controllers use fancy_tui, not run_one_turn")
+            }
         };
 
         let mut controller2: Box<dyn PlayerController> = match self.p2_controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-            WasmControllerType::Human => todo!("Human controller not yet implemented for run_one_turn"),
+            WasmControllerType::Human | WasmControllerType::Fixed => {
+                todo!("Human/Fixed controllers use fancy_tui, not run_one_turn")
+            }
         };
 
         let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
