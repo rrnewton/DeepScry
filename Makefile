@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev
+.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev
 
 # Default target - show available commands
 help:
@@ -125,13 +125,15 @@ validate-impl-sequential:
 	@echo ""
 	@$(MAKE) validate-wasm-step
 	@echo ""
+	@$(MAKE) validate-wasm-e2e-step
+	@echo ""
 	@echo "=== All validation steps completed ==="
 	@echo ""
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-test-step validate-examples-step validate-wasm-step
-validate-parallel-steps: validate-clippy-step validate-test-step validate-examples-step validate-wasm-step deck_list
+.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step
+validate-parallel-steps: validate-clippy-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step deck_list
 
 validate-clippy-step:
 	@$(MAKE) clippy
@@ -148,6 +150,14 @@ validate-examples-step:
 validate-wasm-step:
 	@$(MAKE) wasm-dev
 	@echo "✓ wasm-dev build completed"
+
+# WASM e2e tests run after wasm-dev build completes
+# This step depends on validate-wasm-step finishing first
+validate-wasm-e2e-step: validate-wasm-step
+	@echo "=== Running WASM e2e tests ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_fancy_tui.js && node test_human_input.js
+	@echo "✓ wasm-e2e tests completed"
 
 # Generate documentation and open in browser
 doc:
@@ -511,3 +521,29 @@ wasm-test-fancy-dev: wasm-dev
 	@echo "=== Testing Fancy TUI (dev build, Playwright e2e) ==="
 	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
 	@cd web && node test_fancy_tui.js
+
+# Test human input in browser with Playwright (e2e test)
+# Tests human controller by pressing keys and verifying battlefield state
+wasm-test-human: wasm-dev
+	@echo "=== Testing Human Input (Playwright e2e) ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_human_input.js
+	@echo ""
+	@echo "Screenshots saved in web/screenshots/"
+	@echo "Test results: web/screenshots/human_test_results.json"
+
+# Run all WASM e2e tests (production build)
+wasm-e2e: wasm
+	@echo "=== Running all WASM e2e tests (production) ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_fancy_tui.js && node test_human_input.js
+	@echo ""
+	@echo "All WASM e2e tests passed!"
+
+# Run all WASM e2e tests (dev build for faster iteration)
+wasm-e2e-dev: wasm-dev
+	@echo "=== Running all WASM e2e tests (dev build) ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_fancy_tui.js && node test_human_input.js
+	@echo ""
+	@echo "All WASM e2e tests passed!"

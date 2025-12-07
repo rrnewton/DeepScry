@@ -44,6 +44,61 @@ jobs:
       - name: Run examples
         run: ./scripts/run_examples.sh
 
+  wasm:
+    name: WASM Build and E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-wasm-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build WASM (dev)
+        run: make wasm-dev
+
+      - name: Install Playwright and dependencies
+        run: |
+          cd web
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: Run WASM e2e tests
+        run: |
+          cd web
+          node test_fancy_tui.js
+          node test_human_input.js
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-e2e-screenshots
+          path: web/screenshots/
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
