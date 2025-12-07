@@ -513,9 +513,9 @@
                 // Show battlefield card images if enabled
                 if (cardImagesEnabled) {
                     // Wait a bit for the TUI to render and game to start, then show images
+                    // Images will auto-update via window.onRenderComplete callback (event-driven, no polling!)
                     setTimeout(() => {
                         CardImageOverlay.displayBattlefieldCards();
-                        startImageRefresh();
                     }, 1000);
                 }
 
@@ -527,25 +527,14 @@
         }
 
         let autoRunning = false;
-        let refreshInterval = null;
 
-        // Start periodic refresh of card images during gameplay
-        function startImageRefresh() {
-            if (refreshInterval) return; // Already running
-
-            refreshInterval = setInterval(() => {
-                if (cardImagesEnabled && tuiLaunched) {
-                    CardImageOverlay.displayBattlefieldCards();
-                }
-            }, 2000); // Refresh every 2 seconds
-        }
-
-        function stopImageRefresh() {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-                refreshInterval = null;
+        // Post-render callback: called by WASM after every frame render
+        // This is event-driven (no polling!) - synchronized with TUI rendering
+        window.onRenderComplete = function() {
+            if (cardImagesEnabled && tuiLaunched) {
+                CardImageOverlay.displayBattlefieldCards();
             }
-        }
+        };
 
         // Update turn info display (called from WASM)
         window.updateTurnInfo = function(turnNumber, gameOver) {
@@ -597,11 +586,9 @@
             this.style.background = nowEnabled ? '#30a030' : '#4361ee';
 
             // Refresh battlefield cards when enabled
+            // Images will auto-update via window.onRenderComplete callback (event-driven, no polling!)
             if (nowEnabled) {
                 CardImageOverlay.displayBattlefieldCards();
-                startImageRefresh();
-            } else {
-                stopImageRefresh();
             }
         });
 
@@ -609,8 +596,6 @@
         window.exitFancyTui = function() {
             tuiLaunched = false;
             cardImagesEnabled = false;
-            // Stop image refresh
-            stopImageRefresh();
             // Clear card image overlays
             CardImageOverlay.disable();
             // Hide terminal and show setup bar + header

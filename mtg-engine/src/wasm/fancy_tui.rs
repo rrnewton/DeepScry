@@ -961,6 +961,10 @@ pub fn launch_fancy_tui(
 
             // Draw the TUI using the shared renderer
             renderer.draw_ui(f, &view, prompt, &choices);
+
+            // Post-render hook: notify JavaScript that rendering is complete
+            // This allows image overlays and other enhancements to update
+            let _ = js_sys::eval("window.onRenderComplete && window.onRenderComplete()");
         }
     });
 

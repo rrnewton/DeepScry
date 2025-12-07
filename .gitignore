@@ -83,3 +83,6 @@ vendor/
 
 # Temporary image files
 bad_fonts_mtg_tui.png
+node_modules/
+package-lock.json
+*.png
