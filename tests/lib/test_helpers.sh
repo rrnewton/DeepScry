@@ -160,3 +160,76 @@ run_mtg() {
         run_mtg_cargo "$@"
     fi
 }
+
+# Run mtg with a timeout, compatible with network mode
+# Usage: run_mtg_with_timeout TIMEOUT_SECONDS tui deck1.dck deck2.dck --p1 heuristic ...
+#
+# This runs run_mtg_prebuilt in a background process with timeout handling.
+# Works with shell functions (unlike `timeout cmd` which only works with executables).
+#
+# For piped input, use: echo "input" | run_mtg_with_timeout_stdin TIMEOUT ...
+#
+# Returns:
+#   0 - Command completed successfully
+#   124 - Command timed out
+#   Other - Command failed with that exit code
+run_mtg_with_timeout() {
+    local timeout_secs="$1"
+    shift
+
+    # Run in background and capture PID
+    run_mtg_prebuilt "$@" &
+    local cmd_pid=$!
+
+    # Wait with timeout
+    local elapsed=0
+    while kill -0 $cmd_pid 2>/dev/null; do
+        if [ $elapsed -ge $timeout_secs ]; then
+            # Timeout - kill process group
+            kill -TERM $cmd_pid 2>/dev/null
+            sleep 0.5
+            kill -KILL $cmd_pid 2>/dev/null
+            wait $cmd_pid 2>/dev/null
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    # Get exit status
+    wait $cmd_pid
+    return $?
+}
+
+# Run mtg with a timeout and stdin input, compatible with network mode
+# Usage: run_mtg_with_timeout_stdin TIMEOUT_SECONDS "input_data" tui deck1.dck ...
+#
+# Like run_mtg_with_timeout but accepts stdin data as second argument.
+run_mtg_with_timeout_stdin() {
+    local timeout_secs="$1"
+    local stdin_data="$2"
+    shift 2
+
+    # Run in background with piped input
+    echo -e "$stdin_data" | run_mtg_prebuilt "$@" &
+    local cmd_pid=$!
+
+    # Wait with timeout
+    local elapsed=0
+    while kill -0 $cmd_pid 2>/dev/null; do
+        if [ $elapsed -ge $timeout_secs ]; then
+            # Timeout - kill process group
+            kill -TERM $cmd_pid 2>/dev/null
+            sleep 0.5
+            kill -KILL $cmd_pid 2>/dev/null
+            wait $cmd_pid 2>/dev/null
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    # Get exit status
+    wait $cmd_pid
+    return $?
+}

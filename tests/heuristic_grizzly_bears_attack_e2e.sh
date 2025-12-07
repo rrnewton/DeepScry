@@ -73,7 +73,8 @@ echo
 
 # Run the game with heuristic AI as P1, zero AI as P2
 # Use verbose output to see attack declarations
-if timeout 30s run_mtg_prebuilt tui \
+# Note: Using run_mtg_with_timeout instead of timeout for network mode compatibility
+if run_mtg_with_timeout 30 tui \
     "$ATTACKER_DECK" \
     "$DEFENDER_DECK" \
     --p1 heuristic \
