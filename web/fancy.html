@@ -96,8 +96,22 @@
             min-height: 0;
         }
         /* RatZilla renders terminal content here
-           RatZilla hardcodes: cols = innerWidth/10, rows = innerHeight/20
-           Font 16px with 20px line-height matches RatZilla's 10x20 cell assumption.
+
+           IMPORTANT: RatZilla DomBackend does NOT hardcode cell dimensions!
+           It uses the browser's actual font rendering, which varies by system.
+
+           On Linux with standard monospace fonts (DejaVu Sans Mono, Liberation Mono):
+             - Character width: ~9.64px (NOT 10px!)
+             - Character height: 19px (RatZilla CanvasBackend hardcodes CELL_HEIGHT = 19.0)
+
+           The CSS line-height of 20px is a LIE - actual rendered height is 19px.
+           The fractional width (9.64px) is unavoidable - no standard monospace font
+           renders exactly 10px wide at 16px font size on Linux.
+
+           This is WHY we dynamically measure cell dimensions in CardImageOverlay.measureCellDimensions()
+           instead of assuming 10×20. The measurement uses getBoundingClientRect() on actual
+           rendered characters to get precise positioning.
+
            TIP: Use browser zoom (Ctrl+/-) to get more/fewer rows and columns! */
         #ratzilla-terminal {
             position: absolute;
@@ -107,7 +121,7 @@
             height: 100vh;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 16px;
-            line-height: 20px;
+            line-height: 20px;  /* Note: actual rendered height is 19px, not 20px! */
             background: #000;
             overflow: hidden;
         }
@@ -369,6 +383,24 @@ cast dark ritual</textarea>
             },
 
             // Measure actual RatZilla cell dimensions from rendered characters
+            //
+            // WHY THIS IS NECESSARY:
+            // RatZilla's DomBackend doesn't hardcode cell dimensions - it renders actual
+            // characters in <span> elements and lets the browser's font engine determine sizes.
+            // On Linux, standard monospace fonts render at ~9.64px wide (NOT 10px!) and 19px
+            // tall (NOT 20px despite the CSS line-height!).
+            //
+            // The "cols = innerWidth/10, rows = innerHeight/20" comment is WRONG for DomBackend.
+            // Only CanvasBackend hardcodes dimensions, and even then it's 10×19, not 10×20!
+            //
+            // Root cause investigation findings (2025-12-07):
+            //   - Tested all available monospace fonts on Linux at 16px font-size
+            //   - Liberation Mono, FreeMono, Courier: 9.6094px wide
+            //   - DejaVu Sans Mono (default monospace): 9.6406px wide
+            //   - ALL fonts render at 19px height, not 20px
+            //   - Monaco/Consolas render at 14.23px (completely wrong, not installed)
+            //
+            // This measurement approach is CORRECT and unavoidable given font rendering reality.
             measureCellDimensions() {
                 const grid = document.getElementById('ratzilla-terminal_ratzilla_grid');
                 if (!grid) {
