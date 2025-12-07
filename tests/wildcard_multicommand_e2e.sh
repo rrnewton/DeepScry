@@ -50,13 +50,15 @@ echo "Running test..."
 echo ""
 
 # Run the game with wildcard multi-command scripts using release binary
-if OUTPUT=$(timeout 30s run_mtg_prebuilt tui \
+# Use run_mtg_with_timeout helper to avoid dependency on timeout command
+OUTPUT=$(mktemp)
+if run_mtg_with_timeout 30 tui \
     --start-state "$WORKSPACE_ROOT/puzzles/wildcard_multicommand_e2e.pzl" \
     --p1=fixed \
     --p2=zero \
     --p1-fixed-inputs='pass; *; attack silvercoat' \
     --seed=300 \
-    --verbosity=verbose 2>&1); then
+    --verbosity=verbose > "$OUTPUT" 2>&1; then
     :  # Success - continue to verification
 else
     EXIT_STATUS=$?
@@ -67,11 +69,12 @@ else
     fi
     echo ""
     echo "Output:"
-    echo "$OUTPUT"
+    cat "$OUTPUT"
+    rm "$OUTPUT"
     exit 1
 fi
 
-echo "$OUTPUT" | grep -E "(Turn [0-9]|Silvercoat|Grizzly|attack|damage|Player 2 takes|Battlefield:|Winner)" | head -100
+cat "$OUTPUT" | grep -E "(Turn [0-9]|Silvercoat|Grizzly|attack|damage|Player 2 takes|Battlefield:|Winner)" | head -100
 
 echo ""
 echo "========================================"
@@ -79,35 +82,38 @@ echo "Verification"
 echo "========================================"
 
 # Check that Silvercoat Lion attacked
-if echo "$OUTPUT" | grep -qi "silvercoat.*attack"; then
+if grep -qi "silvercoat.*attack" "$OUTPUT"; then
     echo "✓ Silvercoat Lion attacked"
 else
     echo "✗ FAIL: Silvercoat Lion did not attack"
     echo ""
     echo "Full output:"
-    echo "$OUTPUT"
+    cat "$OUTPUT"
+    rm "$OUTPUT"
     exit 1
 fi
 
 # Check that Player 2 took damage
-if echo "$OUTPUT" | grep -qi "player 2 takes.*damage"; then
+if grep -qi "player 2 takes.*damage" "$OUTPUT"; then
     echo "✓ Player 2 took damage from attack"
 else
     echo "✗ FAIL: Player 2 did not take damage"
     echo ""
     echo "Full output:"
-    echo "$OUTPUT"
+    cat "$OUTPUT"
+    rm "$OUTPUT"
     exit 1
 fi
 
 # Check that the game progressed past turn 1
-if echo "$OUTPUT" | grep -qE "Turn [3-9]|Turn 1[0-9]"; then
+if grep -qE "Turn [3-9]|Turn 1[0-9]" "$OUTPUT"; then
     echo "✓ Game progressed multiple turns (wildcard skipped priority passes)"
 else
     echo "✗ FAIL: Game did not progress properly"
     echo ""
     echo "Full output:"
-    echo "$OUTPUT"
+    cat "$OUTPUT"
+    rm "$OUTPUT"
     exit 1
 fi
 
@@ -120,3 +126,6 @@ echo "Wildcard multi-command syntax working correctly!"
 echo "  - Multiple commands executed in sequence"
 echo "  - Wildcard separator skipped irrelevant priority passes"
 echo "  - Attack command matched and executed at appropriate game phase"
+
+# Cleanup temporary file
+rm "$OUTPUT"
