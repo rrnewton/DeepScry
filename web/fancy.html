@@ -426,21 +426,48 @@
                     // Clear existing overlays first
                     this.clearAll();
 
-                    // Simple grid layout for battlefield cards
-                    // Start at (5, 10) to leave room for UI, arrange in rows of 8 cards
-                    const startCol = 5;
-                    const startRow = 10;
-                    const cardWidth = 15;  // 15 cells wide (150px)
-                    const cardHeight = 20; // 20 cells tall (400px)
-                    const spacing = 2;     // 2 cell gap between cards
-                    const cardsPerRow = 8;
+                    // Better positioning: place cards within the battlefield panes
+                    // The TUI battlefield sections are roughly:
+                    // - Opponent battlefield: rows 2-20, cols 42-105
+                    // - Your battlefield: rows 21-39, cols 42-105
+                    // Position cards in a flowing grid within these areas
 
-                    cards.forEach((card, index) => {
+                    const cardWidth = 14;   // Slightly smaller: 14 cells (140px)
+                    const cardHeight = 18;  // 18 cells (360px)
+                    const spacing = 1;      // 1 cell gap
+
+                    // Split cards into two groups (assume first half = opponent, second half = yours)
+                    // This is a simplification - ideally we'd get owner info from WASM
+                    const midPoint = Math.ceil(cards.length / 2);
+                    const opponentCards = cards.slice(0, midPoint);
+                    const yourCards = cards.slice(midPoint);
+
+                    // Opponent battlefield: start at row 2, col 43
+                    const oppStartRow = 2;
+                    const oppStartCol = 43;
+                    const cardsPerRow = 4; // Fit 4 cards per row in the battlefield area
+
+                    opponentCards.forEach((card, index) => {
                         const row = Math.floor(index / cardsPerRow);
                         const col = index % cardsPerRow;
 
-                        const x = startCol + col * (cardWidth + spacing);
-                        const y = startRow + row * (cardHeight + spacing);
+                        const x = oppStartCol + col * (cardWidth + spacing);
+                        const y = oppStartRow + row * (cardHeight + spacing);
+
+                        const imageUrl = this.scryfallNamedUrl(card.name, 'small');
+                        this.setCardImage(card.instance_id, x, y, cardWidth, cardHeight, imageUrl);
+                    });
+
+                    // Your battlefield: start at row 21, col 43
+                    const yourStartRow = 21;
+                    const yourStartCol = 43;
+
+                    yourCards.forEach((card, index) => {
+                        const row = Math.floor(index / cardsPerRow);
+                        const col = index % cardsPerRow;
+
+                        const x = yourStartCol + col * (cardWidth + spacing);
+                        const y = yourStartRow + row * (cardHeight + spacing);
 
                         const imageUrl = this.scryfallNamedUrl(card.name, 'small');
                         this.setCardImage(card.instance_id, x, y, cardWidth, cardHeight, imageUrl);
@@ -516,7 +543,10 @@
                 // Show battlefield card images if enabled
                 if (cardImagesEnabled) {
                     // Wait a bit for the TUI to render and game to start, then show images
-                    setTimeout(() => CardImageOverlay.displayBattlefieldCards(), 1000);
+                    setTimeout(() => {
+                        CardImageOverlay.displayBattlefieldCards();
+                        startImageRefresh();
+                    }, 1000);
                 }
 
                 console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
@@ -527,6 +557,25 @@
         }
 
         let autoRunning = false;
+        let refreshInterval = null;
+
+        // Start periodic refresh of card images during gameplay
+        function startImageRefresh() {
+            if (refreshInterval) return; // Already running
+
+            refreshInterval = setInterval(() => {
+                if (cardImagesEnabled && tuiLaunched) {
+                    CardImageOverlay.displayBattlefieldCards();
+                }
+            }, 2000); // Refresh every 2 seconds
+        }
+
+        function stopImageRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
 
         // Update turn info display (called from WASM)
         window.updateTurnInfo = function(turnNumber, gameOver) {
@@ -580,6 +629,9 @@
             // Refresh battlefield cards when enabled
             if (nowEnabled) {
                 CardImageOverlay.displayBattlefieldCards();
+                startImageRefresh();
+            } else {
+                stopImageRefresh();
             }
         });
 
@@ -587,6 +639,8 @@
         window.exitFancyTui = function() {
             tuiLaunched = false;
             cardImagesEnabled = false;
+            // Stop image refresh
+            stopImageRefresh();
             // Clear card image overlays
             CardImageOverlay.disable();
             // Hide terminal and show setup bar + header
