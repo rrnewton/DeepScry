@@ -526,12 +526,18 @@ impl WasmFancyTuiState {
                 // User just made a choice - rewind and replay
                 self.needs_replay = false;
 
+                let turn_before = self.game.turn.turn_number;
+                web_sys::console::log_1(&format!("[DEBUG] REPLAY: Starting replay on turn {}", turn_before).into());
+
                 // Get the new choice from the human controller
                 let new_choice = if let Some(ref mut human) = self.p1_human_controller {
                     if let Some(pending) = human.pending_choice.take() {
                         // Convert PendingChoice to ReplayChoice using current context
-                        Some(self.pending_choice_to_replay_choice(&pending))
+                        let choice = self.pending_choice_to_replay_choice(&pending);
+                        web_sys::console::log_1(&format!("[DEBUG] REPLAY: New choice = {:?}", choice).into());
+                        Some(choice)
                     } else {
+                        web_sys::console::log_1(&"[DEBUG] REPLAY: No pending choice".into());
                         None
                     }
                 } else {
@@ -540,11 +546,20 @@ impl WasmFancyTuiState {
 
                 // Rewind game state and get previous choices from this turn
                 let mut replay_choices = self.rewind_to_turn_start();
+                let turn_after_rewind = self.game.turn.turn_number;
+                web_sys::console::log_1(&format!(
+                    "[DEBUG] REPLAY: After rewind - turn {}, {} existing choices to replay",
+                    turn_after_rewind, replay_choices.len()
+                ).into());
 
                 // Add the new choice if we have one
                 if let Some(choice) = new_choice {
                     replay_choices.push(choice);
                 }
+                web_sys::console::log_1(&format!(
+                    "[DEBUG] REPLAY: Total choices to replay: {}",
+                    replay_choices.len()
+                ).into());
 
                 // Create a fresh human controller for the replay.
                 // The WasmHumanController doesn't need persistent state - all choices
@@ -558,7 +573,19 @@ impl WasmFancyTuiState {
 
                 // Run the game with replay controller
                 let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                web_sys::console::log_1(&"[DEBUG] REPLAY: Running game loop with replay controller...".into());
                 let result = game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut());
+
+                let turn_after_run = self.game.turn.turn_number;
+                web_sys::console::log_1(&format!(
+                    "[DEBUG] REPLAY: Game loop returned on turn {}, result type: {}",
+                    turn_after_run,
+                    match &result {
+                        Ok(GameLoopState::Complete(_)) => "Complete",
+                        Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
+                        Err(_) => "Error",
+                    }
+                ).into());
 
                 // Note: We don't need to recover the inner controller because:
                 // 1. Any choices already made are captured in replay_choices
@@ -570,9 +597,23 @@ impl WasmFancyTuiState {
                 self.handle_game_result(result);
             } else {
                 // Normal run - no replay needed
+                web_sys::console::log_1(&format!(
+                    "[DEBUG] NORMAL: Running game loop (no replay), turn {}",
+                    self.game.turn.turn_number
+                ).into());
                 if let Some(ref mut human) = self.p1_human_controller {
                     let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
                     let result = game_loop.run_until_input(human, p2_controller.as_mut());
+                    let turn_after = self.game.turn.turn_number;
+                    web_sys::console::log_1(&format!(
+                        "[DEBUG] NORMAL: Game loop returned on turn {}, result type: {}",
+                        turn_after,
+                        match &result {
+                            Ok(GameLoopState::Complete(_)) => "Complete",
+                            Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
+                            Err(_) => "Error",
+                        }
+                    ).into());
                     self.handle_game_result(result);
                 } else {
                     self.error_message = Some("Human controller not initialized".to_string());
