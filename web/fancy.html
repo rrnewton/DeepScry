@@ -330,12 +330,16 @@ cast dark ritual</textarea>
         let cardImagesEnabled = false;
 
         // Simple card image overlay manager (JavaScript implementation)
-        const CardImageOverlay = {
+        // Expose on window for debugging and testing
+        const CardImageOverlay = window.CardImageOverlay = {
             enabled: false,
             overlays: new Map(),
+            cellWidth: null,  // Measured dynamically from RatZilla
+            cellHeight: null,
 
             enable() {
                 this.enabled = true;
+                this.measureCellDimensions();
                 console.log('Card image overlays enabled');
             },
 
@@ -354,6 +358,36 @@ cast dark ritual</textarea>
                 return this.enabled;
             },
 
+            // Measure actual RatZilla cell dimensions from rendered characters
+            measureCellDimensions() {
+                const grid = document.getElementById('ratzilla-terminal_ratzilla_grid');
+                if (!grid) {
+                    console.warn('RatZilla grid not found, using default cell size');
+                    this.cellWidth = 10;
+                    this.cellHeight = 20;
+                    return;
+                }
+
+                const spans = Array.from(grid.querySelectorAll('span')).filter(s => s.textContent.trim());
+                if (spans.length === 0) {
+                    console.warn('No character spans found, using default cell size');
+                    this.cellWidth = 10;
+                    this.cellHeight = 20;
+                    return;
+                }
+
+                // Measure first 20 characters to get average dimensions
+                const samples = spans.slice(0, 20).map(span => {
+                    const rect = span.getBoundingClientRect();
+                    return { width: rect.width, height: rect.height };
+                });
+
+                this.cellWidth = samples.reduce((sum, s) => sum + s.width, 0) / samples.length;
+                this.cellHeight = samples.reduce((sum, s) => sum + s.height, 0) / samples.length;
+
+                console.log(`Measured RatZilla cell size: ${this.cellWidth.toFixed(2)}px × ${this.cellHeight.toFixed(2)}px`);
+            },
+
             // Build Scryfall API URL for a card
             scryfallUrl(setCode, collectorNumber, size = 'small') {
                 return `https://api.scryfall.com/cards/${setCode.toLowerCase()}/${collectorNumber}?format=image&version=${size}`;
@@ -361,8 +395,9 @@ cast dark ritual</textarea>
 
             // Convert terminal cell coordinates to pixel coordinates
             cellToPixels(col, row) {
-                const CELL_WIDTH_PX = 10;
-                const CELL_HEIGHT_PX = 20;
+                // Use measured dimensions if available, otherwise fall back to defaults
+                const CELL_WIDTH_PX = this.cellWidth || 10;
+                const CELL_HEIGHT_PX = this.cellHeight || 20;
                 return { left: col * CELL_WIDTH_PX, top: row * CELL_HEIGHT_PX };
             },
 
@@ -394,15 +429,19 @@ cast dark ritual</textarea>
 
                 // Update position and size
                 const pos = this.cellToPixels(col, row);
-                const CELL_WIDTH_PX = 10;
-                const CELL_HEIGHT_PX = 20;
+                const CELL_WIDTH_PX = this.cellWidth || 10;
+                const CELL_HEIGHT_PX = this.cellHeight || 20;
+
+                // DEBUG: Log incoming card position data
+                console.log(`[CARD POSITION] ${cardId}: cell(${col}, ${row}) size(${width}×${height}) tapped=${isTapped}`);
 
                 // For tapped cards, TUI swaps width/height (landscape box)
                 // But card images are always portrait, so we need special handling
                 if (isTapped) {
-                    // EXTREME DEBUG: Make rotation super obvious
                     const widthPx = width * CELL_WIDTH_PX;
                     const heightPx = height * CELL_HEIGHT_PX;
+
+                    console.log(`  → TAPPED: pixels(${pos.left.toFixed(2)}, ${pos.top.toFixed(2)}) size(${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px) rotation=90deg`);
 
                     img.style.width = `${widthPx}px`;
                     img.style.height = `${heightPx}px`;
@@ -417,6 +456,8 @@ cast dark ritual</textarea>
                     // This ensures the card image fully covers the textual representation
                     const widthPx = width * CELL_WIDTH_PX;
                     const heightPx = height * CELL_HEIGHT_PX;
+
+                    console.log(`  → UNTAPPED: pixels(${pos.left.toFixed(2)}, ${pos.top.toFixed(2)}) size(${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px)`);
 
                     img.style.width = `${widthPx}px`;
                     img.style.height = `${heightPx}px`;
@@ -568,6 +609,12 @@ cast dark ritual</textarea>
         // positions: array of {card_id, name, x, y, width, height, is_tapped}
         window.onRenderComplete = function(positions) {
             if (cardImagesEnabled && tuiLaunched && positions && positions.length > 0) {
+                // Ensure we have measured cell dimensions (do this once on first render)
+                // Re-measure if we're using default values (10×20) since that means measurement failed earlier
+                if (!CardImageOverlay.cellWidth || (CardImageOverlay.cellWidth === 10 && CardImageOverlay.cellHeight === 20)) {
+                    CardImageOverlay.measureCellDimensions();
+                }
+
                 // Clear existing overlays first
                 CardImageOverlay.clearAll();
 
