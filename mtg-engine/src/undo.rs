@@ -552,11 +552,14 @@ impl UndoLog {
             }
         }
 
-        turn_number.map(|tn| {
-            // Reverse the choices to get forward chronological order
-            choices_reversed.reverse();
-            (tn, choices_reversed, actions_rewound)
-        })
+        // If we found a ChangeTurn, use that turn number.
+        // Otherwise (turn 1), use turn 1 as the turn number.
+        // The game state has been rewound either way.
+        let effective_turn = turn_number.unwrap_or(1);
+
+        // Reverse the choices to get forward chronological order
+        choices_reversed.reverse();
+        Some((effective_turn, choices_reversed, actions_rewound))
     }
 
     /// Get the most recent turn number from the log, if any ChangeTurn exists
@@ -774,7 +777,7 @@ mod tests {
         let mut log = UndoLog::new();
         let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
-        // Add some actions but no ChangeTurn
+        // Add some actions but no ChangeTurn (simulates turn 1)
         log.log(
             GameAction::ModifyLife {
                 player_id: PlayerId::new(1),
@@ -792,8 +795,18 @@ mod tests {
             0,
         );
 
+        // When no ChangeTurn is found, rewind should still succeed with turn 1
+        // This is important for turn 1 where no ChangeTurn has been logged yet
         let result = log.rewind_to_turn_start(&mut game);
-        assert!(result.is_none());
+        assert!(result.is_some(), "rewind_to_turn_start should return Some for turn 1");
+
+        let (turn_number, choice_actions, actions_rewound) = result.unwrap();
+        assert_eq!(turn_number, 1, "Turn number should be 1 when no ChangeTurn found");
+        assert_eq!(choice_actions.len(), 1, "Should have 1 ChoicePoint action");
+        assert_eq!(actions_rewound, 2, "Should have rewound 2 actions");
+
+        // Undo log should be empty after rewinding everything
+        assert!(log.is_empty(), "Undo log should be empty after full rewind");
     }
 
     #[test]

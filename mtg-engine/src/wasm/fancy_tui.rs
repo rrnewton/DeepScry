@@ -163,22 +163,6 @@ impl WasmFancyTuiState {
         }
     }
 
-    /// Extract ReplayChoice entries from undo log's ChoicePoint actions
-    fn extract_replay_choices(&self) -> Vec<ReplayChoice> {
-        self.game
-            .undo_log
-            .actions()
-            .iter()
-            .filter_map(|action| {
-                if let GameAction::ChoicePoint { choice: Some(c), .. } = action {
-                    Some(c.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
     /// Rewind game state to turn start and return choices made so far
     ///
     /// This undoes all game state changes since the start of the turn,
@@ -188,23 +172,27 @@ impl WasmFancyTuiState {
         let result = undo_log.rewind_to_turn_start(&mut self.game);
         self.game.undo_log = undo_log;
 
-        if let Some((_turn_number, choice_actions, _actions_rewound)) = result {
-            // Extract ReplayChoice from the ChoicePoint actions
-            choice_actions
-                .into_iter()
-                .filter_map(|action| {
-                    if let GameAction::ChoicePoint { choice: Some(c), .. } = action {
-                        Some(c)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            // No turn boundary found (we're in turn 1)
-            // Extract all choices from current undo log
-            self.extract_replay_choices()
-        }
+        // rewind_to_turn_start returns None only if undo log is disabled
+        // (which shouldn't happen for WASM TUI, but handle gracefully)
+        let (_turn_number, choice_actions, _actions_rewound) = match result {
+            Some(r) => r,
+            None => {
+                eprintln!("WARNING: Undo log is disabled, cannot replay choices");
+                return Vec::new();
+            }
+        };
+
+        // Extract ReplayChoice from the ChoicePoint actions
+        choice_actions
+            .into_iter()
+            .filter_map(|action| {
+                if let GameAction::ChoicePoint { choice: Some(c), .. } = action {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context

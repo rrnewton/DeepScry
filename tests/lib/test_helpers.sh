@@ -89,7 +89,7 @@ run_mtg() {
                 if [ -n "$MTG_BIN" ] && [ -f "$MTG_BIN" ]; then
                     "$MTG_BIN" tui "$@"
                 else
-                    cargo run --release --bin mtg -- tui "$@"
+                         run --release --bin mtg -- tui "$@"
                 fi
                 return $?
             fi
