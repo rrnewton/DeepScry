@@ -397,30 +397,39 @@ cast dark ritual</textarea>
                 const CELL_WIDTH_PX = 10;
                 const CELL_HEIGHT_PX = 20;
 
-                // For tapped cards, the TUI renderer swaps width/height to simulate rotation
-                // We need to swap dimensions for the image too
-                let widthPx = width * CELL_WIDTH_PX;
-                let heightPx = height * CELL_HEIGHT_PX;
-
-                // Note: TUI already provides swapped dimensions for tapped cards,
-                // so we use them as-is. The image itself should be rotated visually.
-
-                img.style.position = 'absolute';
-                img.style.left = `${pos.left}px`;
-                img.style.top = `${pos.top}px`;
-                img.style.width = `${widthPx}px`;
-                img.style.height = `${heightPx}px`;
-                img.style.objectFit = 'contain';
-                img.style.pointerEvents = 'none';
-                img.style.zIndex = '10';
-
-                // Rotate the image 90 degrees if tapped
+                // For tapped cards, TUI swaps width/height (landscape box)
+                // But card images are always portrait, so we need special handling
                 if (isTapped) {
+                    // EXTREME DEBUG: Make rotation super obvious
+                    const widthPx = width * CELL_WIDTH_PX;
+                    const heightPx = height * CELL_HEIGHT_PX;
+
+                    img.style.width = `${widthPx}px`;
+                    img.style.height = `${heightPx}px`;
+                    img.style.left = `${pos.left}px`;
+                    img.style.top = `${pos.top}px`;
+                    img.style.objectFit = 'cover';  // Cover to fill while maintaining aspect
                     img.style.transform = 'rotate(90deg)';
                     img.style.transformOrigin = 'center center';
                 } else {
+                    // UNTAPPED: Normal portrait card
+                    const widthPx = width * CELL_WIDTH_PX;
+                    const heightPx = height * CELL_HEIGHT_PX;
+
+                    img.style.width = `${widthPx}px`;
+                    img.style.height = `${heightPx}px`;
+                    img.style.left = `${pos.left}px`;
+                    img.style.top = `${pos.top}px`;
+                    img.style.objectFit = 'contain';
                     img.style.transform = 'none';
+                    img.style.border = '';
+                    img.style.backgroundColor = '';
+                    img.style.outline = '';
                 }
+
+                img.style.position = 'absolute';
+                img.style.pointerEvents = 'none';
+                img.style.zIndex = '10';
 
                 this.overlays.set(cardId, img);
             },
@@ -559,12 +568,6 @@ cast dark ritual</textarea>
             if (cardImagesEnabled && tuiLaunched && positions && positions.length > 0) {
                 // Clear existing overlays first
                 CardImageOverlay.clearAll();
-
-                // Count tapped cards for debugging
-                const tappedCount = positions.filter(p => p.is_tapped).length;
-                if (tappedCount > 0) {
-                    console.log(`Rendering ${positions.length} cards (${tappedCount} tapped)`);
-                }
 
                 // Use the positions passed from WASM (avoids re-borrowing)
                 positions.forEach((cardPos) => {
