@@ -107,6 +107,13 @@ soft_ratatui = { version = "0.1", optional = true, default-features = false, fea
 eframe = { version = "0.33", optional = true, default-features = false, features = ["glow", "web_screen_reader", "default_fonts"] }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 
+# Disable wasm-opt to avoid downloading binaryen (network issues)
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
 [features]
 # Default builds include native features (CLI, TUI, async file loading)
 default = ["native", "verbose-logging"]
