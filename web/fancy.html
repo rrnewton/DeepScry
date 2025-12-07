@@ -304,16 +304,123 @@
         }
 
         let tuiLaunched = false;
+        let cardImagesEnabled = false;
+
+        // Simple card image overlay manager (JavaScript implementation)
+        const CardImageOverlay = {
+            enabled: false,
+            overlays: new Map(),
+
+            enable() {
+                this.enabled = true;
+                console.log('Card image overlays enabled');
+            },
+
+            disable() {
+                this.enabled = false;
+                this.clearAll();
+            },
+
+            // Build Scryfall API URL for a card
+            scryfallUrl(setCode, collectorNumber, size = 'small') {
+                return `https://api.scryfall.com/cards/${setCode.toLowerCase()}/${collectorNumber}?format=image&version=${size}`;
+            },
+
+            // Convert terminal cell coordinates to pixel coordinates
+            cellToPixels(col, row) {
+                const CELL_WIDTH_PX = 10;
+                const CELL_HEIGHT_PX = 20;
+                return { left: col * CELL_WIDTH_PX, top: row * CELL_HEIGHT_PX };
+            },
+
+            // Add or update a card image overlay
+            setCardImage(cardId, col, row, width, height, imageUrl) {
+                if (!this.enabled) return;
+
+                const imgId = `card-image-${cardId}`;
+                let img = document.getElementById(imgId);
+
+                if (!img) {
+                    // Create new image element
+                    img = document.createElement('img');
+                    img.id = imgId;
+                    img.className = 'card-overlay-image';
+                    img.src = imageUrl;
+
+                    img.onerror = () => {
+                        console.warn(`Failed to load card image: ${imageUrl}`);
+                    };
+
+                    // Append to terminal container
+                    const terminal = document.getElementById('ratzilla-terminal');
+                    if (terminal) {
+                        terminal.appendChild(img);
+                    }
+                }
+
+                // Update position and size
+                const pos = this.cellToPixels(col, row);
+                const CELL_WIDTH_PX = 10;
+                const CELL_HEIGHT_PX = 20;
+                const widthPx = width * CELL_WIDTH_PX;
+                const heightPx = height * CELL_HEIGHT_PX;
+
+                img.style.position = 'absolute';
+                img.style.left = `${pos.left}px`;
+                img.style.top = `${pos.top}px`;
+                img.style.width = `${widthPx}px`;
+                img.style.height = `${heightPx}px`;
+                img.style.objectFit = 'contain';
+                img.style.pointerEvents = 'none';
+                img.style.zIndex = '10';
+
+                this.overlays.set(cardId, img);
+            },
+
+            // Remove a card image overlay
+            removeOverlay(cardId) {
+                const imgId = `card-image-${cardId}`;
+                const img = document.getElementById(imgId);
+                if (img) {
+                    img.remove();
+                    this.overlays.delete(cardId);
+                }
+            },
+
+            // Clear all overlays
+            clearAll() {
+                const images = document.querySelectorAll('.card-overlay-image');
+                images.forEach(img => img.remove());
+                this.overlays.clear();
+            },
+
+            // Demo: show a test card image
+            showTestCard() {
+                if (!this.enabled) return;
+                // Test: Show a Lightning Bolt at position (10, 5) with size (15, 20) cells
+                // This is just a proof-of-concept - we'll integrate with real game state later
+                const boltUrl = this.scryfallUrl('LEA', '163', 'small');
+                this.setCardImage('test-bolt', 10, 5, 15, 20, boltUrl);
+                console.log('Showing test card image (Lightning Bolt)');
+            }
+        };
 
         function launchTui() {
             const p1Deck = document.getElementById('p1-deck').value;
             const p2Deck = document.getElementById('p2-deck').value;
             const p1Controller = getControllerType(document.getElementById('p1-controller').value);
             const p2Controller = getControllerType(document.getElementById('p2-controller').value);
+            const showImages = document.getElementById('show-card-images').checked;
 
             if (!p1Deck || !p2Deck) {
                 alert('Please select decks for both players');
                 return;
+            }
+
+            // Initialize card image overlay if enabled
+            if (showImages) {
+                CardImageOverlay.enable();
+                cardImagesEnabled = true;
             }
 
             try {
@@ -349,6 +456,12 @@
 
                 // Show game controls widget (collapsed by default)
                 document.getElementById('game-controls').style.display = 'block';
+
+                // Show test card image if enabled (proof-of-concept)
+                if (cardImagesEnabled) {
+                    // Wait a bit for the TUI to render, then show test image
+                    setTimeout(() => CardImageOverlay.showTestCard(), 500);
+                }
 
                 console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
             } catch (error) {
@@ -405,6 +518,9 @@
         // Expose exit function globally for WASM to call
         window.exitFancyTui = function() {
             tuiLaunched = false;
+            cardImagesEnabled = false;
+            // Clear card image overlays
+            CardImageOverlay.disable();
             // Hide terminal and show setup bar + header
             document.getElementById('ratzilla-terminal').style.display = 'none';
             document.getElementById('game-controls').style.display = 'none';
