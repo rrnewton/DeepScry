@@ -89,6 +89,11 @@ web-sys = { version = "0.3", features = [
     "Document",
     "Element",
     "HtmlCanvasElement",
+    "HtmlImageElement",
+    "HtmlElement",
+    "CssStyleDeclaration",
+    "NodeList",
+    "Event",
 ], optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
 

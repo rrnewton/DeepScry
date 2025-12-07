@@ -44,6 +44,9 @@ pub mod fancy_tui;
 
 pub mod human_controller;
 
+#[cfg(target_arch = "wasm32")]
+pub mod image_overlay;
+
 pub use human_controller::{PendingChoice, WasmHumanController};
 
 use std::collections::HashMap;
