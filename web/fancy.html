@@ -225,7 +225,6 @@ cast dark ritual</textarea>
             tui_run_turn,
             tui_toggle_auto,
             tui_get_battlefield_cards,
-            tui_get_card_positions,
             set_p1_fixed_script,
             clear_p1_fixed_script
         } from './pkg/mtg_forge_rs.js';
@@ -449,37 +448,12 @@ cast dark ritual</textarea>
             },
 
             // Display all battlefield cards using actual TUI positions
+            // NOTE: This is now handled by window.onRenderComplete() callback
+            // which receives positions directly from WASM render loop
             displayBattlefieldCards() {
-                if (!this.enabled) return;
-
-                try {
-                    // Get actual card positions from TUI renderer
-                    const positionsJson = tui_get_card_positions();
-                    const positions = JSON.parse(positionsJson);
-
-                    console.log(`Displaying ${positions.length} battlefield cards with actual TUI positions`);
-
-                    // Clear existing overlays first
-                    this.clearAll();
-
-                    // Use the actual positions from the TUI renderer
-                    positions.forEach((cardPos) => {
-                        const imageUrl = this.scryfallNamedUrl(cardPos.name, 'small');
-
-                        // Use the exact position and size from the TUI
-                        this.setCardImage(
-                            cardPos.card_id,
-                            cardPos.x,         // column position from TUI
-                            cardPos.y,         // row position from TUI
-                            cardPos.width,     // width in cells from TUI
-                            cardPos.height,    // height in cells from TUI
-                            imageUrl,
-                            cardPos.is_tapped  // rotation state
-                        );
-                    });
-                } catch (error) {
-                    console.error('Failed to display battlefield cards:', error);
-                }
+                // Images are updated automatically via onRenderComplete callback
+                // This method is kept for backwards compatibility but does nothing
+                console.log('Card images will update via onRenderComplete callback');
             },
 
             // Demo: show a test card image

@@ -185,11 +185,14 @@ fn export_card_positions_from_renderer(
                     }
                 }
             }
-            Entity::VisualStack { card_ids, tapped_count, .. } => {
+            Entity::VisualStack {
+                card_ids, tapped_count, ..
+            } => {
                 // For visual stacks, target the TOP card with diagonal offset
                 // The visual stack renderer draws cards diagonally from bottom-left to top-right
                 // So we need to offset to the top-right position
-                if let Some(&card_id) = card_ids.last() {  // LAST card is on top visually
+                if let Some(&card_id) = card_ids.last() {
+                    // LAST card is on top visually
                     if game.battlefield.cards.contains(&card_id) {
                         if let Ok(card) = game.cards.get(card_id) {
                             let is_tapped = *tapped_count > 0;
@@ -209,7 +212,9 @@ fn export_card_positions_from_renderer(
                     }
                 }
             }
-            Entity::SimpleStack { card_ids, is_tapped, .. } => {
+            Entity::SimpleStack {
+                card_ids, is_tapped, ..
+            } => {
                 // For simple stacks, use the is_tapped field from the entity
                 if let Some(&card_id) = card_ids.first() {
                     if game.battlefield.cards.contains(&card_id) {
@@ -676,6 +681,29 @@ impl WasmFancyTuiState {
                 self.pending_context = Some(context.clone());
                 self.selected_choice_idx = 0;
                 self.update_choices_from_context(&context);
+
+                // Debug logging: show game state when waiting for input
+                let turn = self.game.turn.turn_number;
+                let phase = format!("{:?}", self.game.turn.current_step);
+                let active_player = self.game.turn.active_player;
+                let p1_id = self.game.players[0].id;
+                let is_p1_turn = active_player == p1_id;
+                let choice_count = self.current_choices.len();
+                let context_type = match &context {
+                    ChoiceContext::SpellAbility { available, .. } => format!("SpellAbility({})", available.len()),
+                    ChoiceContext::Targets { .. } => "Targets".to_string(),
+                    ChoiceContext::ManaSources { .. } => "ManaSources".to_string(),
+                    ChoiceContext::Attackers { .. } => "Attackers".to_string(),
+                    ChoiceContext::Blockers { .. } => "Blockers".to_string(),
+                    ChoiceContext::DamageOrder { .. } => "DamageOrder".to_string(),
+                    ChoiceContext::Discard { .. } => "Discard".to_string(),
+                    ChoiceContext::LibrarySearch { .. } => "LibrarySearch".to_string(),
+                };
+                let debug_msg = format!(
+                    "[DEBUG] Turn {}, {}, P1's turn: {}, choices: {}, context: {}",
+                    turn, phase, is_p1_turn, choice_count, context_type
+                );
+                web_sys::console::log_1(&debug_msg.into());
             }
             Err(e) => {
                 self.error_message = Some(format!("Game error: {}", e));
