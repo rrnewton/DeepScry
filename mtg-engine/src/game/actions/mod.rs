@@ -1170,14 +1170,14 @@ impl GameState {
                         .collect();
 
                     if !matching_triggers.is_empty() {
-                        eprintln!(
-                            "DEBUG: Found {} triggers on card {} ({})",
+                        log::debug!(
+                            "Found {} triggers on card {} ({})",
                             matching_triggers.len(),
                             card_id.as_u32(),
                             card.name
                         );
                         for effect in &matching_triggers {
-                            eprintln!("  Trigger effect: {:?}", effect);
+                            log::debug!("  Trigger effect: {:?}", effect);
                         }
                         Some((card_id, matching_triggers))
                     } else {
@@ -1751,12 +1751,12 @@ impl GameState {
                 self.undo_log
                     .log(crate::undo::GameAction::AddMana { player_id, mana }, prior_log_size);
 
-                // Log visible message
+                // Log visible message (use gamelog for official action)
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                     let card = self.cards.get(card_id).ok();
                     let name = card.map(|c| c.name.as_str()).unwrap_or("Unknown");
                     let message = format!("Tap {} for {{{}}}", name, color_symbol);
-                    self.logger.normal(&message);
+                    self.logger.gamelog(&message);
                 }
             } else {
                 // Add the specific mana from the ability
@@ -1787,12 +1787,12 @@ impl GameState {
                     prior_log_size,
                 );
 
-                // Log visible message
+                // Log visible message (use gamelog for official action)
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                     let card = self.cards.get(card_id).ok();
                     let name = card.map(|c| c.name.as_str()).unwrap_or("Unknown");
                     let message = format!("Tap {} for mana", name);
-                    self.logger.normal(&message);
+                    self.logger.gamelog(&message);
                 }
             }
 
@@ -1951,11 +1951,11 @@ impl GameState {
             self.undo_log
                 .log(crate::undo::GameAction::AddMana { player_id, mana }, prior_log_size);
 
-            // Log visible message for mana tapping
+            // Log visible message for mana tapping (use gamelog for official action)
             if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                 let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
                 let message = format!("Tap {} for {{{}}}", card_name, color_symbol);
-                self.logger.normal(&message);
+                self.logger.gamelog(&message);
             }
         }
 

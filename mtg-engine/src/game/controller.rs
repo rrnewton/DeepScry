@@ -720,14 +720,14 @@ macro_rules! handle_choice_result {
             $crate::game::controller::ChoiceResult::UndoRequest(n) => {
                 if n == usize::MAX {
                     // Special case: undo to previous choice point for the requesting player
-                    eprintln!("[UNDO DEBUG MACRO] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                    log::debug!("[UNDO MACRO] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
                               $game.undo_log.len(), $game.logger.log_count(), $game.logger.choice_count());
                     if let Ok(Some((_actions_undone, choice_log_size))) =
                         $game.undo_to_previous_choice_point($player_id)
                     {
-                        eprintln!("[UNDO DEBUG MACRO] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
+                        log::debug!("[UNDO MACRO] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
                         $game.logger.truncate_to(choice_log_size);
-                        eprintln!("[UNDO DEBUG MACRO] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
+                        log::debug!("[UNDO MACRO] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
                         // Note: Undo info should be displayed in status bar only, not logged
                     }
                 } else {
@@ -786,14 +786,14 @@ macro_rules! handle_choice_result_break {
             $crate::game::controller::ChoiceResult::UndoRequest(n) => {
                 if n == usize::MAX {
                     // Special case: undo to previous choice point for the requesting player
-                    eprintln!("[UNDO DEBUG MACRO BREAK] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+                    log::debug!("[UNDO MACRO BREAK] Before undo: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
                               $game.undo_log.len(), $game.logger.log_count(), $game.logger.choice_count());
                     if let Ok(Some((_actions_undone, choice_log_size))) =
                         $game.undo_to_previous_choice_point($player_id)
                     {
-                        eprintln!("[UNDO DEBUG MACRO BREAK] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
+                        log::debug!("[UNDO MACRO BREAK] After undo, before logger truncate: logger.log_count()={}", $game.logger.log_count());
                         $game.logger.truncate_to(choice_log_size);
-                        eprintln!("[UNDO DEBUG MACRO BREAK] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
+                        log::debug!("[UNDO MACRO BREAK] After logger truncate to {}: logger.log_count()={}", choice_log_size, $game.logger.log_count());
                         // Note: Undo info should be displayed in status bar only, not logged
                     }
                 } else {

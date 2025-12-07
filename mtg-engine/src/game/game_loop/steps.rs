@@ -161,15 +161,16 @@ impl<'a> GameLoop<'a> {
                 if let Some(zones) = self.game.get_player_zones(active_player) {
                     if let Some(&card_id) = zones.hand.cards.last() {
                         if let Ok(card) = self.game.cards.get(card_id) {
-                            log_if_verbose!(self, "{} draws {} ({})", player_name, card.name, card_id);
+                            // Use gamelog for official draw action
+                            log_gamelog!(self, "{} draws {} ({})", player_name, card.name, card_id);
                         } else {
-                            log_if_verbose!(self, "{} draws a card", player_name);
+                            log_gamelog!(self, "{} draws a card", player_name);
                         }
                     } else {
-                        log_if_verbose!(self, "{} draws a card", player_name);
+                        log_gamelog!(self, "{} draws a card", player_name);
                     }
                 } else {
-                    log_if_verbose!(self, "{} draws a card", player_name);
+                    log_gamelog!(self, "{} draws a card", player_name);
                 }
             }
         }

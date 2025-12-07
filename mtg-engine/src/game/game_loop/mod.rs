@@ -19,6 +19,25 @@ macro_rules! log_if_verbose {
     };
 }
 
+/// Macro for logging official game actions with gamelog tagging
+///
+/// Similar to log_if_verbose! but uses log_gamelog() which adds
+/// [GAMELOG TurnN STEP] prefix when --tag-gamelogs is enabled.
+/// Use for official game actions that should be comparable across
+/// local and network modes.
+macro_rules! log_gamelog {
+    ($self:expr, $($arg:tt)*) => {
+        #[cfg(feature = "verbose-logging")]
+        {
+            $self.log_gamelog(&format!($($arg)*));
+        }
+        #[cfg(not(feature = "verbose-logging"))]
+        {
+            let _ = &$self; // Suppress unused variable warning
+        }
+    };
+}
+
 use crate::core::{CardId, PlayerId};
 use crate::game::controller::{GameStateView, PlayerController};
 use crate::game::phase::Step;

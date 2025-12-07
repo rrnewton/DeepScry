@@ -918,12 +918,12 @@ impl GameState {
     /// Returns Ok(None) if no ChoicePoint for the specified player is found.
     pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
         // Debug: Log initial state
-        eprintln!(
-            "[UNDO DEBUG] Starting undo_to_previous_choice_point for player {}",
+        log::debug!(
+            "[UNDO] Starting undo_to_previous_choice_point for player {}",
             requesting_player.as_u32()
         );
-        eprintln!(
-            "[UNDO DEBUG]   Initial: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+        log::debug!(
+            "[UNDO]   Initial: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
             self.undo_log.len(),
             self.logger.log_count(),
             self.logger.choice_count()
@@ -936,15 +936,15 @@ impl GameState {
         });
 
         if !has_choice_point {
-            eprintln!(
-                "[UNDO DEBUG] No ChoicePoint found for player {} in undo log - returning early WITHOUT undoing",
+            log::debug!(
+                "[UNDO] No ChoicePoint found for player {} in undo log - returning early WITHOUT undoing",
                 requesting_player.as_u32()
             );
             return Ok(None);
         }
 
-        eprintln!(
-            "[UNDO DEBUG] Found at least one ChoicePoint for player {}, proceeding with undo",
+        log::debug!(
+            "[UNDO] Found at least one ChoicePoint for player {}, proceeding with undo",
             requesting_player.as_u32()
         );
 
@@ -953,16 +953,16 @@ impl GameState {
 
         // Keep undoing until we hit a ChoicePoint for the requesting player
         while let Some((action, prior_log_size)) = self.undo_log.pop() {
-            eprintln!(
-                "[UNDO DEBUG]   Popped action (prior_log_size={}): {:?}",
+            log::debug!(
+                "[UNDO]   Popped action (prior_log_size={}): {:?}",
                 prior_log_size, action
             );
             match action {
                 crate::undo::GameAction::ChoicePoint {
                     player_id, choice_id, ..
                 } => {
-                    eprintln!(
-                        "[UNDO DEBUG]     ChoicePoint for player {}, choice_id={}. Current choice count: {}",
+                    log::debug!(
+                        "[UNDO]     ChoicePoint for player {}, choice_id={}. Current choice count: {}",
                         player_id.as_u32(),
                         choice_id,
                         self.logger.choice_count()
@@ -973,20 +973,20 @@ impl GameState {
                         // Set choice_count to reflect choices made BEFORE this point
                         // (If we're restoring to choice_id=3, then choices 1 and 2 were made, so count=2)
                         let target_choice_count = choice_id.saturating_sub(1) as usize;
-                        eprintln!(
-                            "[UNDO DEBUG]     *** Found target ChoicePoint! Setting choice_count from {} to {}",
+                        log::debug!(
+                            "[UNDO]     *** Found target ChoicePoint! Setting choice_count from {} to {}",
                             self.logger.choice_count(),
                             target_choice_count
                         );
                         // Directly set the choice count instead of decrementing
                         self.logger.set_choice_count(target_choice_count);
-                        eprintln!("[UNDO DEBUG]     *** prior_log_size={}", prior_log_size);
+                        log::debug!("[UNDO]     *** prior_log_size={}", prior_log_size);
                         choice_log_size = Some(prior_log_size);
                         break;
                     }
                     // Otherwise, this was another player's choice - keep undoing
                     // Don't decrement here - we'll set the correct count when we find the target
-                    eprintln!("[UNDO DEBUG]     Different player's choice, continuing undo...");
+                    log::debug!("[UNDO]     Different player's choice, continuing undo...");
                 }
                 _ => {
                     // Not a choice point - undo this action
@@ -1167,14 +1167,14 @@ impl GameState {
 
                     actions_undone += 1;
                     // Truncate logger to the prior size
-                    eprintln!(
-                        "[UNDO DEBUG]     Truncating logger from {} to {}",
+                    log::debug!(
+                        "[UNDO]     Truncating logger from {} to {}",
                         self.logger.log_count(),
                         prior_log_size
                     );
                     self.logger.truncate_to(prior_log_size);
-                    eprintln!(
-                        "[UNDO DEBUG]     Logger after truncate: log_count={}",
+                    log::debug!(
+                        "[UNDO]     Logger after truncate: log_count={}",
                         self.logger.log_count()
                     );
                 }
@@ -1192,25 +1192,25 @@ impl GameState {
         self.increment_mana_version();
 
         if let Some(log_size) = choice_log_size {
-            eprintln!(
-                "[UNDO DEBUG] Undo complete: actions_undone={}, choice_log_size={}",
+            log::debug!(
+                "[UNDO] Undo complete: actions_undone={}, choice_log_size={}",
                 actions_undone, log_size
             );
-            eprintln!(
-                "[UNDO DEBUG]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+            log::debug!(
+                "[UNDO]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
                 self.undo_log.len(),
                 self.logger.log_count(),
                 self.logger.choice_count()
             );
-            eprintln!("[UNDO DEBUG]   Will truncate logger to {} in caller", log_size);
+            log::debug!("[UNDO]   Will truncate logger to {} in caller", log_size);
             Ok(Some((actions_undone, log_size)))
         } else {
-            eprintln!(
-                "[UNDO DEBUG] Undo complete: No ChoicePoint found for player {}",
+            log::debug!(
+                "[UNDO] Undo complete: No ChoicePoint found for player {}",
                 requesting_player.as_u32()
             );
-            eprintln!(
-                "[UNDO DEBUG]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
+            log::debug!(
+                "[UNDO]   Final: undo_log.len()={}, logger.log_count()={}, logger.choice_count()={}",
                 self.undo_log.len(),
                 self.logger.log_count(),
                 self.logger.choice_count()

@@ -132,7 +132,8 @@ impl<'a> GameLoop<'a> {
                             power,
                             toughness
                         );
-                        self.game.logger.normal(&message);
+                        // Use gamelog for official game action
+                        self.game.logger.gamelog(&message);
                     }
                 }
             }
@@ -249,7 +250,8 @@ impl<'a> GameLoop<'a> {
                         attacker_name,
                         blocker_name
                     );
-                    self.game.logger.normal(&message);
+                    // Use gamelog for official game action
+                    self.game.logger.gamelog(&message);
                 }
             }
         }
@@ -384,7 +386,8 @@ impl<'a> GameLoop<'a> {
                             let message = format!(
                                 "Combat: {attacker_name} ({attacker_id}) ({power} damage) ↔ {blocker_name} ({blocker_id}) ({blocker_power} damage)"
                             );
-                            self.game.logger.normal(&message);
+                            // Use gamelog for official game action
+                            self.game.logger.gamelog(&message);
                         }
                     }
                 } else {
@@ -394,7 +397,8 @@ impl<'a> GameLoop<'a> {
                         if power > 0 {
                             let message =
                                 format!("{attacker_name} ({attacker_id}) deals {power} damage to {defender_name}");
-                            self.game.logger.normal(&message);
+                            // Use gamelog for official game action
+                            self.game.logger.gamelog(&message);
                         }
                     }
                 }

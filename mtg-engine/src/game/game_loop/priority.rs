@@ -39,7 +39,8 @@ impl<'a> GameLoop<'a> {
 
         if should_log {
             let message = format!("{} ({}) resolves", card_name, spell_id);
-            self.game.logger.normal(&message);
+            // Use gamelog for official game action
+            self.game.logger.gamelog(&message);
         }
 
         // Resolve the spell (this modifies effects with target replacement)
@@ -143,7 +144,8 @@ impl<'a> GameLoop<'a> {
                         "{} ({}) enters the battlefield as a {}/{} creature",
                         card_name, spell_id, power, toughness
                     );
-                    self.game.logger.normal(&message);
+                    // Use gamelog for official game action
+                    self.game.logger.gamelog(&message);
                 }
             }
         }
