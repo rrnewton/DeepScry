@@ -214,8 +214,7 @@
             launch_fancy_tui,
             tui_run_turn,
             tui_toggle_auto,
-            tui_get_battlefield_cards,
-            tui_get_card_positions
+            tui_get_battlefield_cards
         } from './pkg/mtg_forge_rs.js';
 
         let cardDb = null;
@@ -349,7 +348,8 @@
             },
 
             // Add or update a card image overlay
-            setCardImage(cardId, col, row, width, height, imageUrl) {
+            // isTapped: if true, the card is rotated 90 degrees (swap width/height)
+            setCardImage(cardId, col, row, width, height, imageUrl, isTapped = false) {
                 if (!this.enabled) return;
 
                 const imgId = `card-image-${cardId}`;
@@ -377,8 +377,14 @@
                 const pos = this.cellToPixels(col, row);
                 const CELL_WIDTH_PX = 10;
                 const CELL_HEIGHT_PX = 20;
-                const widthPx = width * CELL_WIDTH_PX;
-                const heightPx = height * CELL_HEIGHT_PX;
+
+                // For tapped cards, the TUI renderer swaps width/height to simulate rotation
+                // We need to swap dimensions for the image too
+                let widthPx = width * CELL_WIDTH_PX;
+                let heightPx = height * CELL_HEIGHT_PX;
+
+                // Note: TUI already provides swapped dimensions for tapped cards,
+                // so we use them as-is. The image itself should be rotated visually.
 
                 img.style.position = 'absolute';
                 img.style.left = `${pos.left}px`;
@@ -388,6 +394,14 @@
                 img.style.objectFit = 'contain';
                 img.style.pointerEvents = 'none';
                 img.style.zIndex = '10';
+
+                // Rotate the image 90 degrees if tapped
+                if (isTapped) {
+                    img.style.transform = 'rotate(90deg)';
+                    img.style.transformOrigin = 'center center';
+                } else {
+                    img.style.transform = 'none';
+                }
 
                 this.overlays.set(cardId, img);
             },
@@ -435,11 +449,12 @@
                         // Use the exact position and size from the TUI
                         this.setCardImage(
                             cardPos.card_id,
-                            cardPos.x,      // column position from TUI
-                            cardPos.y,      // row position from TUI
-                            cardPos.width,  // width in cells from TUI
-                            cardPos.height, // height in cells from TUI
-                            imageUrl
+                            cardPos.x,         // column position from TUI
+                            cardPos.y,         // row position from TUI
+                            cardPos.width,     // width in cells from TUI
+                            cardPos.height,    // height in cells from TUI
+                            imageUrl,
+                            cardPos.is_tapped  // rotation state
                         );
                     });
                 } catch (error) {
@@ -530,9 +545,31 @@
 
         // Post-render callback: called by WASM after every frame render
         // This is event-driven (no polling!) - synchronized with TUI rendering
-        window.onRenderComplete = function() {
-            if (cardImagesEnabled && tuiLaunched) {
-                CardImageOverlay.displayBattlefieldCards();
+        // positions: array of {card_id, name, x, y, width, height, is_tapped}
+        window.onRenderComplete = function(positions) {
+            if (cardImagesEnabled && tuiLaunched && positions && positions.length > 0) {
+                // Clear existing overlays first
+                CardImageOverlay.clearAll();
+
+                // Count tapped cards for debugging
+                const tappedCount = positions.filter(p => p.is_tapped).length;
+                if (tappedCount > 0) {
+                    console.log(`Rendering ${positions.length} cards (${tappedCount} tapped)`);
+                }
+
+                // Use the positions passed from WASM (avoids re-borrowing)
+                positions.forEach((cardPos) => {
+                    const imageUrl = CardImageOverlay.scryfallNamedUrl(cardPos.name, 'small');
+                    CardImageOverlay.setCardImage(
+                        cardPos.card_id,
+                        cardPos.x,
+                        cardPos.y,
+                        cardPos.width,
+                        cardPos.height,
+                        imageUrl,
+                        cardPos.is_tapped
+                    );
+                });
             }
         };
 

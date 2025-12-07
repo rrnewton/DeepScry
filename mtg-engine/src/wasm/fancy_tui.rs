@@ -118,65 +118,87 @@ pub fn tui_get_battlefield_cards() -> String {
     })
 }
 
-/// Get battlefield card positions from the TUI renderer
-/// Returns JSON array of {card_id, name, x, y, width, height}[]
-/// These are the actual positions where the TUI renderer draws cards
-#[wasm_bindgen]
-pub fn tui_get_card_positions() -> String {
+/// Helper function to export card positions from renderer state
+/// This is called from within the render loop, so it doesn't need to borrow GLOBAL_TUI_STATE
+fn export_card_positions_from_renderer(
+    entity_positions: &[crate::game::fancy_tui_renderer::EntityPosition],
+    game: &GameState,
+    player_id: PlayerId,
+) -> String {
     use crate::game::fancy_tui_renderer::Entity;
 
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let s = state.borrow();
-            let mut positions = Vec::new();
+    let mut positions = Vec::new();
+    let view = GameStateView::new(game, player_id);
 
-            // Extract card positions from renderer state
-            // We'll include SingleCard entities (individual battlefield cards)
-            // and cards from VisualStack/SimpleStack (grouped cards on battlefield)
-            for entity_pos in &s.renderer.state.entity_positions {
-                match &entity_pos.entity {
-                    Entity::SingleCard { card_id, .. } => {
-                        // Check if this card is on the battlefield
-                        if s.game.battlefield.cards.contains(card_id) {
-                            if let Ok(card) = s.game.cards.get(*card_id) {
-                                positions.push(serde_json::json!({
-                                    "card_id": format!("{:?}", card_id),
-                                    "name": format!("{}", card.name),
-                                    "x": entity_pos.area.x,
-                                    "y": entity_pos.area.y,
-                                    "width": entity_pos.area.width,
-                                    "height": entity_pos.area.height,
-                                }));
-                            }
-                        }
+    // Extract card positions from renderer state
+    // We'll include SingleCard entities (individual battlefield cards)
+    // and cards from VisualStack/SimpleStack (grouped cards on battlefield)
+    for entity_pos in entity_positions {
+        match &entity_pos.entity {
+            Entity::SingleCard { card_id, .. } => {
+                // Check if this card is on the battlefield
+                if game.battlefield.cards.contains(card_id) {
+                    if let Ok(card) = game.cards.get(*card_id) {
+                        let is_tapped = view.is_tapped(*card_id);
+                        positions.push(serde_json::json!({
+                            "card_id": format!("{:?}", card_id),
+                            "name": format!("{}", card.name),
+                            "x": entity_pos.area.x,
+                            "y": entity_pos.area.y,
+                            "width": entity_pos.area.width,
+                            "height": entity_pos.area.height,
+                            "is_tapped": is_tapped,
+                        }));
                     }
-                    Entity::VisualStack { card_ids, .. } | Entity::SimpleStack { card_ids, .. } => {
-                        // For stacks, we could either show all cards or just the top one
-                        // For now, let's show the top card of each stack
-                        if let Some(&card_id) = card_ids.first() {
-                            if s.game.battlefield.cards.contains(&card_id) {
-                                if let Ok(card) = s.game.cards.get(card_id) {
-                                    positions.push(serde_json::json!({
-                                        "card_id": format!("{:?}", card_id),
-                                        "name": format!("{}", card.name),
-                                        "x": entity_pos.area.x,
-                                        "y": entity_pos.area.y,
-                                        "width": entity_pos.area.width,
-                                        "height": entity_pos.area.height,
-                                    }));
-                                }
-                            }
-                        }
-                    }
-                    _ => {} // Skip hand cards and other entities
                 }
             }
+            Entity::VisualStack { card_ids, tapped_count, .. } => {
+                // For visual stacks, target the TOP card with diagonal offset
+                // The visual stack renderer draws cards diagonally from bottom-left to top-right
+                // So we need to offset to the top-right position
+                if let Some(&card_id) = card_ids.last() {  // LAST card is on top visually
+                    if game.battlefield.cards.contains(&card_id) {
+                        if let Ok(card) = game.cards.get(card_id) {
+                            let is_tapped = *tapped_count > 0;
+                            let stack_depth = card_ids.len() as u16;
+                            let offset = (stack_depth.saturating_sub(1)) * 1; // DIAGONAL_OFFSET = 1
 
-            serde_json::to_string(&positions).unwrap_or_else(|_| "[]".to_string())
-        } else {
-            "[]".to_string()
+                            positions.push(serde_json::json!({
+                                "card_id": format!("{:?}", card_id),
+                                "name": format!("{}", card.name),
+                                "x": entity_pos.area.x + offset,  // Offset to top card position
+                                "y": entity_pos.area.y + offset,
+                                "width": entity_pos.area.width.saturating_sub(offset),   // Top card takes remaining space
+                                "height": entity_pos.area.height.saturating_sub(offset),
+                                "is_tapped": is_tapped,
+                            }));
+                        }
+                    }
+                }
+            }
+            Entity::SimpleStack { card_ids, is_tapped, .. } => {
+                // For simple stacks, use the is_tapped field from the entity
+                if let Some(&card_id) = card_ids.first() {
+                    if game.battlefield.cards.contains(&card_id) {
+                        if let Ok(card) = game.cards.get(card_id) {
+                            positions.push(serde_json::json!({
+                                "card_id": format!("{:?}", card_id),
+                                "name": format!("{}", card.name),
+                                "x": entity_pos.area.x,
+                                "y": entity_pos.area.y,
+                                "width": entity_pos.area.width,
+                                "height": entity_pos.area.height,
+                                "is_tapped": *is_tapped,
+                            }));
+                        }
+                    }
+                }
+            }
+            _ => {} // Skip hand cards and other entities
         }
-    })
+    }
+
+    serde_json::to_string(&positions).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// WASM Fancy TUI Application State
@@ -971,9 +993,14 @@ pub fn launch_fancy_tui(
             // Draw the TUI using the shared renderer
             renderer.draw_ui(f, &view, prompt, &choices);
 
+            // Export card positions for image overlays
+            // We do this inside the render loop to avoid borrow conflicts
+            let positions_json = export_card_positions_from_renderer(&renderer.state.entity_positions, game, player_id);
+
             // Post-render hook: notify JavaScript that rendering is complete
-            // This allows image overlays and other enhancements to update
-            let _ = js_sys::eval("window.onRenderComplete && window.onRenderComplete()");
+            // Pass the card positions so JavaScript doesn't need to call back into WASM
+            let js_code = format!("window.onRenderComplete && window.onRenderComplete({})", positions_json);
+            let _ = js_sys::eval(&js_code);
         }
     });
 
