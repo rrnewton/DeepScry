@@ -965,9 +965,14 @@ impl<'a> GameLoop<'a> {
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
         let step = self.game.turn.current_step;
+        let turn = self.game.turn.turn_number;
 
         // Reset step header tracking for each new step
         self.step_header_printed = false;
+
+        // Update logger's gamelog context (turn and step)
+        self.game.logger.set_gamelog_turn(turn);
+        self.game.logger.set_gamelog_step(step.abbreviation());
 
         // In verbose mode, always print step header immediately
         if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {

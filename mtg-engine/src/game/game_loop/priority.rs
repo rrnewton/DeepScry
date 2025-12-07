@@ -350,7 +350,8 @@ impl<'a> GameLoop<'a> {
                                                 card_name,
                                                 card_id
                                             );
-                                            self.game.logger.normal(&message);
+                                            // Use gamelog for official game actions
+                                            self.game.logger.gamelog(&message);
                                         } else if self.verbosity >= VerbosityLevel::Verbose {
                                             let message = format!(
                                                 "[SUPPRESSED] {} plays {} ({})",
@@ -398,7 +399,8 @@ impl<'a> GameLoop<'a> {
                                             card_name,
                                             card_id
                                         );
-                                        self.game.logger.normal(&message);
+                                        // Use gamelog for official game actions
+                                        self.game.logger.gamelog(&message);
                                     } else if self.verbosity >= VerbosityLevel::Verbose {
                                         let message = format!(
                                             "[SUPPRESSED] {} casts {} ({}) (putting on stack)",

@@ -221,6 +221,11 @@ enum Commands {
         #[arg(long)]
         debug_state_hash: bool,
 
+        /// Tag official game action logs with [GAMELOG TurnN STEP] prefix
+        /// This enables comparing local vs network game logs for correctness
+        #[arg(long)]
+        tag_gamelogs: bool,
+
         /// Stop after N choices by specified player(s) and save snapshot
         /// Format: <NUM>[:[p1|p2]]
         /// Examples: 3 (both players), 1:p1 (only p1), 5:p2 (only p2)
@@ -367,6 +372,11 @@ enum Commands {
         /// Enable state hash debugging (prints hash before each action)
         #[arg(long)]
         debug_state_hash: bool,
+
+        /// Tag official game action logs with [GAMELOG TurnN STEP] prefix
+        /// This enables comparing local vs network game logs for correctness
+        #[arg(long)]
+        tag_gamelogs: bool,
 
         /// Stop after N choices by specified player(s) and save snapshot
         /// Format: <NUM>[:[p1|p2]]
@@ -555,6 +565,7 @@ async fn main() -> Result<()> {
             numeric_choices,
             visual_stacks,
             debug_state_hash,
+            tag_gamelogs,
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
@@ -593,6 +604,7 @@ async fn main() -> Result<()> {
                 numeric_choices,
                 visual_stacks,
                 debug_state_hash,
+                tag_gamelogs,
                 stop_on_choice,
                 stop_when_fixed_exhausted,
                 snapshot_output,
@@ -666,6 +678,7 @@ async fn main() -> Result<()> {
             numeric_choices,
             visual_stacks,
             debug_state_hash,
+            tag_gamelogs,
             stop_on_choice,
             stop_when_fixed_exhausted,
             snapshot_output,
@@ -693,6 +706,7 @@ async fn main() -> Result<()> {
                 numeric_choices,
                 visual_stacks,
                 debug_state_hash,
+                tag_gamelogs,
                 stop_on_choice,
                 stop_when_fixed_exhausted,
                 snapshot_output,
@@ -927,6 +941,7 @@ async fn run_tui(
     numeric_choices: bool,
     visual_stacks: bool,
     debug_state_hash: bool,
+    tag_gamelogs: bool,
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
     snapshot_output: PathBuf,
@@ -1152,6 +1167,14 @@ async fn run_tui(
         game.logger.set_debug_state_hash(true);
         if !suppress_output {
             log::info!("State hash debugging: enabled");
+        }
+    }
+
+    // Enable gamelog tagging if requested
+    if tag_gamelogs {
+        game.logger.set_tag_gamelogs(true);
+        if !suppress_output {
+            log::info!("Gamelog tagging: enabled");
         }
     }
 
@@ -1800,6 +1823,7 @@ async fn run_resume(
     numeric_choices: bool,
     visual_stacks: bool,
     debug_state_hash: bool,
+    tag_gamelogs: bool,
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
     snapshot_output: PathBuf,
@@ -1917,6 +1941,14 @@ async fn run_resume(
         game.logger.set_debug_state_hash(true);
         if !suppress_output {
             log::info!("State hash debugging: enabled");
+        }
+    }
+
+    // Enable gamelog tagging if requested
+    if tag_gamelogs {
+        game.logger.set_tag_gamelogs(true);
+        if !suppress_output {
+            log::info!("Gamelog tagging: enabled");
         }
     }
 

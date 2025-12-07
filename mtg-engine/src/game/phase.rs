@@ -54,6 +54,38 @@ impl Step {
         }
     }
 
+    /// Get a short abbreviation for gamelog tagging
+    ///
+    /// Returns a 2-character abbreviation:
+    /// - UK: Untap
+    /// - UP: Upkeep
+    /// - DR: Draw
+    /// - M1: Main Phase 1
+    /// - BC: Begin Combat
+    /// - DA: Declare Attackers
+    /// - DB: Declare Blockers
+    /// - CD: Combat Damage
+    /// - EC: End Combat
+    /// - M2: Main Phase 2
+    /// - ET: End Turn (End step)
+    /// - CL: Cleanup
+    pub fn abbreviation(&self) -> &'static str {
+        match self {
+            Step::Untap => "UK",
+            Step::Upkeep => "UP",
+            Step::Draw => "DR",
+            Step::Main1 => "M1",
+            Step::BeginCombat => "BC",
+            Step::DeclareAttackers => "DA",
+            Step::DeclareBlockers => "DB",
+            Step::CombatDamage => "CD",
+            Step::EndCombat => "EC",
+            Step::Main2 => "M2",
+            Step::End => "ET",
+            Step::Cleanup => "CL",
+        }
+    }
+
     /// Get the next step in turn order
     pub fn next(&self) -> Option<Step> {
         match self {

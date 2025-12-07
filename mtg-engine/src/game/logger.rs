@@ -90,6 +90,12 @@ pub struct GameLogger {
     show_choice_menu: bool,
     /// Enable state hash debugging (print hash before each logged action)
     debug_state_hash: bool,
+    /// Enable gamelog tagging (prepend [GAMELOG TurnN STEP] to official game actions)
+    tag_gamelogs: bool,
+    /// Current turn number for gamelog tagging
+    gamelog_turn: RefCell<u32>,
+    /// Current step abbreviation for gamelog tagging (UK, UP, DR, M1, BC, DA, DB, CD, EC, M2, ET, CL)
+    gamelog_step: RefCell<&'static str>,
 
     /// Bump allocator for temporary string formatting
     /// Reset after each format operation to avoid growth
@@ -113,6 +119,9 @@ impl GameLogger {
             output_mode: OutputMode::default(),
             show_choice_menu: false,
             debug_state_hash: false,
+            tag_gamelogs: false,
+            gamelog_turn: RefCell::new(1),
+            gamelog_step: RefCell::new("UK"),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
@@ -129,6 +138,9 @@ impl GameLogger {
             output_mode: OutputMode::default(),
             show_choice_menu: false,
             debug_state_hash: false,
+            tag_gamelogs: false,
+            gamelog_turn: RefCell::new(1),
+            gamelog_step: RefCell::new("UK"),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
@@ -336,6 +348,29 @@ impl GameLogger {
         self.debug_state_hash
     }
 
+    /// Enable gamelog tagging (prepend [GAMELOG TurnN STEP] to official actions)
+    pub fn set_tag_gamelogs(&mut self, enabled: bool) {
+        self.tag_gamelogs = enabled;
+    }
+
+    /// Check if gamelog tagging is enabled
+    pub fn tag_gamelogs_enabled(&self) -> bool {
+        self.tag_gamelogs
+    }
+
+    /// Update the current turn number for gamelog tagging
+    pub fn set_gamelog_turn(&self, turn: u32) {
+        *self.gamelog_turn.borrow_mut() = turn;
+    }
+
+    /// Update the current step for gamelog tagging
+    /// Step abbreviations: UK (Untap), UP (Upkeep), DR (Draw), M1 (Main1),
+    /// BC (Begin Combat), DA (Declare Attackers), DB (Declare Blockers),
+    /// CD (Combat Damage), EC (End Combat), M2 (Main2), ET (End), CL (Cleanup)
+    pub fn set_gamelog_step(&self, step: &'static str) {
+        *self.gamelog_step.borrow_mut() = step;
+    }
+
     /// Reset the step header flag
     pub fn reset_step_header(&mut self) {
         self.step_header_printed = false;
@@ -445,6 +480,56 @@ impl GameLogger {
         }
     }
 
+    /// Log an official game action at Normal level
+    ///
+    /// When tag_gamelogs is enabled, prepends `[GAMELOG TurnN STEP]` prefix.
+    /// This allows comparing game logs between local and network modes.
+    ///
+    /// Use this for official game actions like:
+    /// - Card plays (lands, spells)
+    /// - Combat (attacks, blocks, damage)
+    /// - Life changes
+    /// - Card draws
+    /// - Turn/step transitions
+    ///
+    /// Do NOT use this for:
+    /// - Battlefield display printouts
+    /// - Choice selection menus
+    /// - Debug output
+    #[inline]
+    pub fn gamelog(&self, message: &str) {
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+        let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
+
+        // Early exit if message won't be used
+        if VerbosityLevel::Normal > self.verbosity && !should_capture {
+            return;
+        }
+
+        // Format with tag prefix if enabled
+        let formatted = if self.tag_gamelogs {
+            let turn = *self.gamelog_turn.borrow();
+            let step = *self.gamelog_step.borrow();
+            format!("[GAMELOG Turn{} {}] {}", turn, step, message)
+        } else {
+            message.to_string()
+        };
+
+        // Capture if mode requires it
+        if should_capture {
+            self.log_buffer.borrow_mut().push(LogEntry {
+                level: VerbosityLevel::Normal,
+                message: formatted.clone(),
+                category: Some("gamelog".to_string()),
+            });
+        }
+
+        // Output to stdout if mode requires it and verbosity allows
+        if should_output && VerbosityLevel::Normal <= self.verbosity {
+            self.log_to_stdout(VerbosityLevel::Normal, &formatted);
+        }
+    }
+
     /// Log a controller decision at Normal level
     ///
     /// Outputs standardized "chose X" format to stdout for deterministic logging.
@@ -545,6 +630,9 @@ impl Clone for GameLogger {
             output_mode: self.output_mode,
             show_choice_menu: self.show_choice_menu,
             debug_state_hash: self.debug_state_hash,
+            tag_gamelogs: self.tag_gamelogs,
+            gamelog_turn: RefCell::new(*self.gamelog_turn.borrow()),
+            gamelog_step: RefCell::new(*self.gamelog_step.borrow()),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
@@ -592,6 +680,9 @@ impl<'de> Deserialize<'de> for GameLogger {
             output_mode: data.output_mode,
             show_choice_menu: data.show_choice_menu,
             debug_state_hash: false,
+            tag_gamelogs: false,
+            gamelog_turn: RefCell::new(1),
+            gamelog_step: RefCell::new("UK"),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
