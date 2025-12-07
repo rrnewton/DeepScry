@@ -6,11 +6,13 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-04T15:32:28.728526080+00:00
+updated_at: 2025-12-07T20:17:14.501464466+00:00
 ---
 
 # Description
 
+
+Description:
 Track performance optimization work for MTG Forge Rust.
 
 ## Latest Optimization (2025-12-04_#1140(d46eb3d))
@@ -37,3 +39,16 @@ Track performance optimization work for MTG Forge Rust.
 - Extract primitives upfront, re-fetch effects[i] each iteration
 - DHAT: 22,784 fewer bytes, 712 fewer blocks (5.2% reduction)
 - Benchmark: -0.87% execution time (p=0.04, statistically significant)
+
+## Open Optimization Issues
+
+**Priority 2 (Critical):**
+- mtg-0ioei: Reduce WASM rendering frequency when idle (60 FPS → event-driven)
+  - Battery/CPU waste: continuous 60 FPS even when game state unchanged
+  - Investigate RatZilla manual redraw APIs or dirty-flag pattern
+  - See ai_docs/UI_ARCHITECTURE.md for current event architecture
+
+**Other optimization issues:**
+- See OPTIMIZATION.md for methodology and allocation reduction patterns
+- Continue profiling with DHAT to find allocation hotspots
+- Target Vec clones in hot paths (game loop, effect resolution)

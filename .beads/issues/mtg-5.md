@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-11-04T11:50:22.461685265+00:00
+updated_at: 2025-12-07T20:10:32.780174422+00:00
 ---
 
 # Description
@@ -28,6 +28,16 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-41: Controller API consistency and documentation
 - mtg-144: Missing player choices (mulligan, activated abilities)
 
+**UI/TUI Event Architecture:**
+- Current: Partially shared event handling between native and WASM
+  - Mouse clicks: shared via handle_mouse_click() in fancy_tui_events.rs
+  - Keyboard: shared KeyInput enum, but backend-specific handling
+  - Event-driven rendering: window.onRenderComplete callback (not polling!)
+  - Geometry queries: tui_get_card_positions() exports layout data
+- TODO: Extract common InputEventHandler abstraction for full sharing
+- TODO: Animation/transition support (future work)
+- See ai_docs/UI_ARCHITECTURE.md for complete documentation
+
 **Testing infrastructure:**
 - Current: 405 passing tests (nextest, all categories)
 - mtg-42: Improve test coverage for edge cases
@@ -48,10 +58,15 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-53: SIMD optimizations where applicable
 
 ---
-**Checked up-to-date as of 2025-11-04**
-- Verified controller architecture (5 implementations, unified interface)
-- Updated test count: 360 → 405 tests
-- Marked mtg-40 as obsolete (v1/v2 already unified)
-- Verified file locations (ai_docs/CONTROLLER_DESIGN.md exists)
-- All controller implementations working correctly
-- Added mtg-144: Missing player choices (mulligan + activated abilities)
+**Checked up-to-date as of 2025-12-07_#1144**
+- Added UI/TUI Event Architecture section
+- Documented event-driven rendering callback (no polling!)
+- Noted TODO for InputEventHandler abstraction
+- Referenced ai_docs/UI_ARCHITECTURE.md
+- Previous updates from 2025-11-04:
+  - Verified controller architecture (5 implementations, unified interface)
+  - Updated test count: 360 → 405 tests
+  - Marked mtg-40 as obsolete (v1/v2 already unified)
+  - Verified file locations (ai_docs/CONTROLLER_DESIGN.md exists)
+  - All controller implementations working correctly
+  - Added mtg-144: Missing player choices (mulligan + activated abilities)

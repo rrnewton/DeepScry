@@ -1,0 +1,109 @@
+---
+title: Reduce WASM rendering frequency when idle (60 FPS → event-driven)
+status: open
+priority: 2
+issue_type: task
+created_at: 2025-12-07T20:16:47.190264431+00:00
+updated_at: 2025-12-07T20:16:47.190264431+00:00
+---
+
+# Description
+
+## Problem
+
+Currently, the WASM TUI renders at ~60 FPS continuously due to RatZilla's `draw_web()` using `requestAnimationFrame()`. This wastes CPU and battery when the game state isn't changing.
+
+**When redraws are actually needed:**
+1. User input (keyboard/mouse events)
+2. Game state changes (playing cards, advancing turns)
+3. Auto-run mode (needs frequent updates)
+4. Window resize events
+5. UI selection changes (navigating choices)
+
+**When redraws are wasteful:**
+- Waiting for human player input (no state changes)
+- Auto-run OFF, no user interaction
+- Static game-over screen
+
+## Current Architecture
+
+**Location**: mtg-engine/src/wasm/fancy_tui.rs:929-969
+
+```rust
+terminal.draw_web(move |f| {
+    let mut state = state.borrow_mut();
+    
+    // Auto-run: advance game per frame if enabled
+    if state.auto_run && !state.game_over && state.pending_context.is_none() {
+        state.run_until_choice();
+    }
+    
+    // ... render UI ...
+    
+    // Post-render hook for image overlays
+    let _ = js_sys::eval("window.onRenderComplete && window.onRenderComplete()");
+});
+```
+
+RatZilla's `draw_web()` likely uses `requestAnimationFrame()` internally, running at ~60 FPS continuously.
+
+## Investigation Tasks
+
+1. **Research RatZilla API**:
+   - Check if RatZilla 0.2+ has manual redraw APIs (`redraw()`, `invalidate()`)
+   - Review RatZilla source: https://github.com/orhun/ratzilla
+   - Check if we can disable continuous rendering
+
+2. **Measure actual impact**:
+   - Measure CPU/battery usage: idle vs auto-run
+   - Determine if this is a real problem or premature optimization
+
+3. **Evaluate solutions**:
+
+   **Option A: Dirty flag pattern** (minimal change)
+   ```rust
+   if !state.needs_redraw {
+       return; // Skip frame, but still called 60 times/sec
+   }
+   state.needs_redraw = false;
+   ```
+   - Pro: Easy to implement
+   - Con: Still runs callback 60 FPS, just returns early
+   
+   **Option B: Manual redraw trigger** (requires RatZilla support)
+   - Remove continuous loop
+   - Call `terminal.redraw()` on state changes
+   - Pro: True event-driven, zero idle CPU
+   - Con: Needs RatZilla API support
+   
+   **Option C: Alternative rendering backend**
+   - Switch to ratatui + custom WASM backend
+   - Full control over render timing
+   - Pro: Complete control
+   - Con: Significant refactoring
+
+4. **Consider animation requirements**:
+   - Do we want smooth animations in the future?
+   - If yes, 60 FPS might be necessary anyway
+   - Could use hybrid: 60 FPS during animations, idle otherwise
+
+## Success Criteria
+
+- CPU usage near zero when game is idle (waiting for input)
+- No frame drops during auto-run or active gameplay
+- Image overlays still update correctly
+- Architecture supports future animation work
+
+## Related Issues
+
+- See ai_docs/UI_ARCHITECTURE.md for event architecture
+- mtg-5: Cross-cutting codebase issues (event handling)
+- mtg-2: Optimization tracking
+
+## Priority Justification
+
+Priority 2 (critical bug/optimization) because:
+- Affects battery life on laptops/mobile
+- Wastes CPU resources unnecessarily
+- Should be fixed before wider release/demo
+- Not blocking current development
