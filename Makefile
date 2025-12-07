@@ -3,6 +3,9 @@
 # Quick reference for common development tasks
 .PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev
 
+# Configuration variables
+PORT ?= 8080
+
 # Default target - show available commands
 help:
 	@echo "MTG Forge Rust - Available Commands:"
@@ -472,11 +475,11 @@ WASM_SERVER_LOG := web/server.log
 wasm-serve: wasm
 	@echo ""
 	@echo "=== Starting web server ==="
-	@echo "Open http://localhost:8080 in your browser"
+	@echo "Open http://localhost:$(PORT) in your browser"
 	@echo "Log file: $(WASM_SERVER_LOG)"
 	@echo "Press Ctrl+C to stop"
 	@echo ""
-	@cd web && python3 -m http.server 8080 2>&1 | tee server.log
+	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
 
 # Quick dev build - skips wasm-opt optimization for faster iteration
 wasm-dev:
@@ -495,11 +498,11 @@ wasm-dev:
 wasm-dev-serve: wasm-dev
 	@echo ""
 	@echo "=== Starting web server (dev build) ==="
-	@echo "Open http://localhost:8080 in your browser"
+	@echo "Open http://localhost:$(PORT) in your browser"
 	@echo "Log file: $(WASM_SERVER_LOG)"
 	@echo "Press Ctrl+C to stop"
 	@echo ""
-	@cd web && python3 -m http.server 8080 2>&1 | tee server.log
+	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
 
 # Test WASM module in headless browser (basic API test)
 wasm-test: wasm
