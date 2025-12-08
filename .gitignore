@@ -86,3 +86,20 @@ bad_fonts_mtg_tui.png
 node_modules/
 package-lock.json
 *.png
+
+# One-off test scripts (debugging/development)
+# These are temporary scripts for testing specific features
+check_*.js
+debug_*.js
+inspect_*.js
+measure_*.js
+sanity_test_*.js
+test_*.js
+simple_screenshot.js
+quick_screenshot.js
+dom_inspection_test.js
+serve_no_cache.py
+
+# Temporary test output files (root directory)
+console_logs.txt
+sanity_test_console.txt
