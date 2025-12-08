@@ -1,6 +1,9 @@
 # Junk
 
 *~
+
+# Beads command history (local state, not tracked)
+.beads/command_history.log
 .#*
 .DS_Store
 ._.DS_Store
