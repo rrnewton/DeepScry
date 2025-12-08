@@ -1314,6 +1314,87 @@ impl FancyTuiRenderer {
                 card_height,
             );
         }
+
+        // Render graveyard overlay in bottom-right corner
+        self.render_graveyard_overlay(f, inner_area, view, owner_id);
+    }
+
+    /// Render graveyard as a text list in the bottom-right corner of the battlefield
+    ///
+    /// Displays a box-drawing bordered list showing cards in the graveyard:
+    /// ```text
+    ///               │
+    ///   Graveyard:  │
+    ///   White Knight│
+    ///   Tundra Wolves│
+    ///   ─────────────┘
+    /// ```
+    fn render_graveyard_overlay(&self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId) {
+        let graveyard = view.player_graveyard(owner_id);
+        if graveyard.is_empty() {
+            return;
+        }
+
+        // Build list of card names
+        let card_names: Vec<String> = graveyard
+            .iter()
+            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string()))
+            .collect();
+
+        // Calculate required width (longest name + "Graveyard: " header)
+        let header = "Graveyard:";
+        let max_name_len = card_names.iter().map(|n| n.len()).max().unwrap_or(0);
+        let content_width = max_name_len.max(header.len());
+        // Add 1 for right border character
+        let box_width = (content_width + 1) as u16;
+
+        // Calculate required height: header + cards + bottom border
+        let box_height = (1 + card_names.len() + 1) as u16;
+
+        // Position in bottom-right corner
+        if area.width < box_width || area.height < box_height {
+            return; // Not enough space
+        }
+
+        let x_start = area.x + area.width - box_width;
+        let y_start = area.y + area.height - box_height;
+
+        // Render the graveyard box with box-drawing characters
+        let style = Style::default().fg(Color::DarkGray);
+
+        // Header line: "Graveyard:  │"
+        let header_padding = content_width - header.len();
+        let header_line = format!("{}{}│", header, " ".repeat(header_padding));
+        let header_area = Rect {
+            x: x_start,
+            y: y_start,
+            width: box_width,
+            height: 1,
+        };
+        f.render_widget(Paragraph::new(header_line).style(style), header_area);
+
+        // Card name lines: "CardName    │"
+        for (i, name) in card_names.iter().enumerate() {
+            let name_padding = content_width - name.len();
+            let card_line = format!("{}{}│", name, " ".repeat(name_padding));
+            let card_area = Rect {
+                x: x_start,
+                y: y_start + 1 + i as u16,
+                width: box_width,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(card_line).style(style), card_area);
+        }
+
+        // Bottom border: "────────────┘"
+        let bottom_line = format!("{}┘", "─".repeat(content_width));
+        let bottom_area = Rect {
+            x: x_start,
+            y: y_start + 1 + card_names.len() as u16,
+            width: box_width,
+            height: 1,
+        };
+        f.render_widget(Paragraph::new(bottom_line).style(style), bottom_area);
     }
 
     /// Draw card details panel
