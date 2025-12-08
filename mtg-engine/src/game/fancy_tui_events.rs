@@ -34,6 +34,8 @@ pub enum EventResult {
     SelectChoice(usize),
     /// User wants to see battlefield state in log
     ShowBattlefield,
+    /// User wants to see help/keyboard shortcuts
+    ShowHelp,
 }
 
 /// Abstract key code for cross-platform input handling
@@ -64,6 +66,7 @@ pub enum KeyInput {
     CtrlC,           // Exit
     Digit(u8),       // 0-9 for quick choice selection
     ShowBattlefield, // B - log battlefield state
+    Help,            // ? - show keyboard shortcuts
 }
 
 /// Constants for 2D battlefield navigation
@@ -161,6 +164,9 @@ pub fn handle_key_event(
 
         // Show battlefield in log
         KeyInput::ShowBattlefield => EventResult::ShowBattlefield,
+
+        // Show help
+        KeyInput::Help => EventResult::ShowHelp,
 
         // Digit selection (only in Actions pane)
         KeyInput::Digit(d) => {
@@ -547,6 +553,52 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
     }
 
     false
+}
+
+/// Get help text describing all keyboard shortcuts
+///
+/// This function returns a formatted string with all available keyboard shortcuts.
+/// The format is suitable for display in both native TUI (as an overlay) and
+/// browser (as a modal dialog).
+///
+/// # Arguments
+/// * `include_wasm_only` - If true, include WASM/browser-only shortcuts (like 'i' for images)
+pub fn get_help_text(include_wasm_only: bool) -> String {
+    let mut help = String::from("Keyboard Shortcuts\n");
+    help.push_str("==================\n\n");
+
+    help.push_str("Navigation:\n");
+    help.push_str("  Arrow Keys  - Navigate within panes\n");
+    help.push_str("  Tab         - Cycle through panes\n");
+    help.push_str("  Enter       - Select/Confirm\n");
+    help.push_str("  1-9         - Quick select (Actions pane)\n\n");
+
+    help.push_str("Pane Focus:\n");
+    help.push_str("  H           - Focus Hand\n");
+    help.push_str("  I           - Focus Info/Card Details\n");
+    help.push_str("  Y           - Focus Your Battlefield\n");
+    help.push_str("  O           - Focus Opponent's Battlefield\n");
+    help.push_str("  A           - Focus Actions\n");
+    help.push_str("  S           - Focus Stack\n\n");
+
+    help.push_str("Game Actions:\n");
+    help.push_str("  Space       - Advance turn/Continue\n");
+    help.push_str("  P or Q      - Pass priority\n");
+    help.push_str("  Z           - Undo last action\n");
+    help.push_str("  R           - Random choice\n");
+    help.push_str("  B           - Show battlefield in log\n");
+    help.push_str("  Esc         - Exit game\n\n");
+
+    if include_wasm_only {
+        help.push_str("Browser Only:\n");
+        help.push_str("  I (lowercase) - Toggle card images\n");
+        help.push_str("  C           - Toggle controls panel\n\n");
+    }
+
+    help.push_str("Other:\n");
+    help.push_str("  ?           - Show this help\n");
+
+    help
 }
 
 #[cfg(test)]

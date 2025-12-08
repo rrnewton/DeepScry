@@ -181,6 +181,58 @@
             color: #4cc9f0;
             font-size: 14px;
         }
+        /* Help dialog */
+        #help-dialog {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #16213e;
+            border: 2px solid #4361ee;
+            border-radius: 8px;
+            padding: 20px 30px;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        #help-dialog.show {
+            display: block;
+        }
+        #help-dialog-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+        #help-dialog-overlay.show {
+            display: block;
+        }
+        .help-dialog-title {
+            color: #ffd700;
+            font-size: 20px;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        .help-dialog-content {
+            color: #eee;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+        .help-dialog-close {
+            color: #888;
+            font-size: 12px;
+            margin-top: 15px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -195,6 +247,14 @@
     <div id="exit-confirmation">
         <div class="exit-dialog-text">Exit game and return to setup?</div>
         <div class="exit-dialog-prompt">[y/N]</div>
+    </div>
+
+    <!-- Help dialog -->
+    <div id="help-dialog-overlay"></div>
+    <div id="help-dialog">
+        <div class="help-dialog-title">Keyboard Shortcuts</div>
+        <div class="help-dialog-content" id="help-dialog-content"></div>
+        <div class="help-dialog-close">Press any key to close</div>
     </div>
 
     <!-- Floating game controls - collapsible widget in corner -->
@@ -216,7 +276,7 @@
                 <button id="btn-exit" style="background: #a03030; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Exit Game</button>
                 <span id="turn-info" style="color: #ffd700; margin-left: 10px;"></span>
             </div>
-            <div style="color: #888; font-size: 11px; margin-top: 8px;">Keys: Space=turn, A=auto, Q=exit, C=toggle, I=images</div>
+            <div style="color: #888; font-size: 11px; margin-top: 8px;">Keys: Space=turn, A=auto, Q=exit, C=toggle, i=images, ?=help</div>
         </div>
     </div>
 
@@ -276,7 +336,7 @@ cast dark ritual</textarea>
             <span style="color: #888; font-size: 11px;">Enable TRACE logging</span>
         </div>
         <button id="btn-launch">Launch Fancy TUI</button>
-        <span class="help-text">Human: Up/Down=select, Enter=confirm, 1-9=quick select | AI: Space=turn, A=auto | Q=exit, Tab=cycle</span>
+        <span class="help-text">Human: Up/Down=select, Enter=confirm, 1-9=quick select | AI: Space=turn, A=auto | Q=exit, Tab=cycle, ?=help</span>
     </div>
 
     <div class="tui-container">
@@ -880,6 +940,13 @@ cast dark ritual</textarea>
                     }, 1000);
                 }
 
+                // Sync toggle button state with CardImageOverlay.enabled
+                const toggleBtn = document.getElementById('btn-toggle-images');
+                if (toggleBtn) {
+                    toggleBtn.textContent = CardImageOverlay.enabled ? 'Hide Images' : 'Show Images';
+                    toggleBtn.style.background = CardImageOverlay.enabled ? '#30a030' : '#4361ee';
+                }
+
                 console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
             } catch (error) {
                 alert(`Failed to launch TUI: ${error}`);
@@ -1015,6 +1082,87 @@ cast dark ritual</textarea>
                 dialog._confirmKeyHandler = null;
             }
         }
+
+        // Show help dialog when '?' is pressed
+        window.showHelpDialog = function() {
+            const dialog = document.getElementById('help-dialog');
+            const overlay = document.getElementById('help-dialog-overlay');
+            const content = document.getElementById('help-dialog-content');
+
+            // Set help text content (will be populated from WASM via get_help_text)
+            content.textContent = getHelpText(true); // true = include WASM-only shortcuts
+
+            dialog.classList.add('show');
+            overlay.classList.add('show');
+
+            // Add keyboard handler to close on any key
+            const handleHelpKey = function(e) {
+                hideHelpDialog();
+                e.preventDefault();
+                e.stopPropagation();
+            };
+
+            // Store handler so we can remove it later
+            dialog._helpKeyHandler = handleHelpKey;
+            document.addEventListener('keydown', handleHelpKey, true);
+        };
+
+        function hideHelpDialog() {
+            const dialog = document.getElementById('help-dialog');
+            const overlay = document.getElementById('help-dialog-overlay');
+            dialog.classList.remove('show');
+            overlay.classList.remove('show');
+
+            // Remove keyboard handler
+            if (dialog._helpKeyHandler) {
+                document.removeEventListener('keydown', dialog._helpKeyHandler, true);
+                dialog._helpKeyHandler = null;
+            }
+        }
+
+        // Get help text (mirrors the Rust function from fancy_tui_events.rs)
+        function getHelpText(includeWasmOnly) {
+            let help = "Keyboard Shortcuts\n";
+            help += "==================\n\n";
+
+            help += "Navigation:\n";
+            help += "  Arrow Keys  - Navigate within panes\n";
+            help += "  Tab         - Cycle through panes\n";
+            help += "  Enter       - Select/Confirm\n";
+            help += "  1-9         - Quick select (Actions pane)\n\n";
+
+            help += "Pane Focus:\n";
+            help += "  H           - Focus Hand\n";
+            help += "  I           - Focus Info/Card Details\n";
+            help += "  Y           - Focus Your Battlefield\n";
+            help += "  O           - Focus Opponent's Battlefield\n";
+            help += "  A           - Focus Actions\n";
+            help += "  S           - Focus Stack\n\n";
+
+            help += "Game Actions:\n";
+            help += "  Space       - Advance turn/Continue\n";
+            help += "  P or Q      - Pass priority\n";
+            help += "  Z           - Undo last action\n";
+            help += "  R           - Random choice\n";
+            help += "  B           - Show battlefield in log\n";
+            help += "  Esc         - Exit game\n\n";
+
+            if (includeWasmOnly) {
+                help += "Browser Only:\n";
+                help += "  i (lowercase) - Toggle card images\n";
+                help += "  C           - Toggle controls panel\n\n";
+            }
+
+            help += "Other:\n";
+            help += "  ?           - Show this help\n";
+
+            return help;
+        }
+
+        // Toggle card images function (called by 'i' key)
+        window.toggleCardImages = function() {
+            document.getElementById('btn-toggle-images')?.click();
+        };
 
         // Expose exit function globally for WASM to call
         window.exitFancyTui = function() {

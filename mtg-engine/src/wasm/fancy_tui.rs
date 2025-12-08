@@ -1066,10 +1066,15 @@ pub fn launch_fancy_tui(
                     state.needs_redraw = true; // UI state changed, need redraw
                     return;
                 }
+                KeyCode::Char('i') => {
+                    // lowercase 'i': toggle card images (WASM-specific, not shared)
+                    let _ = js_sys::eval("window.toggleCardImages && window.toggleCardImages()");
+                    return;
+                }
                 KeyCode::Char('q') | KeyCode::Char('Q') => Some(KeyInput::Pass),
                 KeyCode::Esc => Some(KeyInput::Escape),
                 KeyCode::Char('h') | KeyCode::Char('H') => Some(KeyInput::FocusHand),
-                KeyCode::Char('i') | KeyCode::Char('I') => Some(KeyInput::FocusInfo),
+                KeyCode::Char('I') => Some(KeyInput::FocusInfo), // uppercase I for Info pane
                 KeyCode::Char('y') | KeyCode::Char('Y') => Some(KeyInput::FocusYourBf),
                 KeyCode::Char('o') | KeyCode::Char('O') => Some(KeyInput::FocusOpponentBf),
                 KeyCode::Char('s') | KeyCode::Char('S') => Some(KeyInput::FocusStack),
@@ -1079,6 +1084,7 @@ pub fn launch_fancy_tui(
                     let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
                     return;
                 }
+                KeyCode::Char('?') => Some(KeyInput::Help),
                 KeyCode::Tab => Some(KeyInput::Tab),
                 KeyCode::Up => Some(KeyInput::Up),
                 KeyCode::Down => Some(KeyInput::Down),
@@ -1175,6 +1181,10 @@ pub fn launch_fancy_tui(
                         let view = GameStateView::new(game, renderer.player_id);
                         let bf_text = crate::game::display::format_battlefield_for_log(&view);
                         log::info!("{}", bf_text);
+                    }
+                    EventResult::ShowHelp => {
+                        // Show help dialog
+                        let _ = js_sys::eval("window.showHelpDialog && window.showHelpDialog()");
                     }
                     _ => {}
                 }
