@@ -4,6 +4,7 @@
 //! the local GameLoop and network clients to render battlefield state.
 
 use crate::core::{Keyword, PlayerId};
+use crate::game::controller::GameStateView;
 use crate::game::GameState;
 
 /// Print detailed battlefield state for all players
@@ -130,4 +131,107 @@ pub fn print_separator(title: Option<&str>) {
             println!("════════════════════════════════════════════════════════════════");
         }
     }
+}
+
+/// Format battlefield state as a string for logging
+///
+/// This is a shared function used by both native and WASM fancy TUI
+/// to display the battlefield when the user presses 'b'.
+pub fn format_battlefield_for_log(view: &GameStateView) -> String {
+    use std::fmt::Write;
+    let mut output = String::new();
+
+    writeln!(output, "=== Battlefield ===").unwrap();
+
+    // Get all players
+    let player_id = view.player_id();
+    let opponent_id = view.opponents().next();
+
+    // Format player's battlefield
+    writeln!(output, "\nYou (P1):").unwrap();
+    writeln!(output, "  Life: {}", view.player_life(player_id)).unwrap();
+    format_player_battlefield(&mut output, view, player_id);
+
+    // Format opponent's battlefield
+    if let Some(opp_id) = opponent_id {
+        writeln!(output, "\nOpponent (P2):").unwrap();
+        writeln!(output, "  Life: {}", view.player_life(opp_id)).unwrap();
+        format_player_battlefield(&mut output, view, opp_id);
+    }
+
+    output
+}
+
+/// Format a single player's battlefield for the log
+fn format_player_battlefield(output: &mut String, view: &GameStateView, player_id: PlayerId) {
+    use std::fmt::Write;
+
+    // Collect cards controlled by this player
+    let bf = view.battlefield();
+    let mut lands = Vec::new();
+    let mut creatures = Vec::new();
+    let mut other = Vec::new();
+
+    for &card_id in bf {
+        if let Some(card) = view.get_card(card_id) {
+            if card.controller != player_id {
+                continue;
+            }
+
+            let name = view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
+            let tapped = if view.is_tapped(card_id) { " (T)" } else { "" };
+
+            if card.is_land() {
+                lands.push(format!("    {}{}", name, tapped));
+            } else if card.is_creature() {
+                let pt = format!(" {}/{}", card.current_power(), card.current_toughness());
+                creatures.push(format!("    {}{}{}", name, pt, tapped));
+            } else {
+                other.push(format!("    {}{}", name, tapped));
+            }
+        }
+    }
+
+    // Output by category
+    let has_permanents = !lands.is_empty() || !creatures.is_empty() || !other.is_empty();
+
+    if !lands.is_empty() {
+        writeln!(output, "  Lands:").unwrap();
+        for land in &lands {
+            writeln!(output, "{}", land).unwrap();
+        }
+    }
+
+    if !creatures.is_empty() {
+        writeln!(output, "  Creatures:").unwrap();
+        for creature in &creatures {
+            writeln!(output, "{}", creature).unwrap();
+        }
+    }
+
+    if !other.is_empty() {
+        writeln!(output, "  Other permanents:").unwrap();
+        for perm in &other {
+            writeln!(output, "{}", perm).unwrap();
+        }
+    }
+
+    if !has_permanents {
+        writeln!(output, "  (empty battlefield)").unwrap();
+    }
+}
+
+/// Format choices with numeric prefixes for action list display
+///
+/// This is a shared function used by both native and WASM fancy TUI
+/// to ensure consistent action list formatting with `[idx] text` prefixes.
+pub fn format_choices_with_numbers(choices: &[String], highlighted_idx: usize) -> Vec<(String, bool)> {
+    choices
+        .iter()
+        .enumerate()
+        .map(|(idx, text)| {
+            let numbered_text = format!("[{}] {}", idx, text);
+            (numbered_text, idx == highlighted_idx)
+        })
+        .collect()
 }

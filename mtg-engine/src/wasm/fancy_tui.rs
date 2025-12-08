@@ -819,11 +819,8 @@ impl WasmFancyTuiState {
         };
         self.current_prompt = Some(prompt);
 
-        // Add choices with highlight on first one
-        for (idx, choice) in choices.iter().enumerate() {
-            self.current_choices
-                .push((choice.clone(), idx == self.selected_choice_idx));
-        }
+        // Format choices with numeric prefixes using shared function
+        self.current_choices = crate::game::display::format_choices_with_numbers(&choices, self.selected_choice_idx);
     }
 
     /// Handle selection of current choice index
@@ -1002,6 +999,7 @@ pub fn launch_fancy_tui(
                 KeyCode::Char('y') | KeyCode::Char('Y') => Some(KeyInput::FocusYourBf),
                 KeyCode::Char('o') | KeyCode::Char('O') => Some(KeyInput::FocusOpponentBf),
                 KeyCode::Char('s') | KeyCode::Char('S') => Some(KeyInput::FocusStack),
+                KeyCode::Char('b') | KeyCode::Char('B') => Some(KeyInput::ShowBattlefield),
                 KeyCode::Char('c') | KeyCode::Char('C') => {
                     // C: toggle controls panel visibility (WASM-specific)
                     let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
@@ -1086,6 +1084,16 @@ pub fn launch_fancy_tui(
                             state.update_choice_highlights();
                             state.select_current_choice();
                         }
+                    }
+                    EventResult::ShowBattlefield => {
+                        // Log battlefield state to console
+                        // Create a fresh view since we dropped the previous one
+                        let WasmFancyTuiState {
+                            ref game, ref renderer, ..
+                        } = *state;
+                        let view = GameStateView::new(game, renderer.player_id);
+                        let bf_text = crate::game::display::format_battlefield_for_log(&view);
+                        log::info!("{}", bf_text);
                     }
                     _ => {}
                 }

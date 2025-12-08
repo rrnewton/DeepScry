@@ -289,6 +289,12 @@ impl FancyTuiController {
                                 self.renderer.state.focused_pane = FocusedPane::Stack;
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
+                            KeyCode::Char('b') | KeyCode::Char('B') => {
+                                // Log battlefield state
+                                let bf_text = crate::game::display::format_battlefield_for_log(view);
+                                log::info!("{}", bf_text);
+                                return Ok(InputAction::Continue);
+                            }
                             // Arrow key navigation - route based on focused pane
                             KeyCode::Up | KeyCode::Char('k') => {
                                 match self.renderer.state.focused_pane {
@@ -653,15 +659,9 @@ impl FancyTuiController {
         let mut terminal = Self::setup_terminal()?;
 
         loop {
-            // Prepare choices with highlighting and numbers
-            let choice_tuples: Vec<(String, bool)> = choices
-                .iter()
-                .enumerate()
-                .map(|(idx, text)| {
-                    let numbered_text = format!("[{}] {}", idx, text);
-                    (numbered_text, idx == self.renderer.state.highlighted_choice)
-                })
-                .collect();
+            // Prepare choices with highlighting and numbers using shared function
+            let choice_tuples =
+                crate::game::display::format_choices_with_numbers(choices, self.renderer.state.highlighted_choice);
 
             terminal.draw(|f| {
                 self.renderer.draw_ui(f, view, Some(prompt), &choice_tuples);

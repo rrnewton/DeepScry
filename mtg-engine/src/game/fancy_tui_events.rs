@@ -32,6 +32,8 @@ pub enum EventResult {
     RandomChoice,
     /// User selected a specific choice index (for Actions pane)
     SelectChoice(usize),
+    /// User wants to see battlefield state in log
+    ShowBattlefield,
 }
 
 /// Abstract key code for cross-platform input handling
@@ -56,11 +58,12 @@ pub enum KeyInput {
     FocusStack,      // S
 
     // Actions
-    Pass,      // P or Q
-    Undo,      // Z (uppercase)
-    Random,    // R
-    CtrlC,     // Exit
-    Digit(u8), // 0-9 for quick choice selection
+    Pass,            // P or Q
+    Undo,            // Z (uppercase)
+    Random,          // R
+    CtrlC,           // Exit
+    Digit(u8),       // 0-9 for quick choice selection
+    ShowBattlefield, // B - log battlefield state
 }
 
 /// Constants for 2D battlefield navigation
@@ -155,6 +158,9 @@ pub fn handle_key_event(
 
         // Random choice
         KeyInput::Random => EventResult::RandomChoice,
+
+        // Show battlefield in log
+        KeyInput::ShowBattlefield => EventResult::ShowBattlefield,
 
         // Digit selection (only in Actions pane)
         KeyInput::Digit(d) => {
