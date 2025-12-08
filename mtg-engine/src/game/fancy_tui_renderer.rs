@@ -1206,6 +1206,7 @@ impl FancyTuiRenderer {
     }
 
     /// Test if word-wrap layout fits in area (excluding header row).
+    /// Labels are only in header, so we only test card layout here.
     fn test_wordwrap_layout_fits(
         &self,
         area: Rect,
@@ -1224,14 +1225,8 @@ impl FancyTuiRenderer {
 
         for item in items {
             match item {
-                BattlefieldItem::Label {
-                    text,
-                    force_newline_before,
-                    ..
-                } => {
-                    let label_width = (text.len() + 1) as u16; // "Label:"
-
-                    // Handle forced newline
+                BattlefieldItem::Label { force_newline_before, .. } => {
+                    // Labels are in header only, but handle forced newlines
                     if *force_newline_before && current_x > 0 {
                         y_offset += row_height + Self::CARD_SPACING;
                         current_x = 0;
@@ -1239,19 +1234,6 @@ impl FancyTuiRenderer {
                             return false;
                         }
                     }
-
-                    // Check if label fits on current row (need room for label + at least 1 card)
-                    let min_section_width = label_width + Self::CARD_SPACING + card_width;
-                    if current_x > 0 && current_x + min_section_width > area.width {
-                        // Wrap to next row
-                        y_offset += row_height + Self::CARD_SPACING;
-                        current_x = 0;
-                        if y_offset + card_height > area.height {
-                            return false;
-                        }
-                    }
-
-                    current_x += label_width + Self::CARD_SPACING;
                 }
                 BattlefieldItem::Card { entity } => {
                     let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
@@ -1290,8 +1272,6 @@ impl FancyTuiRenderer {
         card_width: u16,
         card_height: u16,
     ) {
-        use ratatui::text::Text;
-
         if area.height == 0 || area.width == 0 {
             return;
         }
@@ -1311,56 +1291,21 @@ impl FancyTuiRenderer {
             return;
         }
 
-        // Render content using word-wrap
+        // Render content using word-wrap (cards only, labels are in header)
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
         let mut row_height = card_height;
-        let mut current_label_color = Color::White;
 
         for item in items {
             match item {
-                BattlefieldItem::Label {
-                    text,
-                    color,
-                    force_newline_before,
-                    ..
-                } => {
-                    current_label_color = *color;
-                    let label_text = format!("{}:", text);
-                    let label_width = label_text.len() as u16;
-
-                    // Handle forced newline
+                BattlefieldItem::Label { force_newline_before, .. } => {
+                    // Labels are rendered in header row only.
+                    // Here we just handle forced newlines between sections.
                     if *force_newline_before && current_x > 0 {
                         y_offset += row_height + Self::CARD_SPACING;
                         current_x = 0;
                         row_height = card_height;
                     }
-
-                    // Check if label + at least one card fits on current row
-                    let min_section_width = label_width + Self::CARD_SPACING + card_width;
-                    if current_x > 0 && current_x + min_section_width > content_area.width {
-                        // Wrap to next row
-                        y_offset += row_height + Self::CARD_SPACING;
-                        current_x = 0;
-                        row_height = card_height;
-                    }
-
-                    // Only render label if we have vertical space
-                    if y_offset + card_height <= content_area.height {
-                        let label_area = Rect {
-                            x: content_area.x + current_x,
-                            y: content_area.y + y_offset,
-                            width: label_width,
-                            height: 1,
-                        };
-                        let styled_label = Text::from(Span::styled(
-                            label_text,
-                            Style::default().fg(*color).add_modifier(Modifier::BOLD),
-                        ));
-                        f.render_widget(Paragraph::new(styled_label), label_area);
-                    }
-
-                    current_x += label_width + Self::CARD_SPACING;
                 }
                 BattlefieldItem::Card { entity } => {
                     let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
@@ -1389,18 +1334,16 @@ impl FancyTuiRenderer {
                 }
             }
         }
-
-        // Suppress unused variable warning
-        let _ = current_label_color;
     }
 
     /// Render header row with section labels and counts.
+    /// Always shows all sections, with entity count in parentheses.
     fn render_battlefield_header(&self, f: &mut Frame, area: Rect, items: &[BattlefieldItem]) {
         if area.height == 0 {
             return;
         }
 
-        // Collect labels with their counts
+        // Collect labels with their counts - always show all sections
         let mut header_parts: Vec<(String, Color)> = Vec::new();
         for item in items {
             if let BattlefieldItem::Label {
@@ -1410,12 +1353,9 @@ impl FancyTuiRenderer {
                 ..
             } = item
             {
-                let count_str = if *entity_count > 1 {
-                    format!("{}({})", text, entity_count)
-                } else {
-                    text.clone()
-                };
-                header_parts.push((count_str, *color));
+                // Always show count to make it clear how many entities per section
+                let label_str = format!("{}({})", text, entity_count);
+                header_parts.push((label_str, *color));
             }
         }
 
@@ -1423,7 +1363,7 @@ impl FancyTuiRenderer {
         let mut spans: Vec<Span> = Vec::new();
         for (i, (text, color)) in header_parts.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::raw(" | "));
+                spans.push(Span::raw(" "));
             }
             spans.push(Span::styled(text.clone(), Style::default().fg(*color)));
         }
