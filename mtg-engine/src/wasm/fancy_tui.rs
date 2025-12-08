@@ -11,7 +11,10 @@
 //! - Human input uses the interrupt pattern via run_until_input()
 
 use crate::core::PlayerId;
-use crate::game::controller::{ChoiceContext, GameStateView};
+use crate::game::controller::{
+    prompt_discard, prompt_spell_ability, prompt_target, ChoiceContext, GameStateView, PROMPT_ATTACKERS,
+    PROMPT_BLOCKERS, PROMPT_DAMAGE_ORDER, PROMPT_LIBRARY_SEARCH,
+};
 use crate::game::fancy_tui_events::{handle_key_event, handle_mouse_click, EventResult, KeyInput};
 use crate::game::logger::OutputMode;
 use crate::game::{FancyTuiRenderer, GameLoop, GameLoopState, GameState, VerbosityLevel};
@@ -789,16 +792,25 @@ impl WasmFancyTuiState {
     }
 
     /// Update the current_choices display from a ChoiceContext
+    ///
+    /// Uses shared formatting functions from controller.rs to ensure consistency
+    /// with native TUI.
     fn update_choices_from_context(&mut self, context: &ChoiceContext) {
         self.current_choices.clear();
         let choices: Vec<String> = match context {
             ChoiceContext::SpellAbility { formatted_choices, .. } => formatted_choices.clone(),
-            ChoiceContext::Targets { formatted_targets, .. } => formatted_targets.clone(),
+            ChoiceContext::Targets { formatted_targets, .. } => {
+                // Add "No target" as first option to match TUI
+                std::iter::once("No target".to_string())
+                    .chain(formatted_targets.clone())
+                    .collect()
+            }
             ChoiceContext::ManaSources { formatted_sources, .. } => formatted_sources.clone(),
             ChoiceContext::Attackers {
                 formatted_creatures, ..
             } => {
-                let mut choices = vec!["Done (no more attackers)".to_string()];
+                // Use "Done" to match TUI (not "Done (no more attackers)")
+                let mut choices = vec!["Done".to_string()];
                 choices.extend(formatted_creatures.clone());
                 choices
             }
@@ -807,21 +819,17 @@ impl WasmFancyTuiState {
                 formatted_attackers,
                 ..
             } => {
-                let mut choices = vec!["Done (no blockers)".to_string()];
-                for (i, blocker) in formatted_blockers.iter().enumerate() {
-                    for (j, attacker) in formatted_attackers.iter().enumerate() {
-                        choices.push(format!("{} blocks {} (b{}a{})", blocker, attacker, i, j));
+                // Use "Done" to match TUI and simpler block format without indices
+                let mut choices = vec!["Done".to_string()];
+                for blocker in formatted_blockers.iter() {
+                    for attacker in formatted_attackers.iter() {
+                        choices.push(format!("{} blocks {}", blocker, attacker));
                     }
                 }
                 choices
             }
             ChoiceContext::DamageOrder { formatted_blockers, .. } => formatted_blockers.clone(),
-            ChoiceContext::Discard {
-                formatted_hand, count, ..
-            } => {
-                self.current_prompt = Some(format!("Discard {} card(s):", count));
-                formatted_hand.clone()
-            }
+            ChoiceContext::Discard { formatted_hand, .. } => formatted_hand.clone(),
             ChoiceContext::LibrarySearch { formatted_cards, .. } => {
                 let mut choices = vec!["Fail to find".to_string()];
                 choices.extend(formatted_cards.clone());
@@ -829,16 +837,39 @@ impl WasmFancyTuiState {
             }
         };
 
-        // Set prompt based on context type
+        // Set prompt based on context type using shared prompt functions
         let prompt = match context {
-            ChoiceContext::SpellAbility { .. } => "Choose an action:".to_string(),
-            ChoiceContext::Targets { .. } => "Choose a target:".to_string(),
-            ChoiceContext::ManaSources { .. } => "Choose mana sources:".to_string(),
-            ChoiceContext::Attackers { .. } => "Declare attackers:".to_string(),
-            ChoiceContext::Blockers { .. } => "Declare blockers:".to_string(),
-            ChoiceContext::DamageOrder { .. } => "Choose damage order:".to_string(),
-            ChoiceContext::Discard { count, .. } => format!("Discard {} card(s):", count),
-            ChoiceContext::LibrarySearch { .. } => "Search library:".to_string(),
+            ChoiceContext::SpellAbility { .. } => {
+                // Get player name from priority player
+                if let Some(priority_player) = self.game.turn.priority_player {
+                    let player_name = self
+                        .game
+                        .players
+                        .iter()
+                        .find(|p| p.id == priority_player)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("Player");
+                    prompt_spell_ability(player_name)
+                } else {
+                    prompt_spell_ability("Player")
+                }
+            }
+            ChoiceContext::Targets { spell_id, .. } => {
+                // Get spell name from game state
+                let spell_name = self
+                    .game
+                    .cards
+                    .get(*spell_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("spell");
+                prompt_target(spell_name)
+            }
+            ChoiceContext::ManaSources { .. } => "Choose mana source:".to_string(),
+            ChoiceContext::Attackers { .. } => PROMPT_ATTACKERS.to_string(),
+            ChoiceContext::Blockers { .. } => PROMPT_BLOCKERS.to_string(),
+            ChoiceContext::DamageOrder { .. } => PROMPT_DAMAGE_ORDER.to_string(),
+            ChoiceContext::Discard { count, .. } => prompt_discard(*count),
+            ChoiceContext::LibrarySearch { .. } => PROMPT_LIBRARY_SEARCH.to_string(),
         };
         self.current_prompt = Some(prompt);
 

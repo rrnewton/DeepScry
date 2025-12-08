@@ -7,7 +7,10 @@
 //! WASM browser implementation for exact visual parity.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
+use crate::game::controller::{
+    format_card_choices, format_spell_ability_choices, format_target_choices, prompt_mana_source, prompt_spell_ability,
+    prompt_target, ChoiceResult, GameStateView, PlayerController, PROMPT_ATTACKERS,
+};
 use crate::game::fancy_tui_renderer::{BattlefieldEntity, ChoiceContext, FancyTuiRenderer, FocusedPane};
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
@@ -19,7 +22,6 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use signal_hook::consts::signal::{SIGCONT, SIGTSTP};
 use signal_hook::flag as signal_flag;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -734,24 +736,10 @@ impl PlayerController for FancyTuiController {
             .collect();
 
         let player_name = view.player_name();
-        let prompt = format!("Priority {}: Choose action", player_name);
+        let prompt = prompt_spell_ability(&player_name);
 
-        let choices: Vec<String> = std::iter::once("Pass".to_string())
-            .chain(available.iter().map(|ability| match ability {
-                SpellAbility::PlayLand { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("Play land: {}", name)
-                }
-                SpellAbility::CastSpell { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("Cast spell: {}", name)
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    format!("Activate: {}", name)
-                }
-            }))
-            .collect();
+        // Use shared formatting function for consistency with WASM
+        let choices = format_spell_ability_choices(view, available);
 
         match self.prompt_for_choice(view, &prompt, &choices) {
             Ok(PromptResult::Undo) => {
@@ -820,38 +808,10 @@ impl PlayerController for FancyTuiController {
         self.renderer.state.valid_choices = valid_targets.to_vec();
 
         let spell_name = view.card_name(spell).unwrap_or_default();
-        let prompt = format!("Choose target for: {}", spell_name);
+        let prompt = prompt_target(&spell_name);
 
-        // Count how many times each card name appears (to detect duplicates)
-        let mut name_counts: HashMap<String, usize> = HashMap::new();
-        for &card_id in valid_targets {
-            let name = view.card_name(card_id).unwrap_or_default();
-            *name_counts.entry(name).or_insert(0) += 1;
-        }
-
-        let choices: Vec<String> = std::iter::once("No target".to_string())
-            .chain(valid_targets.iter().map(|&card_id| {
-                let name = view.card_name(card_id).unwrap_or_default();
-
-                // Determine ownership
-                let controller = view.get_card(card_id).map(|c| c.controller);
-                let ownership = if controller == Some(self.player_id) {
-                    "(yours)"
-                } else {
-                    "(theirs)"
-                };
-
-                // Show ID only if there are duplicates of this card name
-                let id_part = if *name_counts.get(&name).unwrap_or(&0) > 1 {
-                    format!(" #{}", card_id.as_u32())
-                } else {
-                    String::new()
-                };
-
-                let tapped = if view.is_tapped(card_id) { " [T]" } else { "" };
-                format!("{}{}{} {}", name, id_part, tapped, ownership)
-            }))
-            .collect();
+        // Use shared formatting function for consistency with WASM
+        let choices = format_target_choices(view, valid_targets, self.player_id);
 
         let mut targets = SmallVec::new();
         match self.prompt_for_choice(view, &prompt, &choices) {
@@ -904,11 +864,9 @@ impl PlayerController for FancyTuiController {
         }
 
         for i in 0..needed {
-            let prompt = format!("Pay mana {}/{}: Select source", i + 1, needed);
-            let choices: Vec<String> = available_sources
-                .iter()
-                .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id)))
-                .collect();
+            let prompt = prompt_mana_source(i + 1, needed);
+            // Use shared formatting for consistency with WASM
+            let choices = format_card_choices(view, available_sources, self.player_id);
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => {
@@ -943,12 +901,14 @@ impl PlayerController for FancyTuiController {
         let mut attackers = SmallVec::new();
 
         loop {
-            let prompt = "Declare Attackers (select creatures or Done)";
+            let prompt = PROMPT_ATTACKERS;
+            // Use shared formatting and add selection markers
+            let base_choices = format_card_choices(view, available_creatures, self.player_id);
             let choices: Vec<String> = std::iter::once("Done".to_string())
-                .chain(available_creatures.iter().map(|&card_id| {
-                    let name = view.card_name(card_id).unwrap_or_default();
+                .chain(base_choices.iter().enumerate().map(|(i, choice)| {
+                    let card_id = available_creatures[i];
                     let selected = if attackers.contains(&card_id) { " [X]" } else { "" };
-                    format!("{}{}", name, selected)
+                    format!("{}{}", choice, selected)
                 }))
                 .collect();
 
@@ -1017,31 +977,17 @@ impl PlayerController for FancyTuiController {
 
         let mut blocks = SmallVec::new();
 
-        // Count how many times each attacker name appears (to detect duplicates)
-        let mut name_counts: HashMap<String, usize> = HashMap::new();
-        for &card_id in attackers {
-            let name = view.card_name(card_id).unwrap_or_default();
-            *name_counts.entry(name).or_insert(0) += 1;
-        }
+        // Pre-format attackers using shared formatting
+        let formatted_attackers = format_card_choices(view, attackers, self.player_id);
 
         // For each blocker, ask which attacker to block
         for &blocker_id in available_blockers {
             let blocker_name = view.card_name(blocker_id).unwrap_or_default();
             let prompt = format!("{}: Block which attacker?", blocker_name);
 
+            // Use shared formatting for attacker choices
             let choices: Vec<String> = std::iter::once("Skip".to_string())
-                .chain(attackers.iter().map(|&attacker_id| {
-                    let name = view.card_name(attacker_id).unwrap_or_default();
-
-                    // Show ID only if there are duplicates of this card name
-                    let id_part = if *name_counts.get(&name).unwrap_or(&0) > 1 {
-                        format!(" #{}", attacker_id.as_u32())
-                    } else {
-                        String::new()
-                    };
-
-                    format!("{}{}", name, id_part)
-                }))
+                .chain(formatted_attackers.clone())
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {

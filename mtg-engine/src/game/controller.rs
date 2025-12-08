@@ -18,6 +18,7 @@ use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::{GameState, Step};
 use crate::zones::Zone;
 use smallvec::SmallVec;
+use std::collections::HashMap;
 
 /// Format available spell/ability choices as a menu
 ///
@@ -207,6 +208,182 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
 
     output
 }
+
+// =============================================================================
+// Shared Menu Formatting Functions
+// =============================================================================
+// These functions provide consistent formatting for menu choices across both
+// native TUI and WASM implementations. Both implementations should use these
+// to ensure identical user-facing strings.
+
+/// Format a single spell ability choice for display
+///
+/// Returns a string like "Play land: Forest" or "Cast spell: Lightning Bolt"
+pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility) -> String {
+    match ability {
+        SpellAbility::PlayLand { card_id } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("Play land: {}", name)
+        }
+        SpellAbility::CastSpell { card_id } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("Cast spell: {}", name)
+        }
+        SpellAbility::ActivateAbility { card_id, .. } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("Activate: {}", name)
+        }
+    }
+}
+
+/// Format all spell ability choices as a Vec of strings
+///
+/// Index 0 is always "Pass", subsequent indices are formatted abilities.
+/// This is used by both TUI and WASM to generate menu choices.
+pub fn format_spell_ability_choices(view: &GameStateView, available: &[SpellAbility]) -> Vec<String> {
+    std::iter::once("Pass".to_string())
+        .chain(
+            available
+                .iter()
+                .map(|ability| format_spell_ability_choice(view, ability)),
+        )
+        .collect()
+}
+
+/// Format a single card for target/selection display
+///
+/// Includes ownership indicator and ID disambiguation when needed.
+/// Format: "<Name> #ID [T] (yours)" or "<Name> (theirs)"
+///
+/// # Arguments
+/// * `view` - Game state view
+/// * `card_id` - The card to format
+/// * `viewer_id` - The player viewing this choice (for ownership)
+/// * `name_counts` - Map of card names to occurrence counts (for ID disambiguation)
+pub fn format_card_choice(
+    view: &GameStateView,
+    card_id: CardId,
+    viewer_id: PlayerId,
+    name_counts: &HashMap<String, usize>,
+) -> String {
+    let name = view.card_name(card_id).unwrap_or_default();
+
+    // Determine ownership
+    let controller = view.get_card(card_id).map(|c| c.controller);
+    let ownership = if controller == Some(viewer_id) {
+        "(yours)"
+    } else {
+        "(theirs)"
+    };
+
+    // Show ID only if there are duplicates of this card name
+    let id_part = if *name_counts.get(&name).unwrap_or(&0) > 1 {
+        format!(" #{}", card_id.as_u32())
+    } else {
+        String::new()
+    };
+
+    let tapped = if view.is_tapped(card_id) { " [T]" } else { "" };
+    format!("{}{}{} {}", name, id_part, tapped, ownership)
+}
+
+/// Count occurrences of each card name in a list
+///
+/// Used by format_card_choice to determine if ID disambiguation is needed.
+pub fn count_card_names(view: &GameStateView, cards: &[CardId]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for &card_id in cards {
+        let name = view.card_name(card_id).unwrap_or_default();
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// Format all cards for target selection display
+///
+/// Each card is formatted with ownership and ID disambiguation.
+pub fn format_card_choices(view: &GameStateView, cards: &[CardId], viewer_id: PlayerId) -> Vec<String> {
+    let name_counts = count_card_names(view, cards);
+    cards
+        .iter()
+        .map(|&card_id| format_card_choice(view, card_id, viewer_id, &name_counts))
+        .collect()
+}
+
+/// Format target choices with "No target" as first option
+///
+/// Returns a Vec where index 0 is "No target" and subsequent indices are formatted targets.
+pub fn format_target_choices(view: &GameStateView, valid_targets: &[CardId], viewer_id: PlayerId) -> Vec<String> {
+    std::iter::once("No target".to_string())
+        .chain(format_card_choices(view, valid_targets, viewer_id))
+        .collect()
+}
+
+/// Format attacker choices with "Done" as first option
+///
+/// Returns a Vec where index 0 is "Done" and subsequent indices are formatted creatures.
+pub fn format_attacker_choices(
+    view: &GameStateView,
+    available_creatures: &[CardId],
+    viewer_id: PlayerId,
+) -> Vec<String> {
+    std::iter::once("Done".to_string())
+        .chain(format_card_choices(view, available_creatures, viewer_id))
+        .collect()
+}
+
+/// Format blocker assignment choices
+///
+/// Returns a Vec where index 0 is "Done" and subsequent entries are "Blocker blocks Attacker" pairs.
+pub fn format_blocker_choices(
+    view: &GameStateView,
+    available_blockers: &[CardId],
+    attackers: &[CardId],
+    viewer_id: PlayerId,
+) -> Vec<String> {
+    let blocker_names = format_card_choices(view, available_blockers, viewer_id);
+    let attacker_names = format_card_choices(view, attackers, viewer_id);
+
+    let mut choices = vec!["Done".to_string()];
+    for blocker_name in &blocker_names {
+        for attacker_name in &attacker_names {
+            choices.push(format!("{} blocks {}", blocker_name, attacker_name));
+        }
+    }
+    choices
+}
+
+/// Get the standard prompt for spell/ability selection
+pub fn prompt_spell_ability(player_name: &str) -> String {
+    format!("Priority {}: Choose action", player_name)
+}
+
+/// Get the standard prompt for target selection
+pub fn prompt_target(spell_name: &str) -> String {
+    format!("Choose target for: {}", spell_name)
+}
+
+/// Get the standard prompt for attacker declaration
+pub const PROMPT_ATTACKERS: &str = "Declare Attackers (select creatures or Done)";
+
+/// Get the standard prompt for blocker declaration
+pub const PROMPT_BLOCKERS: &str = "Declare Blockers (select pairs or Done)";
+
+/// Get the standard prompt for mana source selection
+pub fn prompt_mana_source(current: usize, total: usize) -> String {
+    format!("Pay mana {}/{}: Select source", current, total)
+}
+
+/// Get the standard prompt for discard selection
+pub fn prompt_discard(count: usize) -> String {
+    format!("Discard {} card(s):", count)
+}
+
+/// Get the standard prompt for library search
+pub const PROMPT_LIBRARY_SEARCH: &str = "Search library:";
+
+/// Get the standard prompt for damage order assignment
+pub const PROMPT_DAMAGE_ORDER: &str = "Choose damage order:";
 
 /// Read-only view of game state for controllers
 ///

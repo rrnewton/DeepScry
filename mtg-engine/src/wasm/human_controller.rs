@@ -17,7 +17,9 @@
 //! resuming.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController};
+use crate::game::controller::{
+    format_card_choices, format_spell_ability_choices, ChoiceContext, ChoiceResult, GameStateView, PlayerController,
+};
 use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
 
@@ -80,45 +82,6 @@ impl WasmHumanController {
     pub fn clear_pending_choice(&mut self) {
         self.pending_choice = None;
     }
-
-    /// Helper to format spell abilities for display
-    fn format_spell_abilities(available: &[SpellAbility], view: &GameStateView) -> Vec<String> {
-        let mut formatted = vec!["Pass (do nothing)".to_string()];
-        for ability in available {
-            let s = match ability {
-                SpellAbility::PlayLand { card_id } => {
-                    let name = view.get_card(*card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                    format!("Play land: {}", name)
-                }
-                SpellAbility::CastSpell { card_id } => {
-                    let name = view.get_card(*card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                    let cost = view
-                        .get_card(*card_id)
-                        .map(|c| c.mana_cost.to_string())
-                        .unwrap_or_default();
-                    format!("Cast: {} ({})", name, cost)
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    let name = view.get_card(*card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                    format!("Activate ability of {}", name)
-                }
-            };
-            formatted.push(s);
-        }
-        formatted
-    }
-
-    /// Helper to format cards for display
-    fn format_cards(cards: &[CardId], view: &GameStateView) -> Vec<String> {
-        cards
-            .iter()
-            .map(|id| {
-                view.get_card(*id)
-                    .map(|c| c.name.to_string())
-                    .unwrap_or_else(|| format!("Unknown ({})", id))
-            })
-            .collect()
-    }
 }
 
 impl PlayerController for WasmHumanController {
@@ -150,7 +113,7 @@ impl PlayerController for WasmHumanController {
         // No pending choice - request input
         ChoiceResult::NeedInput(ChoiceContext::SpellAbility {
             available: available.to_vec(),
-            formatted_choices: Self::format_spell_abilities(available, view),
+            formatted_choices: format_spell_ability_choices(view, available),
         })
     }
 
@@ -173,7 +136,7 @@ impl PlayerController for WasmHumanController {
         ChoiceResult::NeedInput(ChoiceContext::Targets {
             spell_id: spell,
             valid_targets: valid_targets.to_vec(),
-            formatted_targets: Self::format_cards(valid_targets, view),
+            formatted_targets: format_card_choices(view, valid_targets, self.player_id),
         })
     }
 
@@ -196,7 +159,7 @@ impl PlayerController for WasmHumanController {
         ChoiceResult::NeedInput(ChoiceContext::ManaSources {
             cost: *cost,
             available_sources: available_sources.to_vec(),
-            formatted_sources: Self::format_cards(available_sources, view),
+            formatted_sources: format_card_choices(view, available_sources, self.player_id),
         })
     }
 
@@ -217,7 +180,7 @@ impl PlayerController for WasmHumanController {
         // No pending choice - request input
         ChoiceResult::NeedInput(ChoiceContext::Attackers {
             available_creatures: available_creatures.to_vec(),
-            formatted_creatures: Self::format_cards(available_creatures, view),
+            formatted_creatures: format_card_choices(view, available_creatures, self.player_id),
         })
     }
 
@@ -244,8 +207,8 @@ impl PlayerController for WasmHumanController {
         ChoiceResult::NeedInput(ChoiceContext::Blockers {
             available_blockers: available_blockers.to_vec(),
             attackers: attackers.to_vec(),
-            formatted_blockers: Self::format_cards(available_blockers, view),
-            formatted_attackers: Self::format_cards(attackers, view),
+            formatted_blockers: format_card_choices(view, available_blockers, self.player_id),
+            formatted_attackers: format_card_choices(view, attackers, self.player_id),
         })
     }
 
@@ -265,7 +228,7 @@ impl PlayerController for WasmHumanController {
         ChoiceResult::NeedInput(ChoiceContext::DamageOrder {
             attacker,
             blockers: blockers.to_vec(),
-            formatted_blockers: Self::format_cards(blockers, view),
+            formatted_blockers: format_card_choices(view, blockers, self.player_id),
         })
     }
 
@@ -285,7 +248,7 @@ impl PlayerController for WasmHumanController {
         ChoiceResult::NeedInput(ChoiceContext::Discard {
             hand: hand.to_vec(),
             count,
-            formatted_hand: Self::format_cards(hand, view),
+            formatted_hand: format_card_choices(view, hand, self.player_id),
         })
     }
 
@@ -307,7 +270,7 @@ impl PlayerController for WasmHumanController {
         // No pending choice - request input
         ChoiceResult::NeedInput(ChoiceContext::LibrarySearch {
             valid_cards: valid_cards.to_vec(),
-            formatted_cards: Self::format_cards(valid_cards, view),
+            formatted_cards: format_card_choices(view, valid_cards, self.player_id),
         })
     }
 
