@@ -1,0 +1,21 @@
+[metadata]
+Name=Complex Battlefield Rendering Test
+Goal=Win
+Turns=1
+Difficulty=Easy
+Description=Test battlefield rendering with all permanent types: lands, creatures, artifacts, and enchantments on both sides
+
+[state]
+turn=5
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt;Giant Growth
+p0battlefield=Forest;Forest;Island;Mountain;Plains;Swamp;Llanowar Elves;Grizzly Bears;Prodigal Sorcerer;Serra Angel;Sol Ring;Mox Jet;Animate Dead;Sylvan Library
+p0library=Island;Forest;Mountain
+p0graveyard=
+p1life=20
+p1hand=Terror;Counterspell
+p1battlefield=Badlands;Tundra;Tropical Island;Underground Sea;Chaos Orb;Black Lotus;Mox Ruby;Hypnotic Specter;Juzam Djinn;Royal Assassin;Glorious Anthem;Necropotence
+p1library=Swamp;Island;Mountain
+p1graveyard=

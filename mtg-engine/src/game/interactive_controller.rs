@@ -1198,6 +1198,71 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(Some(valid_cards[0]))
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        use std::io;
+
+        if valid_permanents.is_empty() || count == 0 {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        println!("\n=== Sacrifice {} ===", card_type_description);
+        println!("You must sacrifice {} {}:", count, card_type_description);
+
+        let mut sacrifices: SmallVec<[CardId; 8]> = SmallVec::new();
+
+        while sacrifices.len() < count && sacrifices.len() < valid_permanents.len() {
+            println!(
+                "\nChoose a {} to sacrifice ({} remaining):",
+                card_type_description,
+                count - sacrifices.len()
+            );
+
+            // Show available permanents
+            let available: Vec<_> = valid_permanents
+                .iter()
+                .filter(|&card_id| !sacrifices.contains(card_id))
+                .collect();
+
+            for (i, &&card_id) in available.iter().enumerate() {
+                if let Some(card_name) = view.get_card_name(card_id) {
+                    println!("  [{}] {}", i, card_name);
+                } else {
+                    println!("  [{}] {:?}", i, card_id);
+                }
+            }
+
+            print!("Enter choice (0-{}): ", available.len().saturating_sub(1));
+            let _ = io::Write::flush(&mut io::stdout());
+
+            let mut input = String::new();
+            if io::stdin().read_line(&mut input).is_err() {
+                // On input error, auto-select first available
+                if let Some(&&card_id) = available.first() {
+                    sacrifices.push(card_id);
+                }
+                continue;
+            }
+
+            let trimmed = input.trim();
+            if let Ok(idx) = trimmed.parse::<usize>() {
+                if idx < available.len() {
+                    sacrifices.push(*available[idx]);
+                    continue;
+                }
+            }
+
+            println!("Invalid choice, please try again.");
+        }
+
+        ChoiceResult::Ok(sacrifices)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Optional: log when player passes
     }

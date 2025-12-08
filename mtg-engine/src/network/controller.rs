@@ -614,6 +614,54 @@ impl PlayerController for NetworkController {
         }
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Build options
+        let options: Vec<String> = valid_permanents
+            .iter()
+            .map(|&card_id| format!("Sacrifice: {}", self.format_card(view, card_id)))
+            .collect();
+
+        // Compute state hash
+        let state_hash = self.compute_simple_hash(view);
+
+        // Send request
+        let choice_type = ChoiceType::Sacrifice {
+            valid_count: valid_permanents.len(),
+            count,
+            card_type_description: card_type_description.to_string(),
+        };
+
+        // Collect multiple choices for sacrifice count
+        let mut sacrifices = SmallVec::new();
+        for _ in 0..count {
+            if sacrifices.len() >= valid_permanents.len() {
+                break;
+            }
+
+            match self.request_choice(view, choice_type.clone(), options.clone(), state_hash) {
+                Ok(idx) => {
+                    self.increment_choice_seq();
+                    if idx < valid_permanents.len() {
+                        let card_id = valid_permanents[idx];
+                        if !sacrifices.contains(&card_id) {
+                            sacrifices.push(card_id);
+                        }
+                    }
+                }
+                Err(NetworkError::Disconnected) => return ChoiceResult::ExitGame,
+                Err(e) => return ChoiceResult::Error(e.to_string()),
+            }
+        }
+
+        ChoiceResult::Ok(sacrifices)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // No action needed for network controller
     }

@@ -122,6 +122,17 @@ impl PlayerController for AliceController {
         ChoiceResult::Ok(valid_cards.first().copied())
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        _view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        _card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Alice sacrifices the first N permanents
+        ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {}
 
     fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
@@ -238,6 +249,17 @@ impl PlayerController for BobController {
     fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
         // Bob picks the first valid card if available
         ChoiceResult::Ok(valid_cards.first().copied())
+    }
+
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        _view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        _card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Bob sacrifices the first N permanents
+        ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {}

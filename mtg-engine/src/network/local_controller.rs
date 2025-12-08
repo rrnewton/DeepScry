@@ -465,6 +465,43 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         result
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        self.process_pending_reveals();
+
+        if self.disconnected {
+            return ChoiceResult::ExitGame;
+        }
+
+        let result = self
+            .inner
+            .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description);
+
+        if let ChoiceResult::Ok(permanents) = &result {
+            // Encode as first permanent index for now
+            // TODO: Multi-select encoding for multiple permanents
+            let idx = if permanents.is_empty() {
+                valid_permanents.len()
+            } else {
+                valid_permanents.iter().position(|&p| p == permanents[0]).unwrap_or(0)
+            };
+            let desc = format!("Sacrifice: {:?}", permanents);
+            let action_count = view.action_count() as u64;
+            let last_actions = self.get_debug_actions(view);
+            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions) {
+                log::error!("Failed to send choice: {}", e);
+                return ChoiceResult::ExitGame;
+            }
+        }
+
+        result
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         self.inner.on_priority_passed(view);
     }

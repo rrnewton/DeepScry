@@ -373,6 +373,18 @@ impl PlayerController for FancyFixedController {
         self.delegate.choose_from_library(view, valid_cards)
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Skip screenshot for sacrifice choice
+        self.delegate
+            .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         self.delegate.on_priority_passed(view);
     }

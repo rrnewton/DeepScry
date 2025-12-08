@@ -128,6 +128,17 @@ impl PlayerController for ZeroController {
         ChoiceResult::Ok(valid_cards.first().copied())
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        _view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        _card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Sacrifice the first N permanents
+        ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Zero controller doesn't need to log
     }

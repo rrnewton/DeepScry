@@ -42,6 +42,8 @@ pub enum PendingChoice {
     Discard(Vec<usize>),
     /// Library search result (index into valid_cards, or None to fail)
     LibrarySearch(Option<usize>),
+    /// Sacrifice selection (indices into valid_permanents)
+    Sacrifice(Vec<usize>),
 }
 
 /// Human controller for WASM/browser gameplay
@@ -271,6 +273,31 @@ impl PlayerController for WasmHumanController {
         ChoiceResult::NeedInput(ChoiceContext::LibrarySearch {
             valid_cards: valid_cards.to_vec(),
             formatted_cards: format_card_choices(view, valid_cards, self.player_id),
+        })
+    }
+
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Check for pending choice
+        if let Some(PendingChoice::Sacrifice(indices)) = self.pending_choice.take() {
+            let sacrifices: SmallVec<[CardId; 8]> = indices
+                .into_iter()
+                .filter_map(|i| valid_permanents.get(i).copied())
+                .collect();
+            return ChoiceResult::Ok(sacrifices);
+        }
+
+        // No pending choice - request input
+        ChoiceResult::NeedInput(ChoiceContext::SacrificePermanents {
+            valid_permanents: valid_permanents.to_vec(),
+            count,
+            card_type_description: card_type_description.to_string(),
+            formatted_permanents: format_card_choices(view, valid_permanents, self.player_id),
         })
     }
 

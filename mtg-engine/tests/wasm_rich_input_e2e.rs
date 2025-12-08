@@ -239,6 +239,16 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
             ChoiceResult::Ok(valid_cards.first().copied())
         }
 
+        fn choose_permanents_to_sacrifice(
+            &mut self,
+            _view: &GameStateView,
+            valid_permanents: &[CardId],
+            count: usize,
+            _card_type_description: &str,
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
+        }
+
         fn on_priority_passed(&mut self, _view: &GameStateView) {}
         fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
         fn get_controller_type(&self) -> ControllerType {
@@ -612,6 +622,16 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
             valid_cards: &[CardId],
         ) -> ChoiceResult<Option<CardId>> {
             ChoiceResult::Ok(valid_cards.first().copied())
+        }
+
+        fn choose_permanents_to_sacrifice(
+            &mut self,
+            _view: &GameStateView,
+            valid_permanents: &[CardId],
+            count: usize,
+            _card_type_description: &str,
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
         }
 
         fn on_priority_passed(&mut self, _view: &GameStateView) {}

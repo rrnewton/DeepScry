@@ -1,0 +1,22 @@
+[metadata]
+Name=Balance Spell Sacrifice Test
+Goal=Win
+Turns=5
+Difficulty=Hard
+Description=Tests Balance spell effect where each player sacrifices creatures until all players have equal amounts. P0 has 0 creatures, P1 has 3 - after Balance, P1 must sacrifice all 3 creatures. P0 has Balance in hand and enough mana.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Balance
+p0battlefield=Plains; Plains
+p0library=Plains; Plains; Plains
+p0graveyard=
+
+p1life=20
+p1hand=
+p1battlefield=Grizzly Bears; Llanowar Elves; Hill Giant
+p1library=Forest; Forest; Forest
+p1graveyard=

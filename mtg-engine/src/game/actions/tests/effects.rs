@@ -1264,4 +1264,158 @@ mod tests {
             cityscape.activated_abilities
         );
     }
+
+    /// Test Balance spell effect - equalizes creatures across all players
+    ///
+    /// Balance is a classic white sorcery that equalizes lands, creatures, and hands.
+    /// This test verifies that after casting Balance:
+    /// - Players with more creatures than the minimum must sacrifice down to match
+    /// - The sacrifice is executed correctly (creatures move to graveyard)
+    #[test]
+    fn test_balance_creature_sacrifice() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let _p1_id = game.players[0].id; // P1 has 0 creatures
+        let p2_id = game.players[1].id;
+
+        // P1 has 0 creatures
+        // P2 has 3 creatures - should sacrifice all 3 after Balance
+
+        // Create 3 creatures for P2
+        let creature_ids: Vec<CardId> = (0..3)
+            .map(|i| {
+                let creature_id = game.next_card_id();
+                let mut creature = Card::new(creature_id, format!("Bear {}", i + 1), p2_id);
+                creature.controller = p2_id;
+                creature.add_type(CardType::Creature);
+                creature.set_power(Some(2));
+                creature.set_toughness(Some(2));
+                game.cards.insert(creature_id, creature);
+                game.battlefield.add(creature_id);
+                creature_id
+            })
+            .collect();
+
+        // Verify initial state: P2 has 3 creatures on battlefield
+        assert_eq!(
+            game.battlefield
+                .cards
+                .iter()
+                .filter(|&&cid| {
+                    game.cards
+                        .get(cid)
+                        .map(|c| c.controller == p2_id && c.is_creature())
+                        .unwrap_or(false)
+                })
+                .count(),
+            3,
+            "P2 should have 3 creatures before Balance"
+        );
+
+        // Execute Balance effect for creatures
+        let result = game.execute_balance_effect("Creature", "Battlefield");
+        assert!(
+            result.is_ok(),
+            "Balance effect should execute successfully: {:?}",
+            result
+        );
+
+        // After Balance, P2 should have 0 creatures (same as P1)
+        let p2_creatures_after = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&cid| {
+                game.cards
+                    .get(cid)
+                    .map(|c| c.controller == p2_id && c.is_creature())
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(
+            p2_creatures_after, 0,
+            "P2 should have 0 creatures after Balance equalizing with P1"
+        );
+
+        // Verify all creatures are in P2's graveyard
+        let p2_graveyard = &game.get_player_zones(p2_id).unwrap().graveyard;
+        for creature_id in creature_ids {
+            assert!(
+                p2_graveyard.contains(creature_id),
+                "Creature {:?} should be in P2's graveyard after sacrifice",
+                creature_id
+            );
+        }
+    }
+
+    /// Test Balance spell effect - equalizes hands (discard) across all players
+    #[test]
+    fn test_balance_hand_discard() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 has 1 card in hand
+        // P2 has 4 cards in hand - should discard 3 to match P1
+
+        // Add 1 card to P1's hand
+        let p1_card = game.next_card_id();
+        let mut card1 = Card::new(p1_card, "Plains".to_string(), p1_id);
+        card1.controller = p1_id;
+        game.cards.insert(p1_card, card1);
+        game.player_zones
+            .iter_mut()
+            .find(|(id, _)| *id == p1_id)
+            .unwrap()
+            .1
+            .hand
+            .cards
+            .push(p1_card);
+
+        // Add 4 cards to P2's hand
+        let p2_cards: Vec<CardId> = (0..4)
+            .map(|i| {
+                let card_id = game.next_card_id();
+                let mut card = Card::new(card_id, format!("Card {}", i + 1), p2_id);
+                card.controller = p2_id;
+                game.cards.insert(card_id, card);
+                game.player_zones
+                    .iter_mut()
+                    .find(|(id, _)| *id == p2_id)
+                    .unwrap()
+                    .1
+                    .hand
+                    .cards
+                    .push(card_id);
+                card_id
+            })
+            .collect();
+
+        // Verify initial state
+        let p1_hand_size_before = game.get_player_zones(p1_id).unwrap().hand.cards.len();
+        let p2_hand_size_before = game.get_player_zones(p2_id).unwrap().hand.cards.len();
+        assert_eq!(p1_hand_size_before, 1, "P1 should have 1 card in hand");
+        assert_eq!(p2_hand_size_before, 4, "P2 should have 4 cards in hand");
+
+        // Execute Balance effect for hands
+        let result = game.execute_balance_effect("", "Hand");
+        assert!(
+            result.is_ok(),
+            "Balance effect should execute successfully: {:?}",
+            result
+        );
+
+        // After Balance, both players should have 1 card in hand
+        let p1_hand_size_after = game.get_player_zones(p1_id).unwrap().hand.cards.len();
+        let p2_hand_size_after = game.get_player_zones(p2_id).unwrap().hand.cards.len();
+        assert_eq!(
+            p1_hand_size_after, 1,
+            "P1 should still have 1 card in hand after Balance"
+        );
+        assert_eq!(p2_hand_size_after, 1, "P2 should have 1 card in hand after Balance");
+
+        // Verify 3 cards are in P2's graveyard
+        let p2_graveyard = &game.get_player_zones(p2_id).unwrap().graveyard;
+        let discarded_count = p2_cards.iter().filter(|&&cid| p2_graveyard.contains(cid)).count();
+        assert_eq!(discarded_count, 3, "3 cards should be in P2's graveyard after discard");
+    }
 }

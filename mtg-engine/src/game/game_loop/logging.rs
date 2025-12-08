@@ -328,6 +328,15 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Balance { card_type, zone } => {
+                let type_str = if card_type.is_empty() { "permanents" } else { card_type };
+                let zone_str = if zone == "Hand" { "hands" } else { "battlefields" };
+                let message = format!(
+                    "{source_name} ({source_id}) balances {} across all players' {}",
+                    type_str, zone_str
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

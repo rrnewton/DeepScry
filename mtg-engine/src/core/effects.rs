@@ -227,6 +227,19 @@ pub enum Effect {
         /// Number of tokens to create
         amount: u8,
     },
+
+    /// Balance effect - equalizes a type of permanent/cards across all players
+    /// Example: "Each player sacrifices creatures until all players control the same number"
+    /// Corresponds to: SP$ Balance | Valid$ Creature/Land | Zone$ Battlefield/Hand
+    ///
+    /// The spell controller's card type and zone define what to balance.
+    /// Each player must sacrifice/discard down to match the player with the fewest.
+    Balance {
+        /// What type of card to balance ("Creature", "Land", or empty for any permanent)
+        card_type: String,
+        /// Zone to balance ("Battlefield" or "Hand")
+        zone: String,
+    },
 }
 
 /// Events that can trigger abilities

@@ -27,6 +27,8 @@ pub enum ReplayChoice {
     Discard(SmallVec<[CardId; 7]>),
     /// Choice of card from library (or None to fail to find)
     LibrarySearch(Option<CardId>),
+    /// Choice of permanents to sacrifice
+    Sacrifice(SmallVec<[CardId; 8]>),
 }
 
 /// Controller that replays a sequence of choices then delegates to another controller
@@ -270,6 +272,29 @@ impl PlayerController for ReplayController {
 
         // No replay choice available, delegate to inner controller
         self.inner.choose_from_library(view, valid_cards)
+    }
+
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Try to consume a replay choice first
+        if let Some(sacrifices) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::Sacrifice(s) = c {
+                Some(s.clone())
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(sacrifices);
+        }
+
+        // No replay choice available, delegate to inner controller
+        self.inner
+            .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
     }
 
     fn on_priority_passed(&mut self, view: &GameStateView) {

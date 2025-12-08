@@ -4116,6 +4116,57 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(best_card)
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Heuristic: Sacrifice the least valuable permanents first
+        // Similar logic to choose_cards_to_discard but for permanents
+        if valid_permanents.is_empty() || count == 0 {
+            view.logger().controller_choice(
+                "HEURISTIC",
+                &format!("Sacrifice {}: nothing to sacrifice", card_type_description),
+            );
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        let mut scored_permanents: Vec<(CardId, i32)> = valid_permanents
+            .iter()
+            .filter_map(|&id| {
+                let card = view.get_card(id)?;
+                let score = if card.is_creature() {
+                    // For creatures, use creature evaluation
+                    self.evaluate_creature(view, id)
+                } else if card.is_land() {
+                    // Lands: prefer to keep dual lands, sacrifice basics first
+                    use crate::game::game_state_evaluator::GameStateEvaluator;
+                    GameStateEvaluator::evaluate_land(card)
+                } else {
+                    // For other permanents, use a basic value
+                    // Higher CMC = more valuable = higher score
+                    card.mana_cost.cmc() as i32 * 10
+                };
+                Some((id, score))
+            })
+            .collect();
+
+        // Sort by score ascending - sacrifice lowest value first
+        scored_permanents.sort_by_key(|&(_, score)| score);
+
+        let to_sacrifice: SmallVec<[CardId; 8]> = scored_permanents.iter().take(count).map(|&(id, _)| id).collect();
+
+        let names: Vec<String> = to_sacrifice.iter().filter_map(|&id| view.get_card_name(id)).collect();
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!("Sacrifice {} {}: [{}]", count, card_type_description, names.join(", ")),
+        );
+
+        ChoiceResult::Ok(to_sacrifice)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Could track game state here for future decisions
     }

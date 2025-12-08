@@ -1078,6 +1078,13 @@ impl GameState {
                 // Call the attach_equipment method from Phase 1
                 self.attach_equipment(*source_equipment, *target_creature)?;
             }
+            Effect::Balance { card_type, zone } => {
+                // Balance effect: equalize permanents/cards of a type across all players
+                // MTG Rules: Each player chooses permanents until all have the same number
+                // as the player with the fewest, then sacrifices the rest
+                self.execute_balance_effect(card_type, zone)?;
+            }
+
             Effect::CreateToken {
                 controller,
                 token_script,
@@ -2229,6 +2236,160 @@ impl GameState {
                 Ok(())
             }
         }
+    }
+
+    /// Execute a Balance effect
+    ///
+    /// Balance equalizes permanents/cards of a specified type across all players.
+    /// Each player with more than the minimum must sacrifice/discard down to the minimum.
+    ///
+    /// # Arguments
+    /// * `card_type` - Type filter (e.g., "Creature", "Land", or empty for any)
+    /// * `zone` - Zone to balance ("Battlefield" or "Hand")
+    ///
+    /// # MTG Rules
+    /// - 701.17: To sacrifice means to move a permanent to graveyard
+    /// - Balance card: Each player chooses, then sacrifices simultaneously
+    ///
+    /// Note: This is a non-interactive implementation. For proper interactive
+    /// sacrifice choice (where players select which permanents to sacrifice),
+    /// this must be called through the game loop which has access to controllers.
+    pub fn execute_balance_effect(&mut self, card_type: &str, zone: &str) -> Result<()> {
+        // Get all player IDs
+        let player_ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
+
+        // Handle Hand zone (discard) vs Battlefield zone (sacrifice)
+        if zone == "Hand" {
+            // Count cards in each player's hand
+            let hand_counts: Vec<(PlayerId, usize)> = player_ids
+                .iter()
+                .map(|&pid| {
+                    let count = self
+                        .player_zones
+                        .iter()
+                        .find(|(id, _)| *id == pid)
+                        .map(|(_, zones)| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    (pid, count)
+                })
+                .collect();
+
+            // Find minimum hand size
+            let min_hand = hand_counts.iter().map(|(_, c)| *c).min().unwrap_or(0);
+
+            // Log the balance action
+            self.logger
+                .gamelog(&format!("Balance: Hand sizes equalize to {}", min_hand));
+
+            // Each player discards down to min (non-interactive: discard from end of hand)
+            for (player_id, current_count) in hand_counts {
+                if current_count > min_hand {
+                    let discard_count = current_count - min_hand;
+
+                    // Get the cards to discard (from end of hand)
+                    let cards_to_discard: Vec<CardId> = self
+                        .player_zones
+                        .iter()
+                        .find(|(id, _)| *id == player_id)
+                        .map(|(_, zones)| zones.hand.cards.iter().rev().take(discard_count).copied().collect())
+                        .unwrap_or_default();
+
+                    // Discard each card
+                    for card_id in cards_to_discard {
+                        self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
+
+                        // Log the discard
+                        if let Ok(card) = self.cards.get(card_id) {
+                            let player_name = self
+                                .get_player(player_id)
+                                .map(|p| p.name.to_string())
+                                .unwrap_or_else(|_| "Player".to_string());
+                            self.logger
+                                .gamelog(&format!("{} discards {} to Balance", player_name, card.name));
+                        }
+                    }
+                }
+            }
+        } else {
+            // Battlefield zone - sacrifice permanents
+            // Filter by card type if specified
+            let counts_and_permanents: Vec<(PlayerId, usize, Vec<CardId>)> = player_ids
+                .iter()
+                .map(|&pid| {
+                    // Get this player's permanents matching the type
+                    let matching_permanents: Vec<CardId> = self
+                        .battlefield
+                        .cards
+                        .iter()
+                        .filter(|&&card_id| {
+                            if let Ok(card) = self.cards.get(card_id) {
+                                // Must be controlled by this player
+                                if card.controller != pid {
+                                    return false;
+                                }
+                                // Filter by card type
+                                match card_type {
+                                    "Creature" => card.is_creature(),
+                                    "Land" => card.is_land(),
+                                    "Artifact" => card.is_artifact(),
+                                    "Enchantment" => card.is_enchantment(),
+                                    "" => true, // Any permanent
+                                    _ => true,  // Default to any
+                                }
+                            } else {
+                                false
+                            }
+                        })
+                        .copied()
+                        .collect();
+
+                    let count = matching_permanents.len();
+                    (pid, count, matching_permanents)
+                })
+                .collect();
+
+            // Find minimum count
+            let min_count = counts_and_permanents.iter().map(|(_, c, _)| *c).min().unwrap_or(0);
+
+            // Log the balance action
+            let type_str = if card_type.is_empty() { "permanents" } else { card_type };
+            self.logger
+                .gamelog(&format!("Balance: {} equalize to {}", type_str, min_count));
+
+            // Each player sacrifices down to min
+            // Non-interactive: sacrifice from end of list (last in battlefield order)
+            for (player_id, current_count, permanents) in counts_and_permanents {
+                if current_count > min_count {
+                    let sacrifice_count = current_count - min_count;
+
+                    // Get permanents to sacrifice (from end of list)
+                    let to_sacrifice: Vec<CardId> = permanents.into_iter().rev().take(sacrifice_count).collect();
+
+                    // Sacrifice each permanent
+                    for card_id in to_sacrifice {
+                        let owner = self.cards.get(card_id)?.owner;
+
+                        // Log before moving
+                        if let Ok(card) = self.cards.get(card_id) {
+                            let player_name = self
+                                .get_player(player_id)
+                                .map(|p| p.name.to_string())
+                                .unwrap_or_else(|_| "Player".to_string());
+                            self.logger
+                                .gamelog(&format!("{} sacrifices {} to Balance", player_name, card.name));
+                        }
+
+                        // Check death triggers BEFORE moving the card
+                        let _ = self.check_death_triggers(card_id);
+
+                        // Move to graveyard
+                        self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

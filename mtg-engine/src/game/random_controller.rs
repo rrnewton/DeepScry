@@ -358,6 +358,48 @@ impl PlayerController for RandomController {
         }
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Randomly choose permanents to sacrifice
+        let log_active = view.logger().is_choice_logging_active();
+
+        if valid_permanents.is_empty() || count == 0 {
+            if log_active {
+                view.logger().controller_choice(
+                    "RANDOM",
+                    &format!("Sacrifice {}: nothing to sacrifice", card_type_description),
+                );
+            }
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // Shuffle and take the first N
+        let mut shuffled: SmallVec<[CardId; 8]> = valid_permanents.iter().copied().collect();
+        shuffled.shuffle(&mut self.rng);
+
+        let num_to_sacrifice = count.min(valid_permanents.len());
+        let to_sacrifice: SmallVec<[CardId; 8]> = shuffled.iter().take(num_to_sacrifice).copied().collect();
+
+        if log_active {
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!(
+                    "Chose {} {} to sacrifice (shuffled from {} available)",
+                    num_to_sacrifice,
+                    card_type_description,
+                    valid_permanents.len()
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(to_sacrifice)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Random AI doesn't need to react to priority passes
     }

@@ -335,6 +335,30 @@ impl PlayerController for RemoteController {
         self.select_from_slice(valid_cards)
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        _view: &GameStateView,
+        valid_permanents: &[CardId],
+        _count: usize,
+        _card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Server sends index of permanent to sacrifice
+        // TODO: Multi-select for sacrificing multiple permanents
+        match self.wait_for_choice() {
+            ChoiceResult::Ok(idx) => {
+                if idx < valid_permanents.len() {
+                    ChoiceResult::Ok(SmallVec::from_slice(&[valid_permanents[idx]]))
+                } else {
+                    ChoiceResult::Ok(SmallVec::new())
+                }
+            }
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+            ChoiceResult::NeedInput(_) => ChoiceResult::Error("NeedInput not supported in network games".to_string()),
+        }
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Nothing to do
     }

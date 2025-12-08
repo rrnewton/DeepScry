@@ -144,6 +144,9 @@ pub enum ApiType {
     RollDice,
     FlipACoin,
 
+    // === Balance/Equalize Effects ===
+    Balance,
+
     // === Catch-all for unknown types ===
     Unknown(String),
 }
@@ -243,6 +246,9 @@ impl ApiType {
             "RollDice" => Self::RollDice,
             "FlipACoin" => Self::FlipACoin,
 
+            // Balance/Equalize
+            "Balance" => Self::Balance,
+
             // Unknown type - preserve original string for debugging
             unknown => Self::Unknown(unknown.to_string()),
         }
@@ -309,6 +315,7 @@ impl ApiType {
             Self::Planeswalk => "Planeswalk",
             Self::RollDice => "RollDice",
             Self::FlipACoin => "FlipACoin",
+            Self::Balance => "Balance",
             Self::Unknown(s) => s.as_str(),
         }
     }

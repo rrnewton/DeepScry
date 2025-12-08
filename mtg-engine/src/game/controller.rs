@@ -837,6 +837,17 @@ pub enum ChoiceContext {
         /// Pre-formatted card strings for display
         formatted_cards: Vec<String>,
     },
+    /// Choose permanents to sacrifice (for Balance, Cataclysm, etc.)
+    SacrificePermanents {
+        /// Valid permanents that can be sacrificed
+        valid_permanents: Vec<CardId>,
+        /// Number of permanents to sacrifice
+        count: usize,
+        /// Description of what type (e.g., "creatures", "lands")
+        card_type_description: String,
+        /// Pre-formatted permanent strings for display
+        formatted_permanents: Vec<String>,
+    },
 }
 
 impl<T> ChoiceResult<T> {
@@ -1169,6 +1180,37 @@ pub trait PlayerController {
     /// ## Java Forge Equivalent
     /// Matches `PlayerController.chooseCardsForEffect(..., "Search library")`
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>>;
+
+    /// Choose permanents to sacrifice
+    ///
+    /// Called when a player must sacrifice a specific number of permanents,
+    /// such as for Balance, Cataclysm, or other sacrifice effects.
+    ///
+    /// Unlike targeted sacrifice (where the controller of the spell chooses),
+    /// this method is called on the controller of the permanents being sacrificed,
+    /// allowing each player to choose which of their own permanents to sacrifice.
+    ///
+    /// MTG Rules 701.17a: To sacrifice a permanent, its controller moves it from
+    /// the battlefield directly to its owner's graveyard.
+    ///
+    /// ## Parameters
+    /// - `view`: Read-only view of the game state
+    /// - `valid_permanents`: Permanents that can be sacrificed (filtered by type)
+    /// - `count`: Exact number of permanents that must be sacrificed
+    /// - `card_type_description`: Human-readable description (e.g., "creatures", "lands")
+    ///
+    /// Returns ChoiceResult with exactly `count` permanents to sacrifice,
+    /// or a special request (UndoRequest, ExitGame, Error).
+    ///
+    /// ## Java Forge Equivalent
+    /// Matches `PlayerController.choosePermanentsToSacrifice(sa, min, max, validTargets, message)`
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
     /// Notification that priority was passed
     ///

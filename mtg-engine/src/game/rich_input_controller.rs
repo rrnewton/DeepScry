@@ -385,6 +385,31 @@ impl PlayerController for RichInputController {
         ChoiceResult::Ok(Some(chosen))
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // RichInputController: Auto-select first N permanents
+        // TODO: Implement rich syntax for sacrifice selection
+        let num_to_sacrifice = count.min(valid_permanents.len());
+        let to_sacrifice: SmallVec<[CardId; 8]> = valid_permanents.iter().take(num_to_sacrifice).copied().collect();
+
+        if !to_sacrifice.is_empty() {
+            view.logger().controller_choice(
+                "RICHINPUT",
+                &format!(
+                    "Sacrifice {}: auto-selected first {} permanents",
+                    card_type_description, num_to_sacrifice
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(to_sacrifice)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // No action needed
     }

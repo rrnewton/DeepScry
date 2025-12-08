@@ -1120,6 +1120,67 @@ impl PlayerController for FancyTuiController {
         }
     }
 
+    fn choose_permanents_to_sacrifice(
+        &mut self,
+        view: &GameStateView,
+        valid_permanents: &[CardId],
+        count: usize,
+        card_type_description: &str,
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        if valid_permanents.is_empty() || count == 0 {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        let mut sacrifices: SmallVec<[CardId; 8]> = SmallVec::new();
+
+        while sacrifices.len() < count {
+            let remaining = count - sacrifices.len();
+            let prompt = format!(
+                "Sacrifice {} {}: Choose {} more",
+                card_type_description, remaining, remaining
+            );
+
+            // Build choices from remaining (not yet selected) permanents
+            let available: Vec<_> = valid_permanents
+                .iter()
+                .filter(|&card_id| !sacrifices.contains(card_id))
+                .collect();
+
+            if available.is_empty() {
+                break;
+            }
+
+            let choices: Vec<String> = available
+                .iter()
+                .map(|&&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id)))
+                .collect();
+
+            match self.prompt_for_choice(view, &prompt, &choices) {
+                Ok(PromptResult::Undo) => {
+                    return ChoiceResult::UndoRequest(usize::MAX);
+                }
+                Ok(PromptResult::Choice(Some(idx))) if idx < available.len() => {
+                    sacrifices.push(*available[idx]);
+                }
+                Ok(PromptResult::Choice(_)) => {
+                    // Invalid choice, try again
+                    continue;
+                }
+                Err(e) => {
+                    return ChoiceResult::Error(format!("Failed to prompt for sacrifice: {}", e));
+                }
+            }
+        }
+
+        let names: Vec<String> = sacrifices.iter().filter_map(|&id| view.card_name(id)).collect();
+        view.logger().controller_choice(
+            "TUI",
+            &format!("Chose to sacrifice {}: [{}]", card_type_description, names.join(", ")),
+        );
+
+        ChoiceResult::Ok(sacrifices)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Logging is handled by the game logger, no local state tracking needed
     }

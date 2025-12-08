@@ -315,6 +315,15 @@ pub enum ChoiceType {
         /// Number of valid cards that can be chosen
         valid_count: usize,
     },
+    /// Choose permanents to sacrifice (Balance, Cataclysm, etc.)
+    Sacrifice {
+        /// Number of valid permanents that can be sacrificed
+        valid_count: usize,
+        /// Number of permanents to sacrifice
+        count: usize,
+        /// Description of the permanent type (e.g., "creatures", "lands")
+        card_type_description: String,
+    },
 }
 
 /// Additional context for a choice request
