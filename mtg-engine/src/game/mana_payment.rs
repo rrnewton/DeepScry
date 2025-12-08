@@ -617,10 +617,11 @@ impl GreedyManaResolver {
 
         // Collect available sources that can produce this color
         for (idx, source) in sources.iter().enumerate() {
+            let can_produce = Self::can_produce_color(&source.production, color);
             if !source.is_tapped
                 && !source.has_summoning_sickness
                 && !tap_order.contains(&source.card_id)
-                && Self::can_produce_color(&source.production, color)
+                && can_produce
             {
                 candidates.push((idx, Self::score_for_color(&source.production, color)));
             }

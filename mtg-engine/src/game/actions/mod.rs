@@ -646,8 +646,12 @@ impl GameState {
         // Track which sources we've successfully tapped for unwinding if needed
         let mut tapped_sources = Vec::new();
 
+        // Track remaining cost as hint for each land tap
+        // This ensures dual lands produce the right color based on what's still needed
+        let mut remaining_hint = remaining_cost;
+
         for &source_id in &sources_to_tap {
-            if let Err(e) = self.tap_for_mana_for_cost(player_id, source_id, &mana_cost) {
+            if let Err(e) = self.tap_for_mana_for_cost(player_id, source_id, &remaining_hint) {
                 // Tapping failed - unwind the spell cast
                 // Move card back to hand
                 self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
@@ -665,6 +669,58 @@ impl GameState {
                 return Err(MtgError::InvalidAction(format!("Failed to tap mana source: {e}")));
             }
             tapped_sources.push(source_id);
+
+            // Update remaining hint based on what color this source produced
+            // Check mana production kind to know what color was produced
+            if let Some(card) = self.cards.try_get(source_id) {
+                match &card.cache.mana_production.kind {
+                    crate::core::ManaProductionKind::Fixed(color) => {
+                        // Deduct the fixed color from remaining hint
+                        match color {
+                            crate::core::ManaColor::White => {
+                                remaining_hint.white = remaining_hint.white.saturating_sub(1);
+                            }
+                            crate::core::ManaColor::Blue => {
+                                remaining_hint.blue = remaining_hint.blue.saturating_sub(1);
+                            }
+                            crate::core::ManaColor::Black => {
+                                remaining_hint.black = remaining_hint.black.saturating_sub(1);
+                            }
+                            crate::core::ManaColor::Red => {
+                                remaining_hint.red = remaining_hint.red.saturating_sub(1);
+                            }
+                            crate::core::ManaColor::Green => {
+                                remaining_hint.green = remaining_hint.green.saturating_sub(1);
+                            }
+                        }
+                    }
+                    crate::core::ManaProductionKind::Colorless => {
+                        // Colorless reduces colorless or generic
+                        if remaining_hint.colorless > 0 {
+                            remaining_hint.colorless = remaining_hint.colorless.saturating_sub(1);
+                        } else {
+                            remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                        }
+                    }
+                    crate::core::ManaProductionKind::Choice(_) | crate::core::ManaProductionKind::AnyColor => {
+                        // For choice/any-color lands, we produced the first needed color
+                        // Deduct in same priority order as tap_for_mana_for_cost
+                        if remaining_hint.white > 0 {
+                            remaining_hint.white = remaining_hint.white.saturating_sub(1);
+                        } else if remaining_hint.blue > 0 {
+                            remaining_hint.blue = remaining_hint.blue.saturating_sub(1);
+                        } else if remaining_hint.black > 0 {
+                            remaining_hint.black = remaining_hint.black.saturating_sub(1);
+                        } else if remaining_hint.red > 0 {
+                            remaining_hint.red = remaining_hint.red.saturating_sub(1);
+                        } else if remaining_hint.green > 0 {
+                            remaining_hint.green = remaining_hint.green.saturating_sub(1);
+                        } else {
+                            remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                        }
+                    }
+                }
+            }
         }
 
         // Step 7: Pay costs
@@ -1938,15 +1994,9 @@ impl GameState {
         // For basic lands and simple cases, check subtypes
         // For dual lands (e.g., Underground Sea = Island Swamp), we need smarter logic
         // First, check subtypes and mana production cache before we borrow player_mut
-        let (
-            has_swamp_subtype,
-            has_mountain_subtype,
-            has_island_subtype,
-            has_forest_subtype,
-            has_plains_subtype,
-            is_any_color_land,
-            produces_colorless,
-        ) = {
+        // Get mana production info and build available colors from BOTH subtypes AND mana production cache
+        // This handles both basic lands (with subtypes) and non-basic dual lands (with Choice abilities)
+        let (is_any_color_land, produces_colorless, available_colors) = {
             let card = self.cards.get(card_id)?;
             // Use pre-computed cache for mana production type (derived from abilities, not text)
             let is_any_color = matches!(
@@ -1957,41 +2007,57 @@ impl GameState {
                 card.cache.mana_production.kind,
                 crate::core::ManaProductionKind::Colorless
             );
-            // Use cached land subtype flags (eliminates eq_ignore_ascii_case overhead)
-            (
-                card.cache.has_swamp_subtype,
-                card.cache.has_mountain_subtype,
-                card.cache.has_island_subtype,
-                card.cache.has_forest_subtype,
-                card.cache.has_plains_subtype,
-                is_any_color,
-                is_colorless,
-            )
+
+            // Build available_colors from BOTH sources:
+            // 1. Land subtypes (Island, Forest, etc.) - for basic/dual lands with land types
+            // 2. ManaProductionKind::Choice - for non-basic duals like Blooming Marsh
+            let mut colors = Vec::new();
+
+            // First, add colors from land subtypes
+            if card.cache.has_plains_subtype {
+                colors.push(crate::core::Color::White);
+            }
+            if card.cache.has_island_subtype {
+                colors.push(crate::core::Color::Blue);
+            }
+            if card.cache.has_swamp_subtype {
+                colors.push(crate::core::Color::Black);
+            }
+            if card.cache.has_mountain_subtype {
+                colors.push(crate::core::Color::Red);
+            }
+            if card.cache.has_forest_subtype {
+                colors.push(crate::core::Color::Green);
+            }
+
+            // Second, add colors from ManaProductionKind::Choice (for non-basic duals)
+            // This handles lands like Blooming Marsh which don't have basic land subtypes
+            if let crate::core::ManaProductionKind::Choice(mana_colors) = &card.cache.mana_production.kind {
+                use crate::core::ManaColor;
+                if mana_colors.contains(ManaColor::White) && !colors.contains(&crate::core::Color::White) {
+                    colors.push(crate::core::Color::White);
+                }
+                if mana_colors.contains(ManaColor::Blue) && !colors.contains(&crate::core::Color::Blue) {
+                    colors.push(crate::core::Color::Blue);
+                }
+                if mana_colors.contains(ManaColor::Black) && !colors.contains(&crate::core::Color::Black) {
+                    colors.push(crate::core::Color::Black);
+                }
+                if mana_colors.contains(ManaColor::Red) && !colors.contains(&crate::core::Color::Red) {
+                    colors.push(crate::core::Color::Red);
+                }
+                if mana_colors.contains(ManaColor::Green) && !colors.contains(&crate::core::Color::Green) {
+                    colors.push(crate::core::Color::Green);
+                }
+            }
+
+            (is_any_color, is_colorless, colors)
         };
 
         // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
         let prior_log_size = self.logger.log_count();
 
         let player = self.get_player_mut(player_id)?;
-
-        // Determine what colors this land can produce
-        // Uses cached land subtype flags (includes name fallback from card loading)
-        let mut available_colors = Vec::new();
-        if has_plains_subtype {
-            available_colors.push(crate::core::Color::White);
-        }
-        if has_island_subtype {
-            available_colors.push(crate::core::Color::Blue);
-        }
-        if has_swamp_subtype {
-            available_colors.push(crate::core::Color::Black);
-        }
-        if has_mountain_subtype {
-            available_colors.push(crate::core::Color::Red);
-        }
-        if has_forest_subtype {
-            available_colors.push(crate::core::Color::Green);
-        }
 
         let color = if is_any_color_land || available_colors.len() > 1 {
             // Multi-color or any-color land: choose based on cost hint
