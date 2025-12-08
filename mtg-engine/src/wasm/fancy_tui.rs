@@ -77,6 +77,21 @@ pub fn clear_p1_fixed_script() {
     });
 }
 
+/// Clean up global state when exiting the TUI
+///
+/// Call this before exiting to ensure a clean slate for the next launch.
+/// This clears the GLOBAL_TUI_STATE and FIXED_SCRIPT thread-local storage.
+#[wasm_bindgen]
+pub fn cleanup_tui_state() {
+    GLOBAL_TUI_STATE.with(|s| {
+        *s.borrow_mut() = None;
+    });
+    FIXED_SCRIPT.with(|s| {
+        *s.borrow_mut() = None;
+    });
+    log::debug!(target: "wasm_tui", "Cleaned up global TUI state");
+}
+
 /// Run one turn or continue game - called from JavaScript button
 #[wasm_bindgen]
 pub fn tui_run_turn() {

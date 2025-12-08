@@ -253,6 +253,7 @@ cast dark ritual</textarea>
             tui_get_battlefield_cards,
             set_p1_fixed_script,
             clear_p1_fixed_script,
+            cleanup_tui_state,
             set_log_level
         } from './pkg/mtg_forge_rs.js';
 
@@ -931,17 +932,34 @@ cast dark ritual</textarea>
 
         // Expose exit function globally for WASM to call
         window.exitFancyTui = function() {
+            console.log('[EXIT] Cleaning up TUI state...');
+
+            // Clean up WASM global state BEFORE anything else
+            cleanup_tui_state();
+
+            // Clean up JavaScript state
             tuiLaunched = false;
             cardImagesEnabled = false;
+
             // Clear card image overlays
             CardImageOverlay.disable();
+
+            // Clear RatZilla-generated DOM content
+            const terminal = document.getElementById('ratzilla-terminal');
+            if (terminal) {
+                // Remove all child elements (RatZilla's grid and content)
+                while (terminal.firstChild) {
+                    terminal.removeChild(terminal.firstChild);
+                }
+            }
+
             // Hide terminal and show setup bar + header
-            document.getElementById('ratzilla-terminal').style.display = 'none';
+            terminal.style.display = 'none';
             document.getElementById('game-controls').style.display = 'none';
             document.getElementById('header-bar').style.display = 'flex';
             document.getElementById('setup-bar').style.display = 'flex';
-            // Reload the page to cleanly reset RatZilla state
-            location.reload();
+
+            console.log('[EXIT] TUI exited cleanly. Ready to launch new game.');
         };
 
         main();
