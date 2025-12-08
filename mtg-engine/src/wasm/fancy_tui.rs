@@ -533,6 +533,24 @@ impl WasmFancyTuiState {
                     ReplayChoice::LibrarySearch(None)
                 }
             }
+            PendingChoice::Sacrifice(indices) => {
+                if let Some(ref context) = self.pending_context {
+                    if let ChoiceContext::SacrificePermanents {
+                        valid_permanents, ..
+                    } = context
+                    {
+                        let permanents: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
+                            .iter()
+                            .filter_map(|i| valid_permanents.get(*i).copied())
+                            .collect();
+                        ReplayChoice::Sacrifice(permanents)
+                    } else {
+                        ReplayChoice::Sacrifice(smallvec::SmallVec::new())
+                    }
+                } else {
+                    ReplayChoice::Sacrifice(smallvec::SmallVec::new())
+                }
+            }
         }
     }
 
@@ -793,6 +811,7 @@ impl WasmFancyTuiState {
                     ChoiceContext::DamageOrder { .. } => "DamageOrder".to_string(),
                     ChoiceContext::Discard { .. } => "Discard".to_string(),
                     ChoiceContext::LibrarySearch { .. } => "LibrarySearch".to_string(),
+                    ChoiceContext::SacrificePermanents { .. } => "SacrificePermanents".to_string(),
                 };
                 log::debug!(
                     target: "wasm_tui",
@@ -851,6 +870,14 @@ impl WasmFancyTuiState {
                 choices.extend(formatted_cards.clone());
                 choices
             }
+            ChoiceContext::SacrificePermanents {
+                formatted_permanents,
+                ..
+            } => {
+                let mut choices = vec!["Done".to_string()];
+                choices.extend(formatted_permanents.clone());
+                choices
+            }
         };
 
         // Set prompt based on context type using shared prompt functions
@@ -886,6 +913,13 @@ impl WasmFancyTuiState {
             ChoiceContext::DamageOrder { .. } => PROMPT_DAMAGE_ORDER.to_string(),
             ChoiceContext::Discard { count, .. } => prompt_discard(*count),
             ChoiceContext::LibrarySearch { .. } => PROMPT_LIBRARY_SEARCH.to_string(),
+            ChoiceContext::SacrificePermanents {
+                count,
+                card_type_description,
+                ..
+            } => {
+                format!("Choose {} {} to sacrifice:", count, card_type_description)
+            }
         };
         self.current_prompt = Some(prompt);
 
@@ -948,6 +982,13 @@ impl WasmFancyTuiState {
                         PendingChoice::LibrarySearch(None)
                     } else {
                         PendingChoice::LibrarySearch(Some(idx - 1))
+                    }
+                }
+                ChoiceContext::SacrificePermanents { .. } => {
+                    if idx == 0 {
+                        PendingChoice::Sacrifice(vec![]) // Done
+                    } else {
+                        PendingChoice::Sacrifice(vec![idx - 1])
                     }
                 }
             }
