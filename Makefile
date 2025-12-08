@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev
 
 # Configuration variables
 # PORT: web server port (use: make PORT=7999 wasm-dev-serve)
@@ -77,6 +77,11 @@ clippy:
 	cargo clippy -p mtg-forge-rs --all-targets --features wasm,network -- -D warnings
 	cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
 
+# Run clippy on WASM target (catches WASM-specific code paths like #[cfg(target_arch = "wasm32")])
+clippy-wasm:
+	@echo "=== Running clippy on WASM target ==="
+	cargo clippy -p mtg-forge-rs --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
+
 # Detect code duplication
 code-dups:
 	which jscpd || npm install -g jscpd
@@ -123,6 +128,8 @@ validate-impl-sequential:
 	@echo ""
 	@$(MAKE) validate-clippy-step
 	@echo ""
+	@$(MAKE) validate-clippy-wasm-step
+	@echo ""
 	@$(MAKE) validate-test-step
 	@echo ""
 	@$(MAKE) validate-examples-step
@@ -136,12 +143,16 @@ validate-impl-sequential:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step
-validate-parallel-steps: validate-clippy-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step deck_list
+.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step
+validate-parallel-steps: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step deck_list
 
 validate-clippy-step:
 	@$(MAKE) clippy
 	@echo "✓ clippy completed"
+
+validate-clippy-wasm-step:
+	@$(MAKE) clippy-wasm
+	@echo "✓ clippy-wasm completed"
 
 validate-test-step:
 	@$(MAKE) test

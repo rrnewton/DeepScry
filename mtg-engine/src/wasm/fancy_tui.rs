@@ -224,7 +224,7 @@ fn export_card_positions_from_renderer(
                         if let Ok(card) = game.cards.get(card_id) {
                             let is_tapped = *tapped_count > 0;
                             let stack_depth = card_ids.len() as u16;
-                            let offset = (stack_depth.saturating_sub(1)) * 1; // DIAGONAL_OFFSET = 1
+                            let offset = stack_depth.saturating_sub(1); // DIAGONAL_OFFSET = 1
 
                             positions.push(serde_json::json!({
                                 "card_id": format!("{:?}", card_id),
@@ -399,6 +399,7 @@ impl WasmFancyTuiState {
     }
 
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context
+    #[allow(clippy::collapsible_match)]
     fn pending_choice_to_replay_choice(&self, pending: &PendingChoice) -> ReplayChoice {
         match pending {
             PendingChoice::SpellAbility(opt_idx) => {
@@ -1019,6 +1020,7 @@ impl WasmFancyTuiState {
 ///
 /// This function creates and runs the RatZilla-based TUI application.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn launch_fancy_tui(
     card_db: &WasmCardDatabase,
     p1_deck_name: &str,
@@ -1137,7 +1139,7 @@ pub fn launch_fancy_tui(
 
                 let view = GameStateView::new(game, renderer.player_id);
                 let result = handle_key_event(&mut renderer.state, key, &view, num_choices);
-                drop(view); // Explicitly drop view to end borrow
+                // view borrow ends here when we're done with it
 
                 match result {
                     EventResult::Handled => {
@@ -1206,7 +1208,6 @@ pub fn launch_fancy_tui(
             let view = GameStateView::new(game, renderer.player_id);
             handle_mouse_click(&mut renderer.state, cell_x, cell_y, &view);
             // State was updated, will redraw on next frame
-            drop(view); // Drop view to release game borrow
             state.needs_redraw = true; // State changed, need redraw
         }
     });
@@ -1251,14 +1252,7 @@ pub fn launch_fancy_tui(
 
             // Optimization: Only run expensive JavaScript callbacks when state has changed
             if *needs_redraw {
-                // Release all borrows before calling back to state
-                drop(view);
-                drop(renderer);
-                drop(game);
-                drop(current_prompt);
-                drop(current_choices);
-
-                // Clear dirty bit
+                // Clear dirty bit - borrows end when we re-destructure below
                 state.needs_redraw = false;
 
                 // Re-borrow for JavaScript callbacks

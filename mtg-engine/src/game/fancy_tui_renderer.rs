@@ -290,6 +290,8 @@ impl FancyTuiRenderer {
     pub const MAX_CARD_HEIGHT: u16 = 15; // Prevent cards from getting too large
     pub const CARD_SPACING: u16 = 1;
     const DIAGONAL_OFFSET: u16 = 1; // chars per card in stack
+    /// Maximum number of cards in a visual stack (prevents huge stacks of 5+ lands)
+    const MAX_VISUAL_STACK_SIZE: usize = 4;
 
     /// Create a new renderer for a player
     pub fn new(player_id: PlayerId, visual_stacks: bool) -> Self {
@@ -376,24 +378,36 @@ impl FancyTuiRenderer {
         }
 
         // Closure that takes tapped/untapped portions and constructs entities
-        let construct_entities = |card_name: String, mut card_ids: SmallVec<[CardId; 8]>| -> Vec<Entity> {
+        let construct_entities = |card_name: String, card_ids: SmallVec<[CardId; 8]>| -> Vec<Entity> {
             if self.visual_stacks {
-                // Visual stacking: create one VisualStack entity
-                if card_ids.len() > 1 {
-                    // Sort cards: untapped first, then tapped (tapped ones will be on top visually)
-                    card_ids.sort_by_key(|&id| view.is_tapped(id));
+                // Visual stacking: separate tapped/untapped, then chunk by MAX_VISUAL_STACK_SIZE
+                let (tapped, untapped): (SmallVec<[CardId; 8]>, SmallVec<[CardId; 8]>) =
+                    card_ids.into_iter().partition(|&id| view.is_tapped(id));
 
-                    // Count how many are tapped
-                    let tapped_count = card_ids.iter().filter(|&&id| view.is_tapped(id)).count();
+                let mut result = Vec::new();
 
-                    vec![Entity::VisualStack {
-                        card_ids,
-                        card_name,
-                        tapped_count,
-                    }]
-                } else {
-                    vec![Entity::SingleCard { card_id: card_ids[0] }]
-                }
+                // Helper to create visual stacks from a group, chunking if needed
+                let mut add_visual_stacks = |cards: SmallVec<[CardId; 8]>, is_tapped: bool, name: &str| {
+                    for chunk in cards.chunks(Self::MAX_VISUAL_STACK_SIZE) {
+                        if chunk.len() > 1 {
+                            result.push(Entity::VisualStack {
+                                card_ids: chunk.iter().copied().collect(),
+                                card_name: name.to_string(),
+                                tapped_count: if is_tapped { chunk.len() } else { 0 },
+                            });
+                        } else if chunk.len() == 1 {
+                            result.push(Entity::SingleCard { card_id: chunk[0] });
+                        }
+                    }
+                };
+
+                // Create visual stacks for untapped cards (chunked)
+                add_visual_stacks(untapped, false, &card_name);
+
+                // Create visual stacks for tapped cards (chunked)
+                add_visual_stacks(tapped, true, &card_name);
+
+                result
             } else {
                 // Simple stacking: create separate SimpleStack entities for tapped/untapped
                 let (tapped, untapped): (SmallVec<[CardId; 8]>, SmallVec<[CardId; 8]>) =

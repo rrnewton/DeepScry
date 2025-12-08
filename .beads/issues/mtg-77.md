@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-04T20:49:53.989124395+00:00
+updated_at: 2025-12-08T10:30:00.000000000+00:00
 ---
 
 # Description
@@ -60,17 +60,26 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 **What's Missing:**
 
+### High Priority (Found 2025-12-08):
+
+1. **Enchantment CASTING from hand (mtg-glaxo)**
+   - `should_cast_spell()` in `heuristic_controller.rs:2467-2513` only recognizes DrawCards, DestroyPermanent, DealDamage, CounterSpell effects
+   - Static buff enchantments like Crusade (`StaticAbility::ModifyPT`) are NOT recognized
+   - AI literally discards Crusade to hand size instead of casting it with WW available
+   - Similarly, Auras like Spirit Link are never cast
+   - Note: mtg-80 fixed enchantment *evaluation on battlefield* but not *casting from hand*
+
 ### Medium Priority:
 
-1. **GameStateEvaluator improvements:**
+2. **GameStateEvaluator improvements:**
    - mtg-78: Port evalManaBase() - mana base quality scoring (CLOSED)
    - mtg-79: Track summon sickness properly (COMPLETED 2025-10-26)
    - mtg-81: Complete land evaluation (detailed heuristics) (CLOSED)
 
 ### Lower Priority:
 
-2. **Bluffing/deception** - Hold information when advantageous
-3. **Additional static abilities** - "Can't be blocked except by" patterns
+3. **Bluffing/deception** - Hold information when advantageous
+4. **Additional static abilities** - "Can't be blocked except by" patterns
 
 ## Completed Work
 
@@ -79,8 +88,9 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ## Next Steps (Priority Order)
 
-1. More static abilities handling ("can't be blocked except by" types)
-2. Bluffing/deception
+1. **Enchantment casting from hand** - Critical for white weenie decks
+2. More static abilities handling ("can't be blocked except by" types)
+3. Bluffing/deception
 
 ---
-**Checked up-to-date as of 2025-12-04_#1154(0d099e3) - 604 tests passing**
+**Checked up-to-date as of 2025-12-08 - 670 tests passing**
