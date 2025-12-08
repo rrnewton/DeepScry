@@ -45,6 +45,10 @@ pub struct ServerConfig {
     pub cardsfolder: PathBuf,
     /// Fixed seed for RNG (None = random seed each game)
     pub seed: Option<u64>,
+    /// Tag official game action logs with [GAMELOG TurnN STEP] prefix
+    pub tag_gamelogs: bool,
+    /// Verbosity level for game output
+    pub verbosity: crate::game::VerbosityLevel,
 }
 
 impl Default for ServerConfig {
@@ -57,6 +61,8 @@ impl Default for ServerConfig {
             deck_visibility: false,
             cardsfolder: PathBuf::from("cardsfolder"),
             seed: None,
+            tag_gamelogs: false,
+            verbosity: crate::game::VerbosityLevel::Normal,
         }
     }
 }
@@ -626,7 +632,11 @@ async fn run_game(
 
     // Run game loop in blocking thread (uses sync channels)
     let game_clone = game.clone();
-    let game_loop_handle = tokio::task::spawn_blocking(move || run_game_loop(game_clone, p1_controller, p2_controller));
+    let tag_gamelogs = config.tag_gamelogs;
+    let verbosity = config.verbosity;
+    let game_loop_handle = tokio::task::spawn_blocking(move || {
+        run_game_loop(game_clone, p1_controller, p2_controller, tag_gamelogs, verbosity)
+    });
 
     // Wait for game to complete
     let result = game_loop_handle.await?;
@@ -973,6 +983,8 @@ fn run_game_loop(
     game: Arc<Mutex<GameState>>,
     mut p1_controller: NetworkController,
     mut p2_controller: NetworkController,
+    tag_gamelogs: bool,
+    verbosity: crate::game::VerbosityLevel,
 ) -> Result<GameResult> {
     // Take ownership of game for the game loop
     let mut game = {
@@ -981,6 +993,10 @@ fn run_game_loop(
         let guard = game.blocking_lock();
         guard.clone()
     };
+
+    // Configure the game logger with server settings
+    game.logger.set_verbosity(verbosity);
+    game.logger.set_tag_gamelogs(tag_gamelogs);
 
     log::debug!(
         "Server GameLoop: undo_log.len() = {} (should be 0 for synchronized mode)",

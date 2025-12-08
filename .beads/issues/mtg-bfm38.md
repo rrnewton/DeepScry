@@ -30,6 +30,7 @@ End-to-end tests for networked gameplay.
 - [x] Test: Graceful handling of client disconnect (test_client_disconnect_handling)
 - [x] Test: Concurrent games on same server - NOT SUPPORTED (server handles connections sequentially)
 - [x] Integration with existing agentplay scripts (MTG_NETWORK_MODE=1 env var)
+- [ ] Test: 4-way gamelog equivalence (mtg-037fw) - local vs server vs client1 vs client2
 
 ## Completed Tests
 

@@ -77,6 +77,7 @@ def parse_args():
     parser.add_argument('--visual-stacks', action='store_true')
     parser.add_argument('--numeric-choices', action='store_true')
     parser.add_argument('--load-all-cards', action='store_true')
+    parser.add_argument('--tag-gamelogs', action='store_true')
 
     # Help
     parser.add_argument('-h', '--help', action='store_true')
@@ -110,6 +111,7 @@ def parse_args():
         print("  --seed-p1, --seed-p2: Controller seeds")
         print("  --verbosity: Output verbosity")
         print("  --visual-stacks: Enable visual stacking")
+        print("  --tag-gamelogs: Tag game actions with [GAMELOG] prefix (passed to server)")
         sys.exit(0)
 
     # Check for unsupported options
@@ -183,16 +185,25 @@ def main():
         '--port', str(port),
         '--password', password,
         '--cardsfolder', cardsfolder,
+        '--verbosity', args.verbosity,
     ]
     if args.seed:
         server_cmd.extend(['--seed', args.seed])
+    if args.tag_gamelogs:
+        server_cmd.append('--tag-gamelogs')
 
     print(f"[mtg_tui_networked] Starting server: {' '.join(server_cmd)}")
+
+    # If tag_gamelogs is enabled, output server logs to stdout so they can be captured
+    # Otherwise discard to prevent blocking
+    server_stdout = sys.stdout if args.tag_gamelogs else subprocess.DEVNULL
+    server_stderr = sys.stderr if args.tag_gamelogs else subprocess.DEVNULL
+
     server_proc = subprocess.Popen(
         server_cmd,
         env=env,
-        stdout=subprocess.DEVNULL,  # Discard server output to prevent blocking
-        stderr=subprocess.DEVNULL,
+        stdout=server_stdout,
+        stderr=server_stderr,
     )
 
     # Wait for server to start

@@ -393,6 +393,93 @@ impl PlayerController for RichInputController {
         // No action needed
     }
 
+    /// Choose from string options (used by network client)
+    ///
+    /// This implements the same command parsing logic as choose_spell_ability_to_play,
+    /// but works with the simplified string-based options used by the network protocol.
+    fn choose_from_options(&mut self, options: &[String]) -> usize {
+        // Check if we have commands left
+        if let Some(command_str) = self.peek_command() {
+            let command = command_str.to_string();
+
+            // Check if this is a wildcard separator
+            if command.trim() == "*" {
+                self.current_index += 1;
+                self.wildcard_mode = true;
+                return self.choose_from_options(options);
+            }
+
+            // Try to parse numeric choice first
+            if let Ok(idx) = command.trim().parse::<usize>() {
+                self.next_command();
+                self.wildcard_mode = false;
+                if idx < options.len() {
+                    return idx;
+                } else {
+                    // Invalid index, default to 0
+                    return 0;
+                }
+            }
+
+            // Try to match command text against options
+            // Check for pass commands (match "pass priority" option)
+            let cmd_lower = command.trim().to_lowercase();
+            if cmd_lower == "pass" || cmd_lower == "p" || cmd_lower == "0" {
+                self.next_command();
+                self.wildcard_mode = false;
+                // Find "pass priority" option or return 0
+                for (i, opt) in options.iter().enumerate() {
+                    if opt.to_lowercase().contains("pass") {
+                        return i;
+                    }
+                }
+                return 0;
+            }
+
+            // Try to match by option text (e.g., "play island" matching "Play land: Island")
+            for (i, opt) in options.iter().enumerate() {
+                let opt_lower = opt.to_lowercase();
+                // Check if command appears to match this option
+                // Handle "play X" -> "Play land: X"
+                if let Some(card_name) = cmd_lower.strip_prefix("play ") {
+                    if opt_lower.contains("play land") && opt_lower.contains(card_name.trim()) {
+                        self.next_command();
+                        self.wildcard_mode = false;
+                        return i;
+                    }
+                }
+                // Handle "cast X" -> "Cast spell: X" or just "Cast: X"
+                if let Some(card_name) = cmd_lower.strip_prefix("cast ") {
+                    if (opt_lower.contains("cast spell") || opt_lower.contains("cast:"))
+                        && opt_lower.contains(card_name.trim())
+                    {
+                        self.next_command();
+                        self.wildcard_mode = false;
+                        return i;
+                    }
+                }
+            }
+
+            // No match found
+            if self.wildcard_mode {
+                // In wildcard mode, pass priority and keep waiting
+                return 0;
+            } else {
+                // Normal mode - consume command and default to 0
+                log::warn!(
+                    "Command '{}' did not match any option, defaulting to 0. Options: {:?}",
+                    command,
+                    options
+                );
+                self.next_command();
+                return 0;
+            }
+        }
+
+        // No more commands - default to 0 (usually "pass priority")
+        0
+    }
+
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Tui
     }

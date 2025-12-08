@@ -447,6 +447,15 @@ enum Commands {
         /// Fixed seed for game RNG (deterministic games). If not specified, uses random seed.
         #[arg(long)]
         seed: Option<u64>,
+
+        /// Tag official game action logs with [GAMELOG TurnN STEP] prefix
+        /// This enables comparing local vs network game logs for correctness
+        #[arg(long)]
+        tag_gamelogs: bool,
+
+        /// Verbosity level for game output (0=silent, 1=minimal, 2=normal, 3=verbose)
+        #[arg(long, default_value = "normal", short = 'v')]
+        verbosity: VerbosityArg,
     },
 
     /// Connect to a multiplayer game server
@@ -726,8 +735,13 @@ async fn main() -> Result<()> {
             starting_life,
             deck_visibility,
             seed,
+            tag_gamelogs,
+            verbosity,
         } => {
+            use mtg_forge_rs::game::VerbosityLevel;
             use mtg_forge_rs::network::{GameServer, ServerConfig};
+
+            let verbosity_level: VerbosityLevel = verbosity.into();
 
             let config = ServerConfig {
                 port,
@@ -736,6 +750,8 @@ async fn main() -> Result<()> {
                 starting_life,
                 deck_visibility,
                 seed,
+                tag_gamelogs,
+                verbosity: verbosity_level,
                 ..Default::default()
             };
 
