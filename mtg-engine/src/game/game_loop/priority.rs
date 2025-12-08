@@ -811,7 +811,7 @@ impl<'a> GameLoop<'a> {
             // Resolve the top spell from the stack (MTG Rules 608: Resolving Spells and Abilities)
             // In MTG, the stack is LIFO (Last In, First Out)
             if let Some(&spell_id) = self.game.stack.cards.last() {
-                self.resolve_top_spell_from_stack(spell_id)?;
+                self.resolve_top_spell_from_stack_interactive(spell_id, controller1, controller2)?;
                 // After resolving a spell, players get priority again
                 // Loop continues to give priority
             } else {
@@ -821,5 +821,180 @@ impl<'a> GameLoop<'a> {
         }
 
         Ok(None)
+    }
+
+    /// Resolve a spell from the stack with interactive effect handling
+    ///
+    /// This wraps `resolve_top_spell_from_stack` and handles interactive effects
+    /// like Balance that require player choices.
+    fn resolve_top_spell_from_stack_interactive(
+        &mut self,
+        spell_id: CardId,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<()> {
+        // Check if this spell has any Balance effects before resolving
+        let balance_effects: Vec<(String, String)> = if let Ok(card) = self.game.cards.get(spell_id) {
+            card.effects
+                .iter()
+                .filter_map(|e| {
+                    if let crate::core::Effect::Balance { card_type, zone } = e {
+                        Some((card_type.clone(), zone.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Resolve the spell normally (Balance effects are no-ops in execute_effect)
+        self.resolve_top_spell_from_stack(spell_id)?;
+
+        // Now handle any Balance effects interactively
+        for (card_type, zone) in balance_effects {
+            self.resolve_balance_effect_interactive(&card_type, &zone, controller1, controller2)?;
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a Balance effect interactively, asking each player to choose sacrifices
+    ///
+    /// Balance equalizes permanents/cards of a specified type across all players.
+    /// Each player with more than the minimum must choose which permanents to sacrifice.
+    fn resolve_balance_effect_interactive(
+        &mut self,
+        card_type: &str,
+        zone: &str,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<()> {
+        use crate::zones::Zone;
+
+        let player_ids: Vec<_> = self.game.players.iter().map(|p| p.id).collect();
+
+        if zone == "Hand" {
+            // Hand balancing - use existing non-interactive implementation for now
+            // TODO: Make hand discard interactive too
+            self.game.execute_balance_effect(card_type, zone)?;
+        } else {
+            // Battlefield - interactive sacrifice
+            // First, compute what each player needs to sacrifice
+            let counts_and_permanents: Vec<_> = player_ids
+                .iter()
+                .map(|&pid| {
+                    let matching_permanents: Vec<CardId> = self
+                        .game
+                        .battlefield
+                        .cards
+                        .iter()
+                        .filter(|&&card_id| {
+                            if let Ok(card) = self.game.cards.get(card_id) {
+                                if card.controller != pid {
+                                    return false;
+                                }
+                                match card_type {
+                                    "Creature" => card.is_creature(),
+                                    "Land" => card.is_land(),
+                                    "Artifact" => card.is_artifact(),
+                                    "Enchantment" => card.is_enchantment(),
+                                    "" => true,
+                                    _ => true,
+                                }
+                            } else {
+                                false
+                            }
+                        })
+                        .copied()
+                        .collect();
+                    let count = matching_permanents.len();
+                    (pid, count, matching_permanents)
+                })
+                .collect();
+
+            let min_count = counts_and_permanents.iter().map(|(_, c, _)| *c).min().unwrap_or(0);
+
+            // Log the balance action
+            let type_str = if card_type.is_empty() { "permanents" } else { card_type };
+            self.game
+                .logger
+                .gamelog(&format!("Balance: {} equalize to {}", type_str, min_count));
+
+            // Process each player who needs to sacrifice
+            for (player_id, current_count, valid_permanents) in counts_and_permanents {
+                if current_count <= min_count {
+                    continue; // This player doesn't need to sacrifice
+                }
+
+                let sacrifice_count = current_count - min_count;
+
+                // Get the appropriate controller for this player
+                let controller: &mut dyn PlayerController = if player_id == controller1.player_id() {
+                    controller1
+                } else {
+                    controller2
+                };
+
+                // Ask player to choose which permanents to sacrifice
+                let view = GameStateView::new(self.game, player_id);
+                let prior_log_size = self.game.logger.log_count();
+
+                let choice_result =
+                    controller.choose_permanents_to_sacrifice(&view, &valid_permanents, sacrifice_count, type_str);
+
+                let to_sacrifice = handle_choice_result!(choice_result, self.game, player_id);
+
+                // Log this choice point for snapshot/replay
+                let replay_choice = crate::game::ReplayChoice::Sacrifice(to_sacrifice.clone());
+                self.log_choice_point(player_id, Some(replay_choice), prior_log_size);
+
+                // Verify correct count
+                if to_sacrifice.len() != sacrifice_count {
+                    return Err(crate::MtgError::InvalidAction(format!(
+                        "Must sacrifice exactly {} {}, selected {}",
+                        sacrifice_count,
+                        type_str,
+                        to_sacrifice.len()
+                    )));
+                }
+
+                // Verify all selected permanents are valid
+                for &perm_id in &to_sacrifice {
+                    if !valid_permanents.contains(&perm_id) {
+                        return Err(crate::MtgError::InvalidAction(format!(
+                            "Selected permanent {:?} is not a valid {} to sacrifice",
+                            perm_id, type_str
+                        )));
+                    }
+                }
+
+                // Sacrifice the selected permanents
+                for card_id in to_sacrifice {
+                    let owner = self.game.cards.get(card_id)?.owner;
+
+                    // Log before moving
+                    if let Ok(card) = self.game.cards.get(card_id) {
+                        let player_name = self
+                            .game
+                            .get_player(player_id)
+                            .map(|p| p.name.to_string())
+                            .unwrap_or_else(|_| "Player".to_string());
+                        self.game
+                            .logger
+                            .gamelog(&format!("{} sacrifices {} to Balance", player_name, card.name));
+                    }
+
+                    // Check death triggers
+                    let _ = self.game.check_death_triggers(card_id);
+
+                    // Move to graveyard
+                    self.game.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }

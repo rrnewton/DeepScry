@@ -1078,11 +1078,13 @@ impl GameState {
                 // Call the attach_equipment method from Phase 1
                 self.attach_equipment(*source_equipment, *target_creature)?;
             }
-            Effect::Balance { card_type, zone } => {
-                // Balance effect: equalize permanents/cards of a type across all players
-                // MTG Rules: Each player chooses permanents until all have the same number
-                // as the player with the fewest, then sacrifices the rest
-                self.execute_balance_effect(card_type, zone)?;
+            Effect::Balance { card_type: _, zone: _ } => {
+                // Balance effect is handled interactively in the game loop
+                // This is a no-op here - the game loop will detect Balance effects
+                // and call resolve_balance_effect_interactive with controllers
+                //
+                // For non-interactive contexts (e.g., unit tests), call
+                // execute_balance_effect() directly on GameState.
             }
 
             Effect::CreateToken {
