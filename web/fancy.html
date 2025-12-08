@@ -586,12 +586,29 @@ cast dark ritual</textarea>
                     const widthPx = height * CELL_WIDTH_PX;   // Use HEIGHT from TUI for our width
                     const heightPx = width * CELL_HEIGHT_PX;  // Use WIDTH from TUI for our height
 
-                    console.log(`  → TAPPED: TUI landscape ${width}×${height} cells → portrait box ${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px + rotate`);
+                    // CRITICAL: When rotating 90° with origin=center, we need to adjust position!
+                    // The TUI box is landscape (wide). We create a portrait box (tall) and rotate it.
+                    // After rotation around center, the top-left corner shifts.
+                    //
+                    // Original landscape box: width=W, height=H, center at (left+W/2, top+H/2)
+                    // Portrait box before rotation: width=h, height=w, center should be at SAME point
+                    // So: portrait.left + h/2 = landscape.left + W/2
+                    //     portrait.top + w/2 = landscape.top + H/2
+                    //
+                    // Solving for portrait position:
+                    const landscapeWidthPx = width * CELL_WIDTH_PX;  // Original TUI box width
+                    const landscapeHeightPx = height * CELL_HEIGHT_PX; // Original TUI box height
+
+                    const adjustedLeft = pos.left + (landscapeWidthPx - widthPx) / 2;
+                    const adjustedTop = pos.top + (landscapeHeightPx - heightPx) / 2;
+
+                    console.log(`  → TAPPED: TUI landscape ${width}×${height} cells @ pixels(${pos.left.toFixed(2)}, ${pos.top.toFixed(2)})`);
+                    console.log(`           → portrait box ${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px @ adjusted(${adjustedLeft.toFixed(2)}, ${adjustedTop.toFixed(2)}) + rotate`);
 
                     img.style.width = `${widthPx}px`;
                     img.style.height = `${heightPx}px`;
-                    img.style.left = `${pos.left}px`;
-                    img.style.top = `${pos.top}px`;
+                    img.style.left = `${adjustedLeft}px`;
+                    img.style.top = `${adjustedTop}px`;
                     img.style.objectFit = 'cover';  // Cover to fill while maintaining aspect
                     img.style.transform = 'rotate(90deg)';
                     img.style.transformOrigin = 'center center';
