@@ -166,30 +166,12 @@ impl BattlefieldEntity for Entity {
     }
 
     fn display_name(&self, view: &GameStateView) -> String {
+        // Note: Stack counts (2X:, 3X:) are now rendered in the header row above the card,
+        // so we don't include them in the display name anymore.
         match self {
             Entity::SingleCard { card_id } => view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id)),
-            Entity::SimpleStack {
-                card_name, card_ids, ..
-            } => {
-                let count = card_ids.len();
-                if count > 1 {
-                    format!("{}x {}", count, card_name)
-                } else {
-                    card_name.clone()
-                }
-            }
-            Entity::VisualStack {
-                card_name, card_ids, ..
-            } => {
-                // For visual stacks, don't show the "Nx" prefix since
-                // the visual diagonal offsets convey the count
-                let count = card_ids.len();
-                if count > 1 {
-                    format!("{}x {}", count, card_name)
-                } else {
-                    card_name.clone()
-                }
-            }
+            Entity::SimpleStack { card_name, .. } => card_name.clone(),
+            Entity::VisualStack { card_name, .. } => card_name.clone(),
             Entity::HandCard { card_id, .. } => view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id)),
             Entity::GraveyardCard { card_id, .. } => {
                 view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id))
@@ -1245,7 +1227,7 @@ impl FancyTuiRenderer {
     }
 
     /// Render battlefield using word-wrap model with per-row headers.
-    /// Each row of cards has a 1-line header above it where section labels appear.
+    /// Each row of cards has a 1-line header above it where section labels and stack counts appear.
     fn render_wordwrap_battlefield(
         &mut self,
         f: &mut Frame,
@@ -1262,10 +1244,12 @@ impl FancyTuiRenderer {
         // Each row takes: 1 (header) + card_height
         let row_unit = 1 + card_height;
 
-        // First pass: compute card positions and label positions
+        // First pass: compute card positions, label positions, and stack count positions
         // Labels appear directly above the first card of their section
+        // Stack counts (2X:, 3X:, etc.) appear above each stacked entity
         let mut card_positions: Vec<(u16, u16, u16, u16)> = Vec::new(); // (x, y, w, h) for each card
         let mut label_positions: Vec<(u16, u16, String, Color)> = Vec::new(); // (x, y, text, color)
+        let mut stack_count_positions: Vec<(u16, u16, usize)> = Vec::new(); // (x, y, count) for stacks
 
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
@@ -1303,6 +1287,12 @@ impl FancyTuiRenderer {
                         label_positions.push((current_x, y_offset, label_text, label_color));
                     }
 
+                    // Check if this entity is a stack with count > 1
+                    let stack_count = entity.count();
+                    if stack_count > 1 {
+                        stack_count_positions.push((current_x, y_offset, stack_count));
+                    }
+
                     // Card position: below the header line
                     let card_y = y_offset + 1;
                     if card_y + card_h <= area.height {
@@ -1328,7 +1318,23 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Third pass: render cards
+        // Third pass: render stack counts in header rows (rendered AFTER labels so they overwrite if needed)
+        for (x, y, count) in &stack_count_positions {
+            if *y < area.height {
+                let count_text = format!("{}X:", count);
+                let count_area = Rect {
+                    x: area.x + x,
+                    y: area.y + y,
+                    width: count_text.len() as u16,
+                    height: 1,
+                };
+                let styled_count =
+                    Span::styled(count_text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+                f.render_widget(Paragraph::new(Line::from(styled_count)), count_area);
+            }
+        }
+
+        // Fourth pass: render cards
         let mut card_idx = 0;
         for item in items {
             if let BattlefieldItem::Card { entity } = item {
