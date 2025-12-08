@@ -333,6 +333,29 @@ impl FancyTuiRenderer {
         }
     }
 
+    /// Calculate required height for player info bar based on available width.
+    /// Returns 3 if content fits on one line, 4 if it needs two lines.
+    /// Height includes 2 for borders (top + bottom) plus content lines.
+    fn calculate_info_bar_height(available_width: u16) -> u16 {
+        // Account for borders and padding in the Paragraph widget
+        let inner_width = available_width.saturating_sub(4);
+
+        // Estimate max lengths for both parts of the status line:
+        // Left: "Opp: 20 life | Hand: 7 | GY: 99 | Lib: 99" (~42 chars)
+        // Right: "Turn: 99 (99) | UP UK DR M1 BC DA DB CD EC M2 ET" (~48 chars)
+        const STATS_MAX_LEN: u16 = 42;
+        const PHASE_MAX_LEN: u16 = 48;
+        const MIN_SPACING: u16 = 3;
+
+        let needs_two_lines = STATS_MAX_LEN + PHASE_MAX_LEN + MIN_SPACING > inner_width;
+
+        if needs_two_lines {
+            4 // 2 borders + 2 content lines
+        } else {
+            3 // 2 borders + 1 content line
+        }
+    }
+
     /// Get all cards for a battlefield in display order (lands, creatures, others)
     pub fn get_battlefield_cards_in_order(view: &GameStateView, owner_id: PlayerId) -> Vec<CardId> {
         let battlefield = view.battlefield();
@@ -724,13 +747,15 @@ impl FancyTuiRenderer {
 
         // Middle column: Player info bars + battlefields
         // Layout: Opponent info bar, Opponent battlefield, Your battlefield, Your info bar
+        // Calculate info bar height based on whether status fits on one line
+        let info_bar_height = Self::calculate_info_bar_height(main_chunks[1].width);
         let middle_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(3),         // Opponent info header
-                Constraint::Percentage(45), // Opponent battlefield
-                Constraint::Percentage(45), // Your battlefield
-                Constraint::Min(3),         // Your info footer
+                Constraint::Length(info_bar_height), // Opponent info header
+                Constraint::Percentage(45),          // Opponent battlefield
+                Constraint::Percentage(45),          // Your battlefield
+                Constraint::Length(info_bar_height), // Your info footer
             ])
             .split(main_chunks[1]);
 
