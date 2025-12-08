@@ -1069,6 +1069,230 @@ impl FancyTuiRenderer {
         f.render_widget(paragraph, inner_area);
     }
 
+    /// Render battlefield with inline section labels
+    ///
+    /// Sections flow left-to-right with inline labels above the first card in each section.
+    /// Optionally breaks between sections if it doesn't reduce card size.
+    fn render_battlefield_inline(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        view: &GameStateView,
+        sections: &[(Vec<CardId>, &str, Color, bool)], // (cards, label, color, try_newline_before)
+    ) {
+        if sections.is_empty() {
+            return;
+        }
+
+        // Try two rendering strategies:
+        // 1. No forced newlines (fully inline)
+        // 2. With forced newlines where requested
+        // Choose the one that gives larger card sizes
+
+        let (card_width_no_newlines, card_height_no_newlines) =
+            self.calculate_card_size_for_inline_layout(area, view, sections, false);
+        let (card_width_with_newlines, card_height_with_newlines) =
+            self.calculate_card_size_for_inline_layout(area, view, sections, true);
+
+        // Choose the layout that gives larger cards (prioritize height, then width)
+        let use_newlines = if card_height_with_newlines > card_height_no_newlines {
+            true
+        } else if card_height_with_newlines == card_height_no_newlines {
+            card_width_with_newlines >= card_width_no_newlines
+        } else {
+            false
+        };
+
+        let (card_width, card_height) = if use_newlines {
+            (card_width_with_newlines, card_height_with_newlines)
+        } else {
+            (card_width_no_newlines, card_height_no_newlines)
+        };
+
+        // Render with chosen strategy
+        self.render_inline_sections(f, area, view, sections, use_newlines, (card_width, card_height));
+    }
+
+    /// Calculate optimal card size for inline layout
+    fn calculate_card_size_for_inline_layout(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        sections: &[(Vec<CardId>, &str, Color, bool)],
+        honor_newline_hints: bool,
+    ) -> (u16, u16) {
+        // Try default size first
+        if self.test_inline_layout_fits(
+            area,
+            view,
+            sections,
+            honor_newline_hints,
+            Self::DEFAULT_CARD_WIDTH,
+            Self::DEFAULT_CARD_HEIGHT,
+        ) {
+            // Default fits, try to increase
+            let mut best_height = Self::DEFAULT_CARD_HEIGHT;
+            for h in (Self::DEFAULT_CARD_HEIGHT + 1)..=Self::MAX_CARD_HEIGHT {
+                let w = Self::compute_width_from_height(h);
+                if self.test_inline_layout_fits(area, view, sections, honor_newline_hints, w, h) {
+                    best_height = h;
+                } else {
+                    break;
+                }
+            }
+            let best_width = Self::compute_width_from_height(best_height);
+            return (best_width, best_height);
+        }
+
+        // Default doesn't fit, try to shrink
+        for h in (Self::MIN_CARD_HEIGHT..Self::DEFAULT_CARD_HEIGHT).rev() {
+            let w = Self::compute_width_from_height(h).max(Self::MIN_CARD_WIDTH);
+            if self.test_inline_layout_fits(area, view, sections, honor_newline_hints, w, h) {
+                return (w, h);
+            }
+        }
+
+        // Return minimum as fallback
+        (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT)
+    }
+
+    /// Test if inline layout fits in area
+    fn test_inline_layout_fits(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        sections: &[(Vec<CardId>, &str, Color, bool)],
+        honor_newline_hints: bool,
+        card_width: u16,
+        card_height: u16,
+    ) -> bool {
+        let mut y_offset = 0u16;
+        let mut current_x = 0u16;
+        let mut row_height = 0u16;
+
+        for (cards, _label, _color, force_newline) in sections {
+            // Check for forced newline
+            if honor_newline_hints && *force_newline && current_x > 0 {
+                // Move to next row
+                y_offset += row_height + Self::CARD_SPACING;
+                current_x = 0;
+                row_height = 0;
+
+                if y_offset >= area.height {
+                    return false;
+                }
+            }
+
+            // Account for label height (1 line above first card in section)
+            if current_x == 0 {
+                y_offset += 1;
+                if y_offset >= area.height {
+                    return false;
+                }
+            }
+
+            // Group cards into entities for this section
+            let entities = self.group_cards_into_entities(cards, view);
+
+            for entity in &entities {
+                let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+
+                // Check if card fits on current row
+                if current_x + card_w > area.width && current_x > 0 {
+                    // Move to next row
+                    current_x = 0;
+                    y_offset += row_height + Self::CARD_SPACING;
+                    row_height = 0;
+
+                    if y_offset >= area.height {
+                        return false;
+                    }
+                }
+
+                // Check vertical space
+                if y_offset + card_h > area.height {
+                    return false;
+                }
+
+                current_x += card_w + Self::CARD_SPACING;
+                row_height = row_height.max(card_h);
+            }
+        }
+
+        true
+    }
+
+    /// Render sections with inline labels
+    fn render_inline_sections(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        view: &GameStateView,
+        sections: &[(Vec<CardId>, &str, Color, bool)],
+        honor_newline_hints: bool,
+        card_size: (u16, u16),
+    ) {
+        use ratatui::text::Text;
+
+        let (card_width, card_height) = card_size;
+        let mut y_offset = 0u16;
+        let mut current_x = 0u16;
+        let mut row_height = 0u16;
+
+        for (cards, label, color, force_newline) in sections {
+            // Check for forced newline
+            if honor_newline_hints && *force_newline && current_x > 0 {
+                // Move to next row
+                y_offset += row_height + Self::CARD_SPACING;
+                current_x = 0;
+                row_height = 0;
+            }
+
+            // Draw section label above first card
+            if current_x == 0 {
+                let label_area = Rect {
+                    x: area.x,
+                    y: area.y + y_offset,
+                    width: area.width,
+                    height: 1,
+                };
+                let label_text = Text::from(Span::styled(
+                    format!("{}:", label),
+                    Style::default().fg(*color).add_modifier(Modifier::BOLD),
+                ));
+                f.render_widget(Paragraph::new(label_text), label_area);
+                y_offset += 1;
+            }
+
+            // Group cards into entities
+            let entities = self.group_cards_into_entities(cards, view);
+
+            // Render entities
+            for entity in &entities {
+                let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+
+                // Check if card fits on current row
+                if current_x + card_w > area.width && current_x > 0 {
+                    // Move to next row
+                    current_x = 0;
+                    y_offset += row_height + Self::CARD_SPACING;
+                    row_height = 0;
+                }
+
+                let entity_area = Rect {
+                    x: area.x + current_x,
+                    y: area.y + y_offset,
+                    width: card_w,
+                    height: card_h,
+                };
+                self.render_entity(f, entity_area, view, entity);
+
+                current_x += card_w + Self::CARD_SPACING;
+                row_height = row_height.max(card_h);
+            }
+        }
+    }
+
     /// Render a group of cards (lands, creatures, others) with dynamic packing
     #[allow(clippy::too_many_arguments)]
     pub fn render_card_group(
@@ -1266,82 +1490,46 @@ impl FancyTuiRenderer {
             return;
         }
 
-        // Build card groups for size calculation
-        let mut card_groups = Vec::new();
-        if !lands.is_empty() {
-            card_groups.push((lands.clone(), "Lands"));
-        }
-        if !creatures.is_empty() {
-            card_groups.push((creatures.clone(), "Creatures"));
-        }
-        if !artifacts.is_empty() {
-            card_groups.push((artifacts.clone(), "Artifacts"));
-        }
-        if !enchantments.is_empty() {
-            card_groups.push((enchantments.clone(), "Enchants"));
-        }
+        // Build ordered sections: lands at bottom for player, top for opponent
+        // Section format: (cards, label, color, force_newline_before)
+        let sections: Vec<(Vec<CardId>, &str, Color, bool)> = if is_player_bf {
+            // Player battlefield: non-lands first, then lands
+            let mut secs = Vec::new();
+            if !creatures.is_empty() {
+                secs.push((creatures, "Creatures", Color::Red, false));
+            }
+            if !artifacts.is_empty() {
+                secs.push((artifacts, "Artifacts", Color::Cyan, false));
+            }
+            if !enchantments.is_empty() {
+                secs.push((enchantments, "Enchants", Color::Magenta, false));
+            }
+            if !lands.is_empty() {
+                // Try to force a newline before lands (will be evaluated during rendering)
+                secs.push((lands, "Lands", Color::Green, true));
+            }
+            secs
+        } else {
+            // Opponent battlefield: lands first, then non-lands
+            let mut secs = Vec::new();
+            if !lands.is_empty() {
+                secs.push((lands, "Lands", Color::Green, false));
+            }
+            if !creatures.is_empty() {
+                // Try to force a newline after lands (before creatures)
+                secs.push((creatures, "Creatures", Color::Red, !secs.is_empty()));
+            }
+            if !artifacts.is_empty() {
+                secs.push((artifacts, "Artifacts", Color::Cyan, false));
+            }
+            if !enchantments.is_empty() {
+                secs.push((enchantments, "Enchants", Color::Magenta, false));
+            }
+            secs
+        };
 
-        // Calculate optimal card size for this battlefield
-        let (card_width, card_height) = Self::calculate_optimal_card_size(inner_area, &card_groups, view);
-
-        // Render card groups with optimal size
-        let mut y_offset = 0;
-
-        if !lands.is_empty() {
-            y_offset += self.render_card_group(
-                f,
-                inner_area,
-                y_offset,
-                view,
-                &lands,
-                "Lands",
-                Color::Green,
-                card_width,
-                card_height,
-            );
-        }
-
-        if !creatures.is_empty() {
-            y_offset += self.render_card_group(
-                f,
-                inner_area,
-                y_offset,
-                view,
-                &creatures,
-                "Creatures",
-                Color::Red,
-                card_width,
-                card_height,
-            );
-        }
-
-        if !artifacts.is_empty() {
-            y_offset += self.render_card_group(
-                f,
-                inner_area,
-                y_offset,
-                view,
-                &artifacts,
-                "Artifacts",
-                Color::Cyan,
-                card_width,
-                card_height,
-            );
-        }
-
-        if !enchantments.is_empty() {
-            self.render_card_group(
-                f,
-                inner_area,
-                y_offset,
-                view,
-                &enchantments,
-                "Enchants",
-                Color::Magenta,
-                card_width,
-                card_height,
-            );
-        }
+        // Render battlefield with inline section labels
+        self.render_battlefield_inline(f, inner_area, view, &sections);
 
         // Render graveyard overlay in bottom-right corner
         self.render_graveyard_overlay(f, inner_area, view, owner_id);
