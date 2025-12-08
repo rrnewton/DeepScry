@@ -123,6 +123,76 @@ NC='\033[0m' # No Color
 # Configuration
 LOG_DIR="validate_logs"
 LATEST_SYMLINK="$LOG_DIR/validate_latest.log"
+LOCK_FILE=".validate.lock"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ============================================================
+# Environment checks and locking
+# ============================================================
+
+# Check for clean environment (no conflicting processes)
+if [ -f "$SCRIPT_DIR/check_clean_environment.py" ]; then
+    echo ""
+    echo -e "${CYAN}Checking for conflicting processes...${NC}"
+    if ! python3 "$SCRIPT_DIR/check_clean_environment.py"; then
+        echo ""
+        echo -e "${RED}✗ Environment not clean - conflicting processes detected${NC}"
+        echo ""
+        echo "To clean up zombie processes, run:"
+        echo "  python3 $SCRIPT_DIR/kill_zombie_processes.py"
+        echo ""
+        exit 1
+    fi
+    echo ""
+fi
+
+# Acquire lock file (prevent concurrent validation)
+acquire_lock() {
+    if [ -f "$LOCK_FILE" ]; then
+        LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
+        LOCK_TIME=$(stat -c %Y "$LOCK_FILE" 2>/dev/null || stat -f %m "$LOCK_FILE" 2>/dev/null || echo "0")
+        CURRENT_TIME=$(date +%s)
+        LOCK_AGE=$((CURRENT_TIME - LOCK_TIME))
+
+        # Check if the PID in the lock file is still running
+        if [ "$LOCK_PID" != "unknown" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+            echo ""
+            echo -e "${RED}✗ Error: Another validation is already running${NC}"
+            echo ""
+            echo "Lock file: $LOCK_FILE"
+            echo "Lock PID: $LOCK_PID"
+            echo "Lock age: ${LOCK_AGE}s"
+            echo ""
+            echo "If this is a stale lock, remove it with:"
+            echo "  rm $LOCK_FILE"
+            echo "Or clean up all zombie processes with:"
+            echo "  python3 $SCRIPT_DIR/kill_zombie_processes.py"
+            echo ""
+            exit 1
+        else
+            # Stale lock file (process no longer running)
+            echo -e "${YELLOW}Warning: Removing stale lock file (PID $LOCK_PID no longer running)${NC}"
+            rm -f "$LOCK_FILE"
+        fi
+    fi
+
+    # Create lock file with our PID
+    echo $$ > "$LOCK_FILE"
+    echo -e "${CYAN}✓ Acquired validation lock (PID $$)${NC}"
+}
+
+release_lock() {
+    if [ -f "$LOCK_FILE" ]; then
+        LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+        if [ "$LOCK_PID" = "$$" ]; then
+            rm -f "$LOCK_FILE"
+        fi
+    fi
+}
+
+# Acquire lock before starting
+acquire_lock
 
 # Default validation commands (can be overridden via CLI flags)
 VALIDATE_CMD="make validate-impl"
@@ -137,7 +207,7 @@ CREATED_WIP_COMMIT=false
 # Track whether caching should be disabled (dirty working copy with --no-wip-commit)
 DISABLE_CACHING=false
 
-# Cleanup function to uncommit WIP if needed
+# Cleanup function to uncommit WIP if needed and release lock
 cleanup() {
     if [ "$CREATED_WIP_COMMIT" = true ]; then
         echo ""
@@ -145,6 +215,8 @@ cleanup() {
         git reset --soft HEAD~1
         echo -e "${CYAN}✓ Uncommitted WIP commit${NC}"
     fi
+    # Always release the lock on exit
+    release_lock
 }
 
 # Register cleanup to run on exit (success or failure)
@@ -368,7 +440,6 @@ echo "==================================="
 echo ""
 
 # Start system utilization monitoring (if enabled)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$MONITOR_UTILIZATION" = true ] && [ -f "$SCRIPT_DIR/utilization_prehook.sh" ]; then
     source "$SCRIPT_DIR/utilization_prehook.sh"
 fi

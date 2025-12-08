@@ -1196,7 +1196,9 @@ impl FancyTuiRenderer {
 
         for item in items {
             match item {
-                BattlefieldItem::Label { force_newline_before, .. } => {
+                BattlefieldItem::Label {
+                    force_newline_before, ..
+                } => {
                     // Handle forced newlines between sections
                     if *force_newline_before && current_x > 0 {
                         y_offset += row_unit + Self::CARD_SPACING;
@@ -1328,8 +1330,10 @@ impl FancyTuiRenderer {
                     width: count_text.len() as u16,
                     height: 1,
                 };
-                let styled_count =
-                    Span::styled(count_text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+                let styled_count = Span::styled(
+                    count_text,
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                );
                 f.render_widget(Paragraph::new(Line::from(styled_count)), count_area);
             }
         }

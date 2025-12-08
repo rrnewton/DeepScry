@@ -535,10 +535,7 @@ impl WasmFancyTuiState {
             }
             PendingChoice::Sacrifice(indices) => {
                 if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::SacrificePermanents {
-                        valid_permanents, ..
-                    } = context
-                    {
+                    if let ChoiceContext::SacrificePermanents { valid_permanents, .. } = context {
                         let permanents: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
                             .iter()
                             .filter_map(|i| valid_permanents.get(*i).copied())
@@ -871,8 +868,7 @@ impl WasmFancyTuiState {
                 choices
             }
             ChoiceContext::SacrificePermanents {
-                formatted_permanents,
-                ..
+                formatted_permanents, ..
             } => {
                 let mut choices = vec!["Done".to_string()];
                 choices.extend(formatted_permanents.clone());
