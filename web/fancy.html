@@ -535,7 +535,10 @@ cast dark ritual</textarea>
             cellToPixels(col, row) {
                 // Use measured dimensions if available, otherwise fall back to defaults
                 const CELL_WIDTH_PX = this.cellWidth || 10;
-                const CELL_HEIGHT_PX = this.cellHeight || 20;
+                // IMPORTANT: Use line-height (20px) for vertical positioning, not measured height (19px)!
+                // The browser uses line-height for vertical spacing between lines, even though
+                // the actual glyph height is 19px. Using 19px would cause cumulative vertical drift.
+                const CELL_HEIGHT_PX = 20;  // ALWAYS 20px for vertical positioning
                 return { left: col * CELL_WIDTH_PX, top: row * CELL_HEIGHT_PX };
             },
 
@@ -568,18 +571,22 @@ cast dark ritual</textarea>
                 // Update position and size
                 const pos = this.cellToPixels(col, row);
                 const CELL_WIDTH_PX = this.cellWidth || 10;
-                const CELL_HEIGHT_PX = this.cellHeight || 20;
+                const CELL_HEIGHT_PX = 20;  // Always 20px (line-height), not measured height (19px)
 
                 // DEBUG: Log incoming card position data
                 console.log(`[CARD POSITION] ${cardId}: cell(${col}, ${row}) size(${width}×${height}) tapped=${isTapped}`);
 
-                // For tapped cards, TUI swaps width/height (landscape box)
-                // But card images are always portrait, so we need special handling
+                // For tapped cards, TUI gives us LANDSCAPE dimensions (width=21, height=6)
+                // But card images are PORTRAIT, so we need to:
+                // 1. SWAP width/height to create a portrait bounding box
+                // 2. ROTATE the image 90° so it becomes landscape when displayed
+                // This ensures the portrait card image fills the landscape TUI box correctly
                 if (isTapped) {
-                    const widthPx = width * CELL_WIDTH_PX;
-                    const heightPx = height * CELL_HEIGHT_PX;
+                    // SWAP dimensions: TUI says landscape (21w × 6h), we create portrait (6w × 21h)
+                    const widthPx = height * CELL_WIDTH_PX;   // Use HEIGHT from TUI for our width
+                    const heightPx = width * CELL_HEIGHT_PX;  // Use WIDTH from TUI for our height
 
-                    console.log(`  → TAPPED: pixels(${pos.left.toFixed(2)}, ${pos.top.toFixed(2)}) size(${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px) rotation=90deg`);
+                    console.log(`  → TAPPED: TUI landscape ${width}×${height} cells → portrait box ${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px + rotate`);
 
                     img.style.width = `${widthPx}px`;
                     img.style.height = `${heightPx}px`;
