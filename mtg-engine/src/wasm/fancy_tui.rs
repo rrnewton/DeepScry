@@ -1183,28 +1183,13 @@ pub fn launch_fancy_tui(
                 state.needs_redraw = true; // Game state changed, need redraw
             }
 
-            // Check dirty bit - skip expensive rendering if nothing changed
-            if !state.needs_redraw {
-                return;
-            }
-
-            // Clear dirty bit before rendering
-            state.needs_redraw = false;
-
-            // Update the turn info in the header
-            let turn_number = state.game.turn.turn_number;
-            let game_over = state.game_over;
-            let _ = js_sys::eval(&format!(
-                "window.updateTurnInfo && window.updateTurnInfo({}, {})",
-                turn_number, game_over
-            ));
-
             // Split borrows to avoid conflict: we need &game and &mut renderer
             let WasmFancyTuiState {
                 ref game,
                 ref mut renderer,
                 ref current_prompt,
                 ref current_choices,
+                ref needs_redraw, // Borrow the dirty bit to check it
                 ..
             } = *state;
 
@@ -1213,17 +1198,45 @@ pub fn launch_fancy_tui(
             let prompt = current_prompt.as_deref();
             let choices: Vec<(String, bool)> = current_choices.clone();
 
-            // Draw the TUI using the shared renderer
+            // IMPORTANT: We must ALWAYS draw the frame, even when state hasn't changed!
+            // RatZilla/Ratatui uses immediate-mode rendering where each frame must be
+            // fully populated. If we skip drawing, the frame will be empty -> black screen.
             renderer.draw_ui(f, &view, prompt, &choices);
 
-            // Export card positions for image overlays
-            // We do this inside the render loop to avoid borrow conflicts
-            let positions_json = export_card_positions_from_renderer(&renderer.state.entity_positions, game, player_id);
+            // Optimization: Only run expensive JavaScript callbacks when state has changed
+            if *needs_redraw {
+                // Release all borrows before calling back to state
+                drop(view);
+                drop(renderer);
+                drop(game);
+                drop(current_prompt);
+                drop(current_choices);
 
-            // Post-render hook: notify JavaScript that rendering is complete
-            // Pass the card positions so JavaScript doesn't need to call back into WASM
-            let js_code = format!("window.onRenderComplete && window.onRenderComplete({})", positions_json);
-            let _ = js_sys::eval(&js_code);
+                // Clear dirty bit
+                state.needs_redraw = false;
+
+                // Re-borrow for JavaScript callbacks
+                let WasmFancyTuiState {
+                    ref game, ref renderer, ..
+                } = *state;
+
+                // Update the turn info in the header
+                let turn_number = game.turn.turn_number;
+                let game_over = state.game_over;
+                let _ = js_sys::eval(&format!(
+                    "window.updateTurnInfo && window.updateTurnInfo({}, {})",
+                    turn_number, game_over
+                ));
+
+                // Export card positions for image overlays
+                let positions_json =
+                    export_card_positions_from_renderer(&renderer.state.entity_positions, game, player_id);
+
+                // Post-render hook: notify JavaScript that rendering is complete
+                // Pass the card positions so JavaScript doesn't need to call back into WASM
+                let js_code = format!("window.onRenderComplete && window.onRenderComplete({})", positions_json);
+                let _ = js_sys::eval(&js_code);
+            }
         }
     });
 
