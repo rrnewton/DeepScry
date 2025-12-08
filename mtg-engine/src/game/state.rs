@@ -509,6 +509,39 @@ impl GameState {
             prior_log_size,
         );
 
+        // Log significant zone transitions to the gamelog
+        // This ensures visibility into all card movements for debugging and replay
+        if let Ok(card) = self.cards.get(card_id) {
+            let card_name = &card.name;
+            match (from, to) {
+                (Zone::Battlefield, Zone::Graveyard) => {
+                    // Creature died or permanent destroyed (not from lethal damage - that's logged elsewhere)
+                    // Only log if not already logged by state-based actions
+                    self.logger
+                        .verbose(&format!("{} ({}) goes to graveyard", card_name, card_id));
+                }
+                (Zone::Battlefield, Zone::Exile) => {
+                    self.logger.normal(&format!("{} ({}) is exiled", card_name, card_id));
+                }
+                (Zone::Battlefield, Zone::Hand) => {
+                    self.logger
+                        .normal(&format!("{} ({}) is returned to hand", card_name, card_id));
+                }
+                (Zone::Stack, Zone::Graveyard) => {
+                    // Spell resolved or was countered - logged elsewhere
+                }
+                (Zone::Hand, Zone::Graveyard) => {
+                    self.logger.normal(&format!("{} is discarded", card_name));
+                }
+                (Zone::Library, Zone::Graveyard) => {
+                    // Mill - don't spam, this is logged by mill effect
+                }
+                _ => {
+                    // Other moves are either logged elsewhere or not significant
+                }
+            }
+        }
+
         // Update mana caches (event-driven incremental update)
         // Read card data first to avoid borrow conflicts
         if let Some(card) = self.cards.try_get(card_id) {
