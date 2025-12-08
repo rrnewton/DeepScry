@@ -169,12 +169,23 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 // TODO: Implement player choice for "Any"
                 ManaCost::from_string("C")
             } else if produced_str.starts_with("Combo") {
-                // Combo means choice between colors
-                // For now, just use the first color mentioned
-                // TODO: Implement player choice for Combo
+                // Combo means choice between colors (e.g., "Combo B G" = {B} or {G})
+                // Parse all listed colors and return them as a ManaCost with all colors set to 1
+                // The cache will detect this as ManaProductionKind::Choice
                 let colors = produced_str.strip_prefix("Combo").unwrap_or("").trim();
-                let first_color = colors.split_whitespace().next().unwrap_or("C");
-                ManaCost::from_string(first_color)
+                let mut mana = ManaCost::default();
+                for color in colors.split_whitespace() {
+                    match color {
+                        "W" => mana.white = 1,
+                        "U" => mana.blue = 1,
+                        "B" => mana.black = 1,
+                        "R" => mana.red = 1,
+                        "G" => mana.green = 1,
+                        "C" => mana.colorless = 1,
+                        _ => {}
+                    }
+                }
+                mana
             } else {
                 // Direct specification: "G", "C C", "W U", etc.
                 ManaCost::from_string(produced_str)
