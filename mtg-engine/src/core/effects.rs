@@ -689,6 +689,15 @@ pub enum AffectedSelector {
         color: String,
     },
 
+    /// All creatures of a specific color (including self).
+    ///
+    /// Corresponds to: `Affected$ Creature.White`, `Affected$ Creature.Black`, etc.
+    /// Used by cards like Crusade that buff all creatures of a color
+    AllCreaturesOfColor {
+        /// The color name (e.g., "Black", "White", "Blue")
+        color: String,
+    },
+
     /// Humans equipped by this equipment.
     ///
     /// Corresponds to: `Affected$ Human.EquippedBy`

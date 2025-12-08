@@ -1,0 +1,25 @@
+[metadata]
+Name:Spirit Link Aura Targeting Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:10
+Difficulty:Easy
+Description:Tests that Spirit Link can be cast targeting a creature and attaches properly. Player casts Spirit Link on Savannah Lions, attacks, and gains life.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=10
+p0hand=Spirit Link
+p0battlefield=Plains; Plains; Savannah Lions
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

@@ -185,6 +185,20 @@ impl GameState {
                 );
             }
 
+            // MTG Rule 303.4a: An Aura spell that resolves attaches to its target
+            // The target was already chosen and validated when casting the Aura
+            let is_aura = self.cards.get(card_id).map(|c| c.is_aura()).unwrap_or(false);
+            if is_aura && !chosen_targets.is_empty() {
+                let aura_target = chosen_targets[0];
+                // Attach the Aura to its target (if target is still valid)
+                if self.battlefield.contains(aura_target) {
+                    self.attach_aura(card_id, aura_target)?;
+                } else {
+                    // Target became invalid - move Aura to graveyard (CR 303.4a)
+                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, card_owner)?;
+                }
+            }
+
             // Check for ETB triggers on all permanents (including the one that just entered)
             self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
         }
@@ -282,6 +296,88 @@ impl GameState {
             .unwrap_or_else(|_| "unknown".to_string());
         self.logger
             .verbose(&format!("{} attaches to {}", equipment_name, target_name));
+
+        Ok(())
+    }
+
+    /// Attach Aura to a target card
+    ///
+    /// This is called when an Aura spell resolves and enters the battlefield.
+    ///
+    /// ## Rules Implementation (CR 303.4)
+    /// - Auras can attach to any legal target (including opponent's creatures)
+    /// - The target is determined by the "enchant" keyword (e.g., "Enchant creature")
+    /// - If already attached, detaches from previous target first
+    pub fn attach_aura(&mut self, aura_id: CardId, target_id: CardId) -> Result<()> {
+        // Validate Aura is on battlefield
+        if !self.battlefield.contains(aura_id) {
+            return Err(MtgError::InvalidAction(
+                "Aura must be on battlefield to attach".to_string(),
+            ));
+        }
+
+        // Validate target is on battlefield
+        if !self.battlefield.contains(target_id) {
+            return Err(MtgError::InvalidAction("Target must be on battlefield".to_string()));
+        }
+
+        // Get Aura and target
+        let aura = self.cards.get(aura_id)?;
+        if !aura.is_aura() {
+            return Err(MtgError::InvalidAction(
+                "Only Auras can be attached via attach_aura".to_string(),
+            ));
+        }
+        let aura_name = aura.name.to_string();
+
+        // Validate target type based on enchant restriction
+        // For now, assume "Enchant creature" (most common case)
+        // TODO: Parse enchant restriction from KeywordArgs::Enchant
+        let target = self.cards.get(target_id)?;
+        if !target.is_creature() {
+            return Err(MtgError::InvalidAction(
+                "This Aura can only enchant creatures".to_string(),
+            ));
+        }
+
+        // Detach from previous target if needed (unlikely for newly-resolved Aura)
+        let aura = self.cards.get_mut(aura_id)?;
+        if let Some(old_target) = aura.attached_to {
+            let old_target_name = self
+                .cards
+                .get(old_target)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            self.logger
+                .verbose(&format!("{} detaches from {}", aura_name, old_target_name));
+        }
+
+        // Attach to new target
+        // Capture old value and log size before mutation
+        let old_target = self.cards.get(aura_id)?.attached_to;
+        let prior_log_size = self.logger.log_count();
+
+        let aura = self.cards.get_mut(aura_id)?;
+        let new_target = Some(target_id);
+        aura.attached_to = new_target;
+
+        // Log the mutation for undo
+        self.undo_log.log(
+            crate::undo::GameAction::SetAttachedTo {
+                equipment_id: aura_id,
+                old_target,
+                new_target,
+            },
+            prior_log_size,
+        );
+
+        // Log attachment
+        let target_name = self
+            .cards
+            .get(target_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        self.logger.gamelog(&format!("{} enchants {}", aura_name, target_name));
 
         Ok(())
     }

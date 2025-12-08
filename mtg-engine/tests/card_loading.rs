@@ -1428,3 +1428,103 @@ fn test_load_soltari_lancer_self_attacking_selector() -> Result<()> {
 
     Ok(())
 }
+
+/// Test loading Crusade - should parse AllCreaturesOfColor selector
+#[test]
+fn test_load_crusade_all_creatures_of_color() -> Result<()> {
+    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/c/crusade.txt");
+    if !path.exists() {
+        eprintln!("Skipping test: cardsfolder not present");
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Crusade");
+    assert!(def.types.contains(&CardType::Enchantment));
+
+    // Check raw abilities - should have Creature.White selector
+    let has_creature_white = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("Affected$ Creature.White") && a.contains("AddPower$ 1") && a.contains("AddToughness$ 1"));
+    assert!(
+        has_creature_white,
+        "Crusade should have Affected$ Creature.White static ability. Raw abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have ModifyPT with AllCreaturesOfColor { color: "White" }
+    let has_modify_pt = card.static_abilities.iter().any(|ability| {
+        matches!(
+            ability,
+            StaticAbility::ModifyPT {
+                affected: AffectedSelector::AllCreaturesOfColor { color },
+                power: 1,
+                toughness: 1,
+                ..
+            } if color == "White"
+        )
+    });
+    assert!(
+        has_modify_pt,
+        "Crusade should have ModifyPT with AllCreaturesOfColor {{ color: \"White\" }}. Static abilities: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}
+
+/// Test that Spirit Link is correctly recognized as an Aura that can target creatures
+#[test]
+fn test_spirit_link_aura_targeting() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/s/spirit_link.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    // Load Spirit Link
+    let spirit_link_def = CardLoader::load_from_file(&path)?;
+
+    println!("Spirit Link card types: {:?}", spirit_link_def.types);
+    println!("Spirit Link subtypes: {:?}", spirit_link_def.subtypes);
+    println!("Spirit Link raw keywords: {:?}", spirit_link_def.raw_keywords);
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = spirit_link_def.instantiate(card_id, player_id);
+
+    // Verify Spirit Link is an Aura
+    assert!(card.is_aura(), "Spirit Link should be recognized as an Aura");
+
+    // Verify it has the Enchant keyword
+    let has_enchant = card.keywords.contains(Keyword::Enchant);
+    assert!(has_enchant, "Spirit Link should have Enchant keyword");
+
+    // Check the Enchant type
+    if let Some(enchant_args) = card.keywords.get_args(Keyword::Enchant) {
+        println!("Spirit Link Enchant args: {:?}", enchant_args);
+        if let KeywordArgs::Enchant { card_type } = enchant_args {
+            assert_eq!(
+                card_type.as_str().to_lowercase(),
+                "creature",
+                "Spirit Link should enchant creatures"
+            );
+        } else {
+            panic!("Spirit Link Enchant keyword has wrong args type");
+        }
+    } else {
+        panic!("Spirit Link should have Enchant keyword args");
+    }
+
+    Ok(())
+}

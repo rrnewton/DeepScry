@@ -408,6 +408,18 @@ impl GameState {
                         _ => false,
                     }
             }
+            AffectedSelector::AllCreaturesOfColor { color } => {
+                // All creatures of this color (including self) - used by Crusade
+                creature.is_creature()
+                    && match color.as_str() {
+                        "White" => creature.mana_cost.white > 0,
+                        "Blue" => creature.mana_cost.blue > 0,
+                        "Black" => creature.mana_cost.black > 0,
+                        "Red" => creature.mana_cost.red > 0,
+                        "Green" => creature.mana_cost.green > 0,
+                        _ => false,
+                    }
+            }
             AffectedSelector::HumanEquippedBy => {
                 self.get_attached_equipment(creature_id).contains(&source_id)
                     && creature.subtypes.contains(&crate::core::Subtype::new("Human"))
@@ -1137,6 +1149,23 @@ impl GameState {
                                         power_bonus += power;
                                         toughness_bonus += toughness;
                                     }
+                                }
+                            }
+                            AffectedSelector::AllCreaturesOfColor { color } => {
+                                // All creatures of this color (including self) - used by Crusade
+                                let creature = self.cards.get(creature_id)?;
+                                let matches = creature.is_creature()
+                                    && match color.as_str() {
+                                        "White" => creature.mana_cost.white > 0,
+                                        "Blue" => creature.mana_cost.blue > 0,
+                                        "Black" => creature.mana_cost.black > 0,
+                                        "Red" => creature.mana_cost.red > 0,
+                                        "Green" => creature.mana_cost.green > 0,
+                                        _ => false,
+                                    };
+                                if matches {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
                                 }
                             }
                             AffectedSelector::HumanEquippedBy => {

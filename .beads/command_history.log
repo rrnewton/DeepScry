@@ -6036,3 +6036,136 @@ battlefield:
 
 - Fixed: Turn 1 land disappearance bug (478a4aa) - added synthetic ChangeTurn marker
 - Related: mtg-25 (Interactive TUI controller)"
+<<BD_INVOKE>> 2025-12-08T01:34:00.475371373+00:00 "create" "--title" "White Weenie Deck: Complete Card Implementation" "--priority" "1" "--label" "feature" "--label" "deck-support" "--description" "# White Weenie Deck Implementation Tracking
+
+This issue tracks all fixes needed to properly support the `decks/old_school2/white_weenie_classic.dck` deck.
+
+## Current State (2025-12-08)
+
+After intensive research and testing, identified the following issues:
+
+## Deck Contents (60 cards main, 8 sideboard)
+
+### Cards Working Correctly
+- Savannah Lions (W, 2/1) - Vanilla creature
+- Tundra Wolves (W, 1/1 First Strike) - First strike keyword works
+- White Knight (WW, 2/2 First Strike, Pro Black) - First strike and protection work
+- Serra Angel (3WW, 4/4 Flying, Vigilance) - Both keywords work  
+- Moorish Cavalry (2WW, 3/3 Trample) - Trample works
+- Swords to Plowshares (W) - Exile effect and life gain work
+- Disenchant (1W) - Artifact/enchantment destruction
+- Sol Ring (1) - Artifact, mana ability
+- Jalum Tome (3) - Artifact with activated ability
+- Strip Mine (Land) - Land destruction
+
+### Cards with Issues
+
+#### 1. Crusade (WW) - CRITICAL
+**Issue**: Color-based Affected selectors not implemented
+- Card definition: S:Mode$ Continuous | Affected$ Creature.White | AddPower$ 1 | AddToughness$ 1
+- The Creature.White selector is not parsed correctly
+- Result: White creatures do NOT get +1/+1 buff
+
+**Fix Required**: Add AffectedSelector::AllCreaturesOfColor { color } variant
+
+#### 2. Spirit Link (W) - CRITICAL  
+**Issue**: Aura targeting not properly implemented
+- Card definition: K:Enchant:Creature + trigger on damage dealt
+- Auras should require targeting when cast
+- The Enchant keyword is parsed but targeting flow for Auras needs work
+
+**Fix Required**: Implement Aura targeting in get_valid_targets_for_spell()
+
+#### 3. Preacher (1WW) - NOT IMPLEMENTED
+**Issue**: Complex control-changing ability with conditional duration
+- Keyword: "You may choose not to untap CARDNAME during your untap step"
+- Warning logged for unknown keyword
+
+#### 4. Army of Allah (1WW) - PARTIAL
+**Issue**: Pump all attacking creatures - needs testing
+
+#### 5. Balance (1W) - COMPLEX
+**Issue**: Multi-step balance effect for lands, hands, and creatures
+
+## Implementation Priority
+
+1. **Crusade** - Most impactful, enables white weenie strategy
+2. **Spirit Link** - Aura targeting needed for many cards
+3. **Preacher** - Lower priority complex ability
+4. Others - Test and fix as needed"
+<<BD_INVOKE>> 2025-12-08T01:34:06.362929738+00:00 "show" "mtg-glaxo"
+<<BD_INVOKE>> 2025-12-08T01:34:13.267512622+00:00 "show" "mtg-1"
+<<BD_INVOKE>> 2025-12-08T01:34:19.833581741+00:00 "show" "mtg-147"
+<<BD_INVOKE>> 2025-12-08T01:35:52.233001910+00:00 "show" "mtg-glaxo"
+<<BD_INVOKE>> 2025-12-08T01:35:57.424474707+00:00 "show" "mtg-147"
+<<BD_INVOKE>> 2025-12-08T01:36:26.596752014+00:00 "update" "mtg-glaxo" "--description" "## White Weenie Deck Implementation Tracking
+
+This issue tracks all fixes needed to properly support the `decks/old_school2/white_weenie_classic.dck` deck.
+
+**Related Issues**:
+- mtg-147: Affected$ selector parsing (Crusade's Creature.White needs this)
+
+## Current State (2025-12-08)
+
+After intensive research and testing, identified the following issues:
+
+## Deck Contents (60 cards main, 8 sideboard)
+
+### Cards Working Correctly
+- Savannah Lions (W, 2/1) - Vanilla creature ✓
+- Tundra Wolves (W, 1/1 First Strike) - First strike keyword works ✓
+- White Knight (WW, 2/2 First Strike, Pro Black) - First strike and protection work ✓
+- Serra Angel (3WW, 4/4 Flying, Vigilance) - Both keywords work ✓
+- Moorish Cavalry (2WW, 3/3 Trample) - Trample works ✓
+- Swords to Plowshares (W) - Exile effect and life gain work ✓
+- Disenchant (1W) - Artifact/enchantment destruction ✓
+- Sol Ring (1) - Artifact, mana ability ✓
+- Jalum Tome (3) - Artifact with activated ability ✓
+- Strip Mine (Land) - Land destruction ✓
+
+### Cards with Issues
+
+#### 1. Crusade (WW) - CRITICAL
+**Issue**: Color-based Affected selectors not implemented
+- Card definition: `S:Mode$ Continuous | Affected$ Creature.White | AddPower$ 1 | AddToughness$ 1`
+- The `Creature.White` selector is not parsed correctly
+- Only `Creature.White+Other` pattern exists in loader (line 1909-1918 of card.rs)
+- Result: White creatures do NOT get +1/+1 buff
+
+**Fix Required**: Add `Creature.COLOR` parsing (without +Other suffix) in `parse_affected_selector()`
+
+#### 2. Spirit Link (W) - CRITICAL
+**Issue**: Aura targeting not properly implemented
+- Card definition: `K:Enchant:Creature` + trigger on damage dealt
+- Auras should require targeting when cast
+- The Enchant keyword is parsed but targeting flow for Auras needs work
+
+**Fix Required**: Implement Aura targeting in `get_valid_targets_for_spell()`
+
+#### 3. Preacher (1WW) - NOT IMPLEMENTED
+**Issue**: Complex control-changing ability with conditional duration
+- Keyword: "You may choose not to untap CARDNAME during your untap step"
+- Warning logged for unknown keyword
+
+#### 4. Army of Allah (1WW) - PARTIAL
+**Issue**: Pump all attacking creatures - needs testing
+
+#### 5. Balance (1W) - COMPLEX
+**Issue**: Multi-step balance effect for lands, hands, and creatures
+
+## Implementation Priority
+
+1. **Crusade** - Most impactful, enables white weenie strategy (fix via mtg-147)
+2. **Spirit Link** - Aura targeting needed for many cards
+3. **Preacher** - Lower priority complex ability
+4. Others - Test and fix as needed
+
+## Test Commands
+
+```bash
+# Quick heuristic game to test Crusade buffing
+cargo run --release --bin mtg -- tui --deck decks/old_school2/white_weenie_classic.dck --opponent decks/old_school2/white_weenie_classic.dck --seed 42
+
+# See Crusade parsing warnings
+cargo run --release --bin mtg -- stats 2>&1 | grep -i crusade
+```"

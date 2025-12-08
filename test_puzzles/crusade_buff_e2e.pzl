@@ -1,0 +1,25 @@
+[metadata]
+Name:Crusade Buff E2E Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests that Crusade gives +1/+1 to all white creatures. Savannah Lions (2/1) with Crusade should become 3/2. Attack for lethal.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Plains; Plains; Crusade; Savannah Lions
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=3
+p1hand=
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

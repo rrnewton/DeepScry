@@ -1749,6 +1749,18 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: Creature.COLOR (e.g., "Creature.White") - ALL creatures of a color
+            // MUST come BEFORE the generic Creature.TYPE pattern to avoid "White" being treated as subtype
+            let color_names = ["White", "Blue", "Black", "Red", "Green"];
+            if value.starts_with("Creature.") && !value.contains('+') {
+                let color_name = value.strip_prefix("Creature.")?;
+                if color_names.contains(&color_name) {
+                    return Some(AffectedSelector::AllCreaturesOfColor {
+                        color: color_name.to_string(),
+                    });
+                }
+            }
+
             // Pattern: Creature.TYPE or Permanent.TYPE (e.g., "Creature.Sliver", "Permanent.Sliver")
             // All creatures of that type globally - used by Sliver lords
             if (value.starts_with("Creature.") || value.starts_with("Permanent."))
@@ -1761,12 +1773,13 @@ impl CardDefinition {
                 } else {
                     value.strip_prefix("Permanent.")?
                 };
-                // Make sure we're not matching reserved types
+                // Make sure we're not matching reserved types or colors (already handled above)
                 if subtype != "YouCtrl"
                     && subtype != "OppCtrl"
                     && subtype != "EnchantedBy"
                     && subtype != "EquippedBy"
                     && subtype != "AttachedBy"
+                    && !color_names.contains(&subtype)
                 {
                     return Some(AffectedSelector::AllCreaturesOfType {
                         subtype: crate::core::Subtype::new(subtype),
@@ -1907,12 +1920,23 @@ impl CardDefinition {
             }
 
             // Pattern: Creature.COLOR+Other (e.g., "Creature.Black+Other")
-            // For cards that buff creatures of a specific color
+            // For cards that buff creatures of a specific color excluding themselves
             let color_names = ["White", "Blue", "Black", "Red", "Green"];
             for color in &color_names {
                 let pattern = format!("Creature.{}+Other", color);
                 if value == pattern {
                     return Some(AffectedSelector::CreatureColorOther {
+                        color: color.to_string(),
+                    });
+                }
+            }
+
+            // Pattern: Creature.COLOR (e.g., "Creature.White") - ALL creatures of a color
+            // For cards like Crusade that buff all creatures of a color (including self)
+            for color in &color_names {
+                let pattern = format!("Creature.{}", color);
+                if value == pattern {
+                    return Some(AffectedSelector::AllCreaturesOfColor {
                         color: color.to_string(),
                     });
                 }

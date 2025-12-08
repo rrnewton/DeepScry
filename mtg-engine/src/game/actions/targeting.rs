@@ -180,6 +180,44 @@ impl GameState {
             }
         }
 
+        // MTG Rule 303.4a: Auras target objects or players as they're being cast
+        // Check if spell is an Aura and add valid targets based on "Enchant X" keyword
+        let is_aura = self.cards.get(spell_card_id).map(|c| c.is_aura()).unwrap_or(false);
+        if is_aura {
+            // Get the enchant restriction (e.g., "creature", "land", "permanent")
+            let enchant_type = self
+                .cards
+                .get(spell_card_id)
+                .ok()
+                .and_then(|c| c.keywords.get_args(crate::core::Keyword::Enchant))
+                .and_then(|args| {
+                    if let crate::core::KeywordArgs::Enchant { card_type } = args {
+                        Some(card_type.as_str().to_lowercase())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "creature".to_string()); // Default to creature
+
+            // Add valid targets based on enchant restriction
+            for &card_id in &self.battlefield.cards {
+                if let Ok(target_card) = self.cards.get(card_id) {
+                    let type_matches = match enchant_type.as_str() {
+                        "creature" => target_card.is_creature(),
+                        "land" => target_card.is_land(),
+                        "artifact" => target_card.is_artifact(),
+                        "enchantment" => target_card.is_type(&crate::core::CardType::Enchantment),
+                        "permanent" => true,            // Any permanent
+                        _ => target_card.is_creature(), // Default fallback
+                    };
+
+                    if type_matches && Self::is_legal_target(target_card, spell_owner) {
+                        valid_targets.push(card_id);
+                    }
+                }
+            }
+        }
+
         // Sort for deterministic ordering (critical for snapshot/resume)
         valid_targets.sort();
         Ok(valid_targets)
