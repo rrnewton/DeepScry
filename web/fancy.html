@@ -142,6 +142,45 @@
             color: #888;
             font-size: 12px;
         }
+        /* Exit confirmation dialog */
+        #exit-confirmation {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #16213e;
+            border: 2px solid #4361ee;
+            border-radius: 8px;
+            padding: 20px 30px;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+        }
+        #exit-confirmation.show {
+            display: block;
+        }
+        #exit-confirmation-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+        #exit-confirmation-overlay.show {
+            display: block;
+        }
+        .exit-dialog-text {
+            color: #ffd700;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+        .exit-dialog-prompt {
+            color: #4cc9f0;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -150,6 +189,14 @@
         <a href="index.html">Back to simple view</a>
         <span id="status">Loading...</span>
     </div>
+
+    <!-- Exit confirmation dialog -->
+    <div id="exit-confirmation-overlay"></div>
+    <div id="exit-confirmation">
+        <div class="exit-dialog-text">Exit game and return to setup?</div>
+        <div class="exit-dialog-prompt">[y/N]</div>
+    </div>
+
     <!-- Floating game controls - collapsible widget in corner -->
     <div id="game-controls" style="display: none; position: fixed; top: 10px; right: 10px; z-index: 100;">
         <!-- Collapsed state: small toggle button -->
@@ -929,6 +976,45 @@ cast dark ritual</textarea>
                 CardImageOverlay.displayBattlefieldCards();
             }
         });
+
+        // Show exit confirmation dialog when Escape is pressed
+        window.showExitConfirmation = function() {
+            const dialog = document.getElementById('exit-confirmation');
+            const overlay = document.getElementById('exit-confirmation-overlay');
+            dialog.classList.add('show');
+            overlay.classList.add('show');
+
+            // Add keyboard handler for y/N
+            const handleConfirmKey = function(e) {
+                if (e.key === 'y' || e.key === 'Y') {
+                    // Confirm exit
+                    hideExitConfirmation();
+                    window.exitFancyTui();
+                } else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') {
+                    // Cancel exit
+                    hideExitConfirmation();
+                }
+                e.preventDefault();
+                e.stopPropagation();
+            };
+
+            // Store handler so we can remove it later
+            dialog._confirmKeyHandler = handleConfirmKey;
+            document.addEventListener('keydown', handleConfirmKey, true);
+        };
+
+        function hideExitConfirmation() {
+            const dialog = document.getElementById('exit-confirmation');
+            const overlay = document.getElementById('exit-confirmation-overlay');
+            dialog.classList.remove('show');
+            overlay.classList.remove('show');
+
+            // Remove keyboard handler
+            if (dialog._confirmKeyHandler) {
+                document.removeEventListener('keydown', dialog._confirmKeyHandler, true);
+                dialog._confirmKeyHandler = null;
+            }
+        }
 
         // Expose exit function globally for WASM to call
         window.exitFancyTui = function() {

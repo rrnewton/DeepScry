@@ -1152,8 +1152,8 @@ pub fn launch_fancy_tui(
                         }
                     }
                     EventResult::Pass | EventResult::Exit => {
-                        // Exit the TUI
-                        let _ = js_sys::eval("window.exitFancyTui && window.exitFancyTui()");
+                        // Show exit confirmation dialog
+                        let _ = js_sys::eval("window.showExitConfirmation && window.showExitConfirmation()");
                     }
                     EventResult::SelectChoice(idx) => {
                         // Choice selection from hand click - set selection and confirm
