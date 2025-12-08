@@ -1017,8 +1017,8 @@ impl GameState {
                             log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
                                 token_name, token_id.as_u32(), controller.as_u32());
 
-                            // Log token creation
-                            self.logger.normal(&format!(
+                            // Log token creation (official game action)
+                            self.logger.gamelog(&format!(
                                 "Created {} under {}'s control",
                                 token_name,
                                 self.get_player(*controller)?.name
@@ -1480,12 +1480,12 @@ impl GameState {
             return Ok(());
         }
 
-        // Log the trigger
+        // Log the trigger (official game action)
         if let Ok(card) = self.cards.get(dying_card_id) {
             for trigger in &card.triggers {
                 if trigger.event == TriggerEvent::LeavesBattlefield {
                     self.logger
-                        .normal(&format!("Trigger: {} - {}", card.name, trigger.description));
+                        .gamelog(&format!("Trigger: {} - {}", card.name, trigger.description));
                 }
             }
         }
@@ -1502,13 +1502,13 @@ impl GameState {
                         mana: *mana,
                     };
 
-                    // Log the mana addition
+                    // Log the mana addition (official game action)
                     if let Ok(card) = self.cards.get(dying_card_id) {
                         let player_name = self
                             .get_player(controller)
                             .map(|p| p.name.as_str().to_string())
                             .unwrap_or_else(|_| "player".to_string());
-                        self.logger.normal(&format!(
+                        self.logger.gamelog(&format!(
                             "{} dies, {} adds mana to {}'s pool",
                             card.name, card.name, player_name
                         ));
@@ -1561,9 +1561,9 @@ impl GameState {
                 prior_log_size,
             );
 
-            // Log damage with new life total
+            // Log damage with new life total (use gamelog for official action)
             let message = format!("{} takes {} damage (life: {})", player_name, amount, new_life);
-            self.logger.normal(&message);
+            self.logger.gamelog(&message);
 
             return Ok(());
         }

@@ -126,6 +126,7 @@ impl<'a> GameLoop<'a> {
             return;
         }
 
+        // All effect logs use gamelog() for official game action tagging
         match effect {
             Effect::DealDamage { target, amount } => match target {
                 TargetRef::Player(target_player_id) => {
@@ -134,7 +135,7 @@ impl<'a> GameLoop<'a> {
                     let message = format!(
                         "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}"
                     );
-                    self.game.logger.normal(&message);
+                    self.game.logger.gamelog(&message);
                 }
                 TargetRef::Permanent(target_card_id) => {
                     let target_name = self
@@ -146,7 +147,7 @@ impl<'a> GameLoop<'a> {
                     let message = format!(
                         "{source_name} ({source_id}) deals {amount} damage to {target_name} ({target_card_id})"
                     );
-                    self.game.logger.normal(&message);
+                    self.game.logger.gamelog(&message);
                 }
                 TargetRef::None => {
                     // Target will be filled in by resolve_spell - log against opponent
@@ -156,14 +157,14 @@ impl<'a> GameLoop<'a> {
                         let message = format!(
                             "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {new_life}"
                         );
-                        self.game.logger.normal(&message);
+                        self.game.logger.gamelog(&message);
                     }
                 }
             },
             Effect::DrawCards { player, count } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::GainLife { player, amount } => {
                 let player_name = self.get_player_name(*player);
@@ -171,7 +172,7 @@ impl<'a> GameLoop<'a> {
                 let message = format!(
                     "{source_name} ({source_id}) causes {player_name} to gain {amount} life - life: {new_life}"
                 );
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::DestroyPermanent { target, .. } => {
                 let target_name = self
@@ -181,7 +182,7 @@ impl<'a> GameLoop<'a> {
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
                 let message = format!("{source_name} ({source_id}) destroys {target_name} ({target})");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::TapPermanent { target } => {
                 let target_name = self
@@ -191,7 +192,7 @@ impl<'a> GameLoop<'a> {
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
                 let message = format!("{source_name} ({source_id}) taps {target_name} ({target})");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::UntapPermanent { target } => {
                 let target_name = self
@@ -201,7 +202,7 @@ impl<'a> GameLoop<'a> {
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
                 let message = format!("{source_name} ({source_id}) untaps {target_name} ({target})");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::PumpCreature {
                 target,
@@ -217,12 +218,12 @@ impl<'a> GameLoop<'a> {
                 let message = format!(
                     "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
                 );
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::Mill { player, count } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to mill {count} card(s)");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::CounterSpell { target } => {
                 let target_name = self
@@ -232,12 +233,12 @@ impl<'a> GameLoop<'a> {
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
                 let message = format!("{source_name} ({source_id}) counters {target_name} ({target})");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::AddMana { player, mana } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) adds {mana} to {player_name}'s mana pool");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::PutCounter {
                 target,
@@ -250,9 +251,10 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!(
-                    "  {source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on {target_name} ({target})"
+                let message = format!(
+                    "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on {target_name} ({target})"
                 );
+                self.game.logger.gamelog(&message);
             }
             Effect::RemoveCounter {
                 target,
@@ -265,9 +267,10 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!(
-                    "  {source_name} ({source_id}) removes {amount} {counter_type:?} counter(s) from {target_name} ({target})"
+                let message = format!(
+                    "{source_name} ({source_id}) removes {amount} {counter_type:?} counter(s) from {target_name} ({target})"
                 );
+                self.game.logger.gamelog(&message);
             }
             Effect::ExilePermanent { target } => {
                 let target_name = self
@@ -276,7 +279,8 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                println!("  {source_name} ({source_id}) exiles {target_name} ({target})");
+                let message = format!("{source_name} ({source_id}) exiles {target_name} ({target})");
+                self.game.logger.gamelog(&message);
             }
             Effect::SearchLibrary {
                 player,
@@ -287,10 +291,11 @@ impl<'a> GameLoop<'a> {
             } => {
                 let player_name = self.get_player_name(*player);
                 let tapped_text = if *enters_tapped { " tapped" } else { "" };
-                println!(
-                    "  {source_name} ({source_id}) searches {player_name}'s library for a {card_type_filter} card and puts it into {:?}{tapped_text}",
+                let message = format!(
+                    "{source_name} ({source_id}) searches {player_name}'s library for a {card_type_filter} card and puts it into {:?}{tapped_text}",
                     destination
                 );
+                self.game.logger.gamelog(&message);
             }
             Effect::AttachEquipment {
                 source_equipment,
@@ -310,7 +315,7 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 let message =
                     format!("{equipment_name} ({source_equipment}) attaches to {creature_name} ({target_creature})");
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
             Effect::CreateToken {
                 controller,
@@ -321,7 +326,7 @@ impl<'a> GameLoop<'a> {
                 let message = format!(
                     "{source_name} ({source_id}) creates {amount} {token_script} token(s) under {controller_name}'s control"
                 );
-                self.game.logger.normal(&message);
+                self.game.logger.gamelog(&message);
             }
         }
     }

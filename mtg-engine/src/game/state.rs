@@ -760,7 +760,7 @@ impl GameState {
             self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
             if let Some(name) = card_name {
                 self.logger
-                    .normal(&format!("{} ({}) dies from lethal damage", name, card_id));
+                    .gamelog(&format!("{} ({}) dies from lethal damage", name, card_id));
             }
         }
 

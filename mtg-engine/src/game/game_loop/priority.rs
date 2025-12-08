@@ -505,7 +505,8 @@ impl<'a> GameLoop<'a> {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                         let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
                                         let message = format!("{} activates ability: {}", name, ability.description);
-                                        self.game.logger.normal(&message);
+                                        // Use gamelog for official game action
+                                        self.game.logger.gamelog(&message);
                                     }
 
                                     // Get valid targets for the ability (before paying costs)
