@@ -1300,4 +1300,75 @@ mod tests {
         let result = resolver.quick_check(&cost, &sources);
         assert_eq!(result, PaymentResult::No);
     }
+
+    #[test]
+    fn test_dual_land_upper_bound_contributes_to_both_colors() {
+        let resolver = GreedyManaResolver::new();
+
+        // Breeding Pool (dual land: U or G)
+        // Upper bound: +1 to blue, +1 to green
+        // Lower bound: 0 to any specific color (can only produce one at a time)
+        let breeding_pool = ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::free(ManaProductionKind::Choice(
+                ManaColors::new().with(ManaColor::Blue).with(ManaColor::Green),
+            )),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+
+        // Test 1: Can pay UG with just Breeding Pool? NO - only produces 1 mana total
+        // The dual land contributes +1 to blue upper bound AND +1 to green upper bound,
+        // but it can only produce ONE mana total (net delta = 1)
+        let cost_ug = ManaCost {
+            generic: 0,
+            white: 0,
+            blue: 1,
+            black: 0,
+            red: 0,
+            green: 1,
+            colorless: 0,
+            x_count: 0,
+        };
+
+        let result = resolver.check_payment(&cost_ug, &[breeding_pool.clone()], None);
+        // Should fail: even though upper bounds for both colors pass (max_blue=1, max_green=1),
+        // total mana available is only 1, but cost needs 2
+        assert_eq!(result, PaymentResult::No);
+
+        // Test 2: With 2 Breeding Pools, can pay UG? YES
+        let breeding_pool_2 = ManaSource {
+            card_id: CardId::new(2),
+            production: ManaProduction::free(ManaProductionKind::Choice(
+                ManaColors::new().with(ManaColor::Blue).with(ManaColor::Green),
+            )),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let sources = vec![breeding_pool.clone(), breeding_pool_2];
+
+        assert!(resolver.can_pay(&cost_ug, &sources));
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost_ug, &sources, &mut tap_order));
+        assert_eq!(tap_order.len(), 2);
+
+        // Test 3: With 1 Breeding Pool + 1 Island, can pay UG? YES
+        let sources = vec![
+            breeding_pool.clone(),
+            ManaSource {
+                card_id: CardId::new(3),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+        ];
+
+        assert!(resolver.can_pay(&cost_ug, &sources));
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost_ug, &sources, &mut tap_order));
+        assert_eq!(tap_order.len(), 2);
+        // Island should be tapped for Blue, Breeding Pool for Green
+        assert_eq!(tap_order[0], CardId::new(3)); // Island for Blue (more specific)
+        assert_eq!(tap_order[1], CardId::new(1)); // Breeding Pool for Green
+    }
 }
