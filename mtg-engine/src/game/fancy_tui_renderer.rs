@@ -90,6 +90,12 @@ pub enum Entity {
         card_id: CardId,
         index: usize, // Index in hand for selection
     },
+    /// A card in graveyard - used for mouse click detection
+    GraveyardCard {
+        card_id: CardId,
+        index: usize,    // Index in graveyard for selection
+        owner: PlayerId, // Whose graveyard this is in
+    },
 }
 
 /// Trait for entities that can be rendered on the battlefield
@@ -120,6 +126,7 @@ impl BattlefieldEntity for Entity {
             Entity::SimpleStack { card_ids, .. } => card_ids,
             Entity::VisualStack { card_ids, .. } => card_ids,
             Entity::HandCard { card_id, .. } => std::slice::from_ref(card_id),
+            Entity::GraveyardCard { card_id, .. } => std::slice::from_ref(card_id),
         }
     }
 
@@ -129,6 +136,7 @@ impl BattlefieldEntity for Entity {
             Entity::SimpleStack { card_ids, .. } => card_ids[0],
             Entity::VisualStack { card_ids, .. } => card_ids[0],
             Entity::HandCard { card_id, .. } => *card_id,
+            Entity::GraveyardCard { card_id, .. } => *card_id,
         }
     }
 
@@ -138,6 +146,7 @@ impl BattlefieldEntity for Entity {
             Entity::SimpleStack { card_ids, .. } => card_ids.len(),
             Entity::VisualStack { card_ids, .. } => card_ids.len(),
             Entity::HandCard { .. } => 1,
+            Entity::GraveyardCard { .. } => 1,
         }
     }
 
@@ -167,6 +176,9 @@ impl BattlefieldEntity for Entity {
                 }
             }
             Entity::HandCard { card_id, .. } => view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id)),
+            Entity::GraveyardCard { card_id, .. } => {
+                view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id))
+            }
         }
     }
 
@@ -175,7 +187,8 @@ impl BattlefieldEntity for Entity {
             Entity::SingleCard { card_id } => view.is_tapped(*card_id),
             Entity::SimpleStack { is_tapped, .. } => *is_tapped,
             Entity::VisualStack { tapped_count, .. } => *tapped_count > 0,
-            Entity::HandCard { .. } => false, // Hand cards are never tapped
+            Entity::HandCard { .. } => false,      // Hand cards are never tapped
+            Entity::GraveyardCard { .. } => false, // Graveyard cards are never tapped
         }
     }
 
@@ -458,6 +471,7 @@ impl FancyTuiRenderer {
             Entity::VisualStack { card_ids, .. } => (1, card_ids[0]),
             Entity::SimpleStack { card_ids, .. } => (1, card_ids[0]),
             Entity::HandCard { card_id, .. } => (2, *card_id), // Shouldn't appear in battlefield
+            Entity::GraveyardCard { card_id, .. } => (3, *card_id), // Shouldn't appear in battlefield
         });
 
         entities
@@ -521,8 +535,8 @@ impl FancyTuiRenderer {
 
                 (base_w + offset_total, base_h + offset_total)
             }
-            Entity::HandCard { .. } => {
-                // Hand cards use base dimensions (never tapped, no stacking)
+            Entity::HandCard { .. } | Entity::GraveyardCard { .. } => {
+                // Hand/graveyard cards use base dimensions (never tapped, no stacking)
                 (base_width, base_height)
             }
         }
@@ -1334,25 +1348,31 @@ impl FancyTuiRenderer {
     }
 
     /// Render graveyard as a simple text list in the bottom-right corner of the battlefield
-    fn render_graveyard_overlay(&self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId) {
+    /// Each card name is clickable to show card details
+    fn render_graveyard_overlay(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId) {
         let graveyard = view.player_graveyard(owner_id);
         if graveyard.is_empty() {
             return;
         }
 
-        // Build list of card names
-        let card_names: Vec<String> = graveyard
+        // Build list of (card_id, name) pairs
+        let card_entries: Vec<(CardId, String)> = graveyard
             .iter()
-            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string()))
+            .map(|&card_id| {
+                (
+                    card_id,
+                    view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string()),
+                )
+            })
             .collect();
 
         // Calculate required width (longest name or header)
         let header = "Graveyard:";
-        let max_name_len = card_names.iter().map(|n| n.len()).max().unwrap_or(0);
+        let max_name_len = card_entries.iter().map(|(_, n)| n.len()).max().unwrap_or(0);
         let content_width = max_name_len.max(header.len()) as u16;
 
         // Calculate required height: header + cards
-        let box_height = (1 + card_names.len()) as u16;
+        let box_height = (1 + card_entries.len()) as u16;
 
         // Position in bottom-right corner
         if area.width < content_width || area.height < box_height {
@@ -1373,8 +1393,8 @@ impl FancyTuiRenderer {
         };
         f.render_widget(Paragraph::new(header).style(style), header_area);
 
-        // Card name lines
-        for (i, name) in card_names.iter().enumerate() {
+        // Card name lines (clickable)
+        for (i, (card_id, name)) in card_entries.iter().enumerate() {
             let card_area = Rect {
                 x: x_start,
                 y: y_start + 1 + i as u16,
@@ -1382,6 +1402,16 @@ impl FancyTuiRenderer {
                 height: 1,
             };
             f.render_widget(Paragraph::new(name.as_str()).style(style), card_area);
+
+            // Record entity position for click detection
+            self.state.entity_positions.push(EntityPosition {
+                entity: Entity::GraveyardCard {
+                    card_id: *card_id,
+                    index: i,
+                    owner: owner_id,
+                },
+                area: card_area,
+            });
         }
     }
 
