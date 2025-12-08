@@ -449,17 +449,180 @@ cast dark ritual</textarea>
         let tuiLaunched = false;
         let cardImagesEnabled = false;
 
+        /**
+         * TUICoordinateSystem: Centralized coordinate translation between TUI cells and browser pixels
+         *
+         * This is the SINGLE SOURCE OF TRUTH for all cell dimension knowledge and coordinate translation.
+         * All coordinate/dimension conversions should go through this class.
+         *
+         * COORDINATE UNITS:
+         * - Cell coordinates: (col, row) in terminal grid cells (integers from TUI renderer)
+         * - Cell dimensions: (width, height) in cells (integers from TUI renderer)
+         * - Pixel coordinates: (left, top) in browser pixels (floats, relative to viewport)
+         * - Pixel dimensions: (width, height) in browser pixels (floats)
+         */
+        const TUICoordinateSystem = window.TUICoordinateSystem = {
+            // Measured cell dimensions in pixels (set by measureCellDimensions())
+            cellWidthPx: null,   // Actual rendered character width (e.g., 9.64px on Linux)
+            cellHeightPx: null,  // Line-height for vertical positioning (always 20px, NOT measured 19px!)
+
+            /**
+             * Measure actual RatZilla cell dimensions from rendered characters.
+             *
+             * WHY THIS IS NECESSARY:
+             * RatZilla's DomBackend doesn't hardcode cell dimensions - it renders actual
+             * characters in <span> elements and lets the browser's font engine determine sizes.
+             * On Linux, standard monospace fonts render at ~9.64px wide (NOT 10px!) and 19px
+             * tall (NOT 20px despite the CSS line-height!).
+             *
+             * Root cause investigation findings (2025-12-07):
+             *   - Tested all available monospace fonts on Linux at 16px font-size
+             *   - Liberation Mono, FreeMono, Courier: 9.6094px wide
+             *   - DejaVu Sans Mono (default monospace): 9.6406px wide
+             *   - ALL fonts render at 19px height, not 20px
+             *
+             * This measurement approach is CORRECT and unavoidable given font rendering reality.
+             */
+            measureCellDimensions() {
+                const grid = document.getElementById('ratzilla-terminal_ratzilla_grid');
+                if (!grid) {
+                    console.warn('RatZilla grid not found, using default cell size');
+                    this.cellWidthPx = 10;
+                    this.cellHeightPx = 20;
+                    return;
+                }
+
+                const spans = Array.from(grid.querySelectorAll('span')).filter(s => s.textContent.trim());
+                if (spans.length === 0) {
+                    console.warn('No character spans found, using default cell size');
+                    this.cellWidthPx = 10;
+                    this.cellHeightPx = 20;
+                    return;
+                }
+
+                // Measure first 20 characters to get average dimensions
+                const samples = spans.slice(0, 20).map(span => {
+                    const rect = span.getBoundingClientRect();
+                    return { width: rect.width, height: rect.height };
+                });
+
+                const measuredWidth = samples.reduce((sum, s) => sum + s.width, 0) / samples.length;
+                const measuredHeight = samples.reduce((sum, s) => sum + s.height, 0) / samples.length;
+
+                // Width: use measured value
+                this.cellWidthPx = measuredWidth;
+
+                // Height: ALWAYS use line-height (20px) for vertical positioning, NOT measured height!
+                // The browser uses line-height for vertical spacing, even though actual glyph height is 19px.
+                // Using 19px would cause cumulative vertical drift.
+                this.cellHeightPx = 20;
+
+                console.log(`Measured RatZilla cell size: ${this.cellWidthPx.toFixed(2)}px × ${measuredHeight.toFixed(2)}px (using ${this.cellHeightPx}px line-height for positioning)`);
+            },
+
+            /**
+             * Convert cell coordinates to pixel position.
+             * @param {number} col - Column in cells
+             * @param {number} row - Row in cells
+             * @returns {{left: number, top: number}} - Position in pixels
+             */
+            cellToPixelPosition(col, row) {
+                const widthPx = this.cellWidthPx || 10;
+                const heightPx = this.cellHeightPx || 20;
+                return {
+                    left: col * widthPx,
+                    top: row * heightPx
+                };
+            },
+
+            /**
+             * Convert cell dimensions to pixel dimensions.
+             * @param {number} widthCells - Width in cells
+             * @param {number} heightCells - Height in cells
+             * @returns {{width: number, height: number}} - Dimensions in pixels
+             */
+            cellToPixelDimensions(widthCells, heightCells) {
+                const widthPx = this.cellWidthPx || 10;
+                const heightPx = this.cellHeightPx || 20;
+                return {
+                    width: widthCells * widthPx,
+                    height: heightCells * heightPx
+                };
+            },
+
+            /**
+             * Get the complete bounding box for a card in pixels.
+             * Handles both tapped and untapped cards.
+             *
+             * TAPPED CARD RENDERING STRATEGY:
+             * - TUI provides LANDSCAPE dimensions (e.g., 96w×80h px - wider than tall)
+             * - Card images are PORTRAIT (aspect ratio ~0.71, e.g., 488w×680h natural)
+             * - CSS transform rotation happens AFTER objectFit calculation
+             * - Therefore: We must SWAP dimensions so objectFit sees a portrait box,
+             *   then rotation makes the final result landscape
+             *
+             * Example for 96×80px landscape TUI box:
+             * 1. Set img box to 80×96px (portrait - swapped!)
+             * 2. objectFit:cover fits portrait image to portrait box (minimal crop)
+             * 3. transform:rotate(90deg) rotates box+image → final 96×80px landscape
+             * 4. Position must be adjusted because rotation changes where box ends up
+             *
+             * @param {number} colCells - Column position in cells
+             * @param {number} rowCells - Row position in cells
+             * @param {number} widthCells - Width in cells (TUI dimensions)
+             * @param {number} heightCells - Height in cells (TUI dimensions)
+             * @param {boolean} isTapped - Whether card is tapped (rotated 90°)
+             * @returns {{left: number, top: number, width: number, height: number, transform: string, transformOrigin: string}}
+             */
+            getCardBox(colCells, rowCells, widthCells, heightCells, isTapped) {
+                const position = this.cellToPixelPosition(colCells, rowCells);
+                const dimensions = this.cellToPixelDimensions(widthCells, heightCells);
+
+                if (isTapped) {
+                    // TUI gives landscape dimensions (e.g., 96px wide × 80px tall)
+                    const landscapeWidth = dimensions.width;
+                    const landscapeHeight = dimensions.height;
+
+                    // SWAP to portrait for objectFit calculation (80px wide × 96px tall)
+                    const portraitWidth = landscapeHeight;
+                    const portraitHeight = landscapeWidth;
+
+                    // Adjust position: rotation origin is center, so we need to shift
+                    // the box so that after rotation, its center aligns with TUI box center
+                    const centerOffsetX = (landscapeWidth - portraitWidth) / 2;
+                    const centerOffsetY = (landscapeHeight - portraitHeight) / 2;
+
+                    return {
+                        left: position.left + centerOffsetX,
+                        top: position.top + centerOffsetY,
+                        width: portraitWidth,   // Swapped: use landscape height
+                        height: portraitHeight,  // Swapped: use landscape width
+                        transform: 'rotate(90deg)',
+                        transformOrigin: 'center center'
+                    };
+                } else {
+                    // Untapped: Normal portrait card
+                    return {
+                        left: position.left,
+                        top: position.top,
+                        width: dimensions.width,
+                        height: dimensions.height,
+                        transform: 'none',
+                        transformOrigin: 'center center'
+                    };
+                }
+            }
+        };
+
         // Simple card image overlay manager (JavaScript implementation)
         // Expose on window for debugging and testing
         const CardImageOverlay = window.CardImageOverlay = {
             enabled: false,
             overlays: new Map(),
-            cellWidth: null,  // Measured dynamically from RatZilla
-            cellHeight: null,
 
             enable() {
                 this.enabled = true;
-                this.measureCellDimensions();
+                TUICoordinateSystem.measureCellDimensions();
                 console.log('Card image overlays enabled');
             },
 
@@ -478,72 +641,22 @@ cast dark ritual</textarea>
                 return this.enabled;
             },
 
-            // Measure actual RatZilla cell dimensions from rendered characters
-            //
-            // WHY THIS IS NECESSARY:
-            // RatZilla's DomBackend doesn't hardcode cell dimensions - it renders actual
-            // characters in <span> elements and lets the browser's font engine determine sizes.
-            // On Linux, standard monospace fonts render at ~9.64px wide (NOT 10px!) and 19px
-            // tall (NOT 20px despite the CSS line-height!).
-            //
-            // The "cols = innerWidth/10, rows = innerHeight/20" comment is WRONG for DomBackend.
-            // Only CanvasBackend hardcodes dimensions, and even then it's 10×19, not 10×20!
-            //
-            // Root cause investigation findings (2025-12-07):
-            //   - Tested all available monospace fonts on Linux at 16px font-size
-            //   - Liberation Mono, FreeMono, Courier: 9.6094px wide
-            //   - DejaVu Sans Mono (default monospace): 9.6406px wide
-            //   - ALL fonts render at 19px height, not 20px
-            //   - Monaco/Consolas render at 14.23px (completely wrong, not installed)
-            //
-            // This measurement approach is CORRECT and unavoidable given font rendering reality.
-            measureCellDimensions() {
-                const grid = document.getElementById('ratzilla-terminal_ratzilla_grid');
-                if (!grid) {
-                    console.warn('RatZilla grid not found, using default cell size');
-                    this.cellWidth = 10;
-                    this.cellHeight = 20;
-                    return;
-                }
-
-                const spans = Array.from(grid.querySelectorAll('span')).filter(s => s.textContent.trim());
-                if (spans.length === 0) {
-                    console.warn('No character spans found, using default cell size');
-                    this.cellWidth = 10;
-                    this.cellHeight = 20;
-                    return;
-                }
-
-                // Measure first 20 characters to get average dimensions
-                const samples = spans.slice(0, 20).map(span => {
-                    const rect = span.getBoundingClientRect();
-                    return { width: rect.width, height: rect.height };
-                });
-
-                this.cellWidth = samples.reduce((sum, s) => sum + s.width, 0) / samples.length;
-                this.cellHeight = samples.reduce((sum, s) => sum + s.height, 0) / samples.length;
-
-                console.log(`Measured RatZilla cell size: ${this.cellWidth.toFixed(2)}px × ${this.cellHeight.toFixed(2)}px`);
-            },
-
             // Build Scryfall API URL for a card
             scryfallUrl(setCode, collectorNumber, size = 'small') {
                 return `https://api.scryfall.com/cards/${setCode.toLowerCase()}/${collectorNumber}?format=image&version=${size}`;
             },
 
-            // Convert terminal cell coordinates to pixel coordinates
-            cellToPixels(col, row) {
-                // Use measured dimensions if available, otherwise fall back to defaults
-                const CELL_WIDTH_PX = this.cellWidth || 10;
-                // IMPORTANT: Use line-height (20px) for vertical positioning, not measured height (19px)!
-                // The browser uses line-height for vertical spacing between lines, even though
-                // the actual glyph height is 19px. Using 19px would cause cumulative vertical drift.
-                const CELL_HEIGHT_PX = 20;  // ALWAYS 20px for vertical positioning
-                return { left: col * CELL_WIDTH_PX, top: row * CELL_HEIGHT_PX };
-            },
-
-            // Add or update a card image overlay
-            // isTapped: if true, the card is rotated 90 degrees (swap width/height)
+            /**
+             * Add or update a card image overlay.
+             *
+             * @param {number} cardId - Unique card identifier
+             * @param {number} col - Column position in cells
+             * @param {number} row - Row position in cells
+             * @param {number} width - Width in cells
+             * @param {number} height - Height in cells
+             * @param {string} imageUrl - URL to card image
+             * @param {boolean} isTapped - Whether card is tapped (rotated 90°)
+             */
             setCardImage(cardId, col, row, width, height, imageUrl, isTapped = false) {
                 if (!this.enabled) return;
 
@@ -568,53 +681,22 @@ cast dark ritual</textarea>
                     }
                 }
 
-                // Update position and size
-                const pos = this.cellToPixels(col, row);
-                const CELL_WIDTH_PX = this.cellWidth || 10;
-                const CELL_HEIGHT_PX = 20;  // Always 20px (line-height), not measured height (19px)
+                // Use centralized coordinate system for ALL translations
+                const box = TUICoordinateSystem.getCardBox(col, row, width, height, isTapped);
 
                 // DEBUG: Log incoming card position data
                 console.log(`[CARD POSITION] ${cardId}: cell(${col}, ${row}) size(${width}×${height}) tapped=${isTapped}`);
+                console.log(`  → ${isTapped ? 'TAPPED' : 'UNTAPPED'}: box(${box.left.toFixed(2)}, ${box.top.toFixed(2)}) ${box.width.toFixed(2)}×${box.height.toFixed(2)}px transform=${box.transform}`);
 
-                // For tapped cards, TUI gives us LANDSCAPE dimensions (e.g., 31w × 9h cells)
-                // Card images are portrait, so we rotate them 90° to make them landscape.
-                // NO DIMENSION SWAPPING needed - use TUI dimensions directly!
-                if (isTapped) {
-                    // Use TUI dimensions directly (already landscape for tapped cards)
-                    const widthPx = width * CELL_WIDTH_PX;
-                    const heightPx = height * CELL_HEIGHT_PX;
-
-                    console.log(`  → TAPPED: TUI landscape ${width}×${height} cells @ pixels(${pos.left.toFixed(2)}, ${pos.top.toFixed(2)})`);
-                    console.log(`           → box ${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px + rotate portrait card 90°`);
-
-                    img.style.width = `${widthPx}px`;
-                    img.style.height = `${heightPx}px`;
-                    img.style.left = `${pos.left}px`;
-                    img.style.top = `${pos.top}px`;
-                    img.style.objectFit = 'cover';  // Portrait card rotated into landscape box
-                    img.style.transform = 'rotate(90deg)';
-                    img.style.transformOrigin = 'center center';
-                } else {
-                    // UNTAPPED: Normal portrait card
-                    // Use 'cover' to completely hide the TUI card, accepting some spillover
-                    // This ensures the card image fully covers the textual representation
-                    const widthPx = width * CELL_WIDTH_PX;
-                    const heightPx = height * CELL_HEIGHT_PX;
-
-                    console.log(`  → UNTAPPED: pixels(${pos.left.toFixed(2)}, ${pos.top.toFixed(2)}) size(${widthPx.toFixed(2)}×${heightPx.toFixed(2)}px)`);
-
-                    img.style.width = `${widthPx}px`;
-                    img.style.height = `${heightPx}px`;
-                    img.style.left = `${pos.left}px`;
-                    img.style.top = `${pos.top}px`;
-                    img.style.objectFit = 'cover';  // Changed from 'contain' to fully cover TUI card
-                    img.style.transform = 'none';
-                    img.style.border = '';
-                    img.style.backgroundColor = '';
-                    img.style.outline = '';
-                }
-
+                // Apply the box dimensions and transforms
                 img.style.position = 'absolute';
+                img.style.left = `${box.left}px`;
+                img.style.top = `${box.top}px`;
+                img.style.width = `${box.width}px`;
+                img.style.height = `${box.height}px`;
+                img.style.transform = box.transform;
+                img.style.transformOrigin = box.transformOrigin;
+                img.style.objectFit = 'cover';  // Fill box, crop excess
                 img.style.pointerEvents = 'none';
                 img.style.zIndex = '10';
 
@@ -762,26 +844,28 @@ cast dark ritual</textarea>
         // Post-render callback: called by WASM after every frame render
         // This is event-driven (no polling!) - synchronized with TUI rendering
         // positions: array of {card_id, name, x, y, width, height, is_tapped}
+        // where x, y, width, height are in CELLS (not pixels)
         window.onRenderComplete = function(positions) {
             if (cardImagesEnabled && tuiLaunched && positions && positions.length > 0) {
                 // Ensure we have measured cell dimensions (do this once on first render)
                 // Re-measure if we're using default values (10×20) since that means measurement failed earlier
-                if (!CardImageOverlay.cellWidth || (CardImageOverlay.cellWidth === 10 && CardImageOverlay.cellHeight === 20)) {
-                    CardImageOverlay.measureCellDimensions();
+                if (!TUICoordinateSystem.cellWidthPx || (TUICoordinateSystem.cellWidthPx === 10 && TUICoordinateSystem.cellHeightPx === 20)) {
+                    TUICoordinateSystem.measureCellDimensions();
                 }
 
                 // Clear existing overlays first
                 CardImageOverlay.clearAll();
 
                 // Use the positions passed from WASM (avoids re-borrowing)
+                // All coordinate translation happens through TUICoordinateSystem
                 positions.forEach((cardPos) => {
                     const imageUrl = CardImageOverlay.scryfallNamedUrl(cardPos.name, 'small');
                     CardImageOverlay.setCardImage(
                         cardPos.card_id,
-                        cardPos.x,
-                        cardPos.y,
-                        cardPos.width,
-                        cardPos.height,
+                        cardPos.x,          // Column in cells
+                        cardPos.y,          // Row in cells
+                        cardPos.width,      // Width in cells
+                        cardPos.height,     // Height in cells
                         imageUrl,
                         cardPos.is_tapped
                     );
