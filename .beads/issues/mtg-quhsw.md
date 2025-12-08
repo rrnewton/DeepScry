@@ -1,12 +1,13 @@
 ---
 title: 'TODO: fetch both sizes of image, set threshold'
-status: open
+status: closed
 priority: 0
 issue_type: task
 labels:
 - human
 created_at: 2025-12-07T21:37:57.731811411+00:00
-updated_at: 2025-12-07T21:37:57.731811411+00:00
+updated_at: 2025-12-08T15:22:47.747529702+00:00
+closed_at: 2025-12-08T15:22:47.747529632+00:00
 ---
 
 # Description

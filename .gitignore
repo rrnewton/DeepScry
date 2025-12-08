@@ -94,6 +94,10 @@ package-lock.json
 # See CLAUDE.md section "Debugging Scripts and Temporary Files"
 debug/
 
+# Downloaded card images (large, local-only)
+# Downloaded by `mtg download` command
+images/
+
 # Legacy one-off scripts (should be moved to debug/)
 # Keeping these patterns temporarily for backward compatibility
 check_*.js

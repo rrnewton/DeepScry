@@ -1,12 +1,13 @@
 ---
 title: 'TODO: provide downloader for ALL images, allow local copy'
-status: open
+status: closed
 priority: 0
 issue_type: task
 labels:
 - human
 created_at: 2025-12-07T21:37:57.733680262+00:00
-updated_at: 2025-12-07T21:37:57.733680262+00:00
+updated_at: 2025-12-08T15:22:39.981005124+00:00
+closed_at: 2025-12-08T15:22:39.981004403+00:00
 ---
 
 # Description

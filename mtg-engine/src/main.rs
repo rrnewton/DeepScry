@@ -425,6 +425,40 @@ enum Commands {
         deck_globs: Vec<String>,
     },
 
+    /// Download card images from Scryfall for offline use
+    ///
+    /// Downloads both small (146x204) and normal (488x680) versions by default.
+    /// Images are saved to ./images/small/ and ./images/normal/
+    Download {
+        /// Output directory for images (default: images)
+        #[arg(long, short = 'o', default_value = "images")]
+        output: PathBuf,
+
+        /// Path to cardsfolder (default: cardsfolder)
+        #[arg(long, default_value = "cardsfolder")]
+        cardsfolder: PathBuf,
+
+        /// Download only cards from specific deck file(s)
+        #[arg(long, short = 'd')]
+        deck: Option<Vec<PathBuf>>,
+
+        /// Image sizes to download (comma-separated: small,normal)
+        #[arg(long, default_value = "small,normal")]
+        sizes: String,
+
+        /// Maximum concurrent downloads (default: 10)
+        #[arg(long, default_value = "10")]
+        concurrency: usize,
+
+        /// Force re-download even if images exist
+        #[arg(long)]
+        force: bool,
+
+        /// Delay between requests in milliseconds (default: 100)
+        #[arg(long, default_value = "100")]
+        rate_limit: u64,
+    },
+
     /// Start a multiplayer game server
     #[cfg(feature = "network")]
     Server {
@@ -731,6 +765,15 @@ async fn main() -> Result<()> {
         }
         Commands::Stats {} => run_stats().await?,
         Commands::ExportWasm { output, deck_globs } => run_export_wasm(output, deck_globs).await?,
+        Commands::Download {
+            output,
+            cardsfolder,
+            deck,
+            sizes,
+            concurrency,
+            force,
+            rate_limit,
+        } => run_download(output, cardsfolder, deck, sizes, concurrency, force, rate_limit).await?,
         #[cfg(feature = "network")]
         Commands::Server {
             port,
@@ -2956,6 +2999,105 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         total_deck_cards_size
     );
     println!("  deck_index.json - deck metadata");
+
+    Ok(())
+}
+
+/// Download card images from Scryfall
+async fn run_download(
+    output: PathBuf,
+    cardsfolder: PathBuf,
+    deck_files: Option<Vec<PathBuf>>,
+    sizes_str: String,
+    concurrency: usize,
+    force: bool,
+    rate_limit: u64,
+) -> Result<()> {
+    use mtg_forge_rs::download::{
+        load_card_names_from_cardsfolder, load_card_names_from_deck, DownloadConfig, ImageDownloader, ImageSize,
+    };
+
+    println!("=== MTG Forge - Image Downloader ===\n");
+
+    // Parse image sizes
+    let sizes: Vec<ImageSize> = sizes_str
+        .split(',')
+        .filter_map(|s| ImageSize::parse(s.trim()))
+        .collect();
+
+    if sizes.is_empty() {
+        return Err(mtg_forge_rs::MtgError::InvalidAction(
+            "No valid image sizes specified. Use: small, normal".to_string(),
+        ));
+    }
+
+    println!(
+        "Image sizes: {}",
+        sizes.iter().map(|s| s.api_version()).collect::<Vec<_>>().join(", ")
+    );
+    println!("Output directory: {}", output.display());
+    println!("Concurrency: {}", concurrency);
+    println!("Rate limit: {}ms between requests", rate_limit);
+    println!("Skip existing: {}\n", !force);
+
+    // Load card names
+    let card_names = if let Some(decks) = deck_files {
+        // Load from specified deck files
+        let mut names = std::collections::HashSet::new();
+        for deck_path in decks {
+            println!("Loading cards from deck: {}", deck_path.display());
+            match load_card_names_from_deck(&deck_path).await {
+                Ok(deck_names) => {
+                    println!("  Found {} unique cards", deck_names.len());
+                    names.extend(deck_names);
+                }
+                Err(e) => {
+                    eprintln!("  Warning: Failed to load deck: {}", e);
+                }
+            }
+        }
+        let mut result: Vec<String> = names.into_iter().collect();
+        result.sort();
+        result
+    } else {
+        // Load all cards from cardsfolder
+        println!("Loading cards from cardsfolder: {}", cardsfolder.display());
+        load_card_names_from_cardsfolder(&cardsfolder).await?
+    };
+
+    println!("\nFound {} unique card names", card_names.len());
+    println!(
+        "Total images to check: {} ({} sizes)",
+        card_names.len() * sizes.len(),
+        sizes.len()
+    );
+    println!();
+
+    // Create downloader
+    let config = DownloadConfig {
+        output_dir: output,
+        card_names,
+        sizes,
+        concurrency,
+        skip_existing: !force,
+        rate_limit_ms: rate_limit,
+    };
+
+    let downloader = ImageDownloader::new(config);
+
+    // Run downloads
+    let stats = downloader.download_all().await?;
+
+    println!("\n=== Download Complete ===");
+    println!("{}", stats);
+
+    if stats.failed > 0 {
+        println!(
+            "\nNote: {} images failed to download. These may be cards not in Scryfall",
+            stats.failed
+        );
+        println!("(e.g., custom tokens, test cards, or cards with non-standard names)");
+    }
 
     Ok(())
 }

@@ -80,6 +80,12 @@ tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
 futures-executor = { version = "0.3", optional = true }
 
+# HTTP client for image downloading (native only)
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
+
+# Progress bar for downloads (native only)
+indicatif = { version = "0.17", optional = true }
+
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
@@ -132,6 +138,8 @@ native = [
     "num_cpus",
     "mimalloc",
     "glob",
+    "reqwest",
+    "indicatif",
 ]
 
 # Native TUI features (crossterm-based terminal)

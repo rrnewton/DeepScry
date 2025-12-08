@@ -12,6 +12,8 @@
 #![feature(allocator_api)]
 
 pub mod core;
+#[cfg(feature = "native")]
+pub mod download;
 pub mod error;
 pub mod game;
 pub mod loader;

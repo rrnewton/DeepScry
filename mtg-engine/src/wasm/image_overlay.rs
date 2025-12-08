@@ -48,7 +48,7 @@ pub fn gatherer_url(card_name: &str) -> String {
     )
 }
 
-/// Build Scryfall image URL for a card (fallback)
+/// Build Scryfall image URL for a card by set code and collector number (fallback)
 ///
 /// # Arguments
 /// * `set_code` - Three-letter set code (e.g. "LEA", "ARN")
@@ -70,6 +70,118 @@ pub fn scryfall_url(set_code: &str, collector_number: &str, version: ImageVersio
         collector_number,
         version_str
     )
+}
+
+/// Build Scryfall image URL for a card by name
+///
+/// Uses Scryfall's named card API endpoint which looks up by exact name.
+///
+/// # Arguments
+/// * `card_name` - Card name (e.g. "Lightning Bolt")
+/// * `version` - Image size/type
+///
+/// # Returns
+/// Full URL to Scryfall named card image API
+pub fn scryfall_url_by_name(card_name: &str, version: ImageVersion) -> String {
+    let version_str = match version {
+        ImageVersion::Small => "small",
+        ImageVersion::Normal => "normal",
+        ImageVersion::ArtCrop => "art_crop",
+    };
+
+    // URL-encode the card name
+    let encoded_name = url_encode(card_name);
+    format!(
+        "https://api.scryfall.com/cards/named?exact={}&format=image&version={}",
+        encoded_name, version_str
+    )
+}
+
+/// Build local image URL for a card (from images/ directory)
+///
+/// Local images are downloaded via `mtg download` command.
+/// Uses first-letter subdirectories like cardsfolder structure:
+/// `./images/small/l/Lightning Bolt.jpg`
+///
+/// # Arguments
+/// * `card_name` - Card name (e.g. "Lightning Bolt")
+/// * `version` - Image size/type
+/// * `base_url` - Base URL for images (e.g. "./images" or "/images")
+///
+/// # Returns
+/// Local URL to card image
+pub fn local_image_url(card_name: &str, version: ImageVersion, base_url: &str) -> String {
+    let version_str = match version {
+        ImageVersion::Small => "small",
+        ImageVersion::Normal => "normal",
+        ImageVersion::ArtCrop => "normal", // No local art_crop, fall back to normal
+    };
+
+    // Get first-letter subdirectory (like cardsfolder)
+    let first_letter = first_letter_subdir(card_name);
+
+    // Sanitize card name for filesystem
+    let safe_name: String = card_name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect();
+
+    format!("{}/{}/{}/{}.jpg", base_url, version_str, first_letter, safe_name)
+}
+
+/// Get the first-letter subdirectory for a card name (like cardsfolder structure)
+///
+/// Returns lowercase first letter for a-z, or "_" for numbers/symbols
+fn first_letter_subdir(card_name: &str) -> String {
+    let first_char = card_name.chars().next().unwrap_or('_');
+    if first_char.is_ascii_alphabetic() {
+        first_char.to_ascii_lowercase().to_string()
+    } else {
+        "_".to_string()
+    }
+}
+
+/// URL-encode a string for use in URLs
+fn url_encode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(byte as char);
+            }
+            b' ' => result.push_str("%20"),
+            _ => {
+                result.push('%');
+                result.push_str(&format!("{:02X}", byte));
+            }
+        }
+    }
+    result
+}
+
+/// Image size dimensions (in pixels)
+pub const SMALL_IMAGE_HEIGHT: u32 = 204;
+pub const NORMAL_IMAGE_HEIGHT: u32 = 680;
+
+/// Choose the appropriate image version based on rendered size
+///
+/// Uses the small version when the rendered height is <= the small image height,
+/// and normal version for larger displays to avoid pixelation.
+///
+/// # Arguments
+/// * `rendered_height_px` - The height at which the image will be displayed (in pixels)
+///
+/// # Returns
+/// The appropriate ImageVersion for the given display size
+pub fn choose_image_version(rendered_height_px: u32) -> ImageVersion {
+    if rendered_height_px <= SMALL_IMAGE_HEIGHT {
+        ImageVersion::Small
+    } else {
+        ImageVersion::Normal
+    }
 }
 
 /// Convert terminal cell coordinates to CSS pixel coordinates
@@ -381,6 +493,39 @@ mod tests {
             url,
             "https://api.scryfall.com/cards/arn/1?format=image&version=normal"
         );
+    }
+
+    #[test]
+    fn test_scryfall_url_by_name() {
+        let url = scryfall_url_by_name("Lightning Bolt", ImageVersion::Normal);
+        assert_eq!(
+            url,
+            "https://api.scryfall.com/cards/named?exact=Lightning%20Bolt&format=image&version=normal"
+        );
+
+        let url = scryfall_url_by_name("Jace, the Mind Sculptor", ImageVersion::Small);
+        assert_eq!(
+            url,
+            "https://api.scryfall.com/cards/named?exact=Jace%2C%20the%20Mind%20Sculptor&format=image&version=small"
+        );
+    }
+
+    #[test]
+    fn test_local_image_url() {
+        // Tests first-letter subdirectory structure
+        let url = local_image_url("Lightning Bolt", ImageVersion::Small, "./images");
+        assert_eq!(url, "./images/small/l/Lightning Bolt.jpg");
+
+        let url = local_image_url("Jace, the Mind Sculptor", ImageVersion::Normal, "/images");
+        assert_eq!(url, "/images/normal/j/Jace, the Mind Sculptor.jpg");
+
+        // Test special character sanitization
+        let url = local_image_url("Who/What/When/Where/Why", ImageVersion::Small, "./images");
+        assert_eq!(url, "./images/small/w/Who_What_When_Where_Why.jpg");
+
+        // Test numeric prefix goes to "_" directory
+        let url = local_image_url("1996 World Champion", ImageVersion::Normal, "./images");
+        assert_eq!(url, "./images/normal/_/1996 World Champion.jpg");
     }
 
     #[test]
