@@ -79,7 +79,9 @@ pub fn clear_p1_fixed_script() {
 pub fn tui_run_turn() {
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
-            state.borrow_mut().run_until_choice();
+            let mut s = state.borrow_mut();
+            s.run_until_choice();
+            s.needs_redraw = true; // State changed, need redraw
         }
     });
 }
@@ -89,7 +91,9 @@ pub fn tui_run_turn() {
 pub fn tui_select_choice() {
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
-            state.borrow_mut().select_current_choice();
+            let mut s = state.borrow_mut();
+            s.select_current_choice();
+            s.needs_redraw = true; // State changed, need redraw
         }
     });
 }
@@ -99,7 +103,9 @@ pub fn tui_select_choice() {
 pub fn tui_prev_choice() {
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
-            state.borrow_mut().select_previous_choice();
+            let mut s = state.borrow_mut();
+            s.select_previous_choice();
+            // needs_redraw already set by select_previous_choice()
         }
     });
 }
@@ -109,7 +115,9 @@ pub fn tui_prev_choice() {
 pub fn tui_next_choice() {
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
-            state.borrow_mut().select_next_choice();
+            let mut s = state.borrow_mut();
+            s.select_next_choice();
+            // needs_redraw already set by select_next_choice()
         }
     });
 }
@@ -121,6 +129,7 @@ pub fn tui_toggle_auto() {
         if let Some(ref state) = *state.borrow() {
             let mut s = state.borrow_mut();
             s.auto_run = !s.auto_run;
+            s.needs_redraw = true; // UI state changed, need redraw
         }
     });
 }
@@ -273,6 +282,9 @@ struct WasmFancyTuiState {
     /// Whether we need to replay choices after user makes a new choice
     /// When true, we rewind to turn start and replay all choices including the new one
     needs_replay: bool,
+    /// Whether the UI needs to be redrawn on the next frame
+    /// This dirty bit prevents unnecessary redraws at 60Hz when nothing has changed
+    needs_redraw: bool,
 }
 
 impl WasmFancyTuiState {
@@ -321,6 +333,7 @@ impl WasmFancyTuiState {
             error_message: None,
             auto_run: false,
             needs_replay: false,
+            needs_redraw: true, // Initial draw required
         }
     }
 
@@ -605,6 +618,7 @@ impl WasmFancyTuiState {
 
                 // Handle the game result - this may set pending_context for the next choice
                 self.handle_game_result(result);
+                self.needs_redraw = true; // State changed, need redraw
             } else {
                 // Normal run - no replay needed
                 log::debug!(
@@ -627,8 +641,10 @@ impl WasmFancyTuiState {
                         }
                     );
                     self.handle_game_result(result);
+                    self.needs_redraw = true; // State changed, need redraw
                 } else {
                     self.error_message = Some("Human controller not initialized".to_string());
+                    self.needs_redraw = true; // Error message changed, need redraw
                 }
             }
         } else if self.p1_controller_type == WasmControllerType::Fixed {
@@ -657,6 +673,7 @@ impl WasmFancyTuiState {
                         } else {
                             self.current_prompt = Some("Game Over! Draw!".to_string());
                         }
+                        self.needs_redraw = true; // State changed, need redraw
                     }
                     Ok(GameLoopState::AwaitingInput(context)) => {
                         // Script paused - show the context to user (similar to human)
@@ -664,14 +681,17 @@ impl WasmFancyTuiState {
                         self.selected_choice_idx = 0;
                         self.update_choices_from_context(&context);
                         self.current_prompt = Some("Fixed script waiting - press Space to continue".to_string());
+                        self.needs_redraw = true; // State changed, need redraw
                     }
                     Err(e) => {
                         self.error_message = Some(format!("Fixed script error: {}", e));
                         self.game_over = true;
+                        self.needs_redraw = true; // State changed, need redraw
                     }
                 }
             } else {
                 self.error_message = Some("Fixed controller not initialized".to_string());
+                self.needs_redraw = true; // Error message changed, need redraw
             }
         } else {
             // AI vs AI - run one turn at a time for step-through mode
@@ -696,15 +716,18 @@ impl WasmFancyTuiState {
                     } else {
                         self.current_prompt = Some("Game Over! Draw!".to_string());
                     }
+                    self.needs_redraw = true; // State changed, need redraw
                 }
                 Ok(None) => {
                     // Turn completed, game continues
                     let turn = self.game.turn.turn_number;
                     self.current_prompt = Some(format!("Turn {} complete. Press Space for next turn.", turn));
+                    self.needs_redraw = true; // State changed, need redraw
                 }
                 Err(e) => {
                     self.error_message = Some(format!("Game error: {}", e));
                     self.game_over = true;
+                    self.needs_redraw = true; // State changed, need redraw
                 }
             }
         }
@@ -907,6 +930,7 @@ impl WasmFancyTuiState {
         if !self.current_choices.is_empty() && self.selected_choice_idx > 0 {
             self.selected_choice_idx -= 1;
             self.update_choice_highlights();
+            self.needs_redraw = true; // UI state changed, need redraw
         }
     }
 
@@ -915,6 +939,7 @@ impl WasmFancyTuiState {
         if !self.current_choices.is_empty() && self.selected_choice_idx < self.current_choices.len() - 1 {
             self.selected_choice_idx += 1;
             self.update_choice_highlights();
+            self.needs_redraw = true; // UI state changed, need redraw
         }
     }
 
@@ -990,6 +1015,7 @@ pub fn launch_fancy_tui(
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     // A: toggle auto-run (WASM-specific, not shared)
                     state.auto_run = !state.auto_run;
+                    state.needs_redraw = true; // UI state changed, need redraw
                     return;
                 }
                 KeyCode::Char('q') | KeyCode::Char('Q') => Some(KeyInput::Pass),
@@ -1024,14 +1050,17 @@ pub fn launch_fancy_tui(
                     match key {
                         KeyInput::Up => {
                             state.select_previous_choice();
+                            // needs_redraw already set by select_previous_choice()
                             return;
                         }
                         KeyInput::Down => {
                             state.select_next_choice();
+                            // needs_redraw already set by select_next_choice()
                             return;
                         }
                         KeyInput::Enter | KeyInput::Space => {
                             state.select_current_choice();
+                            state.needs_redraw = true; // State changed, need redraw
                             return;
                         }
                         KeyInput::Digit(n) => {
@@ -1041,6 +1070,7 @@ pub fn launch_fancy_tui(
                                 state.selected_choice_idx = idx;
                                 state.update_choice_highlights();
                                 state.select_current_choice();
+                                state.needs_redraw = true; // State changed, need redraw
                             }
                             return;
                         }
@@ -1066,11 +1096,13 @@ pub fn launch_fancy_tui(
                 match result {
                     EventResult::Handled => {
                         // State was updated, will redraw on next frame
+                        state.needs_redraw = true; // Renderer state changed, need redraw
                     }
                     EventResult::NotHandled => {
                         // For Space key (not handled by shared handler), run game
                         if matches!(key, KeyInput::Space) {
                             state.run_until_choice();
+                            state.needs_redraw = true; // State changed, need redraw
                         }
                     }
                     EventResult::Pass | EventResult::Exit => {
@@ -1083,6 +1115,7 @@ pub fn launch_fancy_tui(
                             state.selected_choice_idx = idx;
                             state.update_choice_highlights();
                             state.select_current_choice();
+                            state.needs_redraw = true; // State changed, need redraw
                         }
                     }
                     EventResult::ShowBattlefield => {
@@ -1127,6 +1160,8 @@ pub fn launch_fancy_tui(
             let view = GameStateView::new(game, renderer.player_id);
             handle_mouse_click(&mut renderer.state, cell_x, cell_y, &view);
             // State was updated, will redraw on next frame
+            drop(view); // Drop view to release game borrow
+            state.needs_redraw = true; // State changed, need redraw
         }
     });
 
@@ -1145,7 +1180,16 @@ pub fn launch_fancy_tui(
             // Don't auto-run if there's a pending choice (waiting for human)
             if state.auto_run && !state.game_over && state.pending_context.is_none() {
                 state.run_until_choice();
+                state.needs_redraw = true; // Game state changed, need redraw
             }
+
+            // Check dirty bit - skip expensive rendering if nothing changed
+            if !state.needs_redraw {
+                return;
+            }
+
+            // Clear dirty bit before rendering
+            state.needs_redraw = false;
 
             // Update the turn info in the header
             let turn_number = state.game.turn.turn_number;
