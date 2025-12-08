@@ -98,6 +98,20 @@ pub enum Entity {
     },
 }
 
+/// Item in battlefield word-wrap layout - either a section label or a card entity
+#[derive(Debug, Clone)]
+enum BattlefieldItem {
+    /// Section label (e.g., "Lands:", "Creatures:")
+    Label {
+        text: String,
+        color: Color,
+        force_newline_before: bool,
+        entity_count: usize, // Number of entities in this section
+    },
+    /// Card entity (single card or stack)
+    Card { entity: Entity },
+}
+
 /// Trait for entities that can be rendered on the battlefield
 pub trait BattlefieldEntity {
     /// Get all card IDs represented by this entity
@@ -1094,10 +1108,13 @@ impl FancyTuiRenderer {
         f.render_widget(paragraph, inner_area);
     }
 
-    /// Render battlefield with inline section labels
+    /// Render battlefield with inline section labels using word-wrap model.
     ///
-    /// Sections flow left-to-right with inline labels above the first card in each section.
-    /// Optionally breaks between sections if it doesn't reduce card size.
+    /// Treats the battlefield as a continuous "sentence" that word-wraps:
+    /// - Section labels (e.g., "Lands:") are inline items that always render
+    /// - Cards flow after their section label
+    /// - Content wraps to next row when it doesn't fit
+    /// - A header row at the top shows all section labels with counts
     fn render_battlefield_inline(
         &mut self,
         f: &mut Frame,
@@ -1105,74 +1122,81 @@ impl FancyTuiRenderer {
         view: &GameStateView,
         sections: &[(Vec<CardId>, &str, Color, bool)], // (cards, label, color, try_newline_before)
     ) {
-        if sections.is_empty() {
+        if sections.is_empty() || area.height == 0 || area.width == 0 {
             return;
         }
 
-        // Try two rendering strategies:
-        // 1. No forced newlines (fully inline)
-        // 2. With forced newlines where requested
-        // Choose the one that gives larger card sizes
+        // Build flat list of items to render
+        let mut items: Vec<BattlefieldItem> = Vec::new();
+        for (cards, label, color, force_newline) in sections {
+            if cards.is_empty() {
+                continue;
+            }
 
-        let (card_width_no_newlines, card_height_no_newlines) =
-            self.calculate_card_size_for_inline_layout(area, view, sections, false);
-        let (card_width_with_newlines, card_height_with_newlines) =
-            self.calculate_card_size_for_inline_layout(area, view, sections, true);
+            // Group cards into visual entities (stacks)
+            let entities = self.group_cards_into_entities(cards, view);
 
-        // Choose the layout that gives larger cards (prioritize height, then width)
-        let use_newlines = if card_height_with_newlines > card_height_no_newlines {
-            true
-        } else if card_height_with_newlines == card_height_no_newlines {
-            card_width_with_newlines >= card_width_no_newlines
-        } else {
-            false
-        };
+            // Add section label item
+            items.push(BattlefieldItem::Label {
+                text: (*label).to_string(),
+                color: *color,
+                force_newline_before: *force_newline,
+                entity_count: entities.len(),
+            });
 
-        let (card_width, card_height) = if use_newlines {
-            (card_width_with_newlines, card_height_with_newlines)
-        } else {
-            (card_width_no_newlines, card_height_no_newlines)
-        };
+            // Add card items
+            for entity in entities {
+                items.push(BattlefieldItem::Card { entity });
+            }
+        }
 
-        // Render with chosen strategy
-        self.render_inline_sections(f, area, view, sections, use_newlines, (card_width, card_height));
+        if items.is_empty() {
+            return;
+        }
+
+        // Calculate optimal card size for this layout
+        let (card_width, card_height) = self.calculate_wordwrap_card_size(area, view, &items);
+
+        // Render using word-wrap model
+        self.render_wordwrap_battlefield(f, area, view, &items, card_width, card_height);
     }
 
-    /// Calculate optimal card size for inline layout
-    fn calculate_card_size_for_inline_layout(
-        &self,
-        area: Rect,
-        view: &GameStateView,
-        sections: &[(Vec<CardId>, &str, Color, bool)],
-        honor_newline_hints: bool,
-    ) -> (u16, u16) {
+    /// Calculate optimal card size for word-wrap battlefield layout.
+    /// Finds the largest card size where all content fits in the available area.
+    fn calculate_wordwrap_card_size(&self, area: Rect, view: &GameStateView, items: &[BattlefieldItem]) -> (u16, u16) {
+        // Reserve 1 row for header
+        let content_height = area.height.saturating_sub(1);
+        if content_height == 0 {
+            return (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT);
+        }
+
+        let content_area = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: content_height,
+        };
+
         // Try default size first
-        if self.test_inline_layout_fits(
-            area,
-            view,
-            sections,
-            honor_newline_hints,
-            Self::DEFAULT_CARD_WIDTH,
-            Self::DEFAULT_CARD_HEIGHT,
-        ) {
+        if self.test_wordwrap_layout_fits(content_area, view, items, Self::DEFAULT_CARD_WIDTH, Self::DEFAULT_CARD_HEIGHT)
+        {
             // Default fits, try to increase
             let mut best_height = Self::DEFAULT_CARD_HEIGHT;
             for h in (Self::DEFAULT_CARD_HEIGHT + 1)..=Self::MAX_CARD_HEIGHT {
                 let w = Self::compute_width_from_height(h);
-                if self.test_inline_layout_fits(area, view, sections, honor_newline_hints, w, h) {
+                if self.test_wordwrap_layout_fits(content_area, view, items, w, h) {
                     best_height = h;
                 } else {
                     break;
                 }
             }
-            let best_width = Self::compute_width_from_height(best_height);
-            return (best_width, best_height);
+            return (Self::compute_width_from_height(best_height), best_height);
         }
 
         // Default doesn't fit, try to shrink
         for h in (Self::MIN_CARD_HEIGHT..Self::DEFAULT_CARD_HEIGHT).rev() {
             let w = Self::compute_width_from_height(h).max(Self::MIN_CARD_WIDTH);
-            if self.test_inline_layout_fits(area, view, sections, honor_newline_hints, w, h) {
+            if self.test_wordwrap_layout_fits(content_area, view, items, w, h) {
                 return (w, h);
             }
         }
@@ -1181,141 +1205,237 @@ impl FancyTuiRenderer {
         (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT)
     }
 
-    /// Test if inline layout fits in area
-    fn test_inline_layout_fits(
+    /// Test if word-wrap layout fits in area (excluding header row).
+    fn test_wordwrap_layout_fits(
         &self,
         area: Rect,
         view: &GameStateView,
-        sections: &[(Vec<CardId>, &str, Color, bool)],
-        honor_newline_hints: bool,
+        items: &[BattlefieldItem],
         card_width: u16,
         card_height: u16,
     ) -> bool {
+        if area.height == 0 || area.width == 0 {
+            return items.is_empty();
+        }
+
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
-        let mut row_height = 0u16;
+        let mut row_height = card_height; // All rows have same height (card height)
 
-        for (cards, _label, _color, force_newline) in sections {
-            // Check for forced newline
-            if honor_newline_hints && *force_newline && current_x > 0 {
-                // Move to next row
-                y_offset += row_height + Self::CARD_SPACING;
-                current_x = 0;
-                row_height = 0;
+        for item in items {
+            match item {
+                BattlefieldItem::Label {
+                    text,
+                    force_newline_before,
+                    ..
+                } => {
+                    let label_width = (text.len() + 1) as u16; // "Label:"
 
-                if y_offset >= area.height {
-                    return false;
+                    // Handle forced newline
+                    if *force_newline_before && current_x > 0 {
+                        y_offset += row_height + Self::CARD_SPACING;
+                        current_x = 0;
+                        if y_offset + card_height > area.height {
+                            return false;
+                        }
+                    }
+
+                    // Check if label fits on current row (need room for label + at least 1 card)
+                    let min_section_width = label_width + Self::CARD_SPACING + card_width;
+                    if current_x > 0 && current_x + min_section_width > area.width {
+                        // Wrap to next row
+                        y_offset += row_height + Self::CARD_SPACING;
+                        current_x = 0;
+                        if y_offset + card_height > area.height {
+                            return false;
+                        }
+                    }
+
+                    current_x += label_width + Self::CARD_SPACING;
                 }
-            }
+                BattlefieldItem::Card { entity } => {
+                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
-            // Account for label height (1 line above first card in section)
-            if current_x == 0 {
-                y_offset += 1;
-                if y_offset >= area.height {
-                    return false;
-                }
-            }
+                    // Check if card fits on current row
+                    if current_x > 0 && current_x + card_w > area.width {
+                        // Wrap to next row
+                        y_offset += row_height + Self::CARD_SPACING;
+                        current_x = 0;
+                        if y_offset + card_h > area.height {
+                            return false;
+                        }
+                    }
 
-            // Group cards into entities for this section
-            let entities = self.group_cards_into_entities(cards, view);
-
-            for entity in &entities {
-                let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
-
-                // Check if card fits on current row
-                if current_x + card_w > area.width && current_x > 0 {
-                    // Move to next row
-                    current_x = 0;
-                    y_offset += row_height + Self::CARD_SPACING;
-                    row_height = 0;
-
-                    if y_offset >= area.height {
+                    // Check vertical space
+                    if y_offset + card_h > area.height {
                         return false;
                     }
-                }
 
-                // Check vertical space
-                if y_offset + card_h > area.height {
-                    return false;
+                    current_x += card_w + Self::CARD_SPACING;
+                    row_height = row_height.max(card_h);
                 }
-
-                current_x += card_w + Self::CARD_SPACING;
-                row_height = row_height.max(card_h);
             }
         }
 
         true
     }
 
-    /// Render sections with inline labels
-    fn render_inline_sections(
+    /// Render battlefield using word-wrap model with header row.
+    fn render_wordwrap_battlefield(
         &mut self,
         f: &mut Frame,
         area: Rect,
         view: &GameStateView,
-        sections: &[(Vec<CardId>, &str, Color, bool)],
-        honor_newline_hints: bool,
-        card_size: (u16, u16),
+        items: &[BattlefieldItem],
+        card_width: u16,
+        card_height: u16,
     ) {
         use ratatui::text::Text;
 
-        let (card_width, card_height) = card_size;
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+
+        // Render header row with all section labels and counts
+        self.render_battlefield_header(f, area, items);
+
+        // Content area starts after header
+        let content_area = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: area.height.saturating_sub(1),
+        };
+
+        if content_area.height == 0 {
+            return;
+        }
+
+        // Render content using word-wrap
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
-        let mut row_height = 0u16;
+        let mut row_height = card_height;
+        let mut current_label_color = Color::White;
 
-        for (cards, label, color, force_newline) in sections {
-            // Check for forced newline
-            if honor_newline_hints && *force_newline && current_x > 0 {
-                // Move to next row
-                y_offset += row_height + Self::CARD_SPACING;
-                current_x = 0;
-                row_height = 0;
-            }
+        for item in items {
+            match item {
+                BattlefieldItem::Label {
+                    text,
+                    color,
+                    force_newline_before,
+                    ..
+                } => {
+                    current_label_color = *color;
+                    let label_text = format!("{}:", text);
+                    let label_width = label_text.len() as u16;
 
-            // Draw section label above first card
-            if current_x == 0 {
-                let label_area = Rect {
-                    x: area.x,
-                    y: area.y + y_offset,
-                    width: area.width,
-                    height: 1,
-                };
-                let label_text = Text::from(Span::styled(
-                    format!("{}:", label),
-                    Style::default().fg(*color).add_modifier(Modifier::BOLD),
-                ));
-                f.render_widget(Paragraph::new(label_text), label_area);
-                y_offset += 1;
-            }
+                    // Handle forced newline
+                    if *force_newline_before && current_x > 0 {
+                        y_offset += row_height + Self::CARD_SPACING;
+                        current_x = 0;
+                        row_height = card_height;
+                    }
 
-            // Group cards into entities
-            let entities = self.group_cards_into_entities(cards, view);
+                    // Check if label + at least one card fits on current row
+                    let min_section_width = label_width + Self::CARD_SPACING + card_width;
+                    if current_x > 0 && current_x + min_section_width > content_area.width {
+                        // Wrap to next row
+                        y_offset += row_height + Self::CARD_SPACING;
+                        current_x = 0;
+                        row_height = card_height;
+                    }
 
-            // Render entities
-            for entity in &entities {
-                let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    // Only render label if we have vertical space
+                    if y_offset + card_height <= content_area.height {
+                        let label_area = Rect {
+                            x: content_area.x + current_x,
+                            y: content_area.y + y_offset,
+                            width: label_width,
+                            height: 1,
+                        };
+                        let styled_label = Text::from(Span::styled(
+                            label_text,
+                            Style::default().fg(*color).add_modifier(Modifier::BOLD),
+                        ));
+                        f.render_widget(Paragraph::new(styled_label), label_area);
+                    }
 
-                // Check if card fits on current row
-                if current_x + card_w > area.width && current_x > 0 {
-                    // Move to next row
-                    current_x = 0;
-                    y_offset += row_height + Self::CARD_SPACING;
-                    row_height = 0;
+                    current_x += label_width + Self::CARD_SPACING;
                 }
+                BattlefieldItem::Card { entity } => {
+                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
-                let entity_area = Rect {
-                    x: area.x + current_x,
-                    y: area.y + y_offset,
-                    width: card_w,
-                    height: card_h,
-                };
-                self.render_entity(f, entity_area, view, entity);
+                    // Check if card fits on current row
+                    if current_x > 0 && current_x + card_w > content_area.width {
+                        // Wrap to next row
+                        y_offset += row_height + Self::CARD_SPACING;
+                        current_x = 0;
+                        row_height = card_height;
+                    }
 
-                current_x += card_w + Self::CARD_SPACING;
-                row_height = row_height.max(card_h);
+                    // Only render if we have vertical space
+                    if y_offset + card_h <= content_area.height {
+                        let entity_area = Rect {
+                            x: content_area.x + current_x,
+                            y: content_area.y + y_offset,
+                            width: card_w,
+                            height: card_h,
+                        };
+                        self.render_entity(f, entity_area, view, entity);
+                    }
+
+                    current_x += card_w + Self::CARD_SPACING;
+                    row_height = row_height.max(card_h);
+                }
             }
         }
+
+        // Suppress unused variable warning
+        let _ = current_label_color;
+    }
+
+    /// Render header row with section labels and counts.
+    fn render_battlefield_header(&self, f: &mut Frame, area: Rect, items: &[BattlefieldItem]) {
+        if area.height == 0 {
+            return;
+        }
+
+        // Collect labels with their counts
+        let mut header_parts: Vec<(String, Color)> = Vec::new();
+        for item in items {
+            if let BattlefieldItem::Label {
+                text,
+                color,
+                entity_count,
+                ..
+            } = item
+            {
+                let count_str = if *entity_count > 1 {
+                    format!("{}({})", text, entity_count)
+                } else {
+                    text.clone()
+                };
+                header_parts.push((count_str, *color));
+            }
+        }
+
+        // Build header line with colored spans
+        let mut spans: Vec<Span> = Vec::new();
+        for (i, (text, color)) in header_parts.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" | "));
+            }
+            spans.push(Span::styled(text.clone(), Style::default().fg(*color)));
+        }
+
+        let header_line = Line::from(spans);
+        let header_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        };
+        f.render_widget(Paragraph::new(header_line), header_area);
     }
 
     /// Render a group of cards (lands, creatures, others) with dynamic packing
