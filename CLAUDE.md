@@ -47,6 +47,26 @@ Documentation and Analysis
 
 When creating analysis documents, specifications, or other AI-generated documentation, place them in the `ai_docs/` directory. This keeps the top-level clean and makes it clear which documents are AI-generated analysis (and may become outdated) versus core project documentation.
 
+Debugging Scripts and Temporary Files
+========================================
+
+**ALWAYS** place one-off debugging scripts and temporary test files in the `debug/` directory.
+
+This includes:
+- One-off test scripts (JavaScript, Python, Shell, etc.)
+- Temporary screenshot/log analysis tools
+- Quick reproduction scripts for specific bugs
+- Experimental test harnesses that aren't part of the test suite
+
+The `debug/` directory is gitignored, so you can freely create files there without polluting the repository.
+
+**Core test scripts** that are part of `make validate` belong in their proper locations:
+- `web/test_*.js` - Browser/WASM E2E tests (called by `make validate`)
+- `tests/` - Rust unit and integration tests
+- `examples/` - Rust example programs used for validation
+
+If you create a temporary script in the root directory or elsewhere by mistake, move it to `debug/` immediately.
+
 Workflow: Task tracking
 ========================================
 

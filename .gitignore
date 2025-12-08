@@ -87,8 +87,12 @@ node_modules/
 package-lock.json
 *.png
 
-# One-off test scripts (debugging/development)
-# These are temporary scripts for testing specific features
+# Debug directory for one-off scripts and temporary files
+# See CLAUDE.md section "Debugging Scripts and Temporary Files"
+debug/
+
+# Legacy one-off scripts (should be moved to debug/)
+# Keeping these patterns temporarily for backward compatibility
 check_*.js
 debug_*.js
 inspect_*.js
@@ -99,7 +103,5 @@ simple_screenshot.js
 quick_screenshot.js
 dom_inspection_test.js
 serve_no_cache.py
-
-# Temporary test output files (root directory)
 console_logs.txt
 sanity_test_console.txt
