@@ -234,11 +234,17 @@ pub enum Effect {
     ///
     /// The spell controller's card type and zone define what to balance.
     /// Each player must sacrifice/discard down to match the player with the fewest.
+    ///
+    /// SubAbility chaining: After this Balance effect resolves, the sub_ability (if any)
+    /// is looked up in the card's SVars and executed. This enables Balance's full
+    /// Land → Hand → Creature chain.
     Balance {
         /// What type of card to balance ("Creature", "Land", or empty for any permanent)
         card_type: String,
         /// Zone to balance ("Battlefield" or "Hand")
         zone: String,
+        /// Optional SubAbility$ reference (SVar name to execute after this effect)
+        sub_ability: Option<String>,
     },
 }
 

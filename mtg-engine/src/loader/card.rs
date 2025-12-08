@@ -39,6 +39,7 @@ impl CardLoader {
         let mut oracle = String::new();
         let mut raw_abilities = Vec::new();
         let mut raw_keywords = Vec::new();
+        let mut svars = std::collections::HashMap::new();
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -89,9 +90,19 @@ impl CardLoader {
                     "K" => {
                         raw_keywords.push(value.to_string());
                     }
-                    // Ability lines (A:, S:, T:, SVar:, etc.)
-                    "A" | "S" | "T" | "SVar" => {
+                    // Ability lines (A:, S:, T: lines)
+                    "A" | "S" | "T" => {
                         raw_abilities.push(format!("{key}:{value}"));
+                    }
+                    // Script variables (SVar:NAME:body)
+                    // Format: "SVar" key with value "NAME:body"
+                    "SVar" => {
+                        raw_abilities.push(format!("{key}:{value}"));
+                        // Also parse into svars HashMap for SubAbility resolution
+                        // Value format: "NAME:DB$ ApiType | Param$ Value | ..."
+                        if let Some((svar_name, svar_body)) = value.split_once(':') {
+                            svars.insert(svar_name.trim().to_string(), svar_body.trim().to_string());
+                        }
                     }
                     _ => {} // Ignore other fields for now
                 }
@@ -139,6 +150,7 @@ impl CardLoader {
             oracle,
             raw_abilities,
             raw_keywords,
+            svars,
         })
     }
 }
@@ -159,6 +171,9 @@ pub struct CardDefinition {
     pub raw_abilities: Vec<String>,
     /// Raw keyword scripts from the card file (K: lines)
     pub raw_keywords: Vec<String>,
+    /// Script variables (SVar:NAME:...) for SubAbility chaining and other references
+    /// Key: SVar name, Value: SVar body (DB$, AB$, etc.)
+    pub svars: std::collections::HashMap<String, String>,
 }
 
 impl CardDefinition {
@@ -330,6 +345,9 @@ impl CardDefinition {
                     .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
             }
         }
+
+        // Copy SVars for SubAbility resolution during effect execution
+        card.svars = self.svars.clone();
 
         // Update cache AFTER all abilities are parsed (including implicit mana abilities)
         // This derives mana production from Effect::AddMana in the abilities,

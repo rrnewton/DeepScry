@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-04T19:46:17.505864967+00:00
+updated_at: 2025-12-08T14:57:29.974399272+00:00
 ---
 
 # Description
@@ -24,6 +24,7 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-143: Missing player choice opportunities tracking
 - mtg-147: Affected$ selector parsing improvements
 - mtg-hcahb: Web GUI implementation with shared TUI/GUI architecture
+- mtg-m7v83: Upstream Java Forge card script issues (PRs to upstream)
 
 **Current status as of 2025-12-04_#1141(00682bc):**
 - Tests: 597 passing (nextest, all categories)
@@ -54,6 +55,3 @@ This is the main tracking issue for MTG Forge Rust development.
 - Human-created issues have priority 0
 - Reference issues in code: // TODO(mtg-N): description
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
-
----
-**Last updated: 2025-12-04_#1141(00682bc)**

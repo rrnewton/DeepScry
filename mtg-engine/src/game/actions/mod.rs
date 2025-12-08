@@ -1078,7 +1078,11 @@ impl GameState {
                 // Call the attach_equipment method from Phase 1
                 self.attach_equipment(*source_equipment, *target_creature)?;
             }
-            Effect::Balance { card_type: _, zone: _ } => {
+            Effect::Balance {
+                card_type: _,
+                zone: _,
+                sub_ability: _,
+            } => {
                 // Balance effect is handled interactively in the game loop
                 // This is a no-op here - the game loop will detect Balance effects
                 // and call resolve_balance_effect_interactive with controllers

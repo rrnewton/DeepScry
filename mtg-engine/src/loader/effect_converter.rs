@@ -193,13 +193,19 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Balance => {
-            // Balance effect: SP$ Balance | Valid$ Land/Creature | Zone$ Hand/Battlefield
+            // Balance effect: SP$ Balance | Valid$ Land/Creature | Zone$ Hand/Battlefield | SubAbility$ SvarName
             // Valid$ defaults to "Land" (most common use)
             // Zone$ defaults to "Battlefield" for permanents
+            // SubAbility$ references an SVar for the next effect in the chain
             let card_type = params.get("Valid").unwrap_or("Land").to_string();
             let zone = params.get("Zone").unwrap_or("Battlefield").to_string();
+            let sub_ability = params.get("SubAbility").map(|s| s.to_string());
 
-            Some(Effect::Balance { card_type, zone })
+            Some(Effect::Balance {
+                card_type,
+                zone,
+                sub_ability,
+            })
         }
 
         // All other API types not yet implemented

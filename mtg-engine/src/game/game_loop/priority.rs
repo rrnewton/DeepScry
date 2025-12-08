@@ -834,27 +834,43 @@ impl<'a> GameLoop<'a> {
         controller2: &mut dyn PlayerController,
     ) -> Result<()> {
         // Check if this spell has any Balance effects before resolving
-        let balance_effects: Vec<(String, String)> = if let Ok(card) = self.game.cards.get(spell_id) {
-            card.effects
-                .iter()
-                .filter_map(|e| {
-                    if let crate::core::Effect::Balance { card_type, zone } = e {
-                        Some((card_type.clone(), zone.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        // Also capture SVars for SubAbility resolution
+        let (balance_effects, svars): (Vec<_>, std::collections::HashMap<String, String>) =
+            if let Ok(card) = self.game.cards.get(spell_id) {
+                let effects = card
+                    .effects
+                    .iter()
+                    .filter_map(|e| {
+                        if let crate::core::Effect::Balance {
+                            card_type,
+                            zone,
+                            sub_ability,
+                        } = e
+                        {
+                            Some((card_type.clone(), zone.clone(), sub_ability.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (effects, card.svars.clone())
+            } else {
+                (Vec::new(), std::collections::HashMap::new())
+            };
 
         // Resolve the spell normally (Balance effects are no-ops in execute_effect)
         self.resolve_top_spell_from_stack(spell_id)?;
 
-        // Now handle any Balance effects interactively
-        for (card_type, zone) in balance_effects {
-            self.resolve_balance_effect_interactive(&card_type, &zone, controller1, controller2)?;
+        // Now handle any Balance effects interactively, including SubAbility chains
+        for (card_type, zone, sub_ability) in balance_effects {
+            self.resolve_balance_effect_chain(
+                &card_type,
+                &zone,
+                sub_ability.as_deref(),
+                &svars,
+                controller1,
+                controller2,
+            )?;
         }
 
         Ok(())
@@ -990,11 +1006,91 @@ impl<'a> GameLoop<'a> {
                     let _ = self.game.check_death_triggers(card_id);
 
                     // Move to graveyard
-                    self.game.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    self.game
+                        .move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Resolve a Balance effect with SubAbility chaining
+    ///
+    /// This executes the Balance effect for the specified card_type/zone, then
+    /// looks up and executes any chained SubAbility from the card's SVars.
+    ///
+    /// Example chain: Land → Hand → Creature
+    /// - First Balance effect: Land on Battlefield (sub_ability: "BalanceHands")
+    /// - Look up SVar "BalanceHands": "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures"
+    /// - Execute: Hand balancing (sub_ability: "BalanceCreatures")
+    /// - Look up SVar "BalanceCreatures": "DB$ Balance | Valid$ Creature"
+    /// - Execute: Creature balancing (no sub_ability)
+    fn resolve_balance_effect_chain(
+        &mut self,
+        card_type: &str,
+        zone: &str,
+        sub_ability: Option<&str>,
+        svars: &std::collections::HashMap<String, String>,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<()> {
+        // Execute this Balance effect
+        self.resolve_balance_effect_interactive(card_type, zone, controller1, controller2)?;
+
+        // If there's a SubAbility reference, look it up and execute it
+        if let Some(sub_ability_name) = sub_ability {
+            if let Some(svar_body) = svars.get(sub_ability_name) {
+                // Parse the SVar body to get the next Balance effect parameters
+                // Format: "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures"
+                // or "DB$ Balance | Valid$ Creature"
+                if let Some((next_card_type, next_zone, next_sub_ability)) = Self::parse_balance_svar(svar_body) {
+                    // Recursively execute the chained effect
+                    self.resolve_balance_effect_chain(
+                        &next_card_type,
+                        &next_zone,
+                        next_sub_ability.as_deref(),
+                        svars,
+                        controller1,
+                        controller2,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parse a Balance SVar body to extract card_type, zone, and sub_ability
+    ///
+    /// Input: "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures"
+    /// Output: Some(("Land", "Hand", Some("BalanceCreatures")))
+    ///
+    /// Input: "DB$ Balance | Valid$ Creature"
+    /// Output: Some(("Creature", "Battlefield", None))
+    fn parse_balance_svar(svar_body: &str) -> Option<(String, String, Option<String>)> {
+        // Only process Balance SVars
+        if !svar_body.contains("DB$ Balance") && !svar_body.contains("DB$Balance") {
+            return None;
+        }
+
+        // Parse parameters by splitting on |
+        let mut card_type = "Land".to_string(); // Default for Balance
+        let mut zone = "Battlefield".to_string(); // Default for Balance
+        let mut sub_ability = None;
+
+        for param in svar_body.split('|') {
+            let param = param.trim();
+            if let Some((key, value)) = param.split_once('$') {
+                match key.trim() {
+                    "Valid" => card_type = value.trim().to_string(),
+                    "Zone" => zone = value.trim().to_string(),
+                    "SubAbility" => sub_ability = Some(value.trim().to_string()),
+                    _ => {}
+                }
+            }
+        }
+
+        Some((card_type, zone, sub_ability))
     }
 }

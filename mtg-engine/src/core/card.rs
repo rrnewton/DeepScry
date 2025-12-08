@@ -529,6 +529,12 @@ pub struct Card {
     /// - Used to track Equipment→Creature and Aura→Permanent relationships
     pub attached_to: Option<CardId>,
 
+    /// Script variables (SVars) for SubAbility chaining
+    /// Key: SVar name (e.g., "BalanceHands")
+    /// Value: SVar body (e.g., "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures")
+    /// Used for SubAbility$ resolution during effect execution
+    pub svars: std::collections::HashMap<String, String>,
+
     /// Cache for expensive string operations (computed at load time)
     /// Avoids repeated to_lowercase() and contains() allocations during gameplay
     pub cache: CardCache,
@@ -571,6 +577,7 @@ impl Card {
             activated_abilities: Vec::new(),
             static_abilities: Vec::new(),
             attached_to: None,
+            svars: std::collections::HashMap::new(),
         }
     }
 

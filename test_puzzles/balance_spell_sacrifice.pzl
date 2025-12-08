@@ -3,7 +3,7 @@ Name=Balance Spell Sacrifice Test
 Goal=Win
 Turns=5
 Difficulty=Hard
-Description=Tests Balance spell effect. Note: The real Balance card uses SubAbility chaining (Land->Hand->Creature) which is not yet fully implemented. This test shows land balancing works. P0 has 0 lands after casting, P1 has 0 lands - P0 sacrifices both Plains to cast Balance.
+Description=Tests Balance spell full chain (Land->Hand->Creature). P0 casts Balance paying {1}{W} with both Plains. After resolution: Lands: 0 each (P1 has no lands). Hands: 0 each (P1 discards 3 cards). Creatures: 0 each (P1 sacrifices 3 creatures). Note: P0 uses both lands to cast Balance, so P0 has 0 lands after casting.
 
 [state]
 turn=1
@@ -16,7 +16,7 @@ p0library=Plains; Plains; Plains
 p0graveyard=
 
 p1life=20
-p1hand=
+p1hand=Giant Growth; Giant Growth; Giant Growth
 p1battlefield=Grizzly Bears; Llanowar Elves; Hill Giant
 p1library=Forest; Forest; Forest
 p1graveyard=
