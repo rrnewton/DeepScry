@@ -249,7 +249,8 @@ async fn test_load_all_decks() -> Result<()> {
     // Test loading decks from ./decks directory
     // These are our test decks - mostly should load successfully
     // Known failure: monored.dck contains "Ojer Axonil, Deepest Might" (double-faced card)
-    // Current baseline: 1 failure (out of 29 decks, ~96.6% success rate)
+    // Note: Decks with cards not in the database should go in decks_future/ instead
+    // Current baseline: 1 failure (out of ~40 decks)
     // Note: Integration tests run from mtg-engine/ directory, so use ../decks
     let local_decks = PathBuf::from("../decks");
     test_deck_directory(&card_db, &local_decks, 1, "decks").await?;
