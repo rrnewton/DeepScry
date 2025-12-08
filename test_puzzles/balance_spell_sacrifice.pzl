@@ -3,7 +3,7 @@ Name=Balance Spell Sacrifice Test
 Goal=Win
 Turns=5
 Difficulty=Hard
-Description=Tests Balance spell effect where each player sacrifices creatures until all players have equal amounts. P0 has 0 creatures, P1 has 3 - after Balance, P1 must sacrifice all 3 creatures. P0 has Balance in hand and enough mana.
+Description=Tests Balance spell effect. Note: The real Balance card uses SubAbility chaining (Land->Hand->Creature) which is not yet fully implemented. This test shows land balancing works. P0 has 0 lands after casting, P1 has 0 lands - P0 sacrifices both Plains to cast Balance.
 
 [state]
 turn=1
