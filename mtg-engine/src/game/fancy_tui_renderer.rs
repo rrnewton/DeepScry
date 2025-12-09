@@ -1248,7 +1248,8 @@ impl FancyTuiRenderer {
     }
 
     /// Test if word-wrap layout fits in area.
-    /// Each row of cards has a 1-line header above it (row_unit = 1 + card_height).
+    /// Each row of cards has a 1-line header above it.
+    /// Uses actual entity dimensions (which include visual stack offsets).
     fn test_wordwrap_layout_fits(
         &self,
         area: Rect,
@@ -1261,11 +1262,9 @@ impl FancyTuiRenderer {
             return items.is_empty();
         }
 
-        // Each row takes: 1 (header) + card_height + CARD_SPACING (between rows)
-        let row_unit = 1 + card_height;
-
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
+        let mut current_row_max_h = card_height; // Track max entity height in current row
 
         for item in items {
             match item {
@@ -1274,22 +1273,29 @@ impl FancyTuiRenderer {
                 } => {
                     // Handle forced newlines between sections
                     if *force_newline_before && current_x > 0 {
-                        y_offset += row_unit + Self::CARD_SPACING;
+                        // Advance by header + max height of current row + spacing
+                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
                         current_x = 0;
+                        current_row_max_h = card_height;
                     }
                 }
                 BattlefieldItem::Card { entity } => {
-                    let (card_w, _card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
-                    // Check if card fits on current row
+                    // Check if card fits on current row (width check)
                     if current_x > 0 && current_x + card_w > area.width {
-                        // Wrap to next row
-                        y_offset += row_unit + Self::CARD_SPACING;
+                        // Wrap to next row: advance by header + max height of current row
+                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
                         current_x = 0;
+                        current_row_max_h = card_height;
                     }
 
-                    // Check if this row fits (header + card)
-                    if y_offset + row_unit > area.height {
+                    // Update max height for this row
+                    current_row_max_h = current_row_max_h.max(card_h);
+
+                    // Check if this row fits (header + entity height)
+                    // card_y = y_offset + 1 (header), so card occupies [y_offset+1, y_offset+1+card_h)
+                    if y_offset + 1 + card_h > area.height {
                         return false;
                     }
 
@@ -1374,10 +1380,10 @@ impl FancyTuiRenderer {
 
                     // Card position: below the header line
                     let card_y = y_offset + 1;
-                    // Only add if it fits vertically
-                    if card_y + card_h <= area.height {
-                        card_positions.push((current_x, card_y, card_w, card_h));
-                    }
+                    // Always add card position - ratatui will handle clipping if needed.
+                    // The test_wordwrap_layout_fits function should have already ensured
+                    // proper card sizing, but we render regardless for robustness.
+                    card_positions.push((current_x, card_y, card_w, card_h));
 
                     current_x += card_w + Self::CARD_SPACING;
                 }
@@ -2567,5 +2573,192 @@ impl FancyTuiRenderer {
         let text = Text::from(lines);
         let paragraph = Paragraph::new(text).block(block);
         f.render_widget(paragraph, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{Card, CardType};
+    use crate::game::state::GameState;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use smallvec::smallvec;
+
+    /// Helper to create a land card and add it to the game
+    fn create_land(game: &mut GameState, name: &str, owner: PlayerId) -> CardId {
+        let card_id = game.next_entity_id();
+        let mut card = Card::new(card_id, name.to_string(), owner);
+        card.add_type(CardType::Land);
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        card_id
+    }
+
+    /// Test for visual stack clipping bug
+    ///
+    /// When using --visual-stacks mode, a 3X stack of lands grows taller than a 2X stack
+    /// due to diagonal offsets. If the 3X stack is on the bottom row and the height
+    /// exceeds the available area, the card gets silently dropped while the "3X" label
+    /// still renders, making it appear the stack disappeared.
+    ///
+    /// This test reproduces the bug by:
+    /// 1. Creating a battlefield with lands that form visual stacks
+    /// 2. Using a constrained area where the 3X stack clips
+    /// 3. Verifying that both stack count labels AND actual cards render
+    #[test]
+    fn test_visual_stack_does_not_clip_on_bottom_row() {
+        // Create a game state with lands on battlefield
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create lands that will form visual stacks:
+        // - 2 Forests -> 2X stack (height = base + 1 offset = 7 + 1 = 8)
+        // - 3 Plains -> 3X stack (height = base + 2 offsets = 7 + 2 = 9)
+        let forest1 = create_land(&mut game, "Forest", p1_id);
+        let forest2 = create_land(&mut game, "Forest", p1_id);
+        let plains1 = create_land(&mut game, "Plains", p1_id);
+        let plains2 = create_land(&mut game, "Plains", p1_id);
+        let plains3 = create_land(&mut game, "Plains", p1_id);
+
+        // Create the view
+        let view = GameStateView::new(&game, p1_id);
+
+        // Create renderer with visual_stacks = true
+        let mut renderer = FancyTuiRenderer::new(p1_id, true);
+
+        // Set up a constrained area that will trigger the bug:
+        // - Width is sufficient for both stacks side by side
+        // - Height is just barely enough for a 2X stack but not a 3X stack
+        //
+        // With DEFAULT_CARD_HEIGHT = 7:
+        // - Header row: 1 line
+        // - 2X stack: 7 + 1 = 8 lines
+        // - 3X stack: 7 + 2 = 9 lines
+        //
+        // y_offset starts at 0
+        // After label, y_offset still 0 (label stored, not advanced)
+        // card_y = y_offset + 1 = 1
+        // For 2X: card_h = 8, check: card_y + card_h = 1 + 8 = 9 <= area.height
+        // For 3X: card_h = 9, check: card_y + card_h = 1 + 9 = 10 <= area.height
+        //
+        // So if area.height = 9:
+        // - 2X: 9 <= 9 -> renders
+        // - 3X: 10 <= 9 -> false, DOES NOT RENDER (bug!)
+        //
+        // Width: 2X stack = 11 (10+1 offset), 3X stack = 12 (10+2 offsets)
+        // With spacing of 1 between them and label "Lands:" (6 chars)
+        // Total min width = 12 + 1 + 12 + 1 = 26 (plus some margin)
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 50, // Wide enough for both stacks + centering
+            height: 9, // Too short for 3X stack with current bug
+        };
+
+        // Create battlefield items with visual stacks
+        let items = vec![
+            BattlefieldItem::Label {
+                text: "Lands".to_string(),
+                color: Color::Green,
+                force_newline_before: false,
+                entity_count: 2,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::VisualStack {
+                    card_ids: smallvec![forest1, forest2],
+                    card_name: "Forest".to_string(),
+                    tapped_count: 0,
+                },
+            },
+            BattlefieldItem::Card {
+                entity: Entity::VisualStack {
+                    card_ids: smallvec![plains1, plains2, plains3],
+                    card_name: "Plains".to_string(),
+                    tapped_count: 0,
+                },
+            },
+        ];
+
+        // Create test terminal with enough space
+        let backend = TestBackend::new(50, 9);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                renderer.render_wordwrap_battlefield(f, area, &view, &items, 10, 7, None);
+            })
+            .unwrap();
+
+        // Get the buffer content for inspection
+        let buffer = terminal.backend().buffer();
+
+        // Convert buffer to string for inspection
+        let mut output = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = buffer[(x, y)].symbol();
+                output.push_str(cell);
+            }
+            output.push('\n');
+        }
+
+        println!("Rendered output:\n{}", output);
+
+        // Check that "2X" label is present
+        assert!(output.contains("2X"), "2X stack label should be visible in output");
+
+        // Check that "3X" label is present
+        assert!(output.contains("3X"), "3X stack label should be visible in output");
+
+        // THE BUG: The 3X label renders but the card does NOT render!
+        // We need to verify the card box is present, not just the label.
+
+        // Look for "Plains" text in the output - this would be inside the card
+        // If the card is clipped, "Plains" won't appear, only "3X" will.
+        let has_plains = output.contains("Plains");
+
+        // This assertion will FAIL with the bug, demonstrating the issue
+        assert!(
+            has_plains,
+            "Plains card should render (not just the 3X label). Bug: visual stack clipped on bottom row!\n\
+             Output:\n{}",
+            output
+        );
+    }
+
+    /// Test that the card size calculation accounts for visual stack height
+    #[test]
+    fn test_entity_dimensions_for_visual_stacks() {
+        // Create a game state with lands on battlefield
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create 3 plains (will form 3X visual stack)
+        let plains1 = create_land(&mut game, "Plains", p1_id);
+        let plains2 = create_land(&mut game, "Plains", p1_id);
+        let plains3 = create_land(&mut game, "Plains", p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        // Test entity dimension calculation
+        let entity = Entity::VisualStack {
+            card_ids: smallvec![plains1, plains2, plains3],
+            card_name: "Plains".to_string(),
+            tapped_count: 0,
+        };
+
+        // With base height 7, a 3-card stack should have height 7 + 2 = 9
+        // (stack_depth - 1) * DIAGONAL_OFFSET = (3 - 1) * 1 = 2
+        let (width, height) = FancyTuiRenderer::get_entity_dimensions(&entity, &view, 10, 7);
+
+        assert_eq!(
+            height, 9,
+            "3X visual stack should have height = base + (stack_depth - 1) * DIAGONAL_OFFSET"
+        );
+        assert_eq!(
+            width, 12,
+            "3X visual stack should have width = base + (stack_depth - 1) * DIAGONAL_OFFSET"
+        );
     }
 }
