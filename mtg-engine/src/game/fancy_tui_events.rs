@@ -125,17 +125,17 @@ pub fn handle_key_event(
             EventResult::Handled
         }
         KeyInput::FocusStack => {
-            state.focused_pane = FocusedPane::Stack;
+            // Stack is now part of Actions pane, so focus Actions
+            state.focused_pane = FocusedPane::Actions;
             EventResult::Handled
         }
         KeyInput::Tab => {
-            // Cycle through panes
+            // Cycle through panes (Stack removed, now part of Actions)
             state.focused_pane = match state.focused_pane {
                 FocusedPane::Hand => FocusedPane::Info,
                 FocusedPane::Info => FocusedPane::YourBattlefield,
                 FocusedPane::YourBattlefield => FocusedPane::OpponentBattlefield,
-                FocusedPane::OpponentBattlefield => FocusedPane::Stack,
-                FocusedPane::Stack => FocusedPane::Actions,
+                FocusedPane::OpponentBattlefield => FocusedPane::Actions,
                 FocusedPane::Actions => FocusedPane::Hand,
             };
             EventResult::Handled
@@ -356,13 +356,11 @@ fn handle_enter(state: &mut FancyTuiState, view: &GameStateView) -> EventResult 
                 state.selected_card_id = Some(card_id);
             }
         }
-        FocusedPane::Stack => {
-            let stack = view.stack();
-            if !stack.is_empty() {
-                state.selected_card_id = Some(stack[stack.len() - 1]);
-            }
+        FocusedPane::Info | FocusedPane::Actions => {
+            // Info pane doesn't have cards to select
+            // Actions pane could potentially show stack items for card details
+            // but that's a future enhancement
         }
-        _ => {}
     }
 
     EventResult::Handled

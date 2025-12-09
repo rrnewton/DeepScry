@@ -48,10 +48,8 @@ pub enum FocusedPane {
     YourBattlefield,
     /// (O)pponent battlefield
     OpponentBattlefield,
-    /// (A)ctions pane (Prompt - no tabs)
+    /// (A)ctions pane (Prompt + Stack)
     Actions,
-    /// (S)tack pane
-    Stack,
 }
 
 /// Context for what kind of choice is being made
@@ -276,10 +274,9 @@ pub struct FancyTuiRenderer {
 impl FancyTuiRenderer {
     // Minimum acceptable widths for each pane (in terminal columns)
     pub const MIN_WIDTH_INFO_PANE: u16 = 40; // Combat/Log pane (left column top)
-    pub const MIN_WIDTH_ACTIONS_PANE: u16 = 40; // Prompt/Actions pane (left column bottom)
+    pub const MIN_WIDTH_ACTIONS_PANE: u16 = 40; // Prompt/Actions pane (left column bottom, includes stack)
     pub const MIN_WIDTH_CARD_DETAILS: u16 = 30; // Card details pane (right column top)
-    pub const MIN_WIDTH_HAND: u16 = 30; // Hand pane (right column middle)
-    pub const MIN_WIDTH_STACK: u16 = 30; // Stack pane (right column bottom)
+    pub const MIN_WIDTH_HAND: u16 = 30; // Hand pane (right column bottom)
     pub const MIN_WIDTH_BATTLEFIELD: u16 = 60; // Battlefield pane (middle column)
 
     // Default column percentages
@@ -708,8 +705,7 @@ impl FancyTuiRenderer {
             && boosted_left_width >= Self::MIN_WIDTH_ACTIONS_PANE
             && boosted_middle_width >= Self::MIN_WIDTH_BATTLEFIELD
             && boosted_right_width >= Self::MIN_WIDTH_CARD_DETAILS
-            && boosted_right_width >= Self::MIN_WIDTH_HAND
-            && boosted_right_width >= Self::MIN_WIDTH_STACK;
+            && boosted_right_width >= Self::MIN_WIDTH_HAND;
 
         // Use boosted layout if possible, otherwise use default
         let (left_pct, middle_pct, right_pct) = if can_boost {
@@ -756,13 +752,15 @@ impl FancyTuiRenderer {
             ])
             .split(main_chunks[1]);
 
-        // Right column: Card details, Hand, Stack
+        // Right column: Card details, Hand (aligned with Your Battlefield)
+        // Use the same vertical positions as middle column so Hand aligns with Your Battlefield
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(35), // Card details
-                Constraint::Percentage(35), // Hand
-                Constraint::Percentage(30), // Stack
+                Constraint::Min(3),         // Matches opponent info header
+                Constraint::Percentage(45), // Card details (matches opponent battlefield height)
+                Constraint::Percentage(45), // Hand (matches your battlefield height)
+                Constraint::Min(3),         // Matches your info footer
             ])
             .split(main_chunks[2]);
 
@@ -782,11 +780,14 @@ impl FancyTuiRenderer {
         self.draw_battlefield(f, middle_chunks[2], view, view.player_id(), "You");
         self.draw_player_info(f, middle_chunks[3], view, view.player_id());
 
-        // Draw right column
-        self.draw_card_details(f, right_chunks[0], view);
-        self.draw_hand(f, right_chunks[1], view);
-        self.state.hand_pane_area = Some(right_chunks[1]);
-        self.draw_stack(f, right_chunks[2], view);
+        // Draw right column (aligned with middle column)
+        // right_chunks[0] is empty space aligned with opponent info bar
+        // right_chunks[1] is Card Details aligned with opponent battlefield
+        // right_chunks[2] is Hand aligned with your battlefield
+        // right_chunks[3] is empty space aligned with your info bar
+        self.draw_card_details(f, right_chunks[1], view);
+        self.draw_hand(f, right_chunks[2], view);
+        self.state.hand_pane_area = Some(right_chunks[2]);
     }
 
     /// Draw the left column tabs (Combat/Log)
@@ -999,7 +1000,7 @@ impl FancyTuiRenderer {
         f.render_widget(log_list, area);
     }
 
-    /// Draw the prompt/actions panel
+    /// Draw the prompt/actions panel (now includes stack at bottom)
     fn draw_prompt(
         &self,
         f: &mut Frame,
@@ -1026,6 +1027,26 @@ impl FancyTuiRenderer {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
+        // Calculate stack height: 1 line for empty, N+1 lines for N items on stack
+        let stack = view.stack();
+        let stack_height = if stack.is_empty() { 1 } else { stack.len() + 1 } as u16;
+
+        // Split inner area: main content on top, stack at bottom
+        let content_height = inner_area.height.saturating_sub(stack_height);
+        let content_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y,
+            width: inner_area.width,
+            height: content_height,
+        };
+        let stack_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y + content_height,
+            width: inner_area.width,
+            height: stack_height,
+        };
+
+        // Render main content
         let mut lines = Vec::new();
 
         // Show turn info
@@ -1076,19 +1097,66 @@ impl FancyTuiRenderer {
             lines.push(Line::from(Span::styled(text.as_str(), style)));
         }
 
-        // Show navigation hints at the bottom
+        // Show navigation hints
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Up/Down: select | Enter: confirm | Esc: pass | Z: undo | R: random",
             Style::default().fg(Color::DarkGray),
         )));
         lines.push(Line::from(Span::styled(
-            "H/I/Y/O/A/S: focus panes | Tab: cycle tabs",
+            "H/I/Y/O/A: focus panes | Tab: cycle tabs",
             Style::default().fg(Color::DarkGray),
         )));
 
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        f.render_widget(paragraph, inner_area);
+        f.render_widget(paragraph, content_area);
+
+        // Render stack at bottom of Actions pane
+        self.render_stack_inline(f, stack_area, view);
+    }
+
+    /// Render the stack as inline text at the bottom of the Actions pane
+    fn render_stack_inline(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+        let stack = view.stack();
+
+        let mut lines = Vec::new();
+
+        if stack.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Stack: (empty)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            // Header line
+            lines.push(Line::from(Span::styled(
+                format!("Stack ({}):", stack.len()),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+
+            // Stack items (most recent first, displayed top-to-bottom)
+            for (i, &card_id) in stack.iter().rev().enumerate() {
+                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
+                let controller = view.get_card(card_id).map(|c| c.controller);
+                let owner_marker = if controller == Some(view.player_id()) {
+                    "(yours)"
+                } else {
+                    "(opp)"
+                };
+
+                // First item (top of stack, will resolve next) is highlighted
+                let style = if i == 0 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                let line_text = format!("  {} {}", name, owner_marker);
+                lines.push(Line::from(Span::styled(line_text, style)));
+            }
+        }
+
+        let paragraph = Paragraph::new(lines);
+        f.render_widget(paragraph, area);
     }
 
     /// Render battlefield with inline section labels using word-wrap model.
@@ -1784,9 +1852,31 @@ impl FancyTuiRenderer {
             return;
         }
 
+        // Sort hand: lands first, then by descending CMC
+        let mut sorted_hand: Vec<CardId> = hand.to_vec();
+        sorted_hand.sort_by(|&a, &b| {
+            let card_a = view.get_card(a);
+            let card_b = view.get_card(b);
+
+            // Lands first
+            let a_is_land = card_a.map(|c| c.is_land()).unwrap_or(false);
+            let b_is_land = card_b.map(|c| c.is_land()).unwrap_or(false);
+
+            match (a_is_land, b_is_land) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    // Both lands or both non-lands: sort by descending CMC
+                    let a_cmc = card_a.map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                    let b_cmc = card_b.map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                    b_cmc.cmp(&a_cmc) // Descending order
+                }
+            }
+        });
+
         // Track entity positions for each hand card (for mouse click detection)
         // Each list item is 1 row tall, positioned starting from inner_area.y
-        for (i, &card_id) in hand.iter().enumerate() {
+        for (i, &card_id) in sorted_hand.iter().enumerate() {
             let card_area = Rect {
                 x: inner_area.x,
                 y: inner_area.y + i as u16,
@@ -1802,7 +1892,7 @@ impl FancyTuiRenderer {
             }
         }
 
-        let items: Vec<ListItem> = hand
+        let items: Vec<ListItem> = sorted_hand
             .iter()
             .enumerate()
             .map(|(i, &card_id)| {
@@ -1831,68 +1921,6 @@ impl FancyTuiRenderer {
                 };
 
                 ListItem::new(Line::from(Span::styled(text, style)))
-            })
-            .collect();
-
-        let list = List::new(items);
-        f.render_widget(list, inner_area);
-    }
-
-    /// Draw the stack panel
-    fn draw_stack(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
-        let is_focused = self.state.focused_pane == FocusedPane::Stack;
-
-        let stack = view.stack();
-        let title = if is_focused {
-            format!(" Stack ({}) (S) [FOCUSED] ", stack.len())
-        } else {
-            format!(" Stack ({}) (S) ", stack.len())
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(if is_focused {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            });
-
-        let inner_area = block.inner(area);
-        f.render_widget(block, area);
-
-        if stack.is_empty() {
-            let empty_msg = Paragraph::new("(empty)")
-                .style(Style::default().fg(Color::DarkGray))
-                .alignment(Alignment::Center);
-            f.render_widget(empty_msg, inner_area);
-            return;
-        }
-
-        // Stack is displayed bottom-up (most recent on top)
-        let items: Vec<ListItem> = stack
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(i, &card_id)| {
-                let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-                let controller = view.get_card(card_id).map(|c| c.controller);
-                let owner_marker = if controller == Some(view.player_id()) {
-                    "(yours)"
-                } else {
-                    "(theirs)"
-                };
-
-                let style = if i == 0 {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
-                ListItem::new(Line::from(vec![
-                    Span::styled(name, style),
-                    Span::styled(format!(" {}", owner_marker), Style::default().fg(Color::DarkGray)),
-                ]))
             })
             .collect();
 
