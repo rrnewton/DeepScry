@@ -2857,22 +2857,86 @@ async fn run_export_wasm(output: PathBuf, deck_glob: String) -> Result<()> {
         decks_data.len()
     );
 
-    // Generate deck index (names and sizes for UI)
-    let deck_index: Vec<(String, usize)> = decks
+    // Generate per-deck card packs (optimization for fast loading)
+    // Each deck gets a mini cards.bin containing only the cards it needs
+    let deck_cards_dir = output.join("deck_cards");
+    fs::create_dir_all(&deck_cards_dir).map_err(|e| {
+        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+            "Failed to create deck_cards directory: {}",
+            e
+        )))
+    })?;
+
+    println!("\nGenerating per-deck card packs...");
+    let mut deck_card_sizes: HashMap<String, usize> = HashMap::new();
+
+    for (deck_name, deck) in &decks {
+        let unique_names = deck.unique_card_names();
+        let mut deck_cards: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+
+        for card_name in &unique_names {
+            if let Some(card_def) = card_definitions.get(card_name) {
+                deck_cards.insert(card_name.clone(), card_def.clone());
+            } else {
+                eprintln!("  Warning: Card '{}' not found for deck '{}'", card_name, deck_name);
+            }
+        }
+
+        // Serialize this deck's cards
+        let deck_cards_path = deck_cards_dir.join(format!("{}.bin", deck_name));
+        let deck_cards_data = bincode::serialize(&deck_cards)
+            .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize deck cards: {}", e)))?;
+
+        fs::write(&deck_cards_path, &deck_cards_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+        deck_card_sizes.insert(deck_name.clone(), deck_cards_data.len());
+
+        println!(
+            "  {} - {} unique cards ({} bytes)",
+            deck_name,
+            deck_cards.len(),
+            deck_cards_data.len()
+        );
+    }
+
+    // Generate deck index (names, sizes, and card pack sizes for UI)
+    #[derive(serde::Serialize)]
+    struct DeckIndexEntry {
+        name: String,
+        card_count: usize,
+        unique_cards: usize,
+        card_pack_bytes: usize,
+    }
+
+    let deck_index: Vec<DeckIndexEntry> = decks
         .iter()
-        .map(|(name, deck)| (name.clone(), deck.total_cards()))
+        .map(|(name, deck)| DeckIndexEntry {
+            name: name.clone(),
+            card_count: deck.total_cards(),
+            unique_cards: deck.unique_card_names().len(),
+            card_pack_bytes: deck_card_sizes.get(name).copied().unwrap_or(0),
+        })
         .collect();
     let index_path = output.join("deck_index.json");
     let index_json = serde_json::to_string_pretty(&deck_index)
         .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Failed to serialize deck index: {}", e)))?;
     fs::write(&index_path, &index_json).map_err(mtg_forge_rs::MtgError::IoError)?;
-    println!("Exported deck index to {}", index_path.display());
+    println!("\nExported deck index to {}", index_path.display());
 
+    let total_deck_cards_size: usize = deck_card_sizes.values().sum();
     println!("\n=== Export Complete ===");
     println!("Files created in {}:", output.display());
-    println!("  cards.bin    - {} card definitions", card_definitions.len());
-    println!("  decks.bin    - {} decks", decks.len());
-    println!("  deck_index.json - deck names and sizes");
+    println!(
+        "  cards.bin       - {} card definitions ({} bytes) [fallback]",
+        card_definitions.len(),
+        cards_data.len()
+    );
+    println!("  decks.bin       - {} decks ({} bytes)", decks.len(), decks_data.len());
+    println!(
+        "  deck_cards/*.bin - {} per-deck card packs ({} bytes total)",
+        decks.len(),
+        total_deck_cards_size
+    );
+    println!("  deck_index.json - deck metadata");
 
     Ok(())
 }

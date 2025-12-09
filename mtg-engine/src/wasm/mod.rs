@@ -208,6 +208,52 @@ impl WasmCardDatabase {
     pub fn has_deck(&self, deck_name: &str) -> bool {
         self.decks.contains_key(deck_name)
     }
+
+    /// Load cards for a specific deck from a per-deck card pack
+    ///
+    /// This is an optimization path that loads only the cards needed for one deck,
+    /// rather than the full 24MB cards.bin. The data should be from `deck_cards/<deck_name>.bin`.
+    ///
+    /// Cards are merged into the existing card database (duplicates are fine, same definition).
+    /// Returns the number of cards loaded from this pack.
+    pub fn load_deck_cards(&mut self, data: &[u8]) -> Result<u32, JsValue> {
+        let cards: HashMap<String, CardDefinition> = bincode::deserialize(data)
+            .map_err(|e| JsValue::from_str(&format!("Failed to deserialize deck cards: {}", e)))?;
+
+        let count = cards.len() as u32;
+
+        // Merge into existing cards (Arc wrap each)
+        for (name, def) in cards {
+            self.cards.entry(name).or_insert_with(|| Arc::new(def));
+        }
+
+        web_sys::console::log_1(&format!("Loaded {} cards from deck pack (total: {})", count, self.cards.len()).into());
+        Ok(count)
+    }
+
+    /// Check if all cards needed for a deck are loaded
+    ///
+    /// Returns a list of missing card names, or empty if all cards are available.
+    pub fn get_missing_cards_for_deck(&self, deck_name: &str) -> Vec<String> {
+        if let Some(deck) = self.decks.get(deck_name) {
+            deck.unique_card_names()
+                .into_iter()
+                .filter(|name| !self.cards.contains_key(name))
+                .collect()
+        } else {
+            vec![format!("Deck '{}' not found", deck_name)]
+        }
+    }
+
+    /// Get the list of card names needed for a deck (for fetching)
+    pub fn get_deck_card_names_json(&self, deck_name: &str) -> String {
+        if let Some(deck) = self.decks.get(deck_name) {
+            let names = deck.unique_card_names();
+            serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        }
+    }
 }
 
 impl Default for WasmCardDatabase {
