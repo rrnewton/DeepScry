@@ -1319,9 +1319,25 @@ pub fn launch_fancy_tui(
                 let positions_json =
                     export_card_positions_from_renderer(&renderer.state.entity_positions, game, player_id);
 
+                // Export selected card info for Card Details image overlay
+                let selected_card_json = if let Some(card_id) = renderer.state.selected_card_id {
+                    if let Ok(card) = game.cards.get(card_id) {
+                        // Escape quotes in card name for JSON
+                        let escaped_name = card.name.as_str().replace('\"', "\\\"");
+                        format!(r#"{{"card_id": {}, "name": "{}"}}"#, card_id.as_u32(), escaped_name)
+                    } else {
+                        "null".to_string()
+                    }
+                } else {
+                    "null".to_string()
+                };
+
                 // Post-render hook: notify JavaScript that rendering is complete
-                // Pass the card positions so JavaScript doesn't need to call back into WASM
-                let js_code = format!("window.onRenderComplete && window.onRenderComplete({})", positions_json);
+                // Pass the card positions and selected card so JavaScript doesn't need to call back into WASM
+                let js_code = format!(
+                    "window.onRenderComplete && window.onRenderComplete({}, {})",
+                    positions_json, selected_card_json
+                );
                 let _ = js_sys::eval(&js_code);
             }
         }
