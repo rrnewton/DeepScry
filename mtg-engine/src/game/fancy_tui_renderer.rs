@@ -1176,6 +1176,7 @@ impl FancyTuiRenderer {
         area: Rect,
         view: &GameStateView,
         sections: &[(Vec<CardId>, &str, Color, bool)], // (cards, label, color, try_newline_before)
+        graveyard_bounds: Option<Rect>,                // graveyard area to avoid collision
     ) {
         if sections.is_empty() || area.height == 0 || area.width == 0 {
             return;
@@ -1212,8 +1213,8 @@ impl FancyTuiRenderer {
         // Calculate optimal card size for this layout
         let (card_width, card_height) = self.calculate_wordwrap_card_size(area, view, &items);
 
-        // Render using word-wrap model
-        self.render_wordwrap_battlefield(f, area, view, &items, card_width, card_height);
+        // Render using word-wrap model with centering that avoids graveyard
+        self.render_wordwrap_battlefield(f, area, view, &items, card_width, card_height, graveyard_bounds);
     }
 
     /// Calculate optimal card size for word-wrap battlefield layout.
@@ -1302,6 +1303,7 @@ impl FancyTuiRenderer {
 
     /// Render battlefield using word-wrap model with per-row headers.
     /// Each row of cards has a 1-line header above it where section labels and stack counts appear.
+    /// The grid is centered horizontally, sliding left to avoid graveyard collision.
     fn render_wordwrap_battlefield(
         &mut self,
         f: &mut Frame,
@@ -1310,23 +1312,21 @@ impl FancyTuiRenderer {
         items: &[BattlefieldItem],
         card_width: u16,
         card_height: u16,
+        graveyard_bounds: Option<Rect>, // bottom-right graveyard area to avoid
     ) {
         if area.height == 0 || area.width == 0 {
             return;
         }
 
-        // Each row takes: 1 (header) + card_height
-        let row_unit = 1 + card_height;
-
-        // First pass: compute card positions, label positions, and stack count positions
-        // Labels appear directly above the first card of their section
-        // Stack counts (2X, 3X, etc.) appear at upper-right of each stacked entity's header
+        // First pass: compute layout positions relative to (0, 0)
+        // Track max entity height per row for proper row advancement
         let mut card_positions: Vec<(u16, u16, u16, u16)> = Vec::new(); // (x, y, w, h) for each card
         let mut label_positions: Vec<(u16, u16, String, Color)> = Vec::new(); // (x, y, text, color)
         let mut stack_count_positions: Vec<(u16, u16, u16, usize)> = Vec::new(); // (x, y, card_w, count) for stacks
 
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
+        let mut current_row_max_h = card_height; // Track tallest entity in current row
         let mut pending_label: Option<(String, Color)> = None;
 
         for item in items {
@@ -1339,8 +1339,10 @@ impl FancyTuiRenderer {
                 } => {
                     // Handle forced newlines between sections
                     if *force_newline_before && current_x > 0 {
-                        y_offset += row_unit + Self::CARD_SPACING;
+                        // Advance by 1 (header) + max entity height in current row + spacing
+                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
                         current_x = 0;
+                        current_row_max_h = card_height;
                     }
                     // Store label to render above next card
                     pending_label = Some((format!("{}:", text), *color));
@@ -1348,16 +1350,19 @@ impl FancyTuiRenderer {
                 BattlefieldItem::Card { entity } => {
                     let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
-                    // Check if card fits on current row
+                    // Check if card fits on current row (width check)
                     if current_x > 0 && current_x + card_w > area.width {
-                        // Wrap to next row
-                        y_offset += row_unit + Self::CARD_SPACING;
+                        // Wrap to next row: advance by header + max height of current row
+                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
                         current_x = 0;
+                        current_row_max_h = card_height;
                     }
+
+                    // Update max height for this row
+                    current_row_max_h = current_row_max_h.max(card_h);
 
                     // If there's a pending label, place it above this card
                     if let Some((label_text, label_color)) = pending_label.take() {
-                        // Label goes in header row (y_offset), card goes below (y_offset + 1)
                         label_positions.push((current_x, y_offset, label_text, label_color));
                     }
 
@@ -1369,6 +1374,7 @@ impl FancyTuiRenderer {
 
                     // Card position: below the header line
                     let card_y = y_offset + 1;
+                    // Only add if it fits vertically
                     if card_y + card_h <= area.height {
                         card_positions.push((current_x, card_y, card_w, card_h));
                     }
@@ -1378,11 +1384,62 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Second pass: render labels in header rows
+        // Calculate bounding box of the card grid
+        let mut grid_width = 0u16;
+        let mut grid_height = 0u16;
+        for &(x, y, w, h) in &card_positions {
+            grid_width = grid_width.max(x + w);
+            grid_height = grid_height.max(y + h);
+        }
+        // Include header row in height
+        if !label_positions.is_empty() || !stack_count_positions.is_empty() {
+            // The first row has y_offset=0, so card starts at y=1
+            // We need to account for the header line at the top
+            if grid_height > 0 {
+                // grid_height already includes card_y which starts at 1
+                // but we want the total from y=0
+            }
+        }
+
+        // Compute centering offset, adjusting for graveyard collision
+        let x_offset = if grid_width < area.width {
+            let ideal_center = (area.width - grid_width) / 2;
+
+            // Check for graveyard collision with last cards in each row
+            if let Some(gy_bounds) = graveyard_bounds {
+                // Find right-most cards that might collide with graveyard
+                // Last card in last row and last card in second-to-last row
+                let gy_left = gy_bounds.x.saturating_sub(area.x);
+                let gy_top = gy_bounds.y.saturating_sub(area.y);
+
+                // Find cards that would collide with graveyard after centering
+                let mut max_safe_offset = ideal_center;
+
+                for &(x, y, w, h) in &card_positions {
+                    let card_right = x + w + ideal_center;
+                    let card_bottom = y + h;
+
+                    // Check if this card would overlap graveyard
+                    if card_right > gy_left && card_bottom > gy_top {
+                        // This card collides - compute how much we need to slide left
+                        let needed_slide = card_right.saturating_sub(gy_left);
+                        max_safe_offset = max_safe_offset.saturating_sub(needed_slide);
+                    }
+                }
+
+                max_safe_offset
+            } else {
+                ideal_center
+            }
+        } else {
+            0
+        };
+
+        // Render labels with offset
         for (x, y, text, color) in &label_positions {
             if *y < area.height {
                 let label_area = Rect {
-                    x: area.x + x,
+                    x: area.x + x + x_offset,
                     y: area.y + y,
                     width: text.len() as u16,
                     height: 1,
@@ -1392,15 +1449,14 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Third pass: render stack counts at upper-right of card header row
+        // Render stack counts with offset
         for (x, y, card_w, count) in &stack_count_positions {
             if *y < area.height {
-                let count_text = format!("{}X", count); // No colon, placed at upper-right
+                let count_text = format!("{}X", count);
                 let text_len = count_text.len() as u16;
-                // Position at right edge of card area
                 let count_x = x + card_w.saturating_sub(text_len);
                 let count_area = Rect {
-                    x: area.x + count_x,
+                    x: area.x + count_x + x_offset,
                     y: area.y + y,
                     width: text_len,
                     height: 1,
@@ -1413,14 +1469,14 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Fourth pass: render cards
+        // Render cards with offset
         let mut card_idx = 0;
         for item in items {
             if let BattlefieldItem::Card { entity } = item {
                 if card_idx < card_positions.len() {
                     let (x, y, w, h) = card_positions[card_idx];
                     let entity_area = Rect {
-                        x: area.x + x,
+                        x: area.x + x + x_offset,
                         y: area.y + y,
                         width: w,
                         height: h,
@@ -1678,11 +1734,51 @@ impl FancyTuiRenderer {
             secs
         };
 
-        // Render battlefield with inline section labels
-        self.render_battlefield_inline(f, inner_area, view, &sections);
+        // Compute graveyard bounds first so battlefield can avoid collision
+        let graveyard_bounds = Self::compute_graveyard_bounds(inner_area, view, owner_id);
+
+        // Render battlefield with inline section labels, centered and avoiding graveyard
+        self.render_battlefield_inline(f, inner_area, view, &sections, graveyard_bounds);
 
         // Render graveyard overlay in bottom-right corner
         self.render_graveyard_overlay(f, inner_area, view, owner_id);
+    }
+
+    /// Compute the bounding box for graveyard overlay (without rendering)
+    /// Returns None if graveyard is empty or doesn't fit
+    fn compute_graveyard_bounds(area: Rect, view: &GameStateView, owner_id: PlayerId) -> Option<Rect> {
+        let graveyard = view.player_graveyard(owner_id);
+        if graveyard.is_empty() {
+            return None;
+        }
+
+        // Calculate required width (longest name or header)
+        let header = "Graveyard:";
+        let max_name_len = graveyard
+            .iter()
+            .filter_map(|&card_id| view.card_name(card_id))
+            .map(|n| n.len())
+            .max()
+            .unwrap_or(0);
+        let content_width = max_name_len.max(header.len()) as u16;
+
+        // Calculate required height: header + cards
+        let box_height = (1 + graveyard.len()) as u16;
+
+        // Check if it fits
+        if area.width < content_width || area.height < box_height {
+            return None;
+        }
+
+        let x_start = area.x + area.width - content_width;
+        let y_start = area.y + area.height - box_height;
+
+        Some(Rect {
+            x: x_start,
+            y: y_start,
+            width: content_width,
+            height: box_height,
+        })
     }
 
     /// Render graveyard as a simple text list in the bottom-right corner of the battlefield
