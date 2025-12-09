@@ -416,9 +416,13 @@ enum Commands {
         #[arg(long, short = 'o', default_value = "web/data")]
         output: PathBuf,
 
-        /// Glob pattern(s) for deck files to include (default: decks/**/*.dck)
-        #[arg(long, short = 'd', default_value = "decks/**/*.dck")]
-        deck_glob: String,
+        /// Glob pattern(s) for deck files to include (can specify multiple)
+        /// Default includes old_school decks and spiderman draft decks
+        #[arg(long, short = 'd', default_values_t = vec![
+            "decks/old_school/*.dck".to_string(),
+            "decks/*spiderman*.dck".to_string(),
+        ])]
+        deck_globs: Vec<String>,
     },
 
     /// Start a multiplayer game server
@@ -726,7 +730,7 @@ async fn main() -> Result<()> {
             .await?
         }
         Commands::Stats {} => run_stats().await?,
-        Commands::ExportWasm { output, deck_glob } => run_export_wasm(output, deck_glob).await?,
+        Commands::ExportWasm { output, deck_globs } => run_export_wasm(output, deck_globs).await?,
         #[cfg(feature = "network")]
         Commands::Server {
             port,
@@ -2740,7 +2744,7 @@ async fn run_stats() -> Result<()> {
 /// - Selected deck files matching the glob pattern
 ///
 /// These files can be loaded by the WASM module in the browser.
-async fn run_export_wasm(output: PathBuf, deck_glob: String) -> Result<()> {
+async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()> {
     use mtg_forge_rs::loader::CardLoader;
     use std::collections::HashMap;
     use std::fs;
@@ -2807,42 +2811,47 @@ async fn run_export_wasm(output: PathBuf, deck_glob: String) -> Result<()> {
         cards_data.len()
     );
 
-    // Find and load deck files matching the glob pattern
-    println!("\nSearching for decks matching: {}", deck_glob);
+    // Find and load deck files matching the glob patterns
+    println!("\nSearching for decks matching patterns:");
+    for pattern in &deck_globs {
+        println!("  - {}", pattern);
+    }
     let mut decks: HashMap<String, mtg_forge_rs::loader::DeckList> = HashMap::new();
 
-    // Use glob to find matching deck files
-    for entry in glob::glob(&deck_glob)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Invalid glob pattern: {}", e)))?
-    {
-        match entry {
-            Ok(path) => {
-                if path.is_file() {
-                    match DeckLoader::load_from_file(&path) {
-                        Ok(deck) => {
-                            // Use filename without extension as deck name
-                            let deck_name = path
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            println!("  Loaded deck: {} ({} cards)", deck_name, deck.total_cards());
-                            decks.insert(deck_name, deck);
-                        }
-                        Err(e) => {
-                            eprintln!("  Warning: Failed to load deck {}: {}", path.display(), e);
+    // Use glob to find matching deck files from all patterns
+    for deck_glob in &deck_globs {
+        for entry in glob::glob(deck_glob)
+            .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Invalid glob pattern: {}", e)))?
+        {
+            match entry {
+                Ok(path) => {
+                    if path.is_file() {
+                        match DeckLoader::load_from_file(&path) {
+                            Ok(deck) => {
+                                // Use filename without extension as deck name
+                                let deck_name = path
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                println!("  Loaded deck: {} ({} cards)", deck_name, deck.total_cards());
+                                decks.insert(deck_name, deck);
+                            }
+                            Err(e) => {
+                                eprintln!("  Warning: Failed to load deck {}: {}", path.display(), e);
+                            }
                         }
                     }
                 }
-            }
-            Err(e) => {
-                eprintln!("  Warning: Glob error: {}", e);
+                Err(e) => {
+                    eprintln!("  Warning: Glob error: {}", e);
+                }
             }
         }
     }
 
     if decks.is_empty() {
-        eprintln!("Warning: No decks found matching pattern '{}'", deck_glob);
+        eprintln!("Warning: No decks found matching patterns: {:?}", deck_globs);
     }
 
     // Serialize decks to bincode
@@ -2860,6 +2869,16 @@ async fn run_export_wasm(output: PathBuf, deck_glob: String) -> Result<()> {
     // Generate per-deck card packs (optimization for fast loading)
     // Each deck gets a mini cards.bin containing only the cards it needs
     let deck_cards_dir = output.join("deck_cards");
+
+    // Clean up old deck_cards directory to remove stale files
+    if deck_cards_dir.exists() {
+        fs::remove_dir_all(&deck_cards_dir).map_err(|e| {
+            mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+                "Failed to clean deck_cards directory: {}",
+                e
+            )))
+        })?;
+    }
     fs::create_dir_all(&deck_cards_dir).map_err(|e| {
         mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
             "Failed to create deck_cards directory: {}",
