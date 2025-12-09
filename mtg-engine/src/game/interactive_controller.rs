@@ -4,7 +4,7 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::command_parsing::{card_matches, parse_spell_ability_choice};
-use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
+use crate::game::controller::{sort_spell_abilities, ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 use std::io::{self, Write};
 
@@ -375,6 +375,9 @@ impl PlayerController for InteractiveController {
             return ChoiceResult::Ok(None);
         }
 
+        // Sort abilities in canonical order: PlayLand, CastSpell, ActivateAbility
+        let sorted = sort_spell_abilities(available);
+
         // Get player name from view
         let player_name = view.player_name();
         println!(
@@ -388,7 +391,7 @@ impl PlayerController for InteractiveController {
             // Numeric mode: 0 = Pass, 1-N = actions
             println!("\nAvailable actions:");
             println!("  [0] Pass");
-            for (idx, ability) in available.iter().enumerate() {
+            for (idx, ability) in sorted.iter().enumerate() {
                 match ability {
                     SpellAbility::PlayLand { card_id } => {
                         let name = view.card_name(*card_id).unwrap_or_default();
@@ -406,8 +409,8 @@ impl PlayerController for InteractiveController {
             }
 
             let choice_opt = self.get_user_choice_with_view(
-                &format!("Enter choice (0-{}, or ? for help):", available.len()),
-                available.len() + 1,
+                &format!("Enter choice (0-{}, or ? for help):", sorted.len()),
+                sorted.len() + 1,
                 false,
                 Some(view),
             );
@@ -431,7 +434,7 @@ impl PlayerController for InteractiveController {
             }
 
             // Acknowledge the chosen action
-            let ability = &available[choice - 1];
+            let ability = &sorted[choice - 1];
             match ability {
                 SpellAbility::PlayLand { card_id } => {
                     let name = view.card_name(*card_id).unwrap_or_default();
@@ -453,15 +456,15 @@ impl PlayerController for InteractiveController {
                 }
             }
 
-            ChoiceResult::Ok(Some(available[choice - 1].clone()))
+            ChoiceResult::Ok(Some(sorted[choice - 1].clone()))
         } else {
             // Non-numeric mode: Index 0 = Pass, 1+ = actions, OR rich text commands
-            // Use shared format_choice_menu for consistency
-            print!("{}", crate::game::controller::format_choice_menu(view, available));
+            // Use shared format_choice_menu for consistency (it sorts internally)
+            print!("{}", crate::game::controller::format_choice_menu(view, &sorted));
 
             // Read user input and try rich command parsing first
             loop {
-                print!("Choose action (0-{}, or ? for help): ", available.len());
+                print!("Choose action (0-{}, or ? for help): ", sorted.len());
                 io::stdout().flush().unwrap();
 
                 let mut input = String::new();
@@ -493,8 +496,8 @@ impl PlayerController for InteractiveController {
                     _ => {} // Not a special command, continue with parsing
                 }
 
-                // Try rich command parsing first
-                let rich_result = parse_spell_ability_choice(trimmed, view, available);
+                // Try rich command parsing first (searches by card name, order doesn't matter)
+                let rich_result = parse_spell_ability_choice(trimmed, view, &sorted);
 
                 // Check if it was a valid command (pass or ability selection)
                 if trimmed == "p"
@@ -550,12 +553,12 @@ impl PlayerController for InteractiveController {
                             .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                         return ChoiceResult::Ok(None);
                     }
-                    Ok(choice) if choice <= available.len() => {
-                        // Index 1 to N maps to available[0] to available[N-1]
+                    Ok(choice) if choice <= sorted.len() => {
+                        // Index 1 to N maps to sorted[0] to sorted[N-1]
                         let action_index = choice - 1;
 
                         // Acknowledge the chosen action
-                        match &available[action_index] {
+                        match &sorted[action_index] {
                             SpellAbility::PlayLand { card_id } => {
                                 let name = view.card_name(*card_id).unwrap_or_default();
                                 println!("  {} played land: {}", player_name, name);
@@ -575,12 +578,12 @@ impl PlayerController for InteractiveController {
                                     .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
                             }
                         }
-                        return ChoiceResult::Ok(Some(available[action_index].clone()));
+                        return ChoiceResult::Ok(Some(sorted[action_index].clone()));
                     }
                     _ => {
                         eprintln!(
                             "Invalid choice. Enter 0 to pass, 1-{} for actions, or 'play X', 'cast Y' commands.",
-                            available.len()
+                            sorted.len()
                         );
                     }
                 }

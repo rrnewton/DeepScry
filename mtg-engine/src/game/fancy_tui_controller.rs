@@ -9,7 +9,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{
     format_card_choices, format_spell_ability_choices, format_target_choices, prompt_mana_source, prompt_spell_ability,
-    prompt_target, ChoiceResult, GameStateView, PlayerController, PROMPT_ATTACKERS,
+    prompt_target, sort_spell_abilities, ChoiceResult, GameStateView, PlayerController, PROMPT_ATTACKERS,
 };
 use crate::game::fancy_tui_renderer::{BattlefieldEntity, ChoiceContext, FancyTuiRenderer, FocusedPane};
 use crossterm::{
@@ -288,7 +288,8 @@ impl FancyTuiController {
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
                             KeyCode::Char('s') | KeyCode::Char('S') => {
-                                self.renderer.state.focused_pane = FocusedPane::Stack;
+                                // Stack is now part of Actions pane
+                                self.renderer.state.focused_pane = FocusedPane::Actions;
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
                             KeyCode::Char('b') | KeyCode::Char('B') => {
@@ -590,16 +591,9 @@ impl FancyTuiController {
                                             self.renderer.state.selected_card_id = Some(card_id);
                                         }
                                     }
-                                    FocusedPane::Stack => {
-                                        // Select top of stack (most recent spell)
-                                        let stack = view.stack();
-                                        if !stack.is_empty() {
-                                            self.renderer.state.selected_card_id = Some(stack[stack.len() - 1]);
-                                        }
-                                    }
                                     FocusedPane::Info | FocusedPane::Actions => {
                                         // Info pane doesn't have cards to select
-                                        // Actions already handled above
+                                        // Actions pane (with Stack) already handled above
                                     }
                                 }
 
@@ -724,9 +718,12 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(None);
         }
 
+        // Sort abilities in canonical order: PlayLand, CastSpell, ActivateAbility
+        let sorted = sort_spell_abilities(available);
+
         // Set choice context and valid choices for highlighting
         self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
-        self.renderer.state.valid_choices = available
+        self.renderer.state.valid_choices = sorted
             .iter()
             .map(|ability| match ability {
                 SpellAbility::PlayLand { card_id } => *card_id,
@@ -739,7 +736,7 @@ impl PlayerController for FancyTuiController {
         let prompt = prompt_spell_ability(&player_name);
 
         // Use shared formatting function for consistency with WASM
-        let choices = format_spell_ability_choices(view, available);
+        let choices = format_spell_ability_choices(view, &sorted);
 
         match self.prompt_for_choice(view, &prompt, &choices) {
             Ok(PromptResult::Undo) => {
@@ -751,7 +748,7 @@ impl PlayerController for FancyTuiController {
             Ok(PromptResult::Choice(choice_opt)) => {
                 let result = match choice_opt {
                     Some(0) | None => None, // Pass
-                    Some(idx) if idx > 0 && idx <= available.len() => Some(available[idx - 1].clone()),
+                    Some(idx) if idx > 0 && idx <= sorted.len() => Some(sorted[idx - 1].clone()),
                     _ => None,
                 };
 

@@ -18,7 +18,8 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{
-    format_card_choices, format_spell_ability_choices, ChoiceContext, ChoiceResult, GameStateView, PlayerController,
+    format_card_choices, format_spell_ability_choices, sort_spell_abilities, ChoiceContext, ChoiceResult,
+    GameStateView, PlayerController,
 };
 use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
@@ -96,6 +97,9 @@ impl PlayerController for WasmHumanController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
+        // Sort abilities in canonical order: PlayLand, CastSpell, ActivateAbility
+        let sorted = sort_spell_abilities(available);
+
         // Check for pending choice
         if let Some(PendingChoice::SpellAbility(choice_idx)) = self.pending_choice.take() {
             return match choice_idx {
@@ -103,8 +107,8 @@ impl PlayerController for WasmHumanController {
                 Some(0) => ChoiceResult::Ok(None), // Index 0 is also pass
                 Some(idx) => {
                     let ability_idx = idx - 1;
-                    if ability_idx < available.len() {
-                        ChoiceResult::Ok(Some(available[ability_idx].clone()))
+                    if ability_idx < sorted.len() {
+                        ChoiceResult::Ok(Some(sorted[ability_idx].clone()))
                     } else {
                         ChoiceResult::Ok(None) // Invalid index, treat as pass
                     }
@@ -114,8 +118,8 @@ impl PlayerController for WasmHumanController {
 
         // No pending choice - request input
         ChoiceResult::NeedInput(ChoiceContext::SpellAbility {
-            available: available.to_vec(),
-            formatted_choices: format_spell_ability_choices(view, available),
+            available: sorted.clone(),
+            formatted_choices: format_spell_ability_choices(view, &sorted),
         })
     }
 

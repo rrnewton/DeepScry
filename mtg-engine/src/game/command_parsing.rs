@@ -16,7 +16,7 @@
 //!   - `activate forest[2]` - Activate second ability (1-indexed)
 
 use crate::core::SpellAbility;
-use crate::game::controller::GameStateView;
+use crate::game::controller::{sort_spell_abilities, GameStateView};
 
 /// Normalize a string for comparison
 ///
@@ -72,14 +72,17 @@ pub fn parse_spell_ability_choice(
     let cmd = command.trim().to_lowercase();
 
     // Handle numeric choice (matching menu display format from format_choice_menu)
+    // format_choice_menu sorts abilities: PlayLand, CastSpell, ActivateAbility
     // [0] = Pass priority (return None)
-    // [1] to [N] = available[0] to available[N-1] (menu indices shifted by 1)
+    // [1] to [N] = sorted[0] to sorted[N-1] (menu indices shifted by 1)
     // Out of bounds values (idx > available.len()) also pass priority
     if let Ok(idx) = cmd.parse::<usize>() {
         if idx == 0 {
             return None; // [0] = Pass priority
         } else if idx <= available.len() {
-            return Some(available[idx - 1].clone()); // [1] = available[0], etc.
+            // Sort to match format_choice_menu display order
+            let sorted = sort_spell_abilities(available);
+            return Some(sorted[idx - 1].clone()); // [1] = sorted[0], etc.
         } else {
             return None; // Out of bounds = pass priority
         }

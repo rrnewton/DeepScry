@@ -36,8 +36,11 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
     // Pass is ALWAYS option 0
     output.push_str("  [0] Pass priority\n");
 
+    // Sort abilities in canonical order: PlayLand, CastSpell, ActivateAbility
+    let sorted = sort_spell_abilities(available);
+
     // Actions are indexed starting at 1
-    for (idx, ability) in available.iter().enumerate() {
+    for (idx, ability) in sorted.iter().enumerate() {
         let display_idx = idx + 1; // Shift indices by 1 to make room for pass at 0
         match ability {
             SpellAbility::PlayLand { card_id } => {
@@ -215,6 +218,28 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
 // These functions provide consistent formatting for menu choices across both
 // native TUI and WASM implementations. Both implementations should use these
 // to ensure identical user-facing strings.
+
+/// Get sort key for a SpellAbility
+///
+/// Returns a number used for canonical ordering:
+/// 0 = PlayLand, 1 = CastSpell, 2 = ActivateAbility
+fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
+    match ability {
+        SpellAbility::PlayLand { .. } => 0,
+        SpellAbility::CastSpell { .. } => 1,
+        SpellAbility::ActivateAbility { .. } => 2,
+    }
+}
+
+/// Sort spell abilities in canonical order
+///
+/// Order: PlayLand first, then CastSpell, then ActivateAbility.
+/// Pass is always index 0 in formatted choices, but that's handled separately.
+pub fn sort_spell_abilities(abilities: &[SpellAbility]) -> Vec<SpellAbility> {
+    let mut sorted: Vec<SpellAbility> = abilities.to_vec();
+    sorted.sort_by_key(spell_ability_sort_key);
+    sorted
+}
 
 /// Format a single spell ability choice for display
 ///
