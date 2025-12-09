@@ -103,6 +103,7 @@ enum BattlefieldItem {
     Label {
         text: String,
         color: Color,
+        #[allow(dead_code)] // Reserved for future use (section-aware line breaking)
         force_newline_before: bool,
         #[allow(dead_code)] // Reserved for future use (e.g., showing counts in header)
         entity_count: usize,
@@ -1215,94 +1216,237 @@ impl FancyTuiRenderer {
         self.render_wordwrap_battlefield(f, area, view, &items, card_width, card_height, graveyard_bounds);
     }
 
-    /// Calculate optimal card size for word-wrap battlefield layout.
-    /// Each row of cards has a 1-line header above it for labels.
+    /// Calculate optimal card size for battlefield layout.
+    ///
+    /// Uses a smart algorithm that tries different row configurations (1-4 rows)
+    /// to maximize card size. Prefers fewer rows when card sizes are equal.
+    ///
+    /// Algorithm:
+    /// 1. Try laying out all items in 1, 2, 3, 4 rows (without forced newlines)
+    /// 2. For each row count, find the maximum card height that fits
+    /// 3. Pick the configuration with the largest card size
+    /// 4. For multi-row layouts, try breaking at section boundaries first
     fn calculate_wordwrap_card_size(&self, area: Rect, view: &GameStateView, items: &[BattlefieldItem]) -> (u16, u16) {
-        // Try default size first
-        if self.test_wordwrap_layout_fits(area, view, items, Self::DEFAULT_CARD_WIDTH, Self::DEFAULT_CARD_HEIGHT) {
-            // Default fits, try to increase
-            let mut best_height = Self::DEFAULT_CARD_HEIGHT;
-            for h in (Self::DEFAULT_CARD_HEIGHT + 1)..=Self::MAX_CARD_HEIGHT {
-                let w = Self::compute_width_from_height(h);
-                if self.test_wordwrap_layout_fits(area, view, items, w, h) {
-                    best_height = h;
-                } else {
-                    break;
-                }
-            }
-            return (Self::compute_width_from_height(best_height), best_height);
+        if items.is_empty() || area.height == 0 || area.width == 0 {
+            return (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT);
         }
 
-        // Default doesn't fit, try to shrink
-        for h in (Self::MIN_CARD_HEIGHT..Self::DEFAULT_CARD_HEIGHT).rev() {
-            let w = Self::compute_width_from_height(h).max(Self::MIN_CARD_WIDTH);
-            if self.test_wordwrap_layout_fits(area, view, items, w, h) {
-                return (w, h);
+        // Extract sections from items for section-aware layout
+        let sections = Self::extract_sections(items);
+
+        // Try different row counts and find the best card size for each
+        let mut best_height = Self::MIN_CARD_HEIGHT;
+        let mut best_row_count = 1;
+
+        for target_rows in 1..=4 {
+            let max_height = self.find_max_card_height_for_rows(area, view, items, &sections, target_rows);
+            if max_height > best_height {
+                best_height = max_height;
+                best_row_count = target_rows;
             }
         }
 
-        // Return minimum as fallback
-        (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT)
+        // If we found a good multi-row layout, update items with section breaks
+        // This is handled in render_wordwrap_battlefield by checking row count
+        let _ = best_row_count; // Currently unused, but could be used for forced breaks
+
+        (Self::compute_width_from_height(best_height), best_height)
     }
 
-    /// Test if word-wrap layout fits in area.
-    /// Each row of cards has a 1-line header above it.
-    /// Uses actual entity dimensions (which include visual stack offsets).
-    fn test_wordwrap_layout_fits(
+    /// Extract section boundaries from items.
+    /// Returns a list of (start_idx, end_idx) for each section.
+    fn extract_sections(items: &[BattlefieldItem]) -> Vec<(usize, usize)> {
+        let mut sections = Vec::new();
+        let mut current_start: Option<usize> = None;
+
+        for (i, item) in items.iter().enumerate() {
+            match item {
+                BattlefieldItem::Label { .. } => {
+                    // End previous section if any
+                    if let Some(start) = current_start {
+                        sections.push((start, i));
+                    }
+                    current_start = Some(i);
+                }
+                BattlefieldItem::Card { .. } => {
+                    // Continue current section
+                }
+            }
+        }
+        // Close final section
+        if let Some(start) = current_start {
+            sections.push((start, items.len()));
+        }
+        sections
+    }
+
+    /// Find the maximum card height that fits in the given number of rows.
+    fn find_max_card_height_for_rows(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        items: &[BattlefieldItem],
+        sections: &[(usize, usize)],
+        target_rows: usize,
+    ) -> u16 {
+        // Binary search for the maximum card height that fits in target_rows
+        let mut best_height = Self::MIN_CARD_HEIGHT;
+
+        for h in Self::MIN_CARD_HEIGHT..=Self::MAX_CARD_HEIGHT {
+            let w = Self::compute_width_from_height(h);
+            let rows_used = self.count_rows_for_layout(area, view, items, sections, w, h, target_rows);
+            if rows_used <= target_rows {
+                best_height = h;
+            } else {
+                // Once we exceed target rows, larger cards won't fit either
+                break;
+            }
+        }
+
+        best_height
+    }
+
+    /// Count how many rows the layout uses with given card size.
+    /// If target_rows > 1, tries to break at section boundaries when beneficial.
+    fn count_rows_for_layout(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        items: &[BattlefieldItem],
+        sections: &[(usize, usize)],
+        card_width: u16,
+        card_height: u16,
+        target_rows: usize,
+    ) -> usize {
+        if area.width == 0 {
+            return usize::MAX;
+        }
+
+        // First, try natural wrapping (no forced section breaks)
+        let natural_rows = self.simulate_layout_rows(area, view, items, card_width, card_height, false);
+
+        if target_rows == 1 || natural_rows <= target_rows {
+            return natural_rows;
+        }
+
+        // For multi-row targets, try breaking at section boundaries
+        // This treats sections like "words" - don't break mid-section
+        if sections.len() > 1 && target_rows >= 2 {
+            let section_rows = self.simulate_section_break_layout(area, view, items, sections, card_width, card_height);
+            if section_rows <= target_rows {
+                return section_rows;
+            }
+        }
+
+        natural_rows
+    }
+
+    /// Simulate layout and count rows used (natural word-wrap, no forced breaks).
+    fn simulate_layout_rows(
         &self,
         area: Rect,
         view: &GameStateView,
         items: &[BattlefieldItem],
         card_width: u16,
         card_height: u16,
-    ) -> bool {
-        if area.height == 0 || area.width == 0 {
-            return items.is_empty();
-        }
-
-        let mut y_offset = 0u16;
+        _respect_force_newline: bool,
+    ) -> usize {
+        let mut rows = 1usize;
         let mut current_x = 0u16;
-        let mut current_row_max_h = card_height; // Track max entity height in current row
+        let mut current_row_max_h = card_height;
 
         for item in items {
             match item {
-                BattlefieldItem::Label {
-                    force_newline_before, ..
-                } => {
-                    // Handle forced newlines between sections
-                    if *force_newline_before && current_x > 0 {
-                        // Advance by header + max height of current row + spacing
-                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
-                        current_x = 0;
-                        current_row_max_h = card_height;
-                    }
+                BattlefieldItem::Label { .. } => {
+                    // Labels don't take horizontal space in current implementation
+                    // They appear in the header row above cards
                 }
                 BattlefieldItem::Card { entity } => {
                     let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
-                    // Check if card fits on current row (width check)
+                    // Check if card fits on current row
                     if current_x > 0 && current_x + card_w > area.width {
-                        // Wrap to next row: advance by header + max height of current row
-                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
+                        rows += 1;
                         current_x = 0;
                         current_row_max_h = card_height;
                     }
 
-                    // Update max height for this row
                     current_row_max_h = current_row_max_h.max(card_h);
-
-                    // Check if this row fits (header + entity height)
-                    // card_y = y_offset + 1 (header), so card occupies [y_offset+1, y_offset+1+card_h)
-                    if y_offset + 1 + card_h > area.height {
-                        return false;
-                    }
-
                     current_x += card_w + Self::CARD_SPACING;
                 }
             }
         }
 
-        true
+        // Check if we have vertical space for all rows
+        let row_height = 1 + card_height + Self::CARD_SPACING; // header + card + spacing
+        let available_rows = (area.height as usize + Self::CARD_SPACING as usize) / row_height as usize;
+
+        if rows > available_rows {
+            usize::MAX // Doesn't fit
+        } else {
+            rows
+        }
+    }
+
+    /// Simulate layout with section-aware line breaking.
+    /// Tries to keep sections together, breaking only between sections.
+    fn simulate_section_break_layout(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        items: &[BattlefieldItem],
+        sections: &[(usize, usize)],
+        card_width: u16,
+        card_height: u16,
+    ) -> usize {
+        let mut rows = 1usize;
+        let mut current_x = 0u16;
+
+        for (section_idx, &(start, end)) in sections.iter().enumerate() {
+            // Calculate width of this entire section
+            let mut section_width = 0u16;
+            for item in &items[start..end] {
+                if let BattlefieldItem::Card { entity } = item {
+                    let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    section_width += card_w + Self::CARD_SPACING;
+                }
+            }
+
+            // Check if section fits on current row
+            if current_x > 0 && current_x + section_width > area.width {
+                // Try to break before this section
+                if section_idx > 0 {
+                    rows += 1;
+                    current_x = 0;
+                }
+            }
+
+            // If section is too wide for a single row, fall back to card-by-card wrapping
+            if section_width > area.width {
+                for item in &items[start..end] {
+                    if let BattlefieldItem::Card { entity } = item {
+                        let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                        if current_x > 0 && current_x + card_w > area.width {
+                            rows += 1;
+                            current_x = 0;
+                        }
+                        current_x += card_w + Self::CARD_SPACING;
+                    }
+                }
+            } else {
+                current_x += section_width;
+            }
+        }
+
+        // Check if we have vertical space
+        let row_height = 1 + card_height + Self::CARD_SPACING;
+        let available_rows = (area.height as usize + Self::CARD_SPACING as usize) / row_height as usize;
+
+        if rows > available_rows {
+            usize::MAX
+        } else {
+            rows
+        }
     }
 
     /// Render battlefield using word-wrap model with per-row headers.
@@ -1336,20 +1480,9 @@ impl FancyTuiRenderer {
 
         for item in items {
             match item {
-                BattlefieldItem::Label {
-                    text,
-                    color,
-                    force_newline_before,
-                    ..
-                } => {
-                    // Handle forced newlines between sections
-                    if *force_newline_before && current_x > 0 {
-                        // Advance by 1 (header) + max entity height in current row + spacing
-                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
-                        current_x = 0;
-                        current_row_max_h = card_height;
-                    }
-                    // Store label to render above next card
+                BattlefieldItem::Label { text, color, .. } => {
+                    // Labels don't force line breaks - we use natural width-based wrapping
+                    // to maximize card size. Store label to render above next card.
                     pending_label = Some((format!("{}:", text), *color));
                 }
                 BattlefieldItem::Card { entity } => {
