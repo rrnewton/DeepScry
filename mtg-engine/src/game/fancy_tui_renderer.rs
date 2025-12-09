@@ -164,7 +164,7 @@ impl BattlefieldEntity for Entity {
     }
 
     fn display_name(&self, view: &GameStateView) -> String {
-        // Note: Stack counts (2X:, 3X:) are now rendered in the header row above the card,
+        // Note: Stack counts (2X, 3X) are rendered at the upper-right of the card header,
         // so we don't include them in the display name anymore.
         match self {
             Entity::SingleCard { card_id } => view.card_name(*card_id).unwrap_or_else(|| format!("{:?}", card_id)),
@@ -350,7 +350,8 @@ impl FancyTuiRenderer {
         }
     }
 
-    /// Get all cards for a battlefield in display order (lands, creatures, others)
+    /// Get all cards for a battlefield in display order
+    /// Order: Planeswalkers → Creatures → Enchantments → Artifacts → Lands
     pub fn get_battlefield_cards_in_order(view: &GameStateView, owner_id: PlayerId) -> Vec<CardId> {
         let battlefield = view.battlefield();
         let player_cards: Vec<CardId> = battlefield
@@ -363,33 +364,36 @@ impl FancyTuiRenderer {
             .copied()
             .collect();
 
-        // Group cards: lands, creatures, artifacts, enchantments
-        let (lands, creatures, artifacts, enchantments): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-            |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
-                if let Some(card) = view.get_card(card_id) {
-                    if card.is_land() {
-                        lands.push(card_id);
-                    } else if card.is_creature() {
-                        creatures.push(card_id);
-                    } else if card.is_artifact() {
-                        artifacts.push(card_id);
-                    } else if card.is_enchantment() {
-                        enchantments.push(card_id);
+        // Group cards: planeswalkers, creatures, enchantments, artifacts, lands
+        let (planeswalkers, creatures, enchantments, artifacts, lands): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+            player_cards.iter().fold(
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                |(mut planeswalkers, mut creatures, mut enchantments, mut artifacts, mut lands), &card_id| {
+                    if let Some(card) = view.get_card(card_id) {
+                        // Check types in priority order (a card can have multiple types)
+                        if card.is_planeswalker() {
+                            planeswalkers.push(card_id);
+                        } else if card.is_creature() {
+                            creatures.push(card_id);
+                        } else if card.is_enchantment() {
+                            enchantments.push(card_id);
+                        } else if card.is_artifact() {
+                            artifacts.push(card_id);
+                        } else if card.is_land() {
+                            lands.push(card_id);
+                        }
                     }
-                    // Note: Some cards might not fit any category (e.g., planeswalkers)
-                    // They will be omitted for now
-                }
-                (lands, creatures, artifacts, enchantments)
-            },
-        );
+                    (planeswalkers, creatures, enchantments, artifacts, lands)
+                },
+            );
 
-        // Concatenate in display order
+        // Concatenate in display order: PWs → Creatures → Enchants → Artifacts → Lands
         let mut result = Vec::new();
-        result.extend(lands);
+        result.extend(planeswalkers);
         result.extend(creatures);
-        result.extend(artifacts);
         result.extend(enchantments);
+        result.extend(artifacts);
+        result.extend(lands);
         result
     }
 
@@ -1316,10 +1320,10 @@ impl FancyTuiRenderer {
 
         // First pass: compute card positions, label positions, and stack count positions
         // Labels appear directly above the first card of their section
-        // Stack counts (2X:, 3X:, etc.) appear above each stacked entity
+        // Stack counts (2X, 3X, etc.) appear at upper-right of each stacked entity's header
         let mut card_positions: Vec<(u16, u16, u16, u16)> = Vec::new(); // (x, y, w, h) for each card
         let mut label_positions: Vec<(u16, u16, String, Color)> = Vec::new(); // (x, y, text, color)
-        let mut stack_count_positions: Vec<(u16, u16, usize)> = Vec::new(); // (x, y, count) for stacks
+        let mut stack_count_positions: Vec<(u16, u16, u16, usize)> = Vec::new(); // (x, y, card_w, count) for stacks
 
         let mut y_offset = 0u16;
         let mut current_x = 0u16;
@@ -1360,7 +1364,7 @@ impl FancyTuiRenderer {
                     // Check if this entity is a stack with count > 1
                     let stack_count = entity.count();
                     if stack_count > 1 {
-                        stack_count_positions.push((current_x, y_offset, stack_count));
+                        stack_count_positions.push((current_x, y_offset, card_w, stack_count));
                     }
 
                     // Card position: below the header line
@@ -1388,14 +1392,17 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Third pass: render stack counts in header rows (rendered AFTER labels so they overwrite if needed)
-        for (x, y, count) in &stack_count_positions {
+        // Third pass: render stack counts at upper-right of card header row
+        for (x, y, card_w, count) in &stack_count_positions {
             if *y < area.height {
-                let count_text = format!("{}X:", count);
+                let count_text = format!("{}X", count); // No colon, placed at upper-right
+                let text_len = count_text.len() as u16;
+                // Position at right edge of card area
+                let count_x = x + card_w.saturating_sub(text_len);
                 let count_area = Rect {
-                    x: area.x + x,
+                    x: area.x + count_x,
                     y: area.y + y,
-                    width: count_text.len() as u16,
+                    width: text_len,
                     height: 1,
                 };
                 let styled_count = Span::styled(
@@ -1553,24 +1560,28 @@ impl FancyTuiRenderer {
             .copied()
             .collect();
 
-        // Group cards: lands, creatures, artifacts, enchantments
-        let (lands, creatures, artifacts, enchantments): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = player_cards.iter().fold(
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-            |(mut lands, mut creatures, mut artifacts, mut enchantments), &card_id| {
-                if let Some(card) = view.get_card(card_id) {
-                    if card.is_land() {
-                        lands.push(card_id);
-                    } else if card.is_creature() {
-                        creatures.push(card_id);
-                    } else if card.is_artifact() {
-                        artifacts.push(card_id);
-                    } else if card.is_enchantment() {
-                        enchantments.push(card_id);
+        // Group cards: planeswalkers, creatures, enchantments, artifacts, lands
+        let (planeswalkers, creatures, enchantments, artifacts, lands): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+            player_cards.iter().fold(
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                |(mut planeswalkers, mut creatures, mut enchantments, mut artifacts, mut lands), &card_id| {
+                    if let Some(card) = view.get_card(card_id) {
+                        // Check types in priority order (a card can have multiple types)
+                        if card.is_planeswalker() {
+                            planeswalkers.push(card_id);
+                        } else if card.is_creature() {
+                            creatures.push(card_id);
+                        } else if card.is_enchantment() {
+                            enchantments.push(card_id);
+                        } else if card.is_artifact() {
+                            artifacts.push(card_id);
+                        } else if card.is_land() {
+                            lands.push(card_id);
+                        }
                     }
-                }
-                (lands, creatures, artifacts, enchantments)
-            },
-        );
+                    (planeswalkers, creatures, enchantments, artifacts, lands)
+                },
+            );
 
         // Determine focus state
         let is_player_bf = owner_id == view.player_id();
@@ -1622,19 +1633,24 @@ impl FancyTuiRenderer {
             return;
         }
 
-        // Build ordered sections: lands at bottom for player, top for opponent
+        // Build ordered sections for Z-order flow (upper-left to lower-right with wraps)
+        // Player: Planeswalkers → Creatures → Enchantments → Artifacts → Lands
+        // Opponent: reverse (Lands → Artifacts → Enchantments → Creatures → Planeswalkers)
         // Section format: (cards, label, color, force_newline_before)
         let sections: Vec<(Vec<CardId>, &str, Color, bool)> = if is_player_bf {
-            // Player battlefield: non-lands first, then lands
+            // Player battlefield: important things first, lands last
             let mut secs = Vec::new();
+            if !planeswalkers.is_empty() {
+                secs.push((planeswalkers, "PWs", Color::LightYellow, false));
+            }
             if !creatures.is_empty() {
                 secs.push((creatures, "Creatures", Color::Red, false));
             }
-            if !artifacts.is_empty() {
-                secs.push((artifacts, "Artifacts", Color::Cyan, false));
-            }
             if !enchantments.is_empty() {
                 secs.push((enchantments, "Enchants", Color::Magenta, false));
+            }
+            if !artifacts.is_empty() {
+                secs.push((artifacts, "Artifacts", Color::Cyan, false));
             }
             if !lands.is_empty() {
                 // Try to force a newline before lands (will be evaluated during rendering)
@@ -1642,20 +1658,22 @@ impl FancyTuiRenderer {
             }
             secs
         } else {
-            // Opponent battlefield: lands first, then non-lands
+            // Opponent battlefield: reversed order (lands first, PWs last)
             let mut secs = Vec::new();
             if !lands.is_empty() {
                 secs.push((lands, "Lands", Color::Green, false));
             }
-            if !creatures.is_empty() {
-                // Try to force a newline after lands (before creatures)
-                secs.push((creatures, "Creatures", Color::Red, !secs.is_empty()));
-            }
             if !artifacts.is_empty() {
-                secs.push((artifacts, "Artifacts", Color::Cyan, false));
+                secs.push((artifacts, "Artifacts", Color::Cyan, !secs.is_empty()));
             }
             if !enchantments.is_empty() {
                 secs.push((enchantments, "Enchants", Color::Magenta, false));
+            }
+            if !creatures.is_empty() {
+                secs.push((creatures, "Creatures", Color::Red, false));
+            }
+            if !planeswalkers.is_empty() {
+                secs.push((planeswalkers, "PWs", Color::LightYellow, false));
             }
             secs
         };
