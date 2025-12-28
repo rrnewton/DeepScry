@@ -1440,7 +1440,7 @@ mod tests {
             x_count: 0,
         };
 
-        let result = resolver.check_payment(&cost_ug, &[breeding_pool.clone()], None);
+        let result = resolver.check_payment(&cost_ug, std::slice::from_ref(&breeding_pool), None);
         // Should fail: even though upper bounds for both colors pass (max_blue=1, max_green=1),
         // total mana available is only 1, but cost needs 2
         assert_eq!(result, PaymentResult::No);

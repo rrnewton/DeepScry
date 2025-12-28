@@ -271,10 +271,7 @@ impl ImageOverlayManager {
             existing.dyn_into::<HtmlImageElement>()?
         } else {
             // Create new image element
-            let img = self
-                .document
-                .create_element("img")?
-                .dyn_into::<HtmlImageElement>()?;
+            let img = self.document.create_element("img")?.dyn_into::<HtmlImageElement>()?;
             img.set_id(&img_id);
             img.set_class_name("card-overlay-image");
 
@@ -372,10 +369,7 @@ impl ImageOverlayManager {
             existing.dyn_into::<HtmlImageElement>()?
         } else {
             // Create new image element
-            let img = self
-                .document
-                .create_element("img")?
-                .dyn_into::<HtmlImageElement>()?;
+            let img = self.document.create_element("img")?.dyn_into::<HtmlImageElement>()?;
             img.set_id(&img_id);
             img.set_class_name("card-overlay-image");
 
@@ -385,10 +379,7 @@ impl ImageOverlayManager {
             // Add error handler
             let url_clone = image_url.to_string();
             let error_callback = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-                web_sys::console::warn_1(&JsValue::from_str(&format!(
-                    "Failed to load card image: {}",
-                    url_clone
-                )));
+                web_sys::console::warn_1(&JsValue::from_str(&format!("Failed to load card image: {}", url_clone)));
             }) as Box<dyn FnMut(_)>);
 
             img.set_onerror(Some(error_callback.as_ref().unchecked_ref()));
@@ -483,16 +474,10 @@ mod tests {
     #[test]
     fn test_scryfall_url() {
         let url = scryfall_url("LEA", "231", ImageVersion::Small);
-        assert_eq!(
-            url,
-            "https://api.scryfall.com/cards/lea/231?format=image&version=small"
-        );
+        assert_eq!(url, "https://api.scryfall.com/cards/lea/231?format=image&version=small");
 
         let url = scryfall_url("ARN", "1", ImageVersion::Normal);
-        assert_eq!(
-            url,
-            "https://api.scryfall.com/cards/arn/1?format=image&version=normal"
-        );
+        assert_eq!(url, "https://api.scryfall.com/cards/arn/1?format=image&version=normal");
     }
 
     #[test]

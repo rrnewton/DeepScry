@@ -1310,6 +1310,7 @@ impl FancyTuiRenderer {
     /// Render battlefield using word-wrap model with per-row headers.
     /// Each row of cards has a 1-line header above it where section labels and stack counts appear.
     /// The grid is centered horizontally, sliding left to avoid graveyard collision.
+    #[allow(clippy::too_many_arguments)]
     fn render_wordwrap_battlefield(
         &mut self,
         f: &mut Frame,
@@ -2659,7 +2660,7 @@ mod tests {
         let area = Rect {
             x: 0,
             y: 0,
-            width: 50, // Wide enough for both stacks + centering
+            width: 50,  // Wide enough for both stacks + centering
             height: 10, // Just enough for 3X stack (1 header + 9 entity height)
         };
 
