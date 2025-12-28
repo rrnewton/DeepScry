@@ -326,7 +326,15 @@ cast dark ritual</textarea>
                 <input type="checkbox" id="show-card-images" style="margin-right: 5px;">
                 Show Card Images
             </label>
-            <span style="color: #888; font-size: 11px;">Load card art from Scryfall</span>
+        </div>
+        <div class="control-group" id="image-source-group">
+            <label>Image Source</label>
+            <select id="image-source">
+                <option value="gatherer">Gatherer (Official WotC)</option>
+                <option value="scryfall">Scryfall (may be blocked)</option>
+                <option value="none">None (disabled)</option>
+            </select>
+            <span id="image-source-desc" style="color: #888; font-size: 11px;">Official Wizards database</span>
         </div>
         <div class="control-group">
             <label>
@@ -540,6 +548,7 @@ cast dark ritual</textarea>
                 fixedScript: document.getElementById('fixed-script').value,
                 gameSeed: document.getElementById('game-seed').value,
                 showCardImages: document.getElementById('show-card-images').checked,
+                imageSource: document.getElementById('image-source').value,
                 debugMode: document.getElementById('debug-mode').checked
             };
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -583,6 +592,11 @@ cast dark ritual</textarea>
                 if (settings.showCardImages) {
                     document.getElementById('show-card-images').checked = settings.showCardImages;
                 }
+                if (settings.imageSource) {
+                    document.getElementById('image-source').value = settings.imageSource;
+                    ImageSource.setSource(settings.imageSource);
+                    updateImageSourceDescription();
+                }
                 if (settings.debugMode) {
                     document.getElementById('debug-mode').checked = settings.debugMode;
                 }
@@ -597,7 +611,7 @@ cast dark ritual</textarea>
         function setupSettingsPersistence() {
             const controls = [
                 'p1-deck', 'p2-deck', 'p1-controller', 'p2-controller',
-                'fixed-script', 'game-seed', 'show-card-images', 'debug-mode'
+                'fixed-script', 'game-seed', 'show-card-images', 'image-source', 'debug-mode'
             ];
             controls.forEach(id => {
                 const el = document.getElementById(id);
@@ -619,6 +633,24 @@ cast dark ritual</textarea>
             const scriptGroup = document.getElementById('fixed-script-group');
             scriptGroup.style.display = this.value === 'fixed' ? 'flex' : 'none';
         });
+
+        // Image source selector - update description and sync with ImageSource
+        function updateImageSourceDescription() {
+            const sourceId = document.getElementById('image-source').value;
+            const descEl = document.getElementById('image-source-desc');
+            const source = ImageSource.sources[sourceId];
+            if (source && descEl) {
+                descEl.textContent = source.description;
+            }
+        }
+
+        document.getElementById('image-source').addEventListener('change', function() {
+            ImageSource.setSource(this.value);
+            updateImageSourceDescription();
+        });
+
+        // Initialize description on load
+        updateImageSourceDescription();
 
         let tuiLaunched = false;
         let cardImagesEnabled = false;
@@ -788,6 +820,166 @@ cast dark ritual</textarea>
             }
         };
 
+        /**
+         * Card Image Source Abstraction
+         *
+         * Provides a generalized interface for fetching card images from different sources.
+         * Each source has different characteristics:
+         * - Available sizes (some only have one size)
+         * - URL format
+         * - Reliability/availability
+         *
+         * The ImageSource system:
+         * 1. Takes a card name and desired size category (small, normal, large)
+         * 2. Maps the desired size to the best available size for that source
+         * 3. Returns a URL, preferring to return SOMETHING over nothing
+         */
+        const ImageSource = window.ImageSource = {
+            // Current active source
+            currentSource: 'gatherer',
+
+            // Size categories that callers can request
+            // These are abstract - each source maps them to its actual sizes
+            SIZE_SMALL: 'small',    // ~150px width - for battlefield cards
+            SIZE_NORMAL: 'normal',  // ~500px width - for card details
+            SIZE_LARGE: 'large',    // ~750px width - for zoomed view
+
+            // Available sources with their characteristics
+            sources: {
+                /**
+                 * Gatherer - Official WotC card database
+                 * Pros: Official source, reliable, no API rate limits
+                 * Cons: Only one size (~223x310), older cards only
+                 */
+                gatherer: {
+                    name: 'Gatherer (Official WotC)',
+                    description: 'Official Wizards database. Single size (~223x310). Most reliable.',
+                    // Gatherer only has one size, so all requests get the same image
+                    sizes: {
+                        small: { width: 223, height: 310 },
+                        normal: { width: 223, height: 310 },
+                        large: { width: 223, height: 310 }
+                    },
+                    getUrl(cardName, size) {
+                        // Gatherer ignores size - only has one
+                        return `https://gatherer.wizards.com/Handlers/Image.ashx?name=${encodeURIComponent(cardName)}&type=card`;
+                    }
+                },
+
+                /**
+                 * Scryfall - Community card database with high-quality scans
+                 * Pros: Multiple sizes, high quality, modern cards
+                 * Cons: API rate limits, we got blocked from it!
+                 */
+                scryfall: {
+                    name: 'Scryfall',
+                    description: 'High-quality scans with multiple sizes. WARNING: May be blocked.',
+                    sizes: {
+                        small: { width: 146, height: 204, version: 'small' },
+                        normal: { width: 488, height: 680, version: 'normal' },
+                        large: { width: 672, height: 936, version: 'large' }
+                    },
+                    getUrl(cardName, size) {
+                        const sizeInfo = this.sizes[size] || this.sizes.small;
+                        return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${sizeInfo.version}`;
+                    }
+                },
+
+                /**
+                 * None - Disable image loading
+                 */
+                none: {
+                    name: 'None (Disabled)',
+                    description: 'Do not load any card images.',
+                    sizes: {},
+                    getUrl(cardName, size) {
+                        return null;
+                    }
+                }
+            },
+
+            /**
+             * Get image URL for a card
+             * @param {string} cardName - Card name
+             * @param {string} size - Size category: 'small', 'normal', or 'large'
+             * @returns {string|null} URL to card image, or null if disabled
+             */
+            getImageUrl(cardName, size = 'small') {
+                const source = this.sources[this.currentSource];
+                if (!source) {
+                    console.warn(`Unknown image source: ${this.currentSource}`);
+                    return null;
+                }
+                return source.getUrl(cardName, size);
+            },
+
+            /**
+             * Get image URL with fallback chain
+             * Tries primary source first, returns fallback URL if primary might fail
+             * @param {string} cardName - Card name
+             * @param {string} size - Size category
+             * @returns {{primary: string, fallback: string|null}} URLs for primary and fallback
+             */
+            getImageUrlWithFallback(cardName, size = 'small') {
+                const primary = this.getImageUrl(cardName, size);
+
+                // If using Gatherer, fall back to Scryfall
+                // If using Scryfall, fall back to Gatherer
+                let fallback = null;
+                if (this.currentSource === 'gatherer') {
+                    fallback = this.sources.scryfall.getUrl(cardName, size);
+                } else if (this.currentSource === 'scryfall') {
+                    fallback = this.sources.gatherer.getUrl(cardName, size);
+                }
+
+                return { primary, fallback };
+            },
+
+            /**
+             * Set the active image source
+             * @param {string} sourceName - Source name ('gatherer', 'scryfall', 'none')
+             */
+            setSource(sourceName) {
+                if (this.sources[sourceName]) {
+                    this.currentSource = sourceName;
+                    console.log(`Image source set to: ${this.sources[sourceName].name}`);
+                    // Save preference
+                    try {
+                        localStorage.setItem('mtg-image-source', sourceName);
+                    } catch (e) { /* ignore */ }
+                } else {
+                    console.warn(`Unknown image source: ${sourceName}`);
+                }
+            },
+
+            /**
+             * Load saved preference
+             */
+            loadPreference() {
+                try {
+                    const saved = localStorage.getItem('mtg-image-source');
+                    if (saved && this.sources[saved]) {
+                        this.currentSource = saved;
+                    }
+                } catch (e) { /* ignore */ }
+            },
+
+            /**
+             * Get list of available sources for UI
+             * @returns {Array<{id: string, name: string, description: string}>}
+             */
+            getAvailableSources() {
+                return Object.entries(this.sources).map(([id, source]) => ({
+                    id,
+                    name: source.name,
+                    description: source.description
+                }));
+            }
+        };
+
+        // Load saved preference on startup
+        ImageSource.loadPreference();
+
         // Simple card image overlay manager (JavaScript implementation)
         // Expose on window for debugging and testing
         const CardImageOverlay = window.CardImageOverlay = {
@@ -822,17 +1014,18 @@ cast dark ritual</textarea>
             },
 
             /**
-             * Add or update a card image overlay.
+             * Add or update a card image with fallback support.
              *
              * @param {number} cardId - Unique card identifier
              * @param {number} col - Column position in cells
              * @param {number} row - Row position in cells
              * @param {number} width - Width in cells
              * @param {number} height - Height in cells
-             * @param {string} imageUrl - URL to card image
+             * @param {string} primaryUrl - Primary image URL
+             * @param {string|null} fallbackUrl - Fallback URL if primary fails
              * @param {boolean} isTapped - Whether card is tapped (rotated 90°)
              */
-            setCardImage(cardId, col, row, width, height, imageUrl, isTapped = false) {
+            setCardImageWithFallback(cardId, col, row, width, height, primaryUrl, fallbackUrl, isTapped = false) {
                 if (!this.enabled) return;
 
                 const imgId = `card-image-${cardId}`;
@@ -843,10 +1036,22 @@ cast dark ritual</textarea>
                     img = document.createElement('img');
                     img.id = imgId;
                     img.className = 'card-overlay-image';
-                    img.src = imageUrl;
+                    img.src = primaryUrl;
+                    img.dataset.fallback = fallbackUrl || '';
 
-                    img.onerror = () => {
-                        console.warn(`Failed to load card image: ${imageUrl}`);
+                    // Error handler with fallback support
+                    img.onerror = (event) => {
+                        const imgEl = event.target;
+                        const fallback = imgEl.dataset.fallback;
+                        const currentSrc = imgEl.src;
+                        // Try fallback if available and not already tried
+                        if (fallback && !currentSrc.includes(fallback.split('/')[2])) {
+                            console.log(`Primary image failed for ${cardId}, trying fallback`);
+                            imgEl.src = fallback;
+                            imgEl.dataset.fallback = '';  // Clear to prevent loop
+                        } else {
+                            console.warn(`Failed to load card image for ${cardId} (both sources failed)`);
+                        }
                     };
 
                     // Append to terminal container
@@ -854,14 +1059,16 @@ cast dark ritual</textarea>
                     if (terminal) {
                         terminal.appendChild(img);
                     }
+                } else {
+                    // Update existing image with new URLs
+                    if (img.src !== primaryUrl) {
+                        img.src = primaryUrl;
+                        img.dataset.fallback = fallbackUrl || '';
+                    }
                 }
 
                 // Use centralized coordinate system for ALL translations
                 const box = TUICoordinateSystem.getCardBox(col, row, width, height, isTapped);
-
-                // DEBUG: Log incoming card position data
-                console.log(`[CARD POSITION] ${cardId}: cell(${col}, ${row}) size(${width}×${height}) tapped=${isTapped}`);
-                console.log(`  → ${isTapped ? 'TAPPED' : 'UNTAPPED'}: box(${box.left.toFixed(2)}, ${box.top.toFixed(2)}) ${box.width.toFixed(2)}×${box.height.toFixed(2)}px transform=${box.transform}`);
 
                 // Apply the box dimensions and transforms
                 img.style.position = 'absolute';
@@ -876,6 +1083,11 @@ cast dark ritual</textarea>
                 img.style.zIndex = '10';
 
                 this.overlays.set(cardId, img);
+            },
+
+            // Legacy method without fallback (for backwards compatibility)
+            setCardImage(cardId, col, row, width, height, imageUrl, isTapped = false) {
+                this.setCardImageWithFallback(cardId, col, row, width, height, imageUrl, null, isTapped);
             },
 
             // Remove a card image overlay
@@ -984,16 +1196,35 @@ cast dark ritual</textarea>
                     this.cardDetailsImg.style.zIndex = '16';
                     this.cardDetailsImg.style.pointerEvents = 'none';
                     this.cardDetailsImg.style.objectFit = 'contain';  // Preserve aspect ratio
-                    this.cardDetailsImg.onerror = () => {
-                        console.warn(`Failed to load card details image for: ${cardName}`);
-                        this.clearCardDetailsImage();
+                    // Error handler with fallback support
+                    this.cardDetailsImg.onerror = (event) => {
+                        const img = event.target;
+                        const fallbackUrl = img.dataset.fallback;
+                        const currentSrc = img.src;
+                        // Try fallback if available and not already tried
+                        if (fallbackUrl && !currentSrc.includes(fallbackUrl.split('/')[2])) {
+                            console.log(`Primary image failed, trying fallback for card details`);
+                            img.src = fallbackUrl;
+                            img.dataset.fallback = '';  // Clear to prevent loop
+                        } else {
+                            console.warn(`Failed to load card details image (both sources failed)`);
+                            CardImageOverlay.clearCardDetailsImage();
+                        }
                     };
                     terminal.appendChild(this.cardDetailsImg);
                 }
 
                 // Use 'normal' size for Card Details (larger than battlefield thumbnails)
-                const imageUrl = this.scryfallNamedUrl(cardName, 'normal');
-                this.cardDetailsImg.src = imageUrl;
+                // Use ImageSource abstraction with fallback
+                const { primary, fallback } = ImageSource.getImageUrlWithFallback(cardName, 'normal');
+                if (!primary) {
+                    this.clearCardDetailsImage();
+                    return;
+                }
+                this.cardDetailsImg.src = primary;
+
+                // Store fallback URL for error handler
+                this.cardDetailsImg.dataset.fallback = fallback || '';
 
                 // Position image centered within the backdrop area
                 // MTG card aspect ratio is 63:88 ≈ 0.716
@@ -1182,16 +1413,20 @@ cast dark ritual</textarea>
                     // Use the positions passed from WASM (avoids re-borrowing)
                     // All coordinate translation happens through TUICoordinateSystem
                     positions.forEach((cardPos) => {
-                        const imageUrl = CardImageOverlay.scryfallNamedUrl(cardPos.name, 'small');
-                        CardImageOverlay.setCardImage(
-                            cardPos.card_id,
-                            cardPos.x,          // Column in cells
-                            cardPos.y,          // Row in cells
-                            cardPos.width,      // Width in cells
-                            cardPos.height,     // Height in cells
-                            imageUrl,
-                            cardPos.is_tapped
-                        );
+                        // Use ImageSource abstraction with fallback
+                        const { primary, fallback } = ImageSource.getImageUrlWithFallback(cardPos.name, 'small');
+                        if (primary) {
+                            CardImageOverlay.setCardImageWithFallback(
+                                cardPos.card_id,
+                                cardPos.x,          // Column in cells
+                                cardPos.y,          // Row in cells
+                                cardPos.width,      // Width in cells
+                                cardPos.height,     // Height in cells
+                                primary,
+                                fallback,
+                                cardPos.is_tapped
+                            );
+                        }
                     });
                 }
 
