@@ -227,6 +227,8 @@ pub struct FancyTuiState {
     pub actions_pane_area: Option<Rect>,
     /// Hand pane area (for mouse click detection)
     pub hand_pane_area: Option<Rect>,
+    /// Card Details pane area (for image overlay positioning)
+    pub card_details_pane_area: Option<Rect>,
     /// Rewind message to display after undo operation
     pub rewind_message: Option<String>,
 }
@@ -253,6 +255,7 @@ impl FancyTuiState {
             choice_context: ChoiceContext::None,
             actions_pane_area: None,
             hand_pane_area: None,
+            card_details_pane_area: None,
             rewind_message: None,
         }
     }
@@ -756,16 +759,12 @@ impl FancyTuiRenderer {
             ])
             .split(main_chunks[1]);
 
-        // Right column: Card details, Hand (aligned with Your Battlefield)
-        // Use the same vertical positions as middle column so Hand aligns with Your Battlefield
+        // Right column: Card Details (top 50%), Hand+Stack (bottom 50%)
+        // Matches left column layout: Info tabs (top 50%), Actions (bottom 50%)
+        // Card Details starts at row 0, aligned with Info pane
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),         // Matches opponent info header
-                Constraint::Percentage(45), // Card details (matches opponent battlefield height)
-                Constraint::Percentage(45), // Hand (matches your battlefield height)
-                Constraint::Min(3),         // Matches your info footer
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_chunks[2]);
 
         // Draw all panels
@@ -784,14 +783,13 @@ impl FancyTuiRenderer {
         self.draw_battlefield(f, middle_chunks[2], view, view.player_id(), "You");
         self.draw_player_info(f, middle_chunks[3], view, view.player_id());
 
-        // Draw right column (aligned with middle column)
-        // right_chunks[0] is empty space aligned with opponent info bar
-        // right_chunks[1] is Card Details aligned with opponent battlefield
-        // right_chunks[2] is Hand aligned with your battlefield
-        // right_chunks[3] is empty space aligned with your info bar
-        self.draw_card_details(f, right_chunks[1], view);
-        self.draw_hand(f, right_chunks[2], view);
-        self.state.hand_pane_area = Some(right_chunks[2]);
+        // Draw right column
+        // right_chunks[0] is Card Details (starts at row 0, aligned with Info pane)
+        // right_chunks[1] is Hand+Stack (aligned with Actions pane)
+        self.draw_card_details(f, right_chunks[0], view);
+        self.draw_hand(f, right_chunks[1], view);
+        self.state.hand_pane_area = Some(right_chunks[1]);
+        self.state.card_details_pane_area = Some(right_chunks[0]);
     }
 
     /// Draw the left column tabs (Combat/Log)

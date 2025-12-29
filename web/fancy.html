@@ -1138,8 +1138,9 @@ cast dark ritual</textarea>
              * Display selected card image in the Card Details pane
              * The image fills the pane area with letterboxing to avoid showing text underneath
              * @param {string|null} cardName - Card name to display, or null to clear
+             * @param {Object|null} pane - Pane position from WASM: {x, y, width, height} in cells
              */
-            setCardDetailsImage(cardName) {
+            setCardDetailsImage(cardName, pane) {
                 if (!this.enabled) {
                     this.clearCardDetailsImage();
                     return;
@@ -1157,24 +1158,27 @@ cast dark ritual</textarea>
                 const terminal = document.getElementById('ratzilla-terminal');
                 if (!terminal) return;
 
-                // Calculate Card Details pane position based on terminal layout
-                // Layout: Left (25-30%), Middle (50%), Right (20-25%)
-                // Right column: empty (3 rows), CardDetails (45%), Hand (45%), empty (3 rows)
-                const termRect = terminal.getBoundingClientRect();
-                const termWidth = termRect.width;
-                const termHeight = termRect.height;
+                // Use pane position from WASM if available, otherwise fall back to approximation
+                let paneLeftPx, paneTopPx, paneWidthPx, paneHeightPx;
 
-                // Approximate the layout percentages (matches fancy_tui_renderer.rs)
-                // We use the boosted layout percentages: left 30%, middle 45%, right 25%
-                const rightColumnStart = termWidth * 0.75;  // Right column starts at 75%
-                const rightColumnWidth = termWidth * 0.25;
-
-                // Vertical layout: Min(3) + 45% + 45% + Min(3)
-                // Estimate Min(3) as roughly 3 rows of text = ~60px at default font size
-                // But we'll just use percentage-based approximation
-                const topPadding = termHeight * 0.03;  // ~3 rows
-                const cardDetailsHeight = termHeight * 0.45;
-                const cardDetailsTop = topPadding;
+                if (pane && TUICoordinateSystem.cellWidthPx && TUICoordinateSystem.cellHeightPx) {
+                    // Convert cell coordinates to pixels using TUICoordinateSystem
+                    const pxPos = TUICoordinateSystem.cellToPixel(pane.x, pane.y);
+                    const pxDim = TUICoordinateSystem.cellDimensionsToPixel(pane.width, pane.height);
+                    paneLeftPx = pxPos.left;
+                    paneTopPx = pxPos.top;
+                    paneWidthPx = pxDim.width;
+                    paneHeightPx = pxDim.height;
+                } else {
+                    // Fallback: approximate based on percentage layout
+                    const termRect = terminal.getBoundingClientRect();
+                    const termWidth = termRect.width;
+                    const termHeight = termRect.height;
+                    paneLeftPx = termWidth * 0.75;
+                    paneTopPx = 0;  // Now starts at row 0
+                    paneWidthPx = termWidth * 0.25;
+                    paneHeightPx = termHeight * 0.50;  // Top 50%
+                }
 
                 // Create or reuse backdrop (black rectangle to cover text)
                 if (!this.cardDetailsBackdrop) {
@@ -1188,11 +1192,15 @@ cast dark ritual</textarea>
                 }
 
                 // Position the backdrop to fill the Card Details pane (minus borders)
-                const borderWidth = 2;  // Account for TUI borders
-                this.cardDetailsBackdrop.style.left = `${rightColumnStart + borderWidth}px`;
-                this.cardDetailsBackdrop.style.top = `${cardDetailsTop + borderWidth}px`;
-                this.cardDetailsBackdrop.style.width = `${rightColumnWidth - borderWidth * 2}px`;
-                this.cardDetailsBackdrop.style.height = `${cardDetailsHeight - borderWidth * 2}px`;
+                // Border is 1 cell on each side (TUI border characters)
+                const borderCells = 1;
+                const borderPxX = borderCells * (TUICoordinateSystem.cellWidthPx || 10);
+                const borderPxY = borderCells * (TUICoordinateSystem.cellHeightPx || 20);
+
+                this.cardDetailsBackdrop.style.left = `${paneLeftPx + borderPxX}px`;
+                this.cardDetailsBackdrop.style.top = `${paneTopPx + borderPxY}px`;
+                this.cardDetailsBackdrop.style.width = `${paneWidthPx - borderPxX * 2}px`;
+                this.cardDetailsBackdrop.style.height = `${paneHeightPx - borderPxY * 2}px`;
                 this.cardDetailsBackdrop.style.display = 'block';
 
                 // Create or reuse image element
@@ -1235,23 +1243,23 @@ cast dark ritual</textarea>
 
                 // Position image centered within the backdrop area
                 // MTG card aspect ratio is 63:88 ≈ 0.716
-                const paneWidth = rightColumnWidth - borderWidth * 2;
-                const paneHeight = cardDetailsHeight - borderWidth * 2;
+                const contentWidth = paneWidthPx - borderPxX * 2;
+                const contentHeight = paneHeightPx - borderPxY * 2;
                 const cardAspect = 63 / 88;
 
                 let imgWidth, imgHeight;
-                if (paneWidth / paneHeight > cardAspect) {
+                if (contentWidth / contentHeight > cardAspect) {
                     // Pane is wider than card aspect - height is limiting
-                    imgHeight = paneHeight;
+                    imgHeight = contentHeight;
                     imgWidth = imgHeight * cardAspect;
                 } else {
                     // Pane is taller than card aspect - width is limiting
-                    imgWidth = paneWidth;
+                    imgWidth = contentWidth;
                     imgHeight = imgWidth / cardAspect;
                 }
 
-                const imgLeft = rightColumnStart + borderWidth + (paneWidth - imgWidth) / 2;
-                const imgTop = cardDetailsTop + borderWidth + (paneHeight - imgHeight) / 2;
+                const imgLeft = paneLeftPx + borderPxX + (contentWidth - imgWidth) / 2;
+                const imgTop = paneTopPx + borderPxY + (contentHeight - imgHeight) / 2;
 
                 this.cardDetailsImg.style.left = `${imgLeft}px`;
                 this.cardDetailsImg.style.top = `${imgTop}px`;
@@ -1438,8 +1446,9 @@ cast dark ritual</textarea>
                 }
 
                 // Update Card Details image based on selected card
+                // Pass the pane position from WASM for accurate positioning
                 if (selectedCard && selectedCard.name) {
-                    CardImageOverlay.setCardDetailsImage(selectedCard.name);
+                    CardImageOverlay.setCardDetailsImage(selectedCard.name, selectedCard.pane);
                 } else {
                     CardImageOverlay.clearCardDetailsImage();
                 }

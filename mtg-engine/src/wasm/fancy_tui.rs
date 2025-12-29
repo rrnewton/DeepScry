@@ -1320,11 +1320,25 @@ pub fn launch_fancy_tui(
                     export_card_positions_from_renderer(&renderer.state.entity_positions, game, player_id);
 
                 // Export selected card info for Card Details image overlay
+                // Include the pane position so JavaScript can properly position the image
                 let selected_card_json = if let Some(card_id) = renderer.state.selected_card_id {
                     if let Ok(card) = game.cards.get(card_id) {
                         // Escape quotes in card name for JSON
                         let escaped_name = card.name.as_str().replace('\"', "\\\"");
-                        format!(r#"{{"card_id": {}, "name": "{}"}}"#, card_id.as_u32(), escaped_name)
+                        // Include pane area if available
+                        if let Some(pane_area) = renderer.state.card_details_pane_area {
+                            format!(
+                                r#"{{"card_id": {}, "name": "{}", "pane": {{"x": {}, "y": {}, "width": {}, "height": {}}}}}"#,
+                                card_id.as_u32(),
+                                escaped_name,
+                                pane_area.x,
+                                pane_area.y,
+                                pane_area.width,
+                                pane_area.height
+                            )
+                        } else {
+                            format!(r#"{{"card_id": {}, "name": "{}"}}"#, card_id.as_u32(), escaped_name)
+                        }
                     } else {
                         "null".to_string()
                     }
