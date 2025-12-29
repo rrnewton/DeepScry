@@ -199,6 +199,10 @@ pub enum ServerMessage {
         starting_life: i32,
         /// Initial game state hash for verification
         initial_state_hash: u64,
+        /// Network debug mode - if true, clients should include state hashes
+        /// in SubmitChoice and validate server hashes
+        #[serde(default)]
+        network_debug: bool,
     },
 
     /// Card reveal event (draws, tutors, plays, etc.)
@@ -911,6 +915,7 @@ mod tests {
                 opponent_decklist: None,
                 starting_life: 20,
                 initial_state_hash: 0x12345678,
+                network_debug: false,
             },
             ServerMessage::ChoiceRequest {
                 choice_seq: 1,

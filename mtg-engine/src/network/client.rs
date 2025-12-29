@@ -423,6 +423,7 @@ impl NetworkClient {
             starting_life,
             initial_state_hash,
             opponent_decklist,
+            server_network_debug,
         ) = loop {
             let msg = self.receive_message().await?;
             match msg {
@@ -439,6 +440,7 @@ impl NetworkClient {
                     starting_life,
                     initial_state_hash,
                     opponent_decklist,
+                    network_debug,
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(
@@ -446,6 +448,9 @@ impl NetworkClient {
                         opening_hand.len(),
                         library_size
                     );
+                    if network_debug {
+                        log::info!("Network debug mode ENABLED by server");
+                    }
 
                     let our_hand_count = opening_hand.len();
                     break (
@@ -456,6 +461,7 @@ impl NetworkClient {
                         starting_life,
                         initial_state_hash,
                         opponent_decklist,
+                        network_debug,
                     );
                 }
                 ServerMessage::Error { message, fatal } => {
@@ -469,6 +475,9 @@ impl NetworkClient {
                 }
             }
         };
+
+        // Apply server's network_debug setting to client
+        self.network_debug = server_network_debug;
 
         // Store opponent deck if provided
         if let Some(ref deck_info) = opponent_decklist {

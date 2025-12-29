@@ -547,12 +547,6 @@ enum Commands {
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
 
-        /// Enable network debug mode for synchronization validation.
-        /// When enabled, the client includes state hashes in SubmitChoice messages
-        /// and validates server's state hash after each choice.
-        #[arg(long)]
-        network_debug: bool,
-
         /// Enable gamelog tagging for equivalence testing.
         /// When enabled, the client's shadow GameLoop logs [GAMELOG] entries
         /// to stdout, which can be compared with server-side logs.
@@ -833,7 +827,6 @@ async fn main() -> Result<()> {
             seed_player,
             visual_stacks,
             verbosity,
-            network_debug,
             tag_gamelogs,
             gamelog_output,
         } => {
@@ -872,7 +865,7 @@ async fn main() -> Result<()> {
             let mut client = NetworkClient::new(config);
             client.set_verbosity(verbosity_level);
             client.set_visual_stacks(visual_stacks);
-            client.set_network_debug(network_debug);
+            // Note: network_debug is set by server via GameStarted message
             client.set_tag_gamelogs(tag_gamelogs);
             if let Some(ref path) = gamelog_output {
                 client.set_gamelog_output(path.clone());

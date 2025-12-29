@@ -604,6 +604,7 @@ async fn run_game(
             opponent_decklist: p2_deck_info.clone(),
             starting_life: config.starting_life,
             initial_state_hash: initial_hash,
+            network_debug: config.network_debug,
         })
         .await?;
 
@@ -618,6 +619,7 @@ async fn run_game(
             opponent_decklist: p1_deck_info.clone(),
             starting_life: config.starting_life,
             initial_state_hash: initial_hash,
+            network_debug: config.network_debug,
         })
         .await?;
 

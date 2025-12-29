@@ -244,6 +244,7 @@ mod async_tests {
             opponent_decklist: None,
             starting_life: 20,
             initial_state_hash: 0x12345678,
+            network_debug: false,
         };
 
         // Encode to JSON
