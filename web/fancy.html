@@ -991,6 +991,7 @@ cast dark ritual</textarea>
         // Expose on window for debugging and testing
         const CardImageOverlay = window.CardImageOverlay = {
             enabled: false,
+            debugMode: false,  // Enable verbose console logging for image loading
             overlays: new Map(),
 
             enable() {
@@ -1038,6 +1039,11 @@ cast dark ritual</textarea>
                 const imgId = `card-image-${cardId}`;
                 let img = document.getElementById(imgId);
 
+                // Debug: log the URLs being loaded
+                if (this.debugMode) {
+                    console.log(`[CardImage] ${cardId}: primary=${primaryUrl}, fallback=${fallbackUrl || 'none'}`);
+                }
+
                 if (!img) {
                     // Create new image element
                     img = document.createElement('img');
@@ -1045,19 +1051,45 @@ cast dark ritual</textarea>
                     img.className = 'card-overlay-image';
                     img.src = primaryUrl;
                     img.dataset.fallback = fallbackUrl || '';
+                    img.dataset.cardId = cardId;  // Store for debugging
 
                     // Error handler with fallback support
                     img.onerror = (event) => {
                         const imgEl = event.target;
                         const fallback = imgEl.dataset.fallback;
                         const currentSrc = imgEl.src;
+                        const cid = imgEl.dataset.cardId;
                         // Try fallback if available and not already tried
                         if (fallback && !currentSrc.includes(fallback.split('/')[2])) {
-                            console.log(`Primary image failed for ${cardId}, trying fallback`);
+                            console.log(`[CardImage] ${cid}: Primary FAILED, trying fallback: ${fallback}`);
                             imgEl.src = fallback;
                             imgEl.dataset.fallback = '';  // Clear to prevent loop
                         } else {
-                            console.warn(`Failed to load card image for ${cardId} (both sources failed)`);
+                            console.warn(`[CardImage] ${cid}: FAILED (both sources)`);
+                        }
+                    };
+
+                    // Success handler - check for Gatherer card backs
+                    img.onload = (event) => {
+                        const imgEl = event.target;
+                        const cid = imgEl.dataset.cardId;
+                        const fallback = imgEl.dataset.fallback;
+
+                        // Gatherer returns a ~8KB card back image for unknown cards
+                        // Check if natural dimensions suggest a card back (Gatherer card backs are ~200x285)
+                        // Real card fronts should be ~223x310 or larger
+                        // The card back specifically is typically 200x285 pixels
+                        const isGathererUrl = imgEl.src.includes('gatherer.wizards.com');
+                        const isProbablyCardBack = isGathererUrl &&
+                            imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0 &&
+                            imgEl.naturalWidth < 210 && imgEl.naturalHeight < 295;
+
+                        if (isProbablyCardBack && fallback) {
+                            console.log(`[CardImage] ${cid}: Gatherer returned card back (${imgEl.naturalWidth}x${imgEl.naturalHeight}), trying fallback`);
+                            imgEl.src = fallback;
+                            imgEl.dataset.fallback = '';  // Clear to prevent loop
+                        } else if (CardImageOverlay.debugMode) {
+                            console.log(`[CardImage] ${cid}: Loaded OK (${imgEl.naturalWidth}x${imgEl.naturalHeight}) from ${imgEl.src.split('/')[2]}`);
                         }
                     };
 
@@ -1218,12 +1250,31 @@ cast dark ritual</textarea>
                         const currentSrc = img.src;
                         // Try fallback if available and not already tried
                         if (fallbackUrl && !currentSrc.includes(fallbackUrl.split('/')[2])) {
-                            console.log(`Primary image failed, trying fallback for card details`);
+                            console.log(`[CardDetails] Primary FAILED, trying fallback: ${fallbackUrl}`);
                             img.src = fallbackUrl;
                             img.dataset.fallback = '';  // Clear to prevent loop
                         } else {
-                            console.warn(`Failed to load card details image (both sources failed)`);
+                            console.warn(`[CardDetails] FAILED (both sources)`);
                             CardImageOverlay.clearCardDetailsImage();
+                        }
+                    };
+                    // Success handler - check for Gatherer card backs
+                    this.cardDetailsImg.onload = (event) => {
+                        const img = event.target;
+                        const fallbackUrl = img.dataset.fallback;
+
+                        // Gatherer returns a ~200x285 card back image for unknown cards
+                        const isGathererUrl = img.src.includes('gatherer.wizards.com');
+                        const isProbablyCardBack = isGathererUrl &&
+                            img.naturalWidth > 0 && img.naturalHeight > 0 &&
+                            img.naturalWidth < 210 && img.naturalHeight < 295;
+
+                        if (isProbablyCardBack && fallbackUrl) {
+                            console.log(`[CardDetails] Gatherer returned card back (${img.naturalWidth}x${img.naturalHeight}), trying fallback`);
+                            img.src = fallbackUrl;
+                            img.dataset.fallback = '';  // Clear to prevent loop
+                        } else if (CardImageOverlay.debugMode) {
+                            console.log(`[CardDetails] Loaded OK (${img.naturalWidth}x${img.naturalHeight}) from ${img.src.split('/')[2]}`);
                         }
                     };
                     terminal.appendChild(this.cardDetailsImg);
@@ -1236,6 +1287,12 @@ cast dark ritual</textarea>
                     this.clearCardDetailsImage();
                     return;
                 }
+
+                // Debug logging
+                if (this.debugMode) {
+                    console.log(`[CardDetails] ${cardName}: primary=${primary}, fallback=${fallback || 'none'}`);
+                }
+
                 this.cardDetailsImg.src = primary;
 
                 // Store fallback URL for error handler
@@ -1325,9 +1382,11 @@ cast dark ritual</textarea>
 
             // Set log level based on debug mode checkbox
             const debugMode = document.getElementById('debug-mode').checked;
+            CardImageOverlay.debugMode = debugMode;  // Enable image URL logging
             if (debugMode) {
                 set_log_level('trace');
                 console.log('[DEBUG] TRACE logging enabled');
+                console.log('[DEBUG] CardImageOverlay.debugMode enabled - image URLs will be logged');
             } else {
                 set_log_level('info');
             }
