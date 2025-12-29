@@ -1209,26 +1209,37 @@ impl FancyTuiRenderer {
             return;
         }
 
-        // Calculate optimal card size for this layout
-        let (card_width, card_height) = self.calculate_wordwrap_card_size(area, view, &items);
+        // Calculate optimal card size and section breaks for this layout
+        let (card_width, card_height, section_breaks) = self.calculate_wordwrap_card_size(area, view, &items);
 
-        // Render using word-wrap model with centering that avoids graveyard
-        self.render_wordwrap_battlefield(f, area, view, &items, card_width, card_height, graveyard_bounds);
+        // Render using word-wrap model with section-aware breaks and centering
+        self.render_wordwrap_battlefield(
+            f,
+            area,
+            view,
+            &items,
+            card_width,
+            card_height,
+            &section_breaks,
+            graveyard_bounds,
+        );
     }
 
-    /// Calculate optimal card size for battlefield layout.
+    /// Calculate optimal card size and section break indices for battlefield layout.
     ///
     /// Uses a smart algorithm that tries different row configurations (1-4 rows)
     /// to maximize card size. Prefers fewer rows when card sizes are equal.
     ///
-    /// Algorithm:
-    /// 1. Try laying out all items in 1, 2, 3, 4 rows (without forced newlines)
-    /// 2. For each row count, find the maximum card height that fits
-    /// 3. Pick the configuration with the largest card size
-    /// 4. For multi-row layouts, try breaking at section boundaries first
-    fn calculate_wordwrap_card_size(&self, area: Rect, view: &GameStateView, items: &[BattlefieldItem]) -> (u16, u16) {
+    /// Returns: (card_width, card_height, section_break_indices)
+    /// section_break_indices: indices into `sections` array where breaks should occur
+    fn calculate_wordwrap_card_size(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        items: &[BattlefieldItem],
+    ) -> (u16, u16, Vec<usize>) {
         if items.is_empty() || area.height == 0 || area.width == 0 {
-            return (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT);
+            return (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT, Vec::new());
         }
 
         // Extract sections from items for section-aware layout
@@ -1236,21 +1247,66 @@ impl FancyTuiRenderer {
 
         // Try different row counts and find the best card size for each
         let mut best_height = Self::MIN_CARD_HEIGHT;
-        let mut best_row_count = 1;
 
         for target_rows in 1..=4 {
             let max_height = self.find_max_card_height_for_rows(area, view, items, &sections, target_rows);
             if max_height > best_height {
                 best_height = max_height;
-                best_row_count = target_rows;
             }
         }
 
-        // If we found a good multi-row layout, update items with section breaks
-        // This is handled in render_wordwrap_battlefield by checking row count
-        let _ = best_row_count; // Currently unused, but could be used for forced breaks
+        let best_width = Self::compute_width_from_height(best_height);
 
-        (Self::compute_width_from_height(best_height), best_height)
+        // Now find section breaks that work with this card size
+        let section_breaks = self.compute_section_breaks(area, view, items, &sections, best_width, best_height);
+
+        (best_width, best_height, section_breaks)
+    }
+
+    /// Compute which section indices should start on new rows.
+    /// Returns indices into the sections array where breaks should occur.
+    fn compute_section_breaks(
+        &self,
+        area: Rect,
+        view: &GameStateView,
+        items: &[BattlefieldItem],
+        sections: &[(usize, usize)],
+        card_width: u16,
+        card_height: u16,
+    ) -> Vec<usize> {
+        let mut breaks = Vec::new();
+        let mut current_x = 0u16;
+
+        for (section_idx, &(start, end)) in sections.iter().enumerate() {
+            // Calculate width and max height of this section
+            let mut section_width = 0u16;
+            for item in &items[start..end] {
+                if let BattlefieldItem::Card { entity } = item {
+                    let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    section_width += card_w + Self::CARD_SPACING;
+                }
+            }
+
+            // Check if section fits on current row
+            if current_x > 0 && current_x + section_width > area.width {
+                // Need to break before this section
+                if section_idx > 0 {
+                    breaks.push(section_idx);
+                    current_x = 0;
+                }
+            }
+
+            // If section is too wide for a single row, we don't break at section level
+            // (natural wrapping within the section will handle it)
+            if section_width > area.width {
+                // Reset since section will wrap internally
+                current_x = section_width % area.width;
+            } else {
+                current_x += section_width;
+            }
+        }
+
+        breaks
     }
 
     /// Extract section boundaries from items.
@@ -1342,6 +1398,7 @@ impl FancyTuiRenderer {
     }
 
     /// Simulate layout and count rows used (natural word-wrap, no forced breaks).
+    /// Also tracks max entity height per row for accurate vertical space calculation.
     fn simulate_layout_rows(
         &self,
         area: Rect,
@@ -1354,6 +1411,7 @@ impl FancyTuiRenderer {
         let mut rows = 1usize;
         let mut current_x = 0u16;
         let mut current_row_max_h = card_height;
+        let mut total_height = 0u16; // Track total height needed
 
         for item in items {
             match item {
@@ -1366,6 +1424,8 @@ impl FancyTuiRenderer {
 
                     // Check if card fits on current row
                     if current_x > 0 && current_x + card_w > area.width {
+                        // Finish current row
+                        total_height += 1 + current_row_max_h + Self::CARD_SPACING; // header + max_h + spacing
                         rows += 1;
                         current_x = 0;
                         current_row_max_h = card_height;
@@ -1377,11 +1437,11 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Check if we have vertical space for all rows
-        let row_height = 1 + card_height + Self::CARD_SPACING; // header + card + spacing
-        let available_rows = (area.height as usize + Self::CARD_SPACING as usize) / row_height as usize;
+        // Add final row height
+        total_height += 1 + current_row_max_h; // header + max_h (no trailing spacing)
 
-        if rows > available_rows {
+        // Check if we have vertical space
+        if total_height > area.height {
             usize::MAX // Doesn't fit
         } else {
             rows
@@ -1390,6 +1450,7 @@ impl FancyTuiRenderer {
 
     /// Simulate layout with section-aware line breaking.
     /// Tries to keep sections together, breaking only between sections.
+    /// Tracks actual entity heights for accurate vertical space calculation.
     fn simulate_section_break_layout(
         &self,
         area: Rect,
@@ -1401,23 +1462,29 @@ impl FancyTuiRenderer {
     ) -> usize {
         let mut rows = 1usize;
         let mut current_x = 0u16;
+        let mut current_row_max_h = card_height;
+        let mut total_height = 0u16;
 
         for (section_idx, &(start, end)) in sections.iter().enumerate() {
-            // Calculate width of this entire section
+            // Calculate width and max height of this entire section
             let mut section_width = 0u16;
+            let mut section_max_h = card_height;
             for item in &items[start..end] {
                 if let BattlefieldItem::Card { entity } = item {
-                    let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
                     section_width += card_w + Self::CARD_SPACING;
+                    section_max_h = section_max_h.max(card_h);
                 }
             }
 
             // Check if section fits on current row
             if current_x > 0 && current_x + section_width > area.width {
-                // Try to break before this section
+                // Break before this section - finish current row
                 if section_idx > 0 {
+                    total_height += 1 + current_row_max_h + Self::CARD_SPACING;
                     rows += 1;
                     current_x = 0;
+                    current_row_max_h = card_height;
                 }
             }
 
@@ -1425,24 +1492,28 @@ impl FancyTuiRenderer {
             if section_width > area.width {
                 for item in &items[start..end] {
                     if let BattlefieldItem::Card { entity } = item {
-                        let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                        let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
                         if current_x > 0 && current_x + card_w > area.width {
+                            total_height += 1 + current_row_max_h + Self::CARD_SPACING;
                             rows += 1;
                             current_x = 0;
+                            current_row_max_h = card_height;
                         }
+                        current_row_max_h = current_row_max_h.max(card_h);
                         current_x += card_w + Self::CARD_SPACING;
                     }
                 }
             } else {
+                current_row_max_h = current_row_max_h.max(section_max_h);
                 current_x += section_width;
             }
         }
 
-        // Check if we have vertical space
-        let row_height = 1 + card_height + Self::CARD_SPACING;
-        let available_rows = (area.height as usize + Self::CARD_SPACING as usize) / row_height as usize;
+        // Add final row height
+        total_height += 1 + current_row_max_h;
 
-        if rows > available_rows {
+        // Check if we have vertical space
+        if total_height > area.height {
             usize::MAX
         } else {
             rows
@@ -1452,6 +1523,7 @@ impl FancyTuiRenderer {
     /// Render battlefield using word-wrap model with per-row headers.
     /// Each row of cards has a 1-line header above it where section labels and stack counts appear.
     /// The grid is centered horizontally, sliding left to avoid graveyard collision.
+    /// Uses section_breaks to force line breaks at section boundaries where computed.
     #[allow(clippy::too_many_arguments)]
     fn render_wordwrap_battlefield(
         &mut self,
@@ -1461,10 +1533,28 @@ impl FancyTuiRenderer {
         items: &[BattlefieldItem],
         card_width: u16,
         card_height: u16,
+        section_breaks: &[usize],       // Section indices that should start on new rows
         graveyard_bounds: Option<Rect>, // bottom-right graveyard area to avoid
     ) {
         if area.height == 0 || area.width == 0 {
             return;
+        }
+
+        // Extract sections so we can track which section we're in
+        let sections = Self::extract_sections(items);
+        let section_break_set: std::collections::HashSet<usize> = section_breaks.iter().copied().collect();
+
+        // Precompute which sections can fit on a single row vs need internal wrapping
+        let mut section_fits_on_row: Vec<bool> = Vec::new();
+        for &(start, end) in &sections {
+            let mut section_width = 0u16;
+            for item in &items[start..end] {
+                if let BattlefieldItem::Card { entity } = item {
+                    let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    section_width += card_w + Self::CARD_SPACING;
+                }
+            }
+            section_fits_on_row.push(section_width <= area.width);
         }
 
         // First pass: compute layout positions relative to (0, 0)
@@ -1477,19 +1567,40 @@ impl FancyTuiRenderer {
         let mut current_x = 0u16;
         let mut current_row_max_h = card_height; // Track tallest entity in current row
         let mut pending_label: Option<(String, Color)> = None;
+        let mut current_section_idx = 0usize;
 
-        for item in items {
+        for (item_idx, item) in items.iter().enumerate() {
+            // Check if we're entering a new section that should break
+            if let Some(&(section_start, _)) = sections.get(current_section_idx + 1) {
+                if item_idx >= section_start {
+                    current_section_idx += 1;
+                    // Check if this section should start on new row
+                    if section_break_set.contains(&current_section_idx) && current_x > 0 {
+                        y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
+                        current_x = 0;
+                        current_row_max_h = card_height;
+                    }
+                }
+            }
+
             match item {
                 BattlefieldItem::Label { text, color, .. } => {
-                    // Labels don't force line breaks - we use natural width-based wrapping
-                    // to maximize card size. Store label to render above next card.
+                    // Store label to render above next card
                     pending_label = Some((format!("{}:", text), *color));
                 }
                 BattlefieldItem::Card { entity } => {
                     let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
                     // Check if card fits on current row (width check)
-                    if current_x > 0 && current_x + card_w > area.width {
+                    // In section-aware mode, only wrap mid-section if section is too wide to fit
+                    let section_can_fit = section_fits_on_row.get(current_section_idx).copied().unwrap_or(false);
+                    // Wrap if: position is non-zero AND card doesn't fit AND
+                    // (section is too wide for a row, OR no section breaks computed)
+                    let should_wrap = current_x > 0
+                        && current_x + card_w > area.width
+                        && (!section_can_fit || section_breaks.is_empty());
+
+                    if should_wrap {
                         // Wrap to next row: advance by header + max height of current row
                         y_offset += 1 + current_row_max_h + Self::CARD_SPACING;
                         current_x = 0;
@@ -1607,19 +1718,29 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Render cards with offset
+        // Render cards with offset, clipping to area bounds
         let mut card_idx = 0;
         for item in items {
             if let BattlefieldItem::Card { entity } = item {
                 if card_idx < card_positions.len() {
                     let (x, y, w, h) = card_positions[card_idx];
-                    let entity_area = Rect {
-                        x: area.x + x + x_offset,
-                        y: area.y + y,
-                        width: w,
-                        height: h,
-                    };
-                    self.render_entity(f, entity_area, view, entity);
+                    let entity_x = area.x + x + x_offset;
+                    let entity_y = area.y + y;
+
+                    // Clip entity to not exceed area bounds
+                    let max_w = area.x.saturating_add(area.width).saturating_sub(entity_x);
+                    let max_h = area.y.saturating_add(area.height).saturating_sub(entity_y);
+
+                    // Only render if entity has some visible area
+                    if max_w > 0 && max_h > 0 {
+                        let entity_area = Rect {
+                            x: entity_x,
+                            y: entity_y,
+                            width: w.min(max_w),
+                            height: h.min(max_h),
+                        };
+                        self.render_entity(f, entity_area, view, entity);
+                    }
                     card_idx += 1;
                 }
             }
@@ -2825,7 +2946,7 @@ mod tests {
 
         terminal
             .draw(|f| {
-                renderer.render_wordwrap_battlefield(f, area, &view, &items, 10, 7, None);
+                renderer.render_wordwrap_battlefield(f, area, &view, &items, 10, 7, &[], None);
             })
             .unwrap();
 
@@ -2899,5 +3020,264 @@ mod tests {
             width, 12,
             "3X visual stack should have width = base + (stack_depth - 1) * DIAGONAL_OFFSET"
         );
+    }
+
+    /// Test section-aware layout keeps sections together when they fit
+    #[test]
+    fn test_section_aware_layout_keeps_sections_together() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create two sections: 2 Forests and 2 Plains
+        let forest1 = create_land(&mut game, "Forest", p1_id);
+        let forest2 = create_land(&mut game, "Forest", p1_id);
+        let plains1 = create_land(&mut game, "Plains", p1_id);
+        let plains2 = create_land(&mut game, "Plains", p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+        let renderer = FancyTuiRenderer::new(p1_id, true);
+
+        // Create battlefield items with two sections
+        let items = vec![
+            BattlefieldItem::Label {
+                text: "Forest".to_string(),
+                color: Color::Green,
+                force_newline_before: false,
+                entity_count: 1,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::VisualStack {
+                    card_ids: smallvec![forest1, forest2],
+                    card_name: "Forest".to_string(),
+                    tapped_count: 0,
+                },
+            },
+            BattlefieldItem::Label {
+                text: "Plains".to_string(),
+                color: Color::White,
+                force_newline_before: false,
+                entity_count: 1,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::VisualStack {
+                    card_ids: smallvec![plains1, plains2],
+                    card_name: "Plains".to_string(),
+                    tapped_count: 0,
+                },
+            },
+        ];
+
+        // Area that's wide enough for both sections on one row
+        let wide_area = Rect {
+            x: 0,
+            y: 0,
+            width: 50,
+            height: 12,
+        };
+
+        // Calculate card size and section breaks
+        let (card_width, _card_height, section_breaks) =
+            renderer.calculate_wordwrap_card_size(wide_area, &view, &items);
+
+        // With enough width, no section breaks needed
+        assert!(
+            section_breaks.is_empty(),
+            "With wide area, sections should fit on one row: got breaks {:?}",
+            section_breaks
+        );
+        assert!(
+            card_width >= FancyTuiRenderer::MIN_CARD_WIDTH,
+            "Card width should be at least minimum: {} >= {}",
+            card_width,
+            FancyTuiRenderer::MIN_CARD_WIDTH
+        );
+
+        // Now test with narrow area that requires section breaks
+        let narrow_area = Rect {
+            x: 0,
+            y: 0,
+            width: 20, // Too narrow for both sections
+            height: 20,
+        };
+
+        let (_, _, section_breaks_narrow) = renderer.calculate_wordwrap_card_size(narrow_area, &view, &items);
+
+        // With narrow width, we should get section breaks
+        // (or the sections might wrap individually if too wide)
+        println!(
+            "Narrow area section breaks: {:?} (card_width: {})",
+            section_breaks_narrow, card_width
+        );
+    }
+
+    /// Test that entity clipping prevents overflow beyond area bounds
+    #[test]
+    fn test_entity_clipping_prevents_overflow() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a 3-card stack (height = base + 2)
+        let plains1 = create_land(&mut game, "Plains", p1_id);
+        let plains2 = create_land(&mut game, "Plains", p1_id);
+        let plains3 = create_land(&mut game, "Plains", p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+        let mut renderer = FancyTuiRenderer::new(p1_id, true);
+
+        let items = vec![
+            BattlefieldItem::Label {
+                text: "Lands".to_string(),
+                color: Color::Green,
+                force_newline_before: false,
+                entity_count: 1,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::VisualStack {
+                    card_ids: smallvec![plains1, plains2, plains3],
+                    card_name: "Plains".to_string(),
+                    tapped_count: 0,
+                },
+            },
+        ];
+
+        // Very small area that can't fit the 3X stack (needs height = 1 header + 9 entity = 10)
+        // Area height 6 should cause clipping
+        let small_area = Rect {
+            x: 0,
+            y: 0,
+            width: 30,
+            height: 6,
+        };
+
+        let backend = TestBackend::new(30, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                renderer.render_wordwrap_battlefield(f, small_area, &view, &items, 10, 7, &[], None);
+            })
+            .unwrap();
+
+        // Get buffer content
+        let buffer = terminal.backend().buffer();
+
+        // Verify nothing rendered outside the area bounds
+        // The buffer should only have content in the 30x6 area
+        let mut output = String::new();
+        for y in 0..small_area.height {
+            for x in 0..small_area.width {
+                let cell = buffer[(x, y)].symbol();
+                output.push_str(cell);
+            }
+            output.push('\n');
+        }
+
+        println!("Clipped output:\n{}", output);
+
+        // Verify the area was rendered (should have at least the header)
+        assert!(
+            output.contains("Lands") || output.contains("3X"),
+            "Header or stack count should be visible even in small area"
+        );
+    }
+
+    /// Test extract_sections correctly identifies section boundaries
+    #[test]
+    fn test_extract_sections() {
+        let items = vec![
+            BattlefieldItem::Label {
+                text: "Section1".to_string(),
+                color: Color::Red,
+                force_newline_before: false,
+                entity_count: 2,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::SingleCard {
+                    card_id: CardId::new(1),
+                },
+            },
+            BattlefieldItem::Card {
+                entity: Entity::SingleCard {
+                    card_id: CardId::new(2),
+                },
+            },
+            BattlefieldItem::Label {
+                text: "Section2".to_string(),
+                color: Color::Blue,
+                force_newline_before: false,
+                entity_count: 1,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::SingleCard {
+                    card_id: CardId::new(3),
+                },
+            },
+        ];
+
+        let sections = FancyTuiRenderer::extract_sections(&items);
+
+        assert_eq!(sections.len(), 2, "Should have 2 sections");
+        assert_eq!(sections[0], (0, 3), "Section 1: items 0-2 (label + 2 cards)");
+        assert_eq!(sections[1], (3, 5), "Section 2: items 3-4 (label + 1 card)");
+    }
+
+    /// Test that simulate_layout_rows correctly tracks entity heights
+    #[test]
+    fn test_simulate_layout_rows_tracks_entity_heights() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create stacks of different sizes
+        let f1 = create_land(&mut game, "Forest", p1_id);
+        let f2 = create_land(&mut game, "Forest", p1_id);
+        let f3 = create_land(&mut game, "Forest", p1_id);
+        let p1 = create_land(&mut game, "Plains", p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+        let renderer = FancyTuiRenderer::new(p1_id, true);
+
+        // 3X Forest (height = 7 + 2 = 9) and 1X Plains (height = 7)
+        let items = vec![
+            BattlefieldItem::Label {
+                text: "Lands".to_string(),
+                color: Color::Green,
+                force_newline_before: false,
+                entity_count: 2,
+            },
+            BattlefieldItem::Card {
+                entity: Entity::VisualStack {
+                    card_ids: smallvec![f1, f2, f3],
+                    card_name: "Forest".to_string(),
+                    tapped_count: 0,
+                },
+            },
+            BattlefieldItem::Card {
+                entity: Entity::SingleCard { card_id: p1 },
+            },
+        ];
+
+        // Area that's wide enough for one row but we need to verify height tracking
+        // With base card_height=7, 3X stack needs 9 total
+        // One row needs: 1 (header) + 9 (max entity height) = 10
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 50,
+            height: 10,
+        };
+
+        let rows = renderer.simulate_layout_rows(area, &view, &items, 10, 7, false);
+        assert_eq!(rows, 1, "Should fit in 1 row with height=10");
+
+        // Now with height=9, it should NOT fit (need 10)
+        let small_area = Rect {
+            x: 0,
+            y: 0,
+            width: 50,
+            height: 9,
+        };
+
+        let rows_small = renderer.simulate_layout_rows(small_area, &view, &items, 10, 7, false);
+        assert_eq!(rows_small, usize::MAX, "Should not fit in height=9");
     }
 }
