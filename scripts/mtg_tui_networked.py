@@ -208,6 +208,8 @@ def parse_args():
     parser.add_argument('--numeric-choices', action='store_true')
     parser.add_argument('--load-all-cards', action='store_true')
     parser.add_argument('--tag-gamelogs', action='store_true')
+    parser.add_argument('--network-debug', action='store_true',
+                        help='Enable network debug mode (server validates client hashes)')
 
     # Help
     parser.add_argument('-h', '--help', action='store_true')
@@ -248,6 +250,7 @@ def parse_args():
         print("  --verbosity: Output verbosity")
         print("  --visual-stacks: Enable visual stacking")
         print("  --tag-gamelogs: Tag game actions with [GAMELOG] prefix (passed to server)")
+        print("  --network-debug: Enable network debug mode (validates client state hashes)")
         print("\nUtility mode:")
         print("  --merge-logs DIR: Merge server/p1/p2 logs into unified timeline")
         print("  --merge-output FILE: Output file for merged logs (default: stdout)")
@@ -345,6 +348,8 @@ def main():
         server_cmd.extend(['--seed', args.seed])
     if args.tag_gamelogs:
         server_cmd.append('--tag-gamelogs')
+    if args.network_debug:
+        server_cmd.append('--network-debug')
 
     print(f"[mtg_tui_networked] Starting server: {' '.join(server_cmd)}")
 
