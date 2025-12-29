@@ -2178,10 +2178,13 @@ impl FancyTuiRenderer {
                 // Oracle text (if any)
                 if !card.text.is_empty() {
                     lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(
-                        card.text.clone(),
-                        Style::default().fg(Color::White),
-                    )));
+                    // Split oracle text on newlines - each line becomes a separate Line
+                    for oracle_line in card.text.split('\n') {
+                        lines.push(Line::from(Span::styled(
+                            oracle_line.to_string(),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
                 }
 
                 let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
