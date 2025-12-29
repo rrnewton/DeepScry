@@ -1,13 +1,13 @@
 //! Fast Deck Entry Mode - Interactive TUI for rapid deck building
 //!
 //! Provides a streamlined interface for entering paper decks with minimal keystrokes:
-//! - Fuzzy search with real-time preview
+//! - Fuzzy search with real-time preview (prefix matches prioritized)
 //! - Number keys (1-9) to add multiple copies
 //! - Enter to add single copy
 //! - Arrow keys to navigate results
-//! - Escape to save and exit
+//! - First ESC clears search, second ESC saves and exits
 
-use crate::loader::{DeckEntry, DeckList};
+use crate::loader::{CardDefinition, DeckEntry, DeckList};
 use crate::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -19,14 +19,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::collections::HashMap;
 use std::io;
-
-/// Maximum number of search results to display
-const MAX_RESULTS: usize = 10;
+use std::sync::Arc;
 
 /// Deck builder configuration
 pub struct DeckBuilderConfig {
@@ -52,6 +50,8 @@ impl Default for DeckBuilderConfig {
 struct DeckBuilderState {
     /// All available card names (sorted)
     all_cards: Vec<String>,
+    /// Card definitions cache (loaded on demand for details display)
+    card_definitions: HashMap<String, Arc<CardDefinition>>,
     /// Current search query
     search_query: String,
     /// Filtered search results (indices into all_cards)
@@ -64,18 +64,22 @@ struct DeckBuilderState {
     show_exit_dialog: bool,
     /// Message to show at bottom (e.g., "Added 4x Lightning Bolt")
     status_message: Option<String>,
+    /// Maximum number of results to show (dynamic based on pane height)
+    max_results: usize,
 }
 
 impl DeckBuilderState {
-    fn new(all_cards: Vec<String>) -> Self {
+    fn new(all_cards: Vec<String>, card_definitions: HashMap<String, Arc<CardDefinition>>) -> Self {
         Self {
             all_cards,
+            card_definitions,
             search_query: String::new(),
             search_results: Vec::new(),
             selected_index: 0,
             deck: HashMap::new(),
             show_exit_dialog: false,
             status_message: None,
+            max_results: 10, // Will be updated based on pane height
         }
     }
 
@@ -97,14 +101,29 @@ impl DeckBuilderState {
             None
         };
 
-        // Filter cards with fuzzy matching
-        self.search_results = self
+        // Collect matches with scores (lower score = better match)
+        let mut scored_results: Vec<(usize, u8)> = self
             .all_cards
             .iter()
             .enumerate()
-            .filter(|(_, name)| fuzzy_match(&name.to_lowercase(), &query_lower))
+            .filter_map(|(idx, name)| {
+                let name_lower = name.to_lowercase();
+                match_score(&name_lower, &query_lower).map(|score| (idx, score))
+            })
+            .collect();
+
+        // Sort by score (prefix matches first), then alphabetically
+        scored_results.sort_by(|(idx_a, score_a), (idx_b, score_b)| {
+            score_a
+                .cmp(score_b)
+                .then_with(|| self.all_cards[*idx_a].cmp(&self.all_cards[*idx_b]))
+        });
+
+        // Take top N results
+        self.search_results = scored_results
+            .into_iter()
+            .take(self.max_results)
             .map(|(idx, _)| idx)
-            .take(MAX_RESULTS)
             .collect();
 
         // Try to follow the previously selected card
@@ -126,6 +145,13 @@ impl DeckBuilderState {
         }
         let idx = self.search_results.get(self.selected_index)?;
         Some(&self.all_cards[*idx])
+    }
+
+    /// Get the CardDefinition for the selected card (if available)
+    fn selected_card_definition(&self) -> Option<&CardDefinition> {
+        self.selected_card()
+            .and_then(|name| self.card_definitions.get(name))
+            .map(|arc| arc.as_ref())
     }
 
     /// Add copies of the selected card to the deck
@@ -183,18 +209,40 @@ impl DeckBuilderState {
     }
 }
 
-/// Simple fuzzy matching: checks if all characters of query appear in order in the target
-fn fuzzy_match(target: &str, query: &str) -> bool {
+/// Match scoring: returns Some(score) if matches, None if no match
+/// Lower score = better match:
+/// - 0: Exact prefix match
+/// - 1: Prefix match (case-insensitive, already lowercased)
+/// - 2: Contains as substring
+/// - 3: Subsequence match
+fn match_score(target: &str, query: &str) -> Option<u8> {
     if query.is_empty() {
-        return true;
+        return Some(0);
     }
 
-    // For short queries (1-2 chars), require substring match for better UX
+    // Prefix match is highest priority
+    if target.starts_with(query) {
+        return Some(0);
+    }
+
+    // Word-start prefix match (e.g., "bolt" matches "Lightning Bolt")
+    for word in target.split_whitespace() {
+        if word.starts_with(query) {
+            return Some(1);
+        }
+    }
+
+    // Contains as substring
+    if target.contains(query) {
+        return Some(2);
+    }
+
+    // For short queries (1-2 chars), don't allow subsequence match
     if query.len() <= 2 {
-        return target.contains(query);
+        return None;
     }
 
-    // For longer queries, use subsequence matching
+    // Subsequence match for longer queries
     let mut query_chars = query.chars().peekable();
     for target_char in target.chars() {
         if let Some(&query_char) = query_chars.peek() {
@@ -203,16 +251,20 @@ fn fuzzy_match(target: &str, query: &str) -> bool {
             }
         }
         if query_chars.peek().is_none() {
-            return true;
+            return Some(3);
         }
     }
-    query_chars.peek().is_none()
+
+    None
 }
 
 /// Run the deck builder TUI
-pub async fn run_deck_builder(config: DeckBuilderConfig, card_names: Vec<String>) -> Result<()> {
+pub async fn run_deck_builder(
+    config: DeckBuilderConfig,
+    card_names: Vec<String>,
+    card_definitions: HashMap<String, Arc<CardDefinition>>,
+) -> Result<()> {
     // Filter cards by year if specified (placeholder - we don't have set year data yet)
-    // For now, just use all cards
     let filtered_cards = if config.start_year.is_some() || config.end_year.is_some() {
         // TODO: Filter by set release year when we have that data
         eprintln!(
@@ -231,7 +283,7 @@ pub async fn run_deck_builder(config: DeckBuilderConfig, card_names: Vec<String>
     // Small delay so user can see the message
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let mut state = DeckBuilderState::new(filtered_cards);
+    let mut state = DeckBuilderState::new(filtered_cards, card_definitions);
 
     // Setup terminal
     enable_raw_mode().map_err(crate::MtgError::IoError)?;
@@ -299,7 +351,13 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
 
                 match key.code {
                     KeyCode::Esc => {
-                        state.show_exit_dialog = true;
+                        // First ESC clears search, second ESC shows exit dialog
+                        if !state.search_query.is_empty() {
+                            state.search_query.clear();
+                            state.update_search();
+                        } else {
+                            state.show_exit_dialog = true;
+                        }
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(false); // Exit without saving
@@ -333,13 +391,13 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
 }
 
 /// Draw the TUI
-fn draw_ui(f: &mut Frame, state: &DeckBuilderState) {
+fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6), // Deck summary
             Constraint::Length(3), // Search input
-            Constraint::Min(10),   // Search results
+            Constraint::Min(10),   // Search results + card details
             Constraint::Length(2), // Status/help bar
         ])
         .split(f.area());
@@ -350,8 +408,28 @@ fn draw_ui(f: &mut Frame, state: &DeckBuilderState) {
     // Search input
     draw_search_input(f, chunks[1], state);
 
-    // Search results
-    draw_search_results(f, chunks[2], state);
+    // Update max_results based on available height (accounting for borders)
+    let results_pane_height = chunks[2].height.saturating_sub(2) as usize;
+    if state.max_results != results_pane_height && results_pane_height > 0 {
+        state.max_results = results_pane_height;
+        state.update_search(); // Re-run search with new limit
+    }
+
+    // Split the results area horizontally: results on left, card details on right
+    let results_area = chunks[2];
+    let horizontal_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // Search results
+            Constraint::Percentage(50), // Card details
+        ])
+        .split(results_area);
+
+    // Search results (left side)
+    draw_search_results(f, horizontal_chunks[0], state);
+
+    // Card details (right side)
+    draw_card_details(f, horizontal_chunks[1], state);
 
     // Status bar
     draw_status_bar(f, chunks[3], state);
@@ -466,7 +544,7 @@ fn draw_search_results(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
             let prefix = if i == state.selected_index { "▶ " } else { "  " };
 
             let text = if in_deck > 0 {
-                format!("{}{} ({}x in deck)", prefix, card_name, in_deck)
+                format!("{}{} ({}x)", prefix, card_name, in_deck)
             } else {
                 format!("{}{}", prefix, card_name)
             };
@@ -479,6 +557,81 @@ fn draw_search_results(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     f.render_widget(list, inner);
 }
 
+/// Draw card details panel (reuses logic from fancy_tui_renderer)
+fn draw_card_details(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
+    let block = Block::default()
+        .title(" Card Details ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if let Some(card) = state.selected_card_definition() {
+        let mut lines = Vec::new();
+
+        // Card name
+        lines.push(Line::from(Span::styled(
+            card.name.to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )));
+
+        // Mana cost
+        if card.mana_cost.cmc() > 0 {
+            lines.push(Line::from(vec![
+                Span::raw("Cost: "),
+                Span::styled(format!("{}", card.mana_cost), Style::default().fg(Color::Cyan)),
+            ]));
+        }
+
+        // Type line
+        let type_names: Vec<String> = card.types.iter().map(|t| format!("{:?}", t)).collect();
+        let subtype_names: Vec<String> = card.subtypes.iter().map(|s| s.as_str().to_string()).collect();
+        let type_line = if subtype_names.is_empty() {
+            type_names.join(" ")
+        } else {
+            format!("{} — {}", type_names.join(" "), subtype_names.join(" "))
+        };
+        lines.push(Line::from(vec![
+            Span::raw("Type: "),
+            Span::styled(type_line, Style::default().fg(Color::White)),
+        ]));
+
+        // P/T for creatures
+        if let (Some(power), Some(toughness)) = (card.power, card.toughness) {
+            lines.push(Line::from(vec![
+                Span::raw("P/T: "),
+                Span::styled(format!("{}/{}", power, toughness), Style::default().fg(Color::Green)),
+            ]));
+        }
+
+        // Oracle text
+        if !card.oracle.is_empty() {
+            lines.push(Line::from(""));
+            for oracle_line in card.oracle.split('\n') {
+                lines.push(Line::from(Span::styled(
+                    oracle_line.to_string(),
+                    Style::default().fg(Color::White),
+                )));
+            }
+        }
+
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        f.render_widget(paragraph, inner);
+    } else if state.selected_card().is_some() {
+        // Card selected but no definition available
+        let hint = Paragraph::new("Card details not loaded")
+            .style(Style::default().fg(Color::DarkGray))
+            .wrap(Wrap { trim: false });
+        f.render_widget(hint, inner);
+    } else {
+        let hint = Paragraph::new("Select a card to view details")
+            .style(Style::default().fg(Color::DarkGray))
+            .wrap(Wrap { trim: false });
+        f.render_widget(hint, inner);
+    }
+}
+
 fn draw_status_bar(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let status = if let Some(ref msg) = state.status_message {
         Line::from(vec![
@@ -488,7 +641,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     } else {
         Line::from(vec![
             Span::styled("ESC", Style::default().fg(Color::Yellow)),
-            Span::raw(" save & exit  "),
+            Span::raw(" clear/exit  "),
             Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
             Span::raw(" quit  "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
@@ -577,19 +730,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fuzzy_match() {
-        // Short queries use substring
-        assert!(fuzzy_match("lightning bolt", "li"));
-        assert!(fuzzy_match("lightning bolt", "bo"));
-        assert!(!fuzzy_match("lightning bolt", "xy"));
+    fn test_match_score() {
+        // Prefix match is highest priority (score 0)
+        assert_eq!(match_score("lightning bolt", "light"), Some(0));
+        assert_eq!(match_score("lightning bolt", "lightning"), Some(0));
 
-        // Longer queries use subsequence
-        assert!(fuzzy_match("lightning bolt", "lbolt"));
-        assert!(fuzzy_match("lightning bolt", "lgblt"));
-        assert!(!fuzzy_match("lightning bolt", "xyz"));
+        // Word-start match (score 1)
+        assert_eq!(match_score("lightning bolt", "bolt"), Some(1));
 
-        // Empty query matches everything
-        assert!(fuzzy_match("lightning bolt", ""));
+        // Substring match (score 2)
+        assert_eq!(match_score("lightning bolt", "ning"), Some(2));
+        assert_eq!(match_score("lightning bolt", "olt"), Some(2));
+
+        // Subsequence match for 3+ chars (score 3)
+        assert_eq!(match_score("lightning bolt", "lbolt"), Some(3));
+        assert_eq!(match_score("lightning bolt", "lgb"), Some(3));
+
+        // No match
+        assert_eq!(match_score("lightning bolt", "xyz"), None);
+
+        // Short queries (1-2 chars) only allow substring, not subsequence
+        assert_eq!(match_score("lightning bolt", "li"), Some(0)); // prefix
+        assert_eq!(match_score("lightning bolt", "bo"), Some(1)); // word-start
+        assert_eq!(match_score("lightning bolt", "tn"), Some(2)); // substring
+        assert_eq!(match_score("lightning bolt", "lb"), None); // subsequence not allowed for short
     }
 
     #[test]
@@ -600,12 +764,12 @@ mod tests {
             "Grizzly Bears".to_string(),
         ];
 
-        let mut state = DeckBuilderState::new(cards);
+        let mut state = DeckBuilderState::new(cards, HashMap::new());
 
         // Initially no results
         assert!(state.search_results.is_empty());
 
-        // Search for "light"
+        // Search for "light" - should get prefix matches
         state.search_query = "light".to_string();
         state.update_search();
         assert_eq!(state.search_results.len(), 2);

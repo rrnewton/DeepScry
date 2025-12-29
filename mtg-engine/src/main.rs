@@ -2538,7 +2538,7 @@ async fn run_deck_build(
     end_year: Option<u16>,
 ) -> Result<()> {
     use mtg_forge_rs::deck_builder::{run_deck_builder, DeckBuilderConfig};
-    use mtg_forge_rs::download::load_card_names_from_cardsfolder;
+    use mtg_forge_rs::loader::AsyncCardDatabase as CardDatabase;
 
     println!("=== MTG Forge - Fast Deck Builder ===\n");
 
@@ -2550,10 +2550,20 @@ async fn run_deck_build(
         )));
     }
 
-    // Load all card names
-    println!("Loading card names from {:?}...", cardsfolder);
-    let card_names = load_card_names_from_cardsfolder(&cardsfolder).await?;
-    println!("Found {} cards\n", card_names.len());
+    // Load all cards (including definitions for card details display)
+    println!("Loading card database from {:?}...", cardsfolder);
+    let card_db = CardDatabase::new(cardsfolder);
+    let (loaded, duration) = card_db.eager_load().await?;
+    println!("Loaded {} cards in {:?}\n", loaded, duration);
+
+    // Get card names and definitions
+    let all_cards = card_db.all_cards().await;
+    let mut card_names: Vec<String> = all_cards.iter().map(|c| c.name.to_string()).collect();
+    card_names.sort();
+
+    // Build definitions map for card details
+    let card_definitions: std::collections::HashMap<String, std::sync::Arc<mtg_forge_rs::loader::CardDefinition>> =
+        all_cards.into_iter().map(|c| (c.name.to_string(), c)).collect();
 
     let config = DeckBuilderConfig {
         output_file: output_file.to_string_lossy().to_string(),
@@ -2561,7 +2571,7 @@ async fn run_deck_build(
         end_year,
     };
 
-    run_deck_builder(config, card_names).await
+    run_deck_builder(config, card_names, card_definitions).await
 }
 
 /// Print statistics about the card database
