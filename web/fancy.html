@@ -1094,16 +1094,13 @@ cast dark ritual</textarea>
                                           imgEl.src.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
                         const usedFallback = loadedFrom !== imgEl.dataset.primarySource;
 
-                        // Gatherer returns a card back image for unknown cards
-                        // Real card images from Gatherer are 223x310
-                        // Card backs are smaller - check for images below that threshold
-                        const isGathererUrl = imgEl.src.includes('gatherer.wizards.com');
-                        const isProbablyCardBack = isGathererUrl &&
-                            imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0 &&
-                            (imgEl.naturalWidth < 220 || imgEl.naturalHeight < 305);
+                        // Gatherer redirects unknown cards to /assets/card_back.webp
+                        // Check the final URL for this redirect destination
+                        const isCardBackUrl = imgEl.src.includes('card_back.webp') ||
+                            imgEl.src.includes('/assets/card_back');
 
-                        if (isProbablyCardBack && fallback) {
-                            console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK (${imgEl.naturalWidth}x${imgEl.naturalHeight}), switching to ${fbSource}`);
+                        if (isCardBackUrl && fallback) {
+                            console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK (URL redirect), switching to ${fbSource}`);
                             console.log(`[CardImage] ${cid}: Fallback URL = ${fallback}`);
                             imgEl.src = fallback;
                             imgEl.dataset.fallback = '';  // Clear to prevent loop
@@ -1156,11 +1153,30 @@ cast dark ritual</textarea>
                 }
             },
 
-            // Clear all overlays
+            // Clear all overlays (only used when disabling or resetting)
             clearAll() {
                 const images = document.querySelectorAll('.card-overlay-image');
                 images.forEach(img => img.remove());
                 this.overlays.clear();
+                this.currentCardIds = new Set();
+            },
+
+            // Track which card IDs are currently on the battlefield
+            currentCardIds: new Set(),
+
+            // Sync battlefield images: remove cards no longer present, keep existing ones
+            // This avoids re-fetching images for cards that haven't changed
+            syncBattlefieldImages(newCardIds) {
+                const newSet = new Set(newCardIds);
+
+                // Remove images for cards that are no longer on the battlefield
+                for (const cardId of this.currentCardIds) {
+                    if (!newSet.has(cardId)) {
+                        this.removeOverlay(cardId);
+                    }
+                }
+
+                this.currentCardIds = newSet;
             },
 
             // Build Scryfall named card URL (doesn't require set/collector number)
@@ -1310,16 +1326,13 @@ cast dark ritual</textarea>
                                           img.src.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
                         const usedFallback = loadedFrom !== img.dataset.primarySource;
 
-                        // Gatherer returns a card back image for unknown cards
-                        // Card backs have specific dimensions - check for small images from Gatherer
-                        // Real card images from Gatherer are 223x310
-                        const isGathererUrl = img.src.includes('gatherer.wizards.com');
-                        const isProbablyCardBack = isGathererUrl &&
-                            img.naturalWidth > 0 && img.naturalHeight > 0 &&
-                            (img.naturalWidth < 220 || img.naturalHeight < 305);
+                        // Gatherer redirects unknown cards to /assets/card_back.webp
+                        // Check the final URL for this redirect destination
+                        const isCardBackUrl = img.src.includes('card_back.webp') ||
+                            img.src.includes('/assets/card_back');
 
-                        if (isProbablyCardBack && fallbackUrl) {
-                            console.log(`[CardDetails] ${img.dataset.cardName}: Gatherer returned CARD BACK (${img.naturalWidth}x${img.naturalHeight}), switching to ${fbSource}`);
+                        if (isCardBackUrl && fallbackUrl) {
+                            console.log(`[CardDetails] ${img.dataset.cardName}: Gatherer returned CARD BACK (URL redirect), switching to ${fbSource}`);
                             console.log(`[CardDetails] ${img.dataset.cardName}: Fallback URL = ${fallbackUrl}`);
                             img.src = fallbackUrl;
                             img.dataset.fallback = '';  // Clear to prevent loop
@@ -1523,10 +1536,12 @@ cast dark ritual</textarea>
                     TUICoordinateSystem.measureCellDimensions();
                 }
 
-                // Clear existing battlefield overlays first (but not card details)
-                CardImageOverlay.clearAll();
+                // Sync battlefield images: remove cards no longer present, keep existing ones
+                // This avoids re-fetching images for cards that haven't changed
+                const newCardIds = positions ? positions.map(p => p.card_id) : [];
+                CardImageOverlay.syncBattlefieldImages(newCardIds);
 
-                // Render battlefield card images
+                // Render battlefield card images (creates new ones, repositions existing ones)
                 if (positions && positions.length > 0) {
                     // Use the positions passed from WASM (avoids re-borrowing)
                     // All coordinate translation happens through TUICoordinateSystem
