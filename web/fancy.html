@@ -979,7 +979,8 @@ cast dark ritual</textarea>
              */
             getSourceFromUrl(url) {
                 if (!url) return 'Unknown';
-                if (url.startsWith('/images/')) return 'Local';
+                // Check for local images (both relative and absolute URLs)
+                if (url.startsWith('/images/') || url.includes('/images/')) return 'Local';
                 if (url.includes('gatherer.wizards.com')) return 'Gatherer';
                 if (url.includes('scryfall.com')) return 'Scryfall';
                 return 'Unknown';
@@ -1213,8 +1214,8 @@ cast dark ritual</textarea>
 
                 if (pane && TUICoordinateSystem.cellWidthPx && TUICoordinateSystem.cellHeightPx) {
                     // Convert cell coordinates to pixels using TUICoordinateSystem
-                    const pxPos = TUICoordinateSystem.cellToPixel(pane.x, pane.y);
-                    const pxDim = TUICoordinateSystem.cellDimensionsToPixel(pane.width, pane.height);
+                    const pxPos = TUICoordinateSystem.cellToPixelPosition(pane.x, pane.y);
+                    const pxDim = TUICoordinateSystem.cellToPixelDimensions(pane.width, pane.height);
                     paneLeftPx = pxPos.left;
                     paneTopPx = pxPos.top;
                     paneWidthPx = pxDim.width;
