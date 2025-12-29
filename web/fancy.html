@@ -328,13 +328,21 @@ cast dark ritual</textarea>
             </label>
         </div>
         <div class="control-group" id="image-source-group">
-            <label>Image Source</label>
-            <select id="image-source">
-                <option value="gatherer">Gatherer (Official WotC)</option>
-                <option value="scryfall">Scryfall (may be blocked)</option>
-                <option value="none">None (disabled)</option>
-            </select>
-            <span id="image-source-desc" style="color: #888; font-size: 11px;">Official Wizards database</span>
+            <label>Image Sources (fallback order: Local → Scryfall → Gatherer)</label>
+            <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 4px;">
+                <label style="font-weight: normal; font-size: 12px;">
+                    <input type="checkbox" id="img-src-local" checked style="margin-right: 5px;">
+                    Local (fastest, works offline)
+                </label>
+                <label style="font-weight: normal; font-size: 12px;">
+                    <input type="checkbox" id="img-src-scryfall" checked style="margin-right: 5px;">
+                    Scryfall (high quality, may be blocked)
+                </label>
+                <label style="font-weight: normal; font-size: 12px;">
+                    <input type="checkbox" id="img-src-gatherer" checked style="margin-right: 5px;">
+                    Gatherer (official WotC)
+                </label>
+            </div>
         </div>
         <div class="control-group">
             <label>
@@ -548,7 +556,10 @@ cast dark ritual</textarea>
                 fixedScript: document.getElementById('fixed-script').value,
                 gameSeed: document.getElementById('game-seed').value,
                 showCardImages: document.getElementById('show-card-images').checked,
-                imageSource: document.getElementById('image-source').value,
+                // Image source checkboxes (enabled sources)
+                imgSrcLocal: document.getElementById('img-src-local').checked,
+                imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
+                imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
                 debugMode: document.getElementById('debug-mode').checked
             };
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -589,12 +600,18 @@ cast dark ritual</textarea>
                 if (settings.gameSeed) {
                     document.getElementById('game-seed').value = settings.gameSeed;
                 }
-                if (settings.showCardImages) {
+                if (settings.showCardImages !== undefined) {
                     document.getElementById('show-card-images').checked = settings.showCardImages;
                 }
-                if (settings.imageSource) {
-                    document.getElementById('image-source').value = settings.imageSource;
-                    // Note: ImageSource.setSource() is called later after ImageSource is defined
+                // Restore image source checkboxes (default to all enabled if not saved)
+                if (settings.imgSrcLocal !== undefined) {
+                    document.getElementById('img-src-local').checked = settings.imgSrcLocal;
+                }
+                if (settings.imgSrcScryfall !== undefined) {
+                    document.getElementById('img-src-scryfall').checked = settings.imgSrcScryfall;
+                }
+                if (settings.imgSrcGatherer !== undefined) {
+                    document.getElementById('img-src-gatherer').checked = settings.imgSrcGatherer;
                 }
                 if (settings.debugMode) {
                     document.getElementById('debug-mode').checked = settings.debugMode;
@@ -610,7 +627,8 @@ cast dark ritual</textarea>
         function setupSettingsPersistence() {
             const controls = [
                 'p1-deck', 'p2-deck', 'p1-controller', 'p2-controller',
-                'fixed-script', 'game-seed', 'show-card-images', 'image-source', 'debug-mode'
+                'fixed-script', 'game-seed', 'show-card-images',
+                'img-src-local', 'img-src-scryfall', 'img-src-gatherer', 'debug-mode'
             ];
             controls.forEach(id => {
                 const el = document.getElementById(id);
@@ -632,23 +650,6 @@ cast dark ritual</textarea>
             const scriptGroup = document.getElementById('fixed-script-group');
             scriptGroup.style.display = this.value === 'fixed' ? 'flex' : 'none';
         });
-
-        // Image source selector - update description and sync with ImageSource
-        function updateImageSourceDescription() {
-            const sourceId = document.getElementById('image-source').value;
-            const descEl = document.getElementById('image-source-desc');
-            const source = ImageSource.sources[sourceId];
-            if (source && descEl) {
-                descEl.textContent = source.description;
-            }
-        }
-
-        document.getElementById('image-source').addEventListener('change', function() {
-            ImageSource.setSource(this.value);
-            updateImageSourceDescription();
-        });
-
-        // Note: updateImageSourceDescription() is called after ImageSource is defined (see below)
 
         let tuiLaunched = false;
         let cardImagesEnabled = false;
@@ -822,170 +823,120 @@ cast dark ritual</textarea>
          * Card Image Source Abstraction
          *
          * Provides a generalized interface for fetching card images from different sources.
-         * Each source has different characteristics:
-         * - Available sizes (some only have one size)
-         * - URL format
-         * - Reliability/availability
+         * Sources are enabled/disabled via checkboxes and used in fixed fallback order:
+         *   Local → Scryfall → Gatherer
          *
-         * The ImageSource system:
-         * 1. Takes a card name and desired size category (small, normal, large)
-         * 2. Maps the desired size to the best available size for that source
-         * 3. Returns a URL, preferring to return SOMETHING over nothing
+         * Local images use height-based size selection:
+         * - height <= LOCAL_SIZE_THRESHOLD_PX → use 'small' folder
+         * - height > LOCAL_SIZE_THRESHOLD_PX → use 'normal' folder
          */
         const ImageSource = window.ImageSource = {
-            // Current active source
-            currentSource: 'gatherer',
-
-            // Size categories that callers can request
-            // These are abstract - each source maps them to its actual sizes
-            SIZE_SMALL: 'small',    // ~150px width - for battlefield cards
-            SIZE_NORMAL: 'normal',  // ~500px width - for card details
-            SIZE_LARGE: 'large',    // ~750px width - for zoomed view
+            // Height threshold for local image size selection (in pixels)
+            // Images requested with height <= this value use 'small', otherwise 'normal'
+            // TODO: Make this dynamic based on actual rendered card size
+            LOCAL_SIZE_THRESHOLD_PX: 204,
 
             // Available sources with their characteristics
             sources: {
                 /**
-                 * Gatherer - Official WotC card database
-                 * Pros: Official source, reliable, no API rate limits
-                 * Cons: Only one size (~223x310), older cards only
+                 * Local - Pre-downloaded images served from web/images/
+                 * Pros: Fastest, works offline, has most cards including newer ones
+                 * Cons: Requires disk space (~3.3GB for normal + 498MB for small)
+                 * Structure: /images/{size}/{first_letter}/{Card Name}.jpg
                  */
-                gatherer: {
-                    name: 'Gatherer (Official WotC)',
-                    description: 'Official Wizards database. Single size (~223x310). Most reliable.',
-                    // Gatherer only has one size, so all requests get the same image
-                    sizes: {
-                        small: { width: 223, height: 310 },
-                        normal: { width: 223, height: 310 },
-                        large: { width: 223, height: 310 }
-                    },
-                    getUrl(cardName, size) {
-                        // Gatherer ignores size - only has one
-                        return `https://gatherer.wizards.com/Handlers/Image.ashx?name=${encodeURIComponent(cardName)}&type=card`;
+                local: {
+                    name: 'Local',
+                    getUrl(cardName, heightPx) {
+                        // Determine which size folder to use based on height
+                        const threshold = ImageSource.LOCAL_SIZE_THRESHOLD_PX;
+                        const sizeFolder = heightPx <= threshold ? 'small' : 'normal';
+                        // Get first letter for subfolder (lowercase)
+                        const firstLetter = cardName.charAt(0).toLowerCase();
+                        // Encode card name for URL (spaces become %20, etc.)
+                        return `/images/${sizeFolder}/${firstLetter}/${encodeURIComponent(cardName)}.jpg`;
                     }
                 },
 
                 /**
                  * Scryfall - Community card database with high-quality scans
                  * Pros: Multiple sizes, high quality, modern cards
-                 * Cons: API rate limits, we got blocked from it!
+                 * Cons: API rate limits, may be blocked
                  */
                 scryfall: {
                     name: 'Scryfall',
-                    description: 'High-quality scans with multiple sizes. WARNING: May be blocked.',
-                    sizes: {
-                        small: { width: 146, height: 204, version: 'small' },
-                        normal: { width: 488, height: 680, version: 'normal' },
-                        large: { width: 672, height: 936, version: 'large' }
-                    },
-                    getUrl(cardName, size) {
-                        const sizeInfo = this.sizes[size] || this.sizes.small;
-                        return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${sizeInfo.version}`;
+                    getUrl(cardName, heightPx) {
+                        // Map height to Scryfall version
+                        // small: 146x204, normal: 488x680, large: 672x936
+                        const version = heightPx <= 204 ? 'small' : (heightPx <= 680 ? 'normal' : 'large');
+                        return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${version}`;
                     }
                 },
 
                 /**
-                 * None - Disable image loading
+                 * Gatherer - Official WotC card database
+                 * Pros: Official source, reliable, no API rate limits
+                 * Cons: Only one size (~223x310), older cards only, newer cards return card back
                  */
-                none: {
-                    name: 'None (Disabled)',
-                    description: 'Do not load any card images.',
-                    sizes: {},
-                    getUrl(cardName, size) {
-                        return null;
+                gatherer: {
+                    name: 'Gatherer',
+                    getUrl(cardName, heightPx) {
+                        // Gatherer ignores size - only has one
+                        return `https://gatherer.wizards.com/Handlers/Image.ashx?name=${encodeURIComponent(cardName)}&type=card`;
                     }
                 }
             },
 
+            // Fixed fallback order (cannot be changed by user)
+            FALLBACK_ORDER: ['local', 'scryfall', 'gatherer'],
+
             /**
-             * Get image URL for a card
+             * Get which sources are currently enabled from UI checkboxes
+             * @returns {string[]} Array of enabled source IDs in fallback order
+             */
+            getEnabledSources() {
+                const enabled = [];
+                if (document.getElementById('img-src-local')?.checked) enabled.push('local');
+                if (document.getElementById('img-src-scryfall')?.checked) enabled.push('scryfall');
+                if (document.getElementById('img-src-gatherer')?.checked) enabled.push('gatherer');
+                return enabled;
+            },
+
+            /**
+             * Get image URL with fallback chain based on enabled sources
              * @param {string} cardName - Card name
-             * @param {string} size - Size category: 'small', 'normal', or 'large'
-             * @returns {string|null} URL to card image, or null if disabled
+             * @param {number} heightPx - Requested height in pixels (for size selection)
+             * @returns {{primary: string|null, fallback: string|null, fallback2: string|null}} URLs for fallback chain
              */
-            getImageUrl(cardName, size = 'small') {
-                const source = this.sources[this.currentSource];
-                if (!source) {
-                    console.warn(`Unknown image source: ${this.currentSource}`);
-                    return null;
+            getImageUrlWithFallback(cardName, heightPx = 204) {
+                const enabled = this.getEnabledSources();
+
+                if (enabled.length === 0) {
+                    return { primary: null, fallback: null, fallback2: null };
                 }
-                return source.getUrl(cardName, size);
+
+                const urls = enabled.map(sourceId => {
+                    const source = this.sources[sourceId];
+                    return source ? source.getUrl(cardName, heightPx) : null;
+                }).filter(url => url !== null);
+
+                return {
+                    primary: urls[0] || null,
+                    fallback: urls[1] || null,
+                    fallback2: urls[2] || null
+                };
             },
 
             /**
-             * Get image URL with fallback chain
-             * Tries primary source first, returns fallback URL if primary might fail
+             * Get image URL from first enabled source (no fallback)
              * @param {string} cardName - Card name
-             * @param {string} size - Size category
-             * @returns {{primary: string, fallback: string|null}} URLs for primary and fallback
+             * @param {number} heightPx - Requested height in pixels
+             * @returns {string|null} URL to card image, or null if no sources enabled
              */
-            getImageUrlWithFallback(cardName, size = 'small') {
-                const primary = this.getImageUrl(cardName, size);
-
-                // If using Gatherer, fall back to Scryfall
-                // If using Scryfall, fall back to Gatherer
-                let fallback = null;
-                if (this.currentSource === 'gatherer') {
-                    fallback = this.sources.scryfall.getUrl(cardName, size);
-                } else if (this.currentSource === 'scryfall') {
-                    fallback = this.sources.gatherer.getUrl(cardName, size);
-                }
-
-                return { primary, fallback };
-            },
-
-            /**
-             * Set the active image source
-             * @param {string} sourceName - Source name ('gatherer', 'scryfall', 'none')
-             */
-            setSource(sourceName) {
-                if (this.sources[sourceName]) {
-                    this.currentSource = sourceName;
-                    console.log(`Image source set to: ${this.sources[sourceName].name}`);
-                    // Save preference
-                    try {
-                        localStorage.setItem('mtg-image-source', sourceName);
-                    } catch (e) { /* ignore */ }
-                } else {
-                    console.warn(`Unknown image source: ${sourceName}`);
-                }
-            },
-
-            /**
-             * Load saved preference
-             */
-            loadPreference() {
-                try {
-                    const saved = localStorage.getItem('mtg-image-source');
-                    if (saved && this.sources[saved]) {
-                        this.currentSource = saved;
-                    }
-                } catch (e) { /* ignore */ }
-            },
-
-            /**
-             * Get list of available sources for UI
-             * @returns {Array<{id: string, name: string, description: string}>}
-             */
-            getAvailableSources() {
-                return Object.entries(this.sources).map(([id, source]) => ({
-                    id,
-                    name: source.name,
-                    description: source.description
-                }));
+            getImageUrl(cardName, heightPx = 204) {
+                const { primary } = this.getImageUrlWithFallback(cardName, heightPx);
+                return primary;
             }
         };
-
-        // Load saved preference on startup
-        ImageSource.loadPreference();
-
-        // Sync ImageSource with the UI dropdown (which may have been restored from settings)
-        const imageSourceDropdown = document.getElementById('image-source');
-        if (imageSourceDropdown && imageSourceDropdown.value && ImageSource.sources[imageSourceDropdown.value]) {
-            ImageSource.currentSource = imageSourceDropdown.value;
-        }
-
-        // Initialize the image source description in the UI (deferred until after ImageSource is defined)
-        updateImageSourceDescription();
 
         // Simple card image overlay manager (JavaScript implementation)
         // Expose on window for debugging and testing
@@ -1022,6 +973,19 @@ cast dark ritual</textarea>
             },
 
             /**
+             * Detect which source a URL is from
+             * @param {string} url - Image URL
+             * @returns {string} Source name: 'Local', 'Scryfall', 'Gatherer', or 'Unknown'
+             */
+            getSourceFromUrl(url) {
+                if (!url) return 'Unknown';
+                if (url.startsWith('/images/')) return 'Local';
+                if (url.includes('gatherer.wizards.com')) return 'Gatherer';
+                if (url.includes('scryfall.com')) return 'Scryfall';
+                return 'Unknown';
+            },
+
+            /**
              * Add or update a card image with fallback support.
              *
              * @param {number} cardId - Unique card identifier
@@ -1030,27 +994,27 @@ cast dark ritual</textarea>
              * @param {number} width - Width in cells
              * @param {number} height - Height in cells
              * @param {string} primaryUrl - Primary image URL
-             * @param {string|null} fallbackUrl - Fallback URL if primary fails
+             * @param {string|null} fallbackUrl - First fallback URL if primary fails
              * @param {boolean} isTapped - Whether card is tapped (rotated 90°)
+             * @param {string|null} fallback2Url - Second fallback URL if first fallback fails
              */
-            setCardImageWithFallback(cardId, col, row, width, height, primaryUrl, fallbackUrl, isTapped = false) {
+            setCardImageWithFallback(cardId, col, row, width, height, primaryUrl, fallbackUrl, isTapped = false, fallback2Url = null) {
                 if (!this.enabled) return;
 
                 const imgId = `card-image-${cardId}`;
                 let img = document.getElementById(imgId);
 
                 // Determine source names for logging
-                const primarySource = primaryUrl.includes('gatherer.wizards.com') ? 'Gatherer' :
-                                     primaryUrl.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
-                const fallbackSource = fallbackUrl ?
-                    (fallbackUrl.includes('gatherer.wizards.com') ? 'Gatherer' :
-                     fallbackUrl.includes('scryfall.com') ? 'Scryfall' : 'Unknown') : null;
+                const primarySource = this.getSourceFromUrl(primaryUrl);
+                const fallbackSource = this.getSourceFromUrl(fallbackUrl);
+                const fallback2Source = this.getSourceFromUrl(fallback2Url);
 
                 if (!img) {
                     // Debug: log ONLY when creating a new image (not on every position update)
                     if (this.debugMode) {
+                        const fallbacks = [fallbackSource, fallback2Source].filter(s => s !== 'Unknown');
                         console.log(`[CardImage] ${cardId}: NEW load from ${primarySource}` +
-                            (fallbackSource ? ` (fallback: ${fallbackSource})` : ' (no fallback)'));
+                            (fallbacks.length > 0 ? ` (fallbacks: ${fallbacks.join(' → ')})` : ' (no fallback)'));
                         console.log(`[CardImage] ${cardId}: URL = ${primaryUrl}`);
                     }
 
@@ -1060,38 +1024,46 @@ cast dark ritual</textarea>
                     img.className = 'card-overlay-image';
                     img.src = primaryUrl;
                     img.dataset.fallback = fallbackUrl || '';
+                    img.dataset.fallback2 = fallback2Url || '';
                     img.dataset.cardId = cardId;  // Store for debugging
                     img.dataset.primarySource = primarySource;  // Track which source was primary
                     img.dataset.fallbackSource = fallbackSource || '';
+                    img.dataset.fallback2Source = fallback2Source || '';
 
-                    // Error handler with fallback support
+                    // Error handler with fallback chain support
                     img.onerror = (event) => {
                         const imgEl = event.target;
-                        const fallback = imgEl.dataset.fallback;
-                        const currentSrc = imgEl.src;
                         const cid = imgEl.dataset.cardId;
-                        const fbSource = imgEl.dataset.fallbackSource;
-                        // Try fallback if available and not already tried
-                        if (fallback && !currentSrc.includes(fallback.split('/')[2])) {
-                            console.log(`[CardImage] ${cid}: ${imgEl.dataset.primarySource} FAILED (HTTP error), switching to ${fbSource}`);
-                            console.log(`[CardImage] ${cid}: Fallback URL = ${fallback}`);
-                            imgEl.src = fallback;
+                        const currentSource = CardImageOverlay.getSourceFromUrl(imgEl.src);
+
+                        // Try first fallback
+                        const fb1 = imgEl.dataset.fallback;
+                        if (fb1) {
+                            console.log(`[CardImage] ${cid}: ${currentSource} FAILED (HTTP error), trying ${imgEl.dataset.fallbackSource}`);
+                            console.log(`[CardImage] ${cid}: Fallback URL = ${fb1}`);
+                            imgEl.src = fb1;
                             imgEl.dataset.fallback = '';  // Clear to prevent loop
-                        } else {
-                            console.warn(`[CardImage] ${cid}: FAILED - both ${imgEl.dataset.primarySource} and ${fbSource} failed`);
+                            return;
                         }
+
+                        // Try second fallback
+                        const fb2 = imgEl.dataset.fallback2;
+                        if (fb2) {
+                            console.log(`[CardImage] ${cid}: ${currentSource} FAILED (HTTP error), trying ${imgEl.dataset.fallback2Source}`);
+                            console.log(`[CardImage] ${cid}: Fallback2 URL = ${fb2}`);
+                            imgEl.src = fb2;
+                            imgEl.dataset.fallback2 = '';  // Clear to prevent loop
+                            return;
+                        }
+
+                        console.warn(`[CardImage] ${cid}: ALL sources FAILED - no image available`);
                     };
 
                     // Success handler - check for Gatherer card backs
                     img.onload = (event) => {
                         const imgEl = event.target;
                         const cid = imgEl.dataset.cardId;
-                        const fallback = imgEl.dataset.fallback;
-                        const fbSource = imgEl.dataset.fallbackSource;
-
-                        // Determine which source this image came from
-                        const loadedFrom = imgEl.src.includes('gatherer.wizards.com') ? 'Gatherer' :
-                                          imgEl.src.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
+                        const loadedFrom = CardImageOverlay.getSourceFromUrl(imgEl.src);
                         const usedFallback = loadedFrom !== imgEl.dataset.primarySource;
 
                         // Gatherer redirects unknown cards to /assets/card_back.webp
@@ -1099,13 +1071,26 @@ cast dark ritual</textarea>
                         const isCardBackUrl = imgEl.src.includes('card_back.webp') ||
                             imgEl.src.includes('/assets/card_back');
 
-                        if (isCardBackUrl && fallback) {
-                            console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK (URL redirect), switching to ${fbSource}`);
-                            console.log(`[CardImage] ${cid}: Fallback URL = ${fallback}`);
-                            imgEl.src = fallback;
-                            imgEl.dataset.fallback = '';  // Clear to prevent loop
+                        if (isCardBackUrl) {
+                            // Try first fallback
+                            const fb1 = imgEl.dataset.fallback;
+                            if (fb1) {
+                                console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK, trying ${imgEl.dataset.fallbackSource}`);
+                                imgEl.src = fb1;
+                                imgEl.dataset.fallback = '';
+                                return;
+                            }
+                            // Try second fallback
+                            const fb2 = imgEl.dataset.fallback2;
+                            if (fb2) {
+                                console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK, trying ${imgEl.dataset.fallback2Source}`);
+                                imgEl.src = fb2;
+                                imgEl.dataset.fallback2 = '';
+                                return;
+                            }
+                            console.warn(`[CardImage] ${cid}: Gatherer returned CARD BACK and no fallbacks available`);
                         } else {
-                            // Always log successful loads with full details
+                            // Successfully loaded
                             const fallbackNote = usedFallback ? ' [FALLBACK]' : '';
                             console.log(`[CardImage] ${cid}: ✓ LOADED from ${loadedFrom} (${imgEl.naturalWidth}x${imgEl.naturalHeight})${fallbackNote}`);
                             console.log(`[CardImage] ${cid}: Final URL = ${imgEl.src}`);
@@ -1268,25 +1253,25 @@ cast dark ritual</textarea>
                 this.cardDetailsBackdrop.style.height = `${paneHeightPx - borderPxY * 2}px`;
                 this.cardDetailsBackdrop.style.display = 'block';
 
-                // Use 'normal' size for Card Details (larger than battlefield thumbnails)
-                // Use ImageSource abstraction with fallback
-                const { primary, fallback } = ImageSource.getImageUrlWithFallback(cardName, 'normal');
+                // Card Details pane uses 'normal' size (680px height threshold)
+                // Use ImageSource abstraction with fallback chain
+                const contentHeight = paneHeightPx - borderPxY * 2;
+                const { primary, fallback, fallback2 } = ImageSource.getImageUrlWithFallback(cardName, contentHeight);
                 if (!primary) {
                     console.log(`[CardDetails] ${cardName}: No primary URL (images disabled?)`);
                     this.clearCardDetailsImage();
                     return;
                 }
 
-                // Determine source names for logging
-                const primarySource = primary.includes('gatherer.wizards.com') ? 'Gatherer' :
-                                     primary.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
-                const fallbackSource = fallback ?
-                    (fallback.includes('gatherer.wizards.com') ? 'Gatherer' :
-                     fallback.includes('scryfall.com') ? 'Scryfall' : 'Unknown') : null;
+                // Determine source names for logging using shared method
+                const primarySource = this.getSourceFromUrl(primary);
+                const fallbackSource = this.getSourceFromUrl(fallback);
+                const fallback2Source = this.getSourceFromUrl(fallback2);
 
                 // Debug logging - only log when card changes (we already checked above)
+                const fallbacks = [fallbackSource, fallback2Source].filter(s => s !== 'Unknown');
                 console.log(`[CardDetails] ${cardName}: NEW load from ${primarySource}` +
-                    (fallbackSource ? ` (fallback: ${fallbackSource})` : ' (no fallback)'));
+                    (fallbacks.length > 0 ? ` (fallbacks: ${fallbacks.join(' → ')})` : ' (no fallback)'));
                 console.log(`[CardDetails] ${cardName}: URL = ${primary}`);
                 console.log(`[CardDetails] Pane position: ${pane ? `x=${pane.x}, y=${pane.y}, w=${pane.width}, h=${pane.height}` : 'NONE (using fallback)'}`);
 
@@ -1298,49 +1283,69 @@ cast dark ritual</textarea>
                     this.cardDetailsImg.style.zIndex = '16';
                     this.cardDetailsImg.style.pointerEvents = 'none';
                     this.cardDetailsImg.style.objectFit = 'contain';  // Preserve aspect ratio
-                    // Error handler with fallback support
+                    // Error handler with fallback chain support
                     this.cardDetailsImg.onerror = (event) => {
                         const img = event.target;
-                        const fallbackUrl = img.dataset.fallback;
-                        const currentSrc = img.src;
-                        const fbSource = img.dataset.fallbackSource;
-                        // Try fallback if available and not already tried
-                        if (fallbackUrl && !currentSrc.includes(fallbackUrl.split('/')[2])) {
-                            console.log(`[CardDetails] ${img.dataset.cardName}: ${img.dataset.primarySource} FAILED (HTTP error), switching to ${fbSource}`);
-                            console.log(`[CardDetails] ${img.dataset.cardName}: Fallback URL = ${fallbackUrl}`);
-                            img.src = fallbackUrl;
-                            img.dataset.fallback = '';  // Clear to prevent loop
-                        } else {
-                            console.warn(`[CardDetails] ${img.dataset.cardName}: FAILED - both ${img.dataset.primarySource} and ${fbSource} failed`);
-                            CardImageOverlay.clearCardDetailsImage();
+                        const currentSource = CardImageOverlay.getSourceFromUrl(img.src);
+                        const cName = img.dataset.cardName;
+
+                        // Try first fallback
+                        const fb1 = img.dataset.fallback;
+                        if (fb1) {
+                            console.log(`[CardDetails] ${cName}: ${currentSource} FAILED (HTTP error), trying ${img.dataset.fallbackSource}`);
+                            console.log(`[CardDetails] ${cName}: Fallback URL = ${fb1}`);
+                            img.src = fb1;
+                            img.dataset.fallback = '';
+                            return;
                         }
+
+                        // Try second fallback
+                        const fb2 = img.dataset.fallback2;
+                        if (fb2) {
+                            console.log(`[CardDetails] ${cName}: ${currentSource} FAILED (HTTP error), trying ${img.dataset.fallback2Source}`);
+                            console.log(`[CardDetails] ${cName}: Fallback2 URL = ${fb2}`);
+                            img.src = fb2;
+                            img.dataset.fallback2 = '';
+                            return;
+                        }
+
+                        console.warn(`[CardDetails] ${cName}: ALL sources FAILED - no image available`);
+                        CardImageOverlay.clearCardDetailsImage();
                     };
                     // Success handler - check for Gatherer card backs
                     this.cardDetailsImg.onload = (event) => {
                         const img = event.target;
-                        const fallbackUrl = img.dataset.fallback;
-                        const fbSource = img.dataset.fallbackSource;
-
-                        // Determine which source this image came from
-                        const loadedFrom = img.src.includes('gatherer.wizards.com') ? 'Gatherer' :
-                                          img.src.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
+                        const cName = img.dataset.cardName;
+                        const loadedFrom = CardImageOverlay.getSourceFromUrl(img.src);
                         const usedFallback = loadedFrom !== img.dataset.primarySource;
 
                         // Gatherer redirects unknown cards to /assets/card_back.webp
-                        // Check the final URL for this redirect destination
                         const isCardBackUrl = img.src.includes('card_back.webp') ||
                             img.src.includes('/assets/card_back');
 
-                        if (isCardBackUrl && fallbackUrl) {
-                            console.log(`[CardDetails] ${img.dataset.cardName}: Gatherer returned CARD BACK (URL redirect), switching to ${fbSource}`);
-                            console.log(`[CardDetails] ${img.dataset.cardName}: Fallback URL = ${fallbackUrl}`);
-                            img.src = fallbackUrl;
-                            img.dataset.fallback = '';  // Clear to prevent loop
+                        if (isCardBackUrl) {
+                            // Try first fallback
+                            const fb1 = img.dataset.fallback;
+                            if (fb1) {
+                                console.log(`[CardDetails] ${cName}: Gatherer returned CARD BACK, trying ${img.dataset.fallbackSource}`);
+                                img.src = fb1;
+                                img.dataset.fallback = '';
+                                return;
+                            }
+                            // Try second fallback
+                            const fb2 = img.dataset.fallback2;
+                            if (fb2) {
+                                console.log(`[CardDetails] ${cName}: Gatherer returned CARD BACK, trying ${img.dataset.fallback2Source}`);
+                                img.src = fb2;
+                                img.dataset.fallback2 = '';
+                                return;
+                            }
+                            console.warn(`[CardDetails] ${cName}: Gatherer returned CARD BACK and no fallbacks available`);
                         } else {
-                            // Always log successful loads
+                            // Successfully loaded
                             const fallbackNote = usedFallback ? ' [FALLBACK]' : '';
-                            console.log(`[CardDetails] ${img.dataset.cardName}: ✓ LOADED from ${loadedFrom} (${img.naturalWidth}x${img.naturalHeight})${fallbackNote}`);
-                            console.log(`[CardDetails] ${img.dataset.cardName}: Final URL = ${img.src}`);
+                            console.log(`[CardDetails] ${cName}: ✓ LOADED from ${loadedFrom} (${img.naturalWidth}x${img.naturalHeight})${fallbackNote}`);
+                            console.log(`[CardDetails] ${cName}: Final URL = ${img.src}`);
                         }
                     };
                     terminal.appendChild(this.cardDetailsImg);
@@ -1351,14 +1356,16 @@ cast dark ritual</textarea>
 
                 // Store info for error/success handlers
                 this.cardDetailsImg.dataset.fallback = fallback || '';
+                this.cardDetailsImg.dataset.fallback2 = fallback2 || '';
                 this.cardDetailsImg.dataset.cardName = cardName;
                 this.cardDetailsImg.dataset.primarySource = primarySource;
                 this.cardDetailsImg.dataset.fallbackSource = fallbackSource || '';
+                this.cardDetailsImg.dataset.fallback2Source = fallback2Source || '';
 
                 // Position image centered within the backdrop area
                 // MTG card aspect ratio is 63:88 ≈ 0.716
                 const contentWidth = paneWidthPx - borderPxX * 2;
-                const contentHeight = paneHeightPx - borderPxY * 2;
+                // Note: contentHeight already declared above for image source URL selection
                 const cardAspect = 63 / 88;
 
                 let imgWidth, imgHeight;
@@ -1546,8 +1553,10 @@ cast dark ritual</textarea>
                     // Use the positions passed from WASM (avoids re-borrowing)
                     // All coordinate translation happens through TUICoordinateSystem
                     positions.forEach((cardPos) => {
-                        // Use ImageSource abstraction with fallback
-                        const { primary, fallback } = ImageSource.getImageUrlWithFallback(cardPos.name, 'small');
+                        // Calculate pixel height for size selection
+                        const heightPx = cardPos.height * (TUICoordinateSystem.cellHeightPx || 20);
+                        // Use ImageSource abstraction with fallback chain
+                        const { primary, fallback, fallback2 } = ImageSource.getImageUrlWithFallback(cardPos.name, heightPx);
                         if (primary) {
                             CardImageOverlay.setCardImageWithFallback(
                                 cardPos.card_id,
@@ -1557,7 +1566,8 @@ cast dark ritual</textarea>
                                 cardPos.height,     // Height in cells
                                 primary,
                                 fallback,
-                                cardPos.is_tapped
+                                cardPos.is_tapped,
+                                fallback2
                             );
                         }
                     });
