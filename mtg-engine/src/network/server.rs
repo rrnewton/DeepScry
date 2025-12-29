@@ -923,6 +923,8 @@ async fn handle_player_websocket(
                                 action_count: choice_request.action_count,
                                 timestamp_ms: now_ms(),
                                 context: None,
+                                // TODO(mtg-037fw): Populate in debug mode
+                                debug_info: None,
                             }).await?;
                         }
                     }
@@ -1124,6 +1126,9 @@ async fn handle_player_websocket(
                         description: info.description,
                         action_count: info.action_count,
                         timestamp_ms: info.timestamp_ms,
+                        // TODO(mtg-037fw): Populate in debug mode
+                        state_hash_after: None,
+                        debug_info: None,
                     }).await?;
                 }
             }

@@ -295,6 +295,7 @@ mod async_tests {
             action_count: 0,
             timestamp_ms: 1234567890,
             context: None,
+            debug_info: None,
         };
 
         let request_json = serde_json::to_string(&request).expect("serialize request");
@@ -306,6 +307,8 @@ mod async_tests {
             choice_index: 2, // Cast Lightning Bolt
             action_count: 0,
             timestamp_ms: 1234567891,
+            client_state_hash: None,
+            debug_info: None,
         };
 
         let response_json = serde_json::to_string(&response).expect("serialize response");
@@ -835,6 +838,8 @@ mod websocket_integration {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(0),
+                            client_state_hash: None,
+                            debug_info: None,
                         },
                     )
                     .await

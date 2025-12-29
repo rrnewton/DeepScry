@@ -64,6 +64,13 @@ pub enum ClientMessage {
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         #[serde(default)]
         timestamp_ms: u64,
+        /// Client's computed state hash (for server validation in debug mode)
+        /// When present, server compares against its expected hash
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_state_hash: Option<u64>,
+        /// Debug synchronization info (only in network debug mode)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        debug_info: Option<DebugSyncInfo>,
     },
 
     /// Request to disconnect gracefully
@@ -180,6 +187,9 @@ pub enum ServerMessage {
         /// Optional context for the choice
         #[serde(skip_serializing_if = "Option::is_none")]
         context: Option<ChoiceContext>,
+        /// Debug synchronization info (only in network debug mode)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        debug_info: Option<DebugSyncInfo>,
     },
 
     /// Notify client of opponent's choice (for sync)
@@ -199,6 +209,12 @@ pub enum ServerMessage {
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         timestamp_ms: u64,
+        /// State hash AFTER applying this choice (for client validation)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state_hash_after: Option<u64>,
+        /// Debug synchronization info (only in network debug mode)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        debug_info: Option<DebugSyncInfo>,
     },
 
     /// Acknowledge receipt of a submitted choice
@@ -229,6 +245,17 @@ pub enum ServerMessage {
         /// Final action count (undo log length) - used for sync verification
         /// In debug mode, clients should compare this against their own action_count
         action_count: u64,
+    },
+
+    /// Synchronization error detected
+    ///
+    /// Sent when server detects that client's state has diverged from server's.
+    /// Contains diagnostic information to help identify where the drift occurred.
+    SyncError {
+        /// Detailed error information
+        details: SyncErrorDetails,
+        /// Whether this is fatal (connection will close)
+        fatal: bool,
     },
 
     /// Error message
@@ -434,6 +461,238 @@ impl DeckListInfo {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// NETWORK DEBUG SYNC INFO
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Debug synchronization information for detecting and diagnosing state drift.
+///
+/// Only populated when network debug mode is enabled (`--network-debug`).
+/// Contains enough information to identify where client/server states diverged.
+///
+/// Design principle: Include only PUBLIC information that both sides can compute,
+/// so we can meaningfully compare what each side believes the state to be.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugSyncInfo {
+    /// Current turn number
+    pub turn: u32,
+    /// Current phase name (e.g., "Main1", "Combat", "End")
+    pub phase: String,
+    /// Which player's turn it is
+    pub active_player: PlayerId,
+    /// Who currently has priority (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority_player: Option<PlayerId>,
+    /// Life totals: [P1_life, P2_life]
+    pub life_totals: [i32; 2],
+    /// Hand sizes: [P1_hand_size, P2_hand_size]
+    pub hand_sizes: [usize; 2],
+    /// Library sizes: [P1_lib_size, P2_lib_size]
+    pub library_sizes: [usize; 2],
+    /// Number of permanents on battlefield
+    pub battlefield_count: usize,
+    /// Number of items on stack
+    pub stack_size: usize,
+    /// Graveyard sizes: [P1_gy_size, P2_gy_size]
+    pub graveyard_sizes: [usize; 2],
+    /// Last N actions from undo log (human-readable strings)
+    /// Typically the last 10-20 actions for debugging
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub last_actions: Vec<String>,
+}
+
+impl DebugSyncInfo {
+    /// Create a new DebugSyncInfo with default values
+    pub fn new() -> Self {
+        Self {
+            turn: 0,
+            phase: String::new(),
+            active_player: PlayerId::new(0),
+            priority_player: None,
+            life_totals: [0, 0],
+            hand_sizes: [0, 0],
+            library_sizes: [0, 0],
+            battlefield_count: 0,
+            stack_size: 0,
+            graveyard_sizes: [0, 0],
+            last_actions: Vec::new(),
+        }
+    }
+
+    /// Format for error output - concise single-line summary
+    pub fn summary(&self) -> String {
+        format!(
+            "T{}:{} active=P{} life=[{},{}] hands=[{},{}] libs=[{},{}] bf={} stack={}",
+            self.turn,
+            self.phase,
+            self.active_player.as_u32(),
+            self.life_totals[0],
+            self.life_totals[1],
+            self.hand_sizes[0],
+            self.hand_sizes[1],
+            self.library_sizes[0],
+            self.library_sizes[1],
+            self.battlefield_count,
+            self.stack_size,
+        )
+    }
+
+    /// Format detailed multi-line output for diagnostics
+    pub fn detailed(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("  Turn: {}, Phase: {}\n", self.turn, self.phase));
+        out.push_str(&format!("  Active player: P{}\n", self.active_player.as_u32()));
+        if let Some(priority) = self.priority_player {
+            out.push_str(&format!("  Priority: P{}\n", priority.as_u32()));
+        }
+        out.push_str(&format!(
+            "  Life: P1={}, P2={}\n",
+            self.life_totals[0], self.life_totals[1]
+        ));
+        out.push_str(&format!(
+            "  Hands: P1={}, P2={}\n",
+            self.hand_sizes[0], self.hand_sizes[1]
+        ));
+        out.push_str(&format!(
+            "  Libraries: P1={}, P2={}\n",
+            self.library_sizes[0], self.library_sizes[1]
+        ));
+        out.push_str(&format!(
+            "  Graveyards: P1={}, P2={}\n",
+            self.graveyard_sizes[0], self.graveyard_sizes[1]
+        ));
+        out.push_str(&format!(
+            "  Battlefield: {} cards, Stack: {} items\n",
+            self.battlefield_count, self.stack_size
+        ));
+        if !self.last_actions.is_empty() {
+            out.push_str("  Last actions:\n");
+            for (i, action) in self.last_actions.iter().enumerate() {
+                out.push_str(&format!("    [{}] {}\n", i + 1, action));
+            }
+        }
+        out
+    }
+
+    /// Compare two DebugSyncInfo and return differences
+    pub fn diff(&self, other: &DebugSyncInfo) -> Vec<String> {
+        let mut diffs = Vec::new();
+
+        if self.turn != other.turn {
+            diffs.push(format!("turn: {} vs {}", self.turn, other.turn));
+        }
+        if self.phase != other.phase {
+            diffs.push(format!("phase: {} vs {}", self.phase, other.phase));
+        }
+        if self.active_player != other.active_player {
+            diffs.push(format!(
+                "active_player: P{} vs P{}",
+                self.active_player.as_u32(),
+                other.active_player.as_u32()
+            ));
+        }
+        if self.life_totals != other.life_totals {
+            diffs.push(format!(
+                "life_totals: {:?} vs {:?}",
+                self.life_totals, other.life_totals
+            ));
+        }
+        if self.hand_sizes != other.hand_sizes {
+            diffs.push(format!("hand_sizes: {:?} vs {:?}", self.hand_sizes, other.hand_sizes));
+        }
+        if self.library_sizes != other.library_sizes {
+            diffs.push(format!(
+                "library_sizes: {:?} vs {:?}",
+                self.library_sizes, other.library_sizes
+            ));
+        }
+        if self.battlefield_count != other.battlefield_count {
+            diffs.push(format!(
+                "battlefield_count: {} vs {}",
+                self.battlefield_count, other.battlefield_count
+            ));
+        }
+        if self.stack_size != other.stack_size {
+            diffs.push(format!("stack_size: {} vs {}", self.stack_size, other.stack_size));
+        }
+        if self.graveyard_sizes != other.graveyard_sizes {
+            diffs.push(format!(
+                "graveyard_sizes: {:?} vs {:?}",
+                self.graveyard_sizes, other.graveyard_sizes
+            ));
+        }
+
+        diffs
+    }
+}
+
+impl Default for DebugSyncInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Network sync error details
+///
+/// Sent when server or client detects a state hash mismatch.
+/// Contains enough information to diagnose where divergence occurred.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncErrorDetails {
+    /// The choice sequence where mismatch was detected
+    pub choice_seq: u32,
+    /// Expected action count
+    pub expected_action_count: u64,
+    /// Actual action count reported
+    pub actual_action_count: u64,
+    /// Expected state hash
+    pub expected_hash: u64,
+    /// Actual state hash reported
+    pub actual_hash: u64,
+    /// Debug info from the side that detected the error
+    pub local_debug_info: DebugSyncInfo,
+    /// Debug info from the other side (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_debug_info: Option<DebugSyncInfo>,
+    /// Human-readable description of the mismatch
+    pub description: String,
+}
+
+impl SyncErrorDetails {
+    /// Format a detailed error report for logging
+    pub fn format_report(&self) -> String {
+        let mut report = String::new();
+        report.push_str("=== NETWORK SYNC ERROR ===\n");
+        report.push_str(&format!(
+            "Detected at: choice_seq={}, action_count={} (expected {})\n",
+            self.choice_seq, self.actual_action_count, self.expected_action_count
+        ));
+        report.push_str(&format!(
+            "Hash mismatch: actual={:016x} expected={:016x}\n",
+            self.actual_hash, self.expected_hash
+        ));
+        report.push_str(&format!("\n{}\n", self.description));
+
+        report.push_str("\nLocal state:\n");
+        report.push_str(&self.local_debug_info.detailed());
+
+        if let Some(ref remote) = self.remote_debug_info {
+            report.push_str("\nRemote state:\n");
+            report.push_str(&remote.detailed());
+
+            let diffs = self.local_debug_info.diff(remote);
+            if !diffs.is_empty() {
+                report.push_str("\nDifferences detected:\n");
+                for diff in diffs {
+                    report.push_str(&format!("  - {}\n", diff));
+                }
+            }
+        }
+
+        report.push_str("==========================\n");
+        report
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -485,6 +744,7 @@ mod tests {
             action_count: 0,
             timestamp_ms: 1234567890,
             context: None,
+            debug_info: None,
         };
 
         let json = serde_json::to_string(&msg).expect("serialize");
@@ -607,6 +867,7 @@ mod tests {
                 action_count: 0,
                 timestamp_ms: 1234567890,
                 context: None,
+                debug_info: None,
             },
             ServerMessage::CardRevealed {
                 owner: player_id,
@@ -628,6 +889,8 @@ mod tests {
                 description: "Pass priority".to_string(),
                 action_count: 0,
                 timestamp_ms: 1234567891,
+                state_hash_after: None,
+                debug_info: None,
             },
             ServerMessage::GameEnded {
                 winner: Some(player_id),
@@ -676,6 +939,8 @@ mod tests {
                 choice_index: 1,
                 action_count: 0,
                 timestamp_ms: 1234567890,
+                client_state_hash: None,
+                debug_info: None,
             },
             ClientMessage::Ping {
                 timestamp_ms: 9876543210,
