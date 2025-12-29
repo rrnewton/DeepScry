@@ -310,7 +310,9 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
         view.player_hand(player_id).len().hash(&mut hasher);
 
         // Library SIZE only (contents are private)
-        view.player_library(player_id).len().hash(&mut hasher);
+        // Use player_library_size() to correctly handle remote libraries
+        // (client shadow state where cards vec is empty but size is tracked)
+        view.player_library_size(player_id).hash(&mut hasher);
 
         // Graveyard contents (public zone - include card IDs in order)
         let graveyard = view.player_graveyard(player_id);
@@ -377,7 +379,9 @@ pub fn build_debug_sync_info(
         priority_player: None, // Would need more context to determine
         life_totals: [view.player_life(p1), view.player_life(p2)],
         hand_sizes: [view.player_hand(p1).len(), view.player_hand(p2).len()],
-        library_sizes: [view.player_library(p1).len(), view.player_library(p2).len()],
+        // Use player_library_size() to correctly handle remote libraries
+        // (client shadow state where cards vec is empty but size is tracked)
+        library_sizes: [view.player_library_size(p1), view.player_library_size(p2)],
         battlefield_count: view.battlefield().len(),
         stack_size: view.stack().len(),
         graveyard_sizes: [view.player_graveyard(p1).len(), view.player_graveyard(p2).len()],

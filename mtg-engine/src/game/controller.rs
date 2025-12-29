@@ -475,6 +475,18 @@ impl<'a> GameStateView<'a> {
             .unwrap_or(&[])
     }
 
+    /// Get the size of a player's library
+    ///
+    /// This differs from `player_library().len()` because it correctly handles
+    /// remote libraries (client shadow state) where the cards vector is empty
+    /// but the size is tracked separately.
+    pub fn player_library_size(&self, player_id: PlayerId) -> usize {
+        self.game
+            .get_player_zones(player_id)
+            .map(|zones| zones.library.len())
+            .unwrap_or(0)
+    }
+
     /// Check if a card is in a specific zone
     pub fn is_card_in_zone(&self, card_id: CardId, zone: Zone) -> bool {
         match zone {
