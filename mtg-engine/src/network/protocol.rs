@@ -1,10 +1,37 @@
 //! Network protocol message types
 //!
 //! Defines all messages exchanged between client and server.
+//!
+//! ## Global Ordering
+//!
+//! All messages include timing information for debugging synchronization issues:
+//! - `action_count`: Position in the global action log (like a blockchain block number).
+//!   This is the authoritative ordering - server and all clients must agree.
+//! - `timestamp_ms`: Wall-clock milliseconds since Unix epoch for debugging.
+//!
+//! ## Player Identification
+//!
+//! Messages explicitly identify which player they concern using `PlayerId`:
+//! - P1 = PlayerId(0), P2 = PlayerId(1)
+//! - ChoiceRequest includes `for_player` to identify who must respond
+//! - OpponentChoice, CardRevealed include owner/player for context
 
 use crate::core::{CardId, ManaCost, PlayerId};
 use crate::game::GameEndReason;
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GLOBAL TIMESTAMP UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get current wall-clock timestamp in milliseconds since Unix epoch
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT → SERVER MESSAGES
@@ -34,6 +61,9 @@ pub enum ClientMessage {
         /// Used for synchronization validation - server verifies this matches expected
         #[serde(default)]
         action_count: u64,
+        /// Wall-clock timestamp for debugging (ms since Unix epoch)
+        #[serde(default)]
+        timestamp_ms: u64,
     },
 
     /// Request to disconnect gracefully
@@ -133,6 +163,9 @@ pub enum ServerMessage {
     ChoiceRequest {
         /// Sequence number for response correlation
         choice_seq: u32,
+        /// Which player must make this choice (P1=0, P2=1)
+        /// This is always the local player for the receiving client
+        for_player: PlayerId,
         /// Type of choice being requested
         choice_type: ChoiceType,
         /// Human-readable options (for verification against client's local computation)
@@ -142,6 +175,8 @@ pub enum ServerMessage {
         /// Action count at this decision point (undo log position)
         /// Client should verify this matches their local action count
         action_count: u64,
+        /// Wall-clock timestamp for debugging (ms since Unix epoch)
+        timestamp_ms: u64,
         /// Optional context for the choice
         #[serde(skip_serializing_if = "Option::is_none")]
         context: Option<ChoiceContext>,
@@ -151,6 +186,8 @@ pub enum ServerMessage {
     OpponentChoice {
         /// Choice sequence number
         choice_seq: u32,
+        /// Which player made this choice (P1=0, P2=1)
+        player: PlayerId,
         /// What type of choice was made
         choice_type: ChoiceType,
         /// The choice index selected
@@ -160,6 +197,8 @@ pub enum ServerMessage {
         /// Action count when this choice was made
         /// Client uses this to verify they're at the same position
         action_count: u64,
+        /// Wall-clock timestamp for debugging (ms since Unix epoch)
+        timestamp_ms: u64,
     },
 
     /// Acknowledge receipt of a submitted choice
@@ -173,6 +212,9 @@ pub enum ServerMessage {
         /// Client can verify this matches their expected count
         #[serde(default)]
         action_count: u64,
+        /// Wall-clock timestamp for debugging (ms since Unix epoch)
+        #[serde(default)]
+        timestamp_ms: u64,
     },
 
     /// Game has ended
@@ -432,6 +474,7 @@ mod tests {
     fn test_server_message_serialization() {
         let msg = ServerMessage::ChoiceRequest {
             choice_seq: 42,
+            for_player: PlayerId::new(0),
             choice_type: ChoiceType::Priority { available_count: 3 },
             options: vec![
                 "Pass priority".to_string(),
@@ -440,6 +483,7 @@ mod tests {
             ],
             state_hash: 0xDEADBEEF,
             action_count: 0,
+            timestamp_ms: 1234567890,
             context: None,
         };
 
@@ -556,10 +600,12 @@ mod tests {
             },
             ServerMessage::ChoiceRequest {
                 choice_seq: 1,
+                for_player: player_id,
                 choice_type: ChoiceType::Priority { available_count: 2 },
                 options: vec!["Pass".to_string(), "Play Mountain".to_string()],
                 state_hash: 0xABCDEF,
                 action_count: 0,
+                timestamp_ms: 1234567890,
                 context: None,
             },
             ServerMessage::CardRevealed {
@@ -576,10 +622,12 @@ mod tests {
             },
             ServerMessage::OpponentChoice {
                 choice_seq: 5,
+                player: player_id,
                 choice_type: ChoiceType::Priority { available_count: 0 },
                 choice_index: 0,
                 description: "Pass priority".to_string(),
                 action_count: 0,
+                timestamp_ms: 1234567891,
             },
             ServerMessage::GameEnded {
                 winner: Some(player_id),
@@ -627,6 +675,7 @@ mod tests {
                 choice_seq: 42,
                 choice_index: 1,
                 action_count: 0,
+                timestamp_ms: 1234567890,
             },
             ClientMessage::Ping {
                 timestamp_ms: 9876543210,

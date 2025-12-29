@@ -789,7 +789,7 @@ impl NetworkClient {
                                             choice_seq,
                                         });
                                     }
-                                    Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count }) => {
+                                    Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count, .. }) => {
                                         // Server accepted our choice - validate action_count in debug mode
                                         if debug_mode {
                                             if let Some(client_action_count) = last_sent_action_count {
@@ -905,6 +905,7 @@ impl NetworkClient {
                                 choice_seq: choice_seq_to_send,
                                 choice_index: choice.choice_index,
                                 action_count: action_count_to_send,
+                                timestamp_ms: crate::network::protocol::now_ms(),
                             };
                             let text = serde_json::to_string(&msg).unwrap();
                             if ws_sink.send(Message::Text(text.into())).await.is_err() {

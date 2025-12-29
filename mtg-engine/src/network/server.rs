@@ -11,7 +11,7 @@ use crate::core::{CardId, PlayerId};
 use crate::game::{GameEndReason, GameLoop, GameResult, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::protocol::{
-    CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
+    now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
 };
 use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
@@ -114,6 +114,8 @@ struct GameEndInfo {
 struct OpponentChoiceInfo {
     /// Choice sequence number
     choice_seq: u32,
+    /// Which player made this choice (P1=0, P2=1)
+    player: PlayerId,
     /// Type of choice
     choice_type: ChoiceType,
     /// Index of the chosen option
@@ -122,6 +124,8 @@ struct OpponentChoiceInfo {
     description: String,
     /// Action count at time of choice (for sync validation)
     action_count: u64,
+    /// Wall-clock timestamp for debugging
+    timestamp_ms: u64,
 }
 
 /// Card reveal info to broadcast to a player
@@ -888,15 +892,18 @@ async fn handle_player_websocket(
                             conn.send(&ServerMessage::ChoiceAccepted {
                                 choice_seq: pending.choice_seq,
                                 action_count: choice_request.action_count,
+                                timestamp_ms: now_ms(),
                             }).await?;
 
                             // Broadcast to opponent with proper choice_type
                             let opponent_info = OpponentChoiceInfo {
                                 choice_seq: pending.choice_seq,
+                                player: conn.player_id,
                                 choice_type: conn.current_choice_type.take().unwrap(),
                                 choice_index: pending.choice_index,
                                 description: format!("Choice #{}", pending.choice_seq),
                                 action_count: choice_request.action_count,
+                                timestamp_ms: now_ms(),
                             };
                             log::info!(
                                 "Player {:?}: Broadcasting pending choice {} to opponent",
@@ -909,10 +916,12 @@ async fn handle_player_websocket(
                             // Normal case: send ChoiceRequest to client
                             conn.send(&ServerMessage::ChoiceRequest {
                                 choice_seq: choice_request.choice_seq,
+                                for_player: conn.player_id,
                                 choice_type: choice_request.choice_type,
                                 options: choice_request.options,
                                 state_hash: choice_request.state_hash,
                                 action_count: choice_request.action_count,
+                                timestamp_ms: now_ms(),
                                 context: None,
                             }).await?;
                         }
@@ -929,7 +938,7 @@ async fn handle_player_websocket(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count }) => {
+                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count, .. }) => {
                                 // Check if we've sent a ChoiceRequest yet (tracked by expected_action_count)
                                 // If not, the client is ahead of us (synchronized GameLoop timing)
                                 // and we need to queue this choice for later processing.
@@ -959,6 +968,7 @@ async fn handle_player_websocket(
                                     conn.send(&ServerMessage::ChoiceAccepted {
                                         choice_seq,
                                         action_count: expected,
+                                        timestamp_ms: now_ms(),
                                     }).await?;
 
                                     // Broadcast to opponent with proper choice_type
@@ -967,10 +977,12 @@ async fn handle_player_websocket(
                                         .expect("current_choice_type should be set when expected_action_count is set");
                                     let opponent_info = OpponentChoiceInfo {
                                         choice_seq,
+                                        player: conn.player_id,
                                         choice_type,
                                         choice_index,
                                         description: format!("Choice #{}", choice_seq),
                                         action_count: expected,
+                                        timestamp_ms: now_ms(),
                                     };
                                     log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
                                     if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
@@ -1106,10 +1118,12 @@ async fn handle_player_websocket(
 
                     conn.send(&ServerMessage::OpponentChoice {
                         choice_seq: info.choice_seq,
+                        player: info.player,
                         choice_type: info.choice_type,
                         choice_index: info.choice_index,
                         description: info.description,
                         action_count: info.action_count,
+                        timestamp_ms: info.timestamp_ms,
                     }).await?;
                 }
             }

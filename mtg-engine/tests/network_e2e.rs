@@ -284,6 +284,7 @@ mod async_tests {
         // Server sends choice request
         let request = ServerMessage::ChoiceRequest {
             choice_seq: 42,
+            for_player: PlayerId::new(0),
             choice_type: ChoiceType::Priority { available_count: 3 },
             options: vec![
                 "Pass priority".to_string(),
@@ -292,6 +293,7 @@ mod async_tests {
             ],
             state_hash: 0xDEADBEEF,
             action_count: 0,
+            timestamp_ms: 1234567890,
             context: None,
         };
 
@@ -303,6 +305,7 @@ mod async_tests {
             choice_seq: 42,
             choice_index: 2, // Cast Lightning Bolt
             action_count: 0,
+            timestamp_ms: 1234567891,
         };
 
         let response_json = serde_json::to_string(&response).expect("serialize response");
@@ -828,6 +831,10 @@ mod websocket_integration {
                             choice_seq,
                             choice_index,
                             action_count: 0,
+                            timestamp_ms: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0),
                         },
                     )
                     .await

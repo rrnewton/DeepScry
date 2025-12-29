@@ -7,6 +7,7 @@ allowing us to test the networking stack with existing agentplay tests.
 
 Usage:
     ./scripts/mtg_tui_networked.py [mtg tui args...]
+    ./scripts/mtg_tui_networked.py --merge-logs <gamelog_dir>  # Merge logs by timestamp
 
 Environment variables:
     MTG_BINARY: Path to mtg binary (default: ./target/release/mtg)
@@ -20,6 +21,7 @@ Supported options:
     - --seed-p1, --seed-p2 (controller seeds)
     - --verbosity, --visual-stacks, etc.
     - --tag-gamelogs (enables [GAMELOG] tagging on server AND clients)
+    - --merge-logs (utility: merge captured logs by timestamp)
 
 Limitations (will error if used):
     - --deck-seed (library ordering not supported)
@@ -35,16 +37,138 @@ Limitations (will error if used):
 For 4-way gamelog equivalence testing:
     Set MTG_GAMELOG_DIR to capture gamelogs from all 3 processes (server, P1, P2)
     to separate files that can be compared for equivalence.
+
+Log Analysis:
+    After running with MTG_GAMELOG_DIR, use --merge-logs to view unified timeline:
+        ./scripts/mtg_tui_networked.py --merge-logs /tmp/gamelogs
+    This merges server.log, p1.log, p2.log into one timeline ordered by timestamps.
 """
 
 import argparse
+import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+
+def merge_logs(gamelog_dir: str, output_file=None):
+    """
+    Merge server.log, p1.log, p2.log into a unified timeline ordered by action_count/timestamp.
+
+    Each line with a timestamp or action_count is tagged with its source (SERVER/P1/P2)
+    and sorted chronologically.
+
+    The protocol includes timestamps in messages like:
+    - ChoiceRequest: timestamp_ms, action_count, for_player
+    - OpponentChoice: timestamp_ms, action_count, player
+    - SubmitChoice: timestamp_ms, action_count
+
+    This function extracts timing information and creates a unified view.
+    """
+    log_files = {
+        'SERVER': os.path.join(gamelog_dir, 'server.log'),
+        'P1': os.path.join(gamelog_dir, 'p1.log'),
+        'P2': os.path.join(gamelog_dir, 'p2.log'),
+    }
+
+    entries = []
+
+    # Regex patterns for extracting timing information
+    # Match RUST_LOG style: "2025-01-02T12:34:56.789Z INFO ..."
+    rust_log_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s+(.*)$')
+    # Match action_count in debug messages
+    action_count_pattern = re.compile(r'action_count[=:]?\s*(\d+)', re.IGNORECASE)
+    # Match [GAMELOG Turn N PHASE] prefix
+    gamelog_pattern = re.compile(r'^\[GAMELOG\s+Turn\s*(\d+)\s+([^\]]+)\](.*)$')
+
+    for source, log_path in log_files.items():
+        if not os.path.exists(log_path):
+            print(f"Warning: {log_path} not found", file=sys.stderr)
+            continue
+
+        with open(log_path, 'r') as f:
+            line_num = 0
+            for line in f:
+                line_num += 1
+                line = line.rstrip('\n')
+                if not line:
+                    continue
+
+                # Try to extract timestamp from RUST_LOG format
+                timestamp = None
+                rust_match = rust_log_pattern.match(line)
+                if rust_match:
+                    timestamp = rust_match.group(1)
+
+                # Try to extract action_count
+                action_count = None
+                ac_match = action_count_pattern.search(line)
+                if ac_match:
+                    action_count = int(ac_match.group(1))
+
+                # Try to extract turn/phase from [GAMELOG] tags
+                turn = None
+                phase = None
+                gamelog_match = gamelog_pattern.match(line)
+                if gamelog_match:
+                    turn = int(gamelog_match.group(1))
+                    phase = gamelog_match.group(2).strip()
+
+                # Create sort key: (action_count or 0, timestamp or '', line_num)
+                sort_key = (
+                    action_count if action_count is not None else 0,
+                    turn if turn is not None else 0,
+                    timestamp if timestamp else '',
+                    line_num
+                )
+
+                entries.append({
+                    'source': source,
+                    'line_num': line_num,
+                    'line': line,
+                    'sort_key': sort_key,
+                    'action_count': action_count,
+                    'turn': turn,
+                    'phase': phase,
+                    'timestamp': timestamp,
+                })
+
+    # Sort by action_count, then turn, then timestamp, then line number
+    entries.sort(key=lambda e: e['sort_key'])
+
+    # Output merged logs
+    out = open(output_file, 'w') if output_file else sys.stdout
+
+    try:
+        prev_action_count = None
+        for entry in entries:
+            # Add separator when action_count changes
+            if entry['action_count'] is not None and entry['action_count'] != prev_action_count:
+                if prev_action_count is not None:
+                    print("", file=out)  # Empty line separator
+                prev_action_count = entry['action_count']
+
+            # Format: [SOURCE] line
+            prefix = f"[{entry['source']:6s}]"
+            if entry['action_count'] is not None:
+                prefix += f" ac={entry['action_count']:4d}"
+            if entry['turn'] is not None:
+                prefix += f" T{entry['turn']}"
+
+            print(f"{prefix} {entry['line']}", file=out)
+    finally:
+        if output_file:
+            out.close()
+
+    if output_file:
+        print(f"Merged logs written to: {output_file}", file=sys.stderr)
+    else:
+        print(f"\n--- End of merged logs ({len(entries)} lines) ---", file=sys.stderr)
 
 
 def find_free_port():
@@ -88,6 +212,12 @@ def parse_args():
     # Help
     parser.add_argument('-h', '--help', action='store_true')
 
+    # Utility mode: merge logs
+    parser.add_argument('--merge-logs', metavar='DIR',
+                        help='Merge server/p1/p2 logs from DIR into unified timeline')
+    parser.add_argument('--merge-output', metavar='FILE',
+                        help='Output file for merged logs (default: stdout)')
+
     # Unsupported options (we'll detect and error)
     parser.add_argument('--seed', default=None)
     parser.add_argument('--deck-seed', default=None)
@@ -118,6 +248,12 @@ def parse_args():
         print("  --verbosity: Output verbosity")
         print("  --visual-stacks: Enable visual stacking")
         print("  --tag-gamelogs: Tag game actions with [GAMELOG] prefix (passed to server)")
+        print("\nUtility mode:")
+        print("  --merge-logs DIR: Merge server/p1/p2 logs into unified timeline")
+        print("  --merge-output FILE: Output file for merged logs (default: stdout)")
+        print("\nExample:")
+        print("  MTG_GAMELOG_DIR=/tmp/gamelogs ./scripts/mtg_tui_networked.py deck.dck")
+        print("  ./scripts/mtg_tui_networked.py --merge-logs /tmp/gamelogs")
         sys.exit(0)
 
     # Check for unsupported options
@@ -160,6 +296,14 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Handle utility mode: merge logs
+    if args.merge_logs:
+        if not os.path.isdir(args.merge_logs):
+            print(f"ERROR: {args.merge_logs} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        merge_logs(args.merge_logs, args.merge_output)
+        sys.exit(0)
 
     # Get configuration from environment
     mtg_binary = os.environ.get('MTG_BINARY', './target/release/mtg')
