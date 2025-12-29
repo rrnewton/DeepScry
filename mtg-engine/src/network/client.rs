@@ -915,9 +915,9 @@ impl NetworkClient {
                                 choice_index: choice.choice_index,
                                 action_count: action_count_to_send,
                                 timestamp_ms: crate::network::protocol::now_ms(),
-                                // TODO(mtg-037fw): Populate these in debug mode
-                                client_state_hash: None,
-                                debug_info: None,
+                                // Include debug fields when network_debug is enabled
+                                client_state_hash: choice.client_state_hash,
+                                debug_info: choice.debug_info,
                             };
                             let text = serde_json::to_string(&msg).unwrap();
                             if ws_sink.send(Message::Text(text.into())).await.is_err() {
