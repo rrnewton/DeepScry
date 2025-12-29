@@ -139,3 +139,57 @@ Lower priority prerequisites (from mtg-bfm38):
 
 **Blockers for Phase 2:**
 - Client GameLoop sync issues - need to fix NetworkLocalController timing
+
+## Root Cause Analysis (2025-12-29)
+
+**The Problem:** Games hang around Turn 3-7 due to **game state drift** between client shadow state and server authoritative state.
+
+**Architecture:**
+```
+Server                          Client (e.g., P1)
+══════                          ═══════════════════
+GameLoop (authoritative)        GameLoop (shadow state)
+  ├─► NetworkController P1        ├─► NetworkLocalController (us)
+  └─► NetworkController P2        └─► RemoteController (opponent)
+```
+
+**Sync Mechanism:**
+1. For **our choices**: `NetworkLocalController.wait_for_choice_request()` blocks until server sends `ChoiceRequest`
+2. For **opponent choices**: `RemoteController.wait_for_choice()` blocks until server sends `OpponentChoice`
+
+**The Deadlock Scenario:**
+
+When client and server game states diverge (even slightly), they may disagree about **whose turn it is** or **who has priority**:
+
+```
+Server state: Player 1 has priority → sends ChoiceRequest to P1
+Client state: Player 2 has priority → P1's GameLoop asks RemoteController for P2's choice
+
+Result: Server waits for P1's SubmitChoice
+        Client waits for OpponentChoice for P2
+        DEADLOCK!
+```
+
+**Why State Drifts:**
+1. **Card reveals**: Libraries differ between server (full cards) and client (CardIds only until revealed)
+2. **Draw timing**: Client must receive CardRevealed before draw, any timing issues cause drift
+3. **Token creation**: New tokens need proper CardId synchronization
+4. **Mana payment choices**: Multi-step mana payment may diverge
+
+**Evidence:**
+- Test `test_run_game_with_random_controllers` times out at Turn 3-4 with "Client 1 timed out"
+- Last logged state shows both players at 20 life, game running normally
+- Then suddenly hangs without errors - classic deadlock pattern
+
+**Required Fix:**
+The fundamental issue is that client's GameLoop is **racing independently** against server's GameLoop. Even with wait_for_choice_request(), if the GameLoop reaches a choice point for the **wrong player** first, we deadlock.
+
+**Potential Solutions:**
+
+1. **Explicit turn/phase sync**: Server broadcasts current phase/turn to clients before each choice, clients verify their state matches
+
+2. **Choice type in ChoiceRequest**: Include which controller type the server expects (local vs remote), client can validate or recover
+
+3. **Server-driven model**: Instead of running parallel GameLoops, have server tell client exactly what state changes to apply
+
+4. **State hash validation**: Before each choice, compare state hashes; if mismatch, resync from server snapshot
