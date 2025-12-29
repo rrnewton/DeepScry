@@ -1,0 +1,56 @@
+{
+  "description": "Image size classifications for MTG card images",
+  "note": "We classify by HEIGHT only, staying agnostic to exact resolutions which vary by source",
+  "size_buckets": {
+    "small": {
+      "height_range": [200, 500],
+      "description": "Battlefield view - compact cards",
+      "typical_sources": ["Scryfall small (204px)", "Gatherer (~310px)"]
+    },
+    "medium": {
+      "height_range": [500, 1100],
+      "description": "Detail view - readable text",
+      "typical_sources": ["Scryfall normal (680px)", "Some high-res variants (~974-987px)"]
+    },
+    "large": {
+      "height_range": [1100, null],
+      "description": "Full resolution - printing quality",
+      "typical_sources": ["Scryfall large", "Scryfall png"]
+    }
+  },
+  "local_directories": {
+    "small/": {
+      "bucket": "small",
+      "observed_dimensions": [
+        {"dimensions": "146x204", "count": 31267, "primary": true},
+        {"dimensions": "204x292", "count": 123},
+        {"dimensions": "208x296", "count": 106}
+      ]
+    },
+    "normal/": {
+      "bucket": "medium",
+      "observed_dimensions": [
+        {"dimensions": "488x680", "count": 31267, "primary": true},
+        {"dimensions": "681x974", "count": 123},
+        {"dimensions": "694x987", "count": 106}
+      ]
+    }
+  },
+  "sources": {
+    "gatherer": {
+      "url_pattern": "https://gatherer.wizards.com/Handlers/Image.ashx?name={name}&type=card",
+      "typical_height": 310,
+      "bucket": "small",
+      "notes": "Single size only, ~223x310 pixels"
+    },
+    "scryfall": {
+      "url_pattern": "https://api.scryfall.com/cards/{set}/{num}?format=image&version={version}",
+      "versions": {
+        "small": {"typical_height": 204, "bucket": "small"},
+        "normal": {"typical_height": 680, "bucket": "medium"},
+        "large": {"typical_height": 936, "bucket": "medium"},
+        "png": {"typical_height": 1040, "bucket": "medium"}
+      }
+    }
+  }
+}
