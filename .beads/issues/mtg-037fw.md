@@ -95,6 +95,12 @@ Lower priority prerequisites (from mtg-bfm38):
 - [x] Add protocol timestamps for debugging
 
 **In Progress (sync debugging):**
+- [x] Add DebugSyncInfo and SyncErrorDetails types to protocol
+- [x] Add optional debug fields to SubmitChoice, ChoiceRequest, OpponentChoice
+- [x] Add SyncError message variant
+- [ ] Create compute_view_hash function (replace compute_simple_hash)
+- [ ] Wire up debug mode in server/client with hash validation
+- [ ] Add CLI flags: --network-debug, --network-debug-halt
 - [ ] Debug client/server desync around Turn 5-7
 - [ ] Re-enable network tests once sync is stable
 
