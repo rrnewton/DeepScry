@@ -85,7 +85,7 @@ impl CardLoader {
                             )));
                         }
                     }
-                    "Oracle" => oracle = value.to_string(),
+                    "Oracle" => oracle = value.replace("\\n", "\n"),
                     // Keyword lines (K:)
                     "K" => {
                         raw_keywords.push(value.to_string());
