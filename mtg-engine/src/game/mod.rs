@@ -79,7 +79,9 @@ pub use replay_controller::{ReplayChoice, ReplayController};
 pub use rich_input_controller::RichInputController;
 pub use snapshot::{ControllerState, ControllerType, GameSnapshot, SnapshotError};
 pub use state::GameState;
-pub use state_hash::{compute_state_hash, compute_undo_test_hash, format_hash};
+pub use state_hash::{
+    build_debug_sync_info, compute_state_hash, compute_undo_test_hash, compute_view_hash, format_hash,
+};
 pub use stop_condition::{StopCondition, StopPlayer};
 pub use zero_controller::ZeroController;
 

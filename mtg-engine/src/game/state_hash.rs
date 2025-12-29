@@ -270,6 +270,120 @@ pub fn compute_network_state_hash(game: &GameState) -> u64 {
     compute_state_hash_with_mode(game, HashMode::Network)
 }
 
+/// Compute a network-safe state hash from a GameStateView
+///
+/// This function computes the same hash as `compute_network_state_hash(game)`
+/// but works with a GameStateView, which is what controllers have access to.
+///
+/// The hash includes only PUBLIC information visible to both server and client:
+/// - Turn number, active player, current step/phase
+/// - Life totals for all players
+/// - Hand SIZES (not contents)
+/// - Library SIZES (not contents)
+/// - Graveyard contents (public zone)
+/// - Battlefield cards with tap status and controller
+/// - Stack contents
+/// - Action count (undo log length)
+///
+/// This is designed to produce identical results on server and all clients.
+pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
+    use crate::core::PlayerId;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+
+    // ═══ Game Metadata ═══
+    view.turn_number().hash(&mut hasher);
+    view.active_player().as_u32().hash(&mut hasher);
+    // Use discriminant for step since it may not implement Hash
+    std::mem::discriminant(&view.current_step()).hash(&mut hasher);
+    view.action_count().hash(&mut hasher);
+
+    // ═══ Player State (2 players) ═══
+    for player_idx in 0..2u32 {
+        let player_id = PlayerId::new(player_idx);
+
+        // Life total (public)
+        view.player_life(player_id).hash(&mut hasher);
+
+        // Hand SIZE only (contents are private)
+        view.player_hand(player_id).len().hash(&mut hasher);
+
+        // Library SIZE only (contents are private)
+        view.player_library(player_id).len().hash(&mut hasher);
+
+        // Graveyard contents (public zone - include card IDs in order)
+        let graveyard = view.player_graveyard(player_id);
+        graveyard.len().hash(&mut hasher);
+        for &card_id in graveyard {
+            card_id.as_u32().hash(&mut hasher);
+        }
+    }
+
+    // ═══ Battlefield (public zone) ═══
+    // Sort by CardId for deterministic ordering
+    let mut battlefield_cards: Vec<_> = view.battlefield().to_vec();
+    battlefield_cards.sort_by_key(|id| id.as_u32());
+
+    battlefield_cards.len().hash(&mut hasher);
+    for card_id in battlefield_cards {
+        card_id.as_u32().hash(&mut hasher);
+        // Include tap status (public information)
+        view.is_tapped(card_id).hash(&mut hasher);
+        // Include controller if we can get it from the card
+        if let Some(card) = view.get_card(card_id) {
+            card.controller.as_u32().hash(&mut hasher);
+        }
+    }
+
+    // ═══ Stack (public zone) ═══
+    let stack = view.stack();
+    stack.len().hash(&mut hasher);
+    for &card_id in stack {
+        card_id.as_u32().hash(&mut hasher);
+    }
+
+    hasher.finish()
+}
+
+/// Build a DebugSyncInfo from a GameStateView
+///
+/// Creates debug synchronization information for network sync debugging.
+/// Used to populate the debug_info field in network messages.
+pub fn build_debug_sync_info(
+    view: &crate::game::controller::GameStateView,
+    last_action_count: usize,
+) -> crate::network::DebugSyncInfo {
+    use crate::core::PlayerId;
+    use crate::network::DebugSyncInfo;
+
+    let p1 = PlayerId::new(0);
+    let p2 = PlayerId::new(1);
+
+    let last_actions: Vec<String> = if last_action_count > 0 {
+        view.format_last_n_actions(last_action_count)
+            .lines()
+            .map(|s| s.to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    DebugSyncInfo {
+        turn: view.turn_number(),
+        phase: format!("{:?}", view.current_step()),
+        active_player: view.active_player(),
+        priority_player: None, // Would need more context to determine
+        life_totals: [view.player_life(p1), view.player_life(p2)],
+        hand_sizes: [view.player_hand(p1).len(), view.player_hand(p2).len()],
+        library_sizes: [view.player_library(p1).len(), view.player_library(p2).len()],
+        battlefield_count: view.battlefield().len(),
+        stack_size: view.stack().len(),
+        graveyard_sizes: [view.player_graveyard(p1).len(), view.player_graveyard(p2).len()],
+        last_actions,
+    }
+}
+
 /// Recursively strip fields based on hash mode
 fn strip_fields_for_mode(value: serde_json::Value, mode: HashMode) -> serde_json::Value {
     let excluded_fields: &[&str] = match mode {

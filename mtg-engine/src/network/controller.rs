@@ -312,18 +312,13 @@ impl NetworkController {
         reveals
     }
 
-    /// Compute a simple state hash for verification
+    /// Compute a network-safe state hash for verification
     ///
-    /// This uses a simplified approach since we can't easily access
-    /// the full GameState from GameStateView. In production, the server
-    /// would compute the proper network state hash.
-    fn compute_simple_hash(&self, view: &GameStateView) -> u64 {
-        // Use turn number and player life totals as a simple hash
-        // This is a placeholder - in production we'd use compute_network_state_hash
-        let mut hash: u64 = 0;
-        hash = hash.wrapping_add(view.turn_number() as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(view.life() as u64);
-        hash
+    /// Uses `compute_view_hash` to compute a deterministic hash from the view.
+    /// This produces identical results on server and client for the same
+    /// game state, enabling early sync drift detection.
+    fn compute_view_hash(&self, view: &GameStateView) -> u64 {
+        crate::game::compute_view_hash(view)
     }
 }
 
@@ -344,7 +339,7 @@ impl PlayerController for NetworkController {
         }
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request and get response
         let choice_type = ChoiceType::Priority {
@@ -388,7 +383,7 @@ impl PlayerController for NetworkController {
         }
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::Targets {
@@ -423,7 +418,7 @@ impl PlayerController for NetworkController {
             .collect();
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::ManaSources { cost: *cost };
@@ -455,7 +450,7 @@ impl PlayerController for NetworkController {
         }
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::Attackers {
@@ -501,7 +496,7 @@ impl PlayerController for NetworkController {
         }
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::Blockers {
@@ -548,7 +543,7 @@ impl PlayerController for NetworkController {
             .collect();
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::DamageOrder {
@@ -592,7 +587,7 @@ impl PlayerController for NetworkController {
             .collect();
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::Discard { count };
@@ -620,7 +615,7 @@ impl PlayerController for NetworkController {
         }
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::LibrarySearch {
@@ -660,7 +655,7 @@ impl PlayerController for NetworkController {
             .collect();
 
         // Compute state hash
-        let state_hash = self.compute_simple_hash(view);
+        let state_hash = self.compute_view_hash(view);
 
         // Send request
         let choice_type = ChoiceType::Sacrifice {
