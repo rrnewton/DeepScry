@@ -35,6 +35,9 @@ pub enum ControllerType {
     Fixed,
     #[serde(rename = "fancyfixed")]
     FancyFixed,
+    /// Remote controller - receives choices from network server
+    /// Used in network games where the opponent's choices are unknown locally
+    Remote,
 }
 
 /// Default controller type for backward compatibility with old snapshots

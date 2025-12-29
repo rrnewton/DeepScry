@@ -5,6 +5,7 @@
 
 use crate::core::CardId;
 use crate::game::controller::{format_choice_menu, GameStateView, PlayerController};
+use crate::game::snapshot::ControllerType;
 use crate::game::GameState;
 use crate::{handle_choice_result, handle_choice_result_break, Result};
 use smallvec::SmallVec;
@@ -239,7 +240,12 @@ impl<'a> GameLoop<'a> {
 
                     // If no actions available, automatically pass priority without asking controller
                     // Only invoke controller when there's an actual choice to make
-                    if available_count == 0 {
+                    //
+                    // EXCEPTION: Remote controllers MUST always be asked, because we don't know
+                    // opponent's hidden hand contents and thus can't compute their available actions.
+                    // The server will send the actual ability via OpponentChoice.
+                    let is_remote = controller.get_controller_type() == ControllerType::Remote;
+                    if available_count == 0 && !is_remote {
                         // No available actions - automatically pass priority
                         break None;
                     }

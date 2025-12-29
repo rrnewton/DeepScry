@@ -306,6 +306,16 @@ impl CardZone {
             0
         }
     }
+
+    /// Decrement the remote library size by 1 (for cards already drawn server-side)
+    ///
+    /// Used for opening hand reveals where the server has already drawn the cards
+    /// and we just need to update our tracked size. No-op for local libraries.
+    pub fn decrement_size(&mut self) {
+        if let Some(ref mut mode) = self.library_mode {
+            mode.decrement_size();
+        }
+    }
 }
 
 /// Collection of all zones for a player

@@ -1922,6 +1922,8 @@ async fn run_resume(
             mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
             mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
             mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
+            // Remote controllers can't be restored from snapshot - they require network
+            mtg_forge_rs::game::ControllerType::Remote => ControllerType::Zero,
         }
     });
 
@@ -1934,6 +1936,8 @@ async fn run_resume(
             mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
             mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
             mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
+            // Remote controllers can't be restored from snapshot - they require network
+            mtg_forge_rs::game::ControllerType::Remote => ControllerType::Zero,
         }
     });
 

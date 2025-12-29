@@ -54,6 +54,15 @@ use smallvec::SmallVec;
 /// Used by network clients to drain reveals from the server before each draw.
 type RevealDrainer = Box<dyn Fn(&mut GameState) + Send>;
 
+/// Callback type for pushing reveals AFTER automatic actions (like draws).
+///
+/// This function is called after automatic actions that reveal cards.
+/// It receives a reference to the game state and the player who performed the action.
+/// The callback should collect any new reveals and broadcast them immediately.
+///
+/// Used by network servers to push reveals to clients without waiting for ChoiceRequests.
+type RevealPusher = Box<dyn Fn(&GameState, PlayerId) + Send>;
+
 // Module structure
 mod actions;
 mod combat;
@@ -183,11 +192,16 @@ pub struct GameLoop<'a> {
     deck_seed: Option<u64>,
     /// The main game seed to use after shuffling (only needed when deck_seed is set)
     game_seed: Option<u64>,
-    /// Optional reveal drainer for network mode
+    /// Optional reveal drainer for network mode (client-side)
     ///
     /// When set, this function is called before each draw to process pending card
     /// reveals from the server and queue them into the appropriate player's library.
     reveal_drainer: Option<RevealDrainer>,
+    /// Optional reveal pusher for network mode (server-side)
+    ///
+    /// When set, this function is called after automatic actions (like draws) to
+    /// push reveals to clients immediately without waiting for ChoiceRequests.
+    reveal_pusher: Option<RevealPusher>,
     /// Skip opening hand setup (for network clients)
     ///
     /// When true, run_game skips shuffling and drawing opening hands.
@@ -224,6 +238,7 @@ impl<'a> GameLoop<'a> {
             deck_seed: None,
             game_seed: None,
             reveal_drainer: None,
+            reveal_pusher: None,
             skip_opening_hands: false,
         }
     }
@@ -382,6 +397,38 @@ impl<'a> GameLoop<'a> {
         self
     }
 
+    /// Set the reveal pusher for network server mode.
+    ///
+    /// The pusher is called AFTER automatic actions (like draws) to push reveals
+    /// to clients immediately. This ensures clients receive reveals before their
+    /// GameLoop needs them for synchronization.
+    ///
+    /// The callback receives:
+    /// - `game`: The current game state to collect reveals from
+    /// - `player`: The player who performed the automatic action
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Network server pushes reveals after draws
+    /// let reveal_tx = Arc::new(Mutex::new(reveal_tx));
+    /// let tx_clone = reveal_tx.clone();
+    ///
+    /// game_loop.with_reveal_pusher(move |game, player| {
+    ///     // Collect and send reveals for both players
+    ///     if let Ok(tx) = tx_clone.lock() {
+    ///         // Push reveals to channel for WebSocket handlers to broadcast
+    ///     }
+    /// });
+    /// ```
+    pub fn with_reveal_pusher<F>(mut self, pusher: F) -> Self
+    where
+        F: Fn(&GameState, PlayerId) + Send + 'static,
+    {
+        self.reveal_pusher = Some(Box::new(pusher));
+        self
+    }
+
     /// Skip opening hand setup (for network clients)
     ///
     /// When enabled, `run_game` will not shuffle libraries or draw opening hands.
@@ -408,6 +455,17 @@ impl<'a> GameLoop<'a> {
     pub(super) fn drain_reveals(&mut self) {
         if let Some(ref drainer) = self.reveal_drainer {
             drainer(self.game);
+        }
+    }
+
+    /// Push reveals for an automatic action if a pusher is configured
+    ///
+    /// This is called automatically after automatic actions (like draws) to push
+    /// reveals to network clients immediately. The player parameter indicates who
+    /// performed the action.
+    pub(super) fn push_reveals(&self, player: PlayerId) {
+        if let Some(ref pusher) = self.reveal_pusher {
+            pusher(self.game, player);
         }
     }
 

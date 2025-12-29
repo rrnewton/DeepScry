@@ -58,7 +58,7 @@
 //! - ChoiceRequest includes `for_player` to identify who must respond
 //! - OpponentChoice, CardRevealed include owner/player for context
 
-use crate::core::{CardId, ManaCost, PlayerId};
+use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::GameEndReason;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -264,6 +264,13 @@ pub enum ServerMessage {
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         timestamp_ms: u64,
+        /// The actual spell ability chosen (for Priority choices)
+        ///
+        /// When the opponent plays a spell/land/ability, this contains the
+        /// actual ability so the client can execute it directly without
+        /// needing to compute available abilities from hidden hand contents.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        spell_ability: Option<SpellAbility>,
         /// State hash AFTER applying this choice (for client validation)
         #[serde(skip_serializing_if = "Option::is_none")]
         state_hash_after: Option<u64>,
@@ -948,6 +955,7 @@ mod tests {
                 description: "Pass priority".to_string(),
                 action_count: 0,
                 timestamp_ms: 1234567891,
+                spell_ability: None,
                 state_hash_after: None,
                 debug_info: None,
             },

@@ -153,6 +153,10 @@ impl<'a> GameLoop<'a> {
         // Draw a card
         self.game.draw_card(active_player)?;
 
+        // Push reveals immediately for network mode (server-side)
+        // This ensures clients receive the draw reveal before their GameLoop needs it
+        self.push_reveals(active_player);
+
         #[cfg(feature = "verbose-logging")]
         {
             // Skip draw logging during replay mode (already logged in previous game segment)

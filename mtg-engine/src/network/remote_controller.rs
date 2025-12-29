@@ -39,6 +39,10 @@ pub enum RemoteMessage {
         choice_index: usize,
         /// Human-readable description of the choice
         description: String,
+        /// The actual spell ability (for Priority choices)
+        /// When present, RemoteController can return this directly instead
+        /// of looking up by index in the local available list
+        spell_ability: Option<SpellAbility>,
     },
     /// Signal that the game has ended normally
     ///
@@ -63,6 +67,8 @@ pub struct RemoteController {
     disconnected: bool,
     /// Whether the game has ended normally (not a disconnect)
     game_ended: bool,
+    /// Last received spell ability (from Priority choices)
+    last_spell_ability: Option<SpellAbility>,
 }
 
 impl RemoteController {
@@ -77,12 +83,14 @@ impl RemoteController {
             choice_rx,
             disconnected: false,
             game_ended: false,
+            last_spell_ability: None,
         }
     }
 
     /// Wait for the next choice from the server
     ///
     /// Returns the choice index, or signals disconnect if channel is closed.
+    /// Also stores any spell_ability for use by choose_spell_ability_to_play.
     fn wait_for_choice(&mut self) -> ChoiceResult<usize> {
         if self.disconnected || self.game_ended {
             return ChoiceResult::ExitGame;
@@ -93,13 +101,17 @@ impl RemoteController {
             Ok(RemoteMessage::Choice {
                 choice_index,
                 description,
+                spell_ability,
             }) => {
                 log::debug!(
-                    "RemoteController {:?}: Opponent chose index {} ({})",
+                    "RemoteController {:?}: Opponent chose index {} ({}) spell_ability={:?}",
                     self.player_id,
                     choice_index,
-                    description
+                    description,
+                    spell_ability
                 );
+                // Store spell_ability for choose_spell_ability_to_play to use
+                self.last_spell_ability = spell_ability;
                 ChoiceResult::Ok(choice_index)
             }
             Ok(RemoteMessage::GameEnded) => {
@@ -161,14 +173,27 @@ impl PlayerController for RemoteController {
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
         // Server sends: 0 = pass, 1..N = ability indices
+        // For remote controllers, we may receive the actual ability directly
         match self.wait_for_choice() {
             ChoiceResult::Ok(0) => ChoiceResult::Ok(None), // Pass
             ChoiceResult::Ok(idx) => {
+                // If server sent the actual spell ability, use it directly
+                // This handles the case where client doesn't know opponent's hand
+                if let Some(ability) = self.last_spell_ability.take() {
+                    log::debug!("RemoteController: Using server-provided spell ability: {:?}", ability);
+                    return ChoiceResult::Ok(Some(ability));
+                }
+
+                // Fall back to index-based lookup
                 let ability_idx = idx - 1;
                 if ability_idx < available.len() {
                     ChoiceResult::Ok(Some(available[ability_idx].clone()))
                 } else {
-                    log::warn!("RemoteController: Invalid ability index {}", ability_idx);
+                    log::warn!(
+                        "RemoteController: Invalid ability index {} (available={}, spell_ability was None)",
+                        ability_idx,
+                        available.len()
+                    );
                     ChoiceResult::Ok(None)
                 }
             }
@@ -369,8 +394,7 @@ impl PlayerController for RemoteController {
     }
 
     fn get_controller_type(&self) -> ControllerType {
-        // FIXME-UNFINISHED: Add ControllerType::Remote variant
-        ControllerType::Zero
+        ControllerType::Remote
     }
 }
 
@@ -396,6 +420,7 @@ mod tests {
         tx.send(RemoteMessage::Choice {
             choice_index: 2,
             description: "Cast Lightning Bolt".to_string(),
+            spell_ability: None,
         })
         .unwrap();
 

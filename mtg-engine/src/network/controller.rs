@@ -174,6 +174,10 @@ impl NetworkController {
     ///
     /// This also collects any card reveals since this player's last choice
     /// and includes them in the request.
+    ///
+    /// NOTE: Reveals are now handled by the immediate reveal system (reveal_pusher)
+    /// which sends reveals directly after automatic actions like draws.
+    /// We no longer collect reveals here to avoid duplicates.
     fn request_choice(
         &self,
         view: &GameStateView,
@@ -181,8 +185,10 @@ impl NetworkController {
         options: Vec<String>,
         state_hash: u64,
     ) -> Result<usize, NetworkError> {
-        // Collect reveals since last choice
-        let reveals = self.collect_reveals_since_last_choice(view);
+        // Reveals are now sent by the immediate reveal system (reveal_pusher hook)
+        // to ensure clients receive them before their GameLoop needs them.
+        // We don't collect them here anymore to avoid duplicate CardRevealed messages.
+        let reveals = Vec::new();
 
         // Get action count from GameState undo log for synchronization
         let action_count = view.action_count() as u64;
@@ -280,6 +286,10 @@ impl NetworkController {
     /// A player sees a reveal if:
     /// - They own the card (e.g., their own draw)
     /// - The card moved to a public zone (battlefield, graveyard, stack, exile)
+    ///
+    /// NOTE: Currently unused - reveals are now handled by the immediate reveal system.
+    /// Kept for potential future use with non-draw reveals.
+    #[allow(dead_code)]
     fn collect_reveals_since_last_choice(&self, view: &GameStateView) -> Vec<CardRevealInfo> {
         let actions = view.undo_log_actions();
         let mut reveals = Vec::new();

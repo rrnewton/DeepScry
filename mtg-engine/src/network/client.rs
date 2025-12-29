@@ -12,17 +12,15 @@ use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-/// Shared queue for card reveals from the server
-///
-/// Used in `run_game()` to communicate card reveals from the WebSocket handler
-/// to the game thread, which can then queue them into the appropriate library.
-pub type SharedRevealQueue = Arc<Mutex<VecDeque<(PlayerId, CardId, RevealReason)>>>;
+/// Reveal message sent from WebSocket handler to game thread
+type RevealMsg = (PlayerId, CardId, RevealReason);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT CONFIGURATION
@@ -569,7 +567,9 @@ impl NetworkClient {
                         card.card_id,
                         owner
                     );
-                    // Queue the card ID in the appropriate library for drawing
+                    // Queue the reveal in the library's pending_reveals.
+                    // The GameLoop with skip_opening_hands will drain these and draw
+                    // the cards, creating MoveCard entries that match the server's undo_log.
                     if let Some(ref mut state) = self.state {
                         if let Some(zones) = state.game.get_player_zones_mut(owner) {
                             zones.library.queue_reveal(card.card_id);
@@ -703,9 +703,9 @@ impl NetworkClient {
         // Game end signal: (winner, server_action_count)
         let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<(Option<PlayerId>, u64)>(1);
 
-        // Shared queue for card reveals (WebSocket handler -> Game thread)
-        let reveal_queue: SharedRevealQueue = Arc::new(Mutex::new(VecDeque::new()));
-        let reveal_queue_ws = reveal_queue.clone();
+        // Channel for card reveals (WebSocket handler -> Game thread)
+        // Using std::sync::mpsc so game thread can do blocking recv_timeout
+        let (reveal_tx, reveal_rx) = mpsc::channel::<RevealMsg>();
 
         // Debug mode flag for sync validation
         let network_debug = self.network_debug;
@@ -770,16 +770,17 @@ impl NetworkClient {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
                                         log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
-                                        // Queue card reveal for the game thread to process
-                                        if let Ok(mut queue) = reveal_queue_ws.lock() {
-                                            queue.push_back((owner, card.card_id, reason));
+                                        // Send reveal to game thread via channel
+                                        if let Err(e) = reveal_tx.send((owner, card.card_id, reason)) {
+                                            log::error!("Failed to send reveal to game thread: {:?}", e);
                                         }
                                     }
-                                    Ok(ServerMessage::OpponentChoice { choice_index, description, .. }) => {
-                                        log::debug!("WebSocket: opponent chose {} (idx={}), sending to RemoteController channel", description, choice_index);
+                                    Ok(ServerMessage::OpponentChoice { choice_index, description, spell_ability, .. }) => {
+                                        log::debug!("WebSocket: opponent chose {} (idx={}), spell_ability={:?}, sending to RemoteController channel", description, choice_index, spell_ability);
                                         match remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_index,
                                             description: description.clone(),
+                                            spell_ability,
                                         }) {
                                             Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController channel successfully"),
                                             Err(e) => log::error!("WebSocket: FAILED to send opponent choice to RemoteController channel: {:?}", e),
@@ -935,24 +936,64 @@ impl NetworkClient {
         let mut local_controller = local_controller;
         let mut remote_controller = remote_controller;
         let game_result = tokio::task::spawn_blocking(move || {
-            // Create drain function that will be called before each draw
-            let reveal_queue_clone = reveal_queue.clone();
+            // Create drain function that processes reveals from the channel
+            // This function WAITS for reveals when the active player's library is remote
+            // (meaning we need to receive the draw reveal before proceeding)
             let drain_reveals = move |game: &mut GameState| {
-                if let Ok(mut queue) = reveal_queue_clone.lock() {
-                    while let Some((owner, card_id, reason)) = queue.pop_front() {
-                        if matches!(reason, RevealReason::Draw) {
-                            if let Some(zones) = game.get_player_zones_mut(owner) {
-                                zones.library.queue_reveal(card_id);
-                                log::debug!("Queued reveal for {:?}: {:?}", owner, card_id);
-                            }
+                // Helper to process a single reveal
+                let process_reveal = |game: &mut GameState, owner: PlayerId, card_id: CardId, reason: RevealReason| {
+                    if matches!(reason, RevealReason::Draw) {
+                        if let Some(zones) = game.get_player_zones_mut(owner) {
+                            zones.library.queue_reveal(card_id);
+                            log::debug!("Queued reveal for {:?}: {:?}", owner, card_id);
                         }
-                        // Other reveal reasons (TokenCreated, etc.) would need card instantiation
-                        // which requires access to card_db - skip for now
                     }
+                    // Other reveal reasons (TokenCreated, etc.) would need card instantiation
+                    // which requires access to card_db - skip for now
+                };
+
+                // Check if the active player's library is remote
+                // If so, we need to wait for a draw reveal before proceeding
+                let active_player = game.turn.active_player;
+                let turn_number = game.turn.turn_number;
+
+                let expecting_reveal = turn_number > 1
+                    && game
+                        .get_player_zones(active_player)
+                        .is_some_and(|z| z.library.is_remote_library());
+
+                if expecting_reveal {
+                    // We're about to draw from a remote library - WAIT for the reveal
+                    log::debug!(
+                        "Turn {}: Waiting for draw reveal for {:?} (remote library)",
+                        turn_number,
+                        active_player
+                    );
+                    match reveal_rx.recv_timeout(Duration::from_secs(10)) {
+                        Ok((owner, card_id, reason)) => {
+                            process_reveal(game, owner, card_id, reason);
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            log::error!(
+                                "TIMEOUT waiting for draw reveal for {:?}! Game may desync.",
+                                active_player
+                            );
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            log::error!("Reveal channel disconnected!");
+                        }
+                    }
+                }
+
+                // Also drain any additional reveals that may have arrived
+                while let Ok((owner, card_id, reason)) = reveal_rx.try_recv() {
+                    process_reveal(game, owner, card_id, reason);
                 }
             };
 
             // Process any reveals before starting (for opening hand)
+            // Note: On turn 1, the game loop skips drawing, so we just non-blocking drain
+            // whatever reveals are available (they won't be needed for turn 1)
             drain_reveals(&mut game);
 
             // Create game loop with reveal drainer hook
