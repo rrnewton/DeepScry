@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2025-12-08T11:49:48.576522867+00:00
-updated_at: 2025-12-29T18:00:00.000000000+00:00
+updated_at: 2025-12-29T19:59:29.825623908+00:00
 ---
 
 # Description
@@ -21,6 +21,14 @@ This proves the networking layer is a faithful drop-in replacement for local pla
 
 ## Current Status (2025-12-29)
 
+**Network Debug Infrastructure Complete!**
+- [x] Added `--network-debug` flag to server command
+- [x] Server is single source of truth - clients learn debug mode from GameStarted message
+- [x] Server populates DebugSyncInfo in ChoiceRequest when enabled
+- [x] Client computes and sends client_state_hash + debug_info in SubmitChoice
+- [x] Added `compute_view_hash()` for network-safe state hashing
+- [x] Added `build_debug_sync_info()` for structured debug info
+
 **Architecture change: Removed message-based mode**
 - Deleted `run_game_message_based()` from NetworkClient
 - Removed `--message-based` CLI flag from `mtg connect`
@@ -32,6 +40,7 @@ This proves the networking layer is a faithful drop-in replacement for local pla
 - Added `for_player: PlayerId` to ChoiceRequest
 - Added `player: PlayerId` to OpponentChoice
 - Added `now_ms()` utility function for wall-clock timestamps
+- Added `network_debug: bool` to GameStarted message
 - Added `--merge-logs` utility to `mtg_tui_networked.py` for unified log analysis
 
 **2-way equivalence test is working!**
@@ -94,13 +103,22 @@ Lower priority prerequisites (from mtg-bfm38):
 - [x] Remove message-based mode (deleted `run_game_message_based()`)
 - [x] Add protocol timestamps for debugging
 
-**In Progress (sync debugging):**
+**Completed (sync debugging infrastructure):**
 - [x] Add DebugSyncInfo and SyncErrorDetails types to protocol
 - [x] Add optional debug fields to SubmitChoice, ChoiceRequest, OpponentChoice
 - [x] Add SyncError message variant
-- [ ] Create compute_view_hash function (replace compute_simple_hash)
-- [ ] Wire up debug mode in server/client with hash validation
-- [ ] Add CLI flags: --network-debug, --network-debug-halt
+- [x] Create compute_view_hash function (network-safe hash from GameStateView)
+- [x] Create build_debug_sync_info function (extract turn/phase/life/zones)
+- [x] Add `--network-debug` flag to server command
+- [x] Server sends network_debug in GameStarted message
+- [x] Client reads network_debug from server and configures itself
+- [x] Server populates debug_info in ChoiceRequest when debug enabled
+- [x] Client populates client_state_hash + debug_info in SubmitChoice when debug enabled
+
+**In Progress (sync debugging):**
+- [ ] Server validates client_state_hash against its expected hash
+- [ ] Server logs detailed DebugSyncInfo diff when hashes mismatch
+- [ ] Add `--network-debug-halt` flag to pause on first mismatch
 - [ ] Debug client/server desync around Turn 5-7
 - [ ] Re-enable network tests once sync is stable
 
@@ -199,3 +217,5 @@ The fundamental issue is that client's GameLoop is **racing independently** agai
 3. **Server-driven model**: Instead of running parallel GameLoops, have server tell client exactly what state changes to apply
 
 4. **State hash validation**: Before each choice, compare state hashes; if mismatch, resync from server snapshot
+   - **Progress**: Debug infrastructure now in place (--network-debug flag, client_state_hash, debug_info)
+   - **Next**: Server-side validation of client hashes
