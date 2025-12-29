@@ -494,6 +494,12 @@ enum Commands {
         /// Verbosity level for game output (0=silent, 1=minimal, 2=normal, 3=verbose)
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
+
+        /// Enable network debug mode for synchronization validation.
+        /// When enabled, each protocol message includes state hashes and debug info.
+        /// Server validates client's state hash matches its own after each choice.
+        #[arg(long)]
+        network_debug: bool,
     },
 
     /// Connect to a multiplayer game server
@@ -541,11 +547,11 @@ enum Commands {
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
 
-        /// Enable debug mode for action_count synchronization validation.
-        /// When enabled, the client validates action_count at each choice point
-        /// and fails fast if a mismatch is detected.
+        /// Enable network debug mode for synchronization validation.
+        /// When enabled, the client includes state hashes in SubmitChoice messages
+        /// and validates server's state hash after each choice.
         #[arg(long)]
-        debug: bool,
+        network_debug: bool,
 
         /// Enable gamelog tagging for equivalence testing.
         /// When enabled, the client's shadow GameLoop logs [GAMELOG] entries
@@ -789,6 +795,7 @@ async fn main() -> Result<()> {
             seed,
             tag_gamelogs,
             verbosity,
+            network_debug,
         } => {
             use mtg_forge_rs::game::VerbosityLevel;
             use mtg_forge_rs::network::{GameServer, ServerConfig};
@@ -804,6 +811,7 @@ async fn main() -> Result<()> {
                 seed,
                 tag_gamelogs,
                 verbosity: verbosity_level,
+                network_debug,
                 ..Default::default()
             };
 
@@ -825,7 +833,7 @@ async fn main() -> Result<()> {
             seed_player,
             visual_stacks,
             verbosity,
-            debug,
+            network_debug,
             tag_gamelogs,
             gamelog_output,
         } => {
@@ -864,7 +872,7 @@ async fn main() -> Result<()> {
             let mut client = NetworkClient::new(config);
             client.set_verbosity(verbosity_level);
             client.set_visual_stacks(visual_stacks);
-            client.set_debug_mode(debug);
+            client.set_network_debug(network_debug);
             client.set_tag_gamelogs(tag_gamelogs);
             if let Some(ref path) = gamelog_output {
                 client.set_gamelog_output(path.clone());

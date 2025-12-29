@@ -90,8 +90,8 @@ pub struct NetworkLocalController<C: PlayerController> {
     message_rx: mpsc::Receiver<LocalControllerMessage>,
     /// Whether we've been disconnected
     disconnected: bool,
-    /// Debug mode: include action log info in choices for sync validation
-    debug_mode: bool,
+    /// Network debug mode: include action log info in choices for sync validation
+    network_debug: bool,
     /// Last received server action count (from ChoiceRequest)
     server_action_count: Option<u64>,
     /// Last received server choice sequence (from ChoiceRequest)
@@ -115,18 +115,18 @@ impl<C: PlayerController> NetworkLocalController<C> {
             choice_tx,
             message_rx,
             disconnected: false,
-            debug_mode: false,
+            network_debug: false,
             server_action_count: None,
             server_choice_seq: None,
         }
     }
 
-    /// Enable debug mode for action log transmission
+    /// Enable network debug mode for action log transmission
     ///
     /// When enabled, the last N actions are included with each choice
     /// for sync validation and debugging.
-    pub fn with_debug_mode(mut self, debug: bool) -> Self {
-        self.debug_mode = debug;
+    pub fn with_network_debug(mut self, enabled: bool) -> Self {
+        self.network_debug = enabled;
         self
     }
 
@@ -294,12 +294,12 @@ impl<C: PlayerController> NetworkLocalController<C> {
         }
     }
 
-    /// Get formatted last N actions from view for debug mode
+    /// Get formatted last N actions from view for network debug mode
     ///
-    /// Returns Some(formatted_string) if debug_mode is enabled, None otherwise.
+    /// Returns Some(formatted_string) if network_debug is enabled, None otherwise.
     /// Shows the last 20 actions for context when sync errors occur.
     fn get_debug_actions(&self, view: &GameStateView) -> Option<String> {
-        if self.debug_mode {
+        if self.network_debug {
             Some(view.format_last_n_actions(20))
         } else {
             None

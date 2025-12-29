@@ -49,6 +49,8 @@ pub struct ServerConfig {
     pub tag_gamelogs: bool,
     /// Verbosity level for game output
     pub verbosity: crate::game::VerbosityLevel,
+    /// Enable network debug mode - populates debug fields in protocol messages
+    pub network_debug: bool,
 }
 
 impl Default for ServerConfig {
@@ -63,6 +65,7 @@ impl Default for ServerConfig {
             seed: None,
             tag_gamelogs: false,
             verbosity: crate::game::VerbosityLevel::Normal,
+            network_debug: false,
         }
     }
 }

@@ -277,8 +277,8 @@ pub struct NetworkClient {
     verbosity: VerbosityLevel,
     /// Visual stacks mode for display
     visual_stacks: bool,
-    /// Debug mode: validate action_count synchronization at each choice point
-    debug_mode: bool,
+    /// Network debug mode: populate debug fields in protocol messages and validate state hashes
+    network_debug: bool,
     /// Enable gamelog tagging ([GAMELOG ...] prefix)
     tag_gamelogs: bool,
     /// Output file for gamelogs (None = stdout)
@@ -297,7 +297,7 @@ impl NetworkClient {
             opponent_deck: None,
             verbosity: VerbosityLevel::Normal,
             visual_stacks: false,
-            debug_mode: false,
+            network_debug: false,
             tag_gamelogs: false,
             gamelog_output: None,
         }
@@ -313,14 +313,14 @@ impl NetworkClient {
         self.visual_stacks = visual_stacks;
     }
 
-    /// Enable debug mode for action_count synchronization validation
+    /// Enable network debug mode for synchronization validation
     ///
-    /// When enabled, the client validates action_count at each choice point
-    /// and fails with a detailed error if a mismatch is detected.
-    pub fn set_debug_mode(&mut self, debug: bool) {
-        self.debug_mode = debug;
-        if debug {
-            log::info!("Debug mode ENABLED: action_count sync validation active");
+    /// When enabled, the client includes state hashes in SubmitChoice messages
+    /// and validates server's state hash after each choice. Helps detect desync.
+    pub fn set_network_debug(&mut self, enabled: bool) {
+        self.network_debug = enabled;
+        if enabled {
+            log::info!("Network debug mode ENABLED: state hash validation active");
         }
     }
 
@@ -699,7 +699,7 @@ impl NetworkClient {
         let reveal_queue_ws = reveal_queue.clone();
 
         // Debug mode flag for sync validation
-        let debug_mode = self.debug_mode;
+        let network_debug = self.network_debug;
 
         // Create controllers
         let local_controller = NetworkLocalController::new(
@@ -726,7 +726,7 @@ impl NetworkClient {
             },
             local_msg_rx,
         )
-        .with_debug_mode(debug_mode);
+        .with_network_debug(network_debug);
         let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
 
         // Get game state for the game thread
@@ -790,8 +790,8 @@ impl NetworkClient {
                                         });
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count, .. }) => {
-                                        // Server accepted our choice - validate action_count in debug mode
-                                        if debug_mode {
+                                        // Server accepted our choice - validate action_count in network debug mode
+                                        if network_debug {
                                             if let Some(client_action_count) = last_sent_action_count {
                                                 if client_action_count != server_action_count {
                                                     log::error!(
@@ -873,7 +873,7 @@ impl NetworkClient {
                             });
 
                             // Log comparison for debugging (only when they differ)
-                            if debug_mode && choice.action_count != action_count_to_send {
+                            if network_debug && choice.action_count != action_count_to_send {
                                 log::debug!(
                                     "WebSocket: action_count differs - client shadow={} server={}",
                                     choice.action_count, action_count_to_send
@@ -965,7 +965,7 @@ impl NetworkClient {
         });
 
         // Wait for game to end
-        // debug_mode is used for action_count verification logging
+        // network_debug is used for action_count verification logging
         tokio::select! {
             result = game_result => {
                 ws_handler.abort();
