@@ -350,6 +350,7 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
 ///
 /// Creates debug synchronization information for network sync debugging.
 /// Used to populate the debug_info field in network messages.
+#[cfg(feature = "network")]
 pub fn build_debug_sync_info(
     view: &crate::game::controller::GameStateView,
     last_action_count: usize,
