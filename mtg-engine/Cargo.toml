@@ -60,7 +60,8 @@ libc = { version = "0.2", optional = true }  # For signal handling (raise)
 # WASM TUI (egui-based ratatui rendering) - see [target.'cfg(...)'.dependencies] section below
 
 # Async runtime (native only)
-tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "macros", "time", "sync"], optional = true }
+# Note: "net" feature is required for network (WebSocket) support
+tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "macros", "time", "sync", "net"], optional = true }
 
 # Parallel directory walking (native only)
 jwalk = { version = "0.8", optional = true }
