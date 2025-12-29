@@ -596,8 +596,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         count: usize,
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        self.process_pending_reveals();
-
+        // Note: Reveal processing is handled by drain_reveals callback in GameLoop
         if self.disconnected {
             return ChoiceResult::ExitGame;
         }

@@ -1364,6 +1364,7 @@ impl FancyTuiRenderer {
 
     /// Count how many rows the layout uses with given card size.
     /// If target_rows > 1, tries to break at section boundaries when beneficial.
+    #[allow(clippy::too_many_arguments)]
     fn count_rows_for_layout(
         &self,
         area: Rect,
