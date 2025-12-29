@@ -364,6 +364,71 @@ cast dark ritual</textarea>
         <div id="ratzilla-terminal" style="display: none;"></div>
     </div>
 
+    <!-- JavaScript error display banner -->
+    <div id="js-error-banner" style="display: none; position: fixed; bottom: 0; left: 0; right: 0; background: #8b0000; color: white; padding: 10px 15px; font-family: monospace; font-size: 13px; z-index: 9999; max-height: 30vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <strong>⚠️ JavaScript Error</strong>
+            <button onclick="document.getElementById('js-error-banner').style.display='none'" style="background: #600; border: 1px solid #f88; color: white; padding: 2px 8px; cursor: pointer;">✕ Close</button>
+        </div>
+        <div id="js-error-messages"></div>
+    </div>
+
+    <!-- Global error handler - catches uncaught JS errors and displays them visibly -->
+    <script>
+        (function() {
+            const errorBanner = document.getElementById('js-error-banner');
+            const errorMessages = document.getElementById('js-error-messages');
+            let errorCount = 0;
+
+            function showError(message, source, lineno, colno, error) {
+                errorCount++;
+                errorBanner.style.display = 'block';
+
+                const errorDiv = document.createElement('div');
+                errorDiv.style.borderBottom = '1px solid #f66';
+                errorDiv.style.paddingBottom = '5px';
+                errorDiv.style.marginBottom = '5px';
+
+                const stack = error?.stack || '';
+                const location = source ? `${source}:${lineno}:${colno}` : 'unknown';
+
+                errorDiv.innerHTML = `
+                    <div><strong>#${errorCount}:</strong> ${escapeHtml(message)}</div>
+                    <div style="color: #faa; font-size: 11px;">at ${escapeHtml(location)}</div>
+                    ${stack ? `<pre style="color: #fcc; font-size: 10px; margin: 5px 0 0 0; white-space: pre-wrap; max-height: 100px; overflow-y: auto;">${escapeHtml(stack)}</pre>` : ''}
+                `;
+                errorMessages.appendChild(errorDiv);
+
+                // Also log to console with full details
+                console.error('[JS ERROR CAUGHT]', message, '\nSource:', source, '\nLine:', lineno, 'Col:', colno, '\nError:', error);
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // Catch synchronous errors
+            window.onerror = function(message, source, lineno, colno, error) {
+                showError(message, source, lineno, colno, error);
+                return false; // Still log to console
+            };
+
+            // Catch unhandled promise rejections
+            window.onunhandledrejection = function(event) {
+                const error = event.reason;
+                const message = error?.message || String(error);
+                showError(`Unhandled Promise Rejection: ${message}`, null, null, null, error);
+            };
+
+            // Expose for manual error reporting
+            window.reportJsError = function(message, error) {
+                showError(message, null, null, null, error);
+            };
+        })();
+    </script>
+
     <script type="module">
         import init, {
             version,
@@ -723,6 +788,11 @@ cast dark ritual</textarea>
                 this.cellHeightPx = 20;
 
                 console.log(`Measured RatZilla cell size: ${this.cellWidthPx.toFixed(2)}px × ${measuredHeight.toFixed(2)}px (using ${this.cellHeightPx}px line-height for positioning)`);
+
+                // Tell WASM the measured cell dimensions for accurate layout bounds calculation
+                if (typeof tui_set_cell_dimensions === 'function') {
+                    tui_set_cell_dimensions(this.cellWidthPx, this.cellHeightPx);
+                }
             },
 
             /**
@@ -759,59 +829,63 @@ cast dark ritual</textarea>
              * Get the complete bounding box for a card in pixels.
              * Handles both tapped and untapped cards.
              *
-             * TAPPED CARD RENDERING STRATEGY:
-             * - TUI provides LANDSCAPE dimensions (e.g., 96w×80h px - wider than tall)
-             * - Card images are PORTRAIT (aspect ratio ~0.71, e.g., 488w×680h natural)
-             * - CSS transform rotation happens AFTER objectFit calculation
-             * - Therefore: We must SWAP dimensions so objectFit sees a portrait box,
-             *   then rotation makes the final result landscape
+             * LAYOUT BOUNDS (layoutWidthPx, layoutHeightPx):
+             * When provided from WASM CardBounds, these values already have the correct
+             * MTG card aspect ratio (63:88 portrait, 88:63 landscape for tapped).
+             * They are used directly for image dimensions without further calculation.
              *
-             * Example for 96×80px landscape TUI box:
-             * 1. Set img box to 80×96px (portrait - swapped!)
-             * 2. objectFit:cover fits portrait image to portrait box (minimal crop)
-             * 3. transform:rotate(90deg) rotates box+image → final 96×80px landscape
-             * 4. Position must be adjusted because rotation changes where box ends up
+             * TAPPED CARD RENDERING STRATEGY:
+             * - Layout bounds give LANDSCAPE dimensions (e.g., 139.7px wide × 100px tall for 88:63)
+             * - Card images are PORTRAIT (natural aspect ratio ~0.71)
+             * - CSS transform rotation happens AFTER objectFit calculation
+             * - Therefore: We set img box to portrait (swapped), then rotate 90° to landscape
              *
              * @param {number} colCells - Column position in cells
              * @param {number} rowCells - Row position in cells
-             * @param {number} widthCells - Width in cells (TUI dimensions)
-             * @param {number} heightCells - Height in cells (TUI dimensions)
+             * @param {number} widthCells - Width in cells (TUI MIN dimensions, used as fallback)
+             * @param {number} heightCells - Height in cells (TUI MIN dimensions, used as fallback)
              * @param {boolean} isTapped - Whether card is tapped (rotated 90°)
+             * @param {number|null} layoutWidthPx - MAX width in pixels from WASM CardBounds (optional)
+             * @param {number|null} layoutHeightPx - MAX height in pixels from WASM CardBounds (optional)
              * @returns {{left: number, top: number, width: number, height: number, transform: string, transformOrigin: string}}
              */
-            getCardBox(colCells, rowCells, widthCells, heightCells, isTapped) {
+            getCardBox(colCells, rowCells, widthCells, heightCells, isTapped, layoutWidthPx = null, layoutHeightPx = null) {
                 const position = this.cellToPixelPosition(colCells, rowCells);
-                const dimensions = this.cellToPixelDimensions(widthCells, heightCells);
+
+                // Use layout pixel values if provided (from WASM CardBounds with correct aspect ratio)
+                // Otherwise fall back to cell-based calculation
+                const hasLayoutBounds = layoutWidthPx != null && layoutHeightPx != null;
+                const imageWidth = hasLayoutBounds ? layoutWidthPx : (widthCells * (this.cellWidthPx || 10));
+                const imageHeight = hasLayoutBounds ? layoutHeightPx : (heightCells * (this.cellHeightPx || 20));
 
                 if (isTapped) {
-                    // TUI gives landscape dimensions (e.g., 96px wide × 80px tall)
-                    const landscapeWidth = dimensions.width;
-                    const landscapeHeight = dimensions.height;
+                    // Layout bounds are already in landscape orientation (88:63 aspect)
+                    // We need to display a portrait image rotated 90° to appear landscape.
+                    //
+                    // Img element is sized as portrait (width/height swapped), then rotated.
+                    const portraitWidth = imageHeight;   // Swap: use layout height as width
+                    const portraitHeight = imageWidth;   // Swap: use layout width as height
 
-                    // SWAP to portrait for objectFit calculation (80px wide × 96px tall)
-                    const portraitWidth = landscapeHeight;
-                    const portraitHeight = landscapeWidth;
-
-                    // Adjust position: rotation origin is center, so we need to shift
-                    // the box so that after rotation, its center aligns with TUI box center
-                    const centerOffsetX = (landscapeWidth - portraitWidth) / 2;
-                    const centerOffsetY = (landscapeHeight - portraitHeight) / 2;
+                    // After 90° rotation, visual dimensions match imageWidth × imageHeight
+                    // Center the rotated box within the layout bounds
+                    const centerOffsetX = (imageWidth - portraitWidth) / 2;
+                    const centerOffsetY = (imageHeight - portraitHeight) / 2;
 
                     return {
                         left: position.left + centerOffsetX,
                         top: position.top + centerOffsetY,
-                        width: portraitWidth,   // Swapped: use landscape height
-                        height: portraitHeight,  // Swapped: use landscape width
+                        width: portraitWidth,
+                        height: portraitHeight,
                         transform: 'rotate(90deg)',
                         transformOrigin: 'center center'
                     };
                 } else {
-                    // Untapped: Normal portrait card
+                    // Untapped: Normal portrait card, use layout bounds directly
                     return {
                         left: position.left,
                         top: position.top,
-                        width: dimensions.width,
-                        height: dimensions.height,
+                        width: imageWidth,
+                        height: imageHeight,
                         transform: 'none',
                         transformOrigin: 'center center'
                     };
@@ -992,14 +1066,16 @@ cast dark ritual</textarea>
              * @param {number} cardId - Unique card identifier
              * @param {number} col - Column position in cells
              * @param {number} row - Row position in cells
-             * @param {number} width - Width in cells
-             * @param {number} height - Height in cells
+             * @param {number} width - Width in cells (MIN bounds)
+             * @param {number} height - Height in cells (MIN bounds)
              * @param {string} primaryUrl - Primary image URL
              * @param {string|null} fallbackUrl - First fallback URL if primary fails
              * @param {boolean} isTapped - Whether card is tapped (rotated 90°)
              * @param {string|null} fallback2Url - Second fallback URL if first fallback fails
+             * @param {number|null} layoutWidthPx - MAX width in pixels from WASM CardBounds
+             * @param {number|null} layoutHeightPx - MAX height in pixels from WASM CardBounds
              */
-            setCardImageWithFallback(cardId, col, row, width, height, primaryUrl, fallbackUrl, isTapped = false, fallback2Url = null) {
+            setCardImageWithFallback(cardId, col, row, width, height, primaryUrl, fallbackUrl, isTapped = false, fallback2Url = null, layoutWidthPx = null, layoutHeightPx = null) {
                 if (!this.enabled) return;
 
                 const imgId = `card-image-${cardId}`;
@@ -1107,7 +1183,8 @@ cast dark ritual</textarea>
                 // Note: If img already exists, we just reposition it below - no reload needed
 
                 // Use centralized coordinate system for ALL translations
-                const box = TUICoordinateSystem.getCardBox(col, row, width, height, isTapped);
+                // Pass layout pixel values from WASM CardBounds for correct MTG aspect ratio
+                const box = TUICoordinateSystem.getCardBox(col, row, width, height, isTapped, layoutWidthPx, layoutHeightPx);
 
                 // Apply the box dimensions and transforms
                 img.style.position = 'absolute';
@@ -1192,14 +1269,15 @@ cast dark ritual</textarea>
              * @param {Object|null} pane - Pane position from WASM: {x, y, width, height} in cells
              */
             setCardDetailsImage(cardName, pane) {
-                if (!this.enabled) {
-                    this.clearCardDetailsImage();
-                    return;
-                }
+                try {
+                    if (!this.enabled) {
+                        this.clearCardDetailsImage();
+                        return;
+                    }
 
-                // No change needed if same card
-                if (cardName === this.lastSelectedCardName) return;
-                this.lastSelectedCardName = cardName;
+                    // No change needed if same card
+                    if (cardName === this.lastSelectedCardName) return;
+                    this.lastSelectedCardName = cardName;
 
                 if (!cardName) {
                     this.clearCardDetailsImage();
@@ -1388,6 +1466,13 @@ cast dark ritual</textarea>
                 this.cardDetailsImg.style.width = `${imgWidth}px`;
                 this.cardDetailsImg.style.height = `${imgHeight}px`;
                 this.cardDetailsImg.style.display = 'block';
+                } catch (error) {
+                    // Report errors visually so they don't get silently swallowed
+                    console.error('[setCardDetailsImage] Error:', error);
+                    if (window.reportJsError) {
+                        window.reportJsError(`setCardDetailsImage: ${error.message}`, error);
+                    }
+                }
             },
 
             // Clear card details image overlay
@@ -1537,49 +1622,59 @@ cast dark ritual</textarea>
         // where x, y, width, height are in CELLS (not pixels)
         // selectedCard: {card_id, name} or null if no card selected
         window.onRenderComplete = function(positions, selectedCard) {
-            if (cardImagesEnabled && tuiLaunched) {
-                // Ensure we have measured cell dimensions (do this once on first render)
-                // Re-measure if we're using default values (10×20) since that means measurement failed earlier
-                if (!TUICoordinateSystem.cellWidthPx || (TUICoordinateSystem.cellWidthPx === 10 && TUICoordinateSystem.cellHeightPx === 20)) {
-                    TUICoordinateSystem.measureCellDimensions();
+            try {
+                if (cardImagesEnabled && tuiLaunched) {
+                    // Ensure we have measured cell dimensions (do this once on first render)
+                    // Re-measure if we're using default values (10×20) since that means measurement failed earlier
+                    if (!TUICoordinateSystem.cellWidthPx || (TUICoordinateSystem.cellWidthPx === 10 && TUICoordinateSystem.cellHeightPx === 20)) {
+                        TUICoordinateSystem.measureCellDimensions();
+                    }
+
+                    // Sync battlefield images: remove cards no longer present, keep existing ones
+                    // This avoids re-fetching images for cards that haven't changed
+                    const newCardIds = positions ? positions.map(p => p.card_id) : [];
+                    CardImageOverlay.syncBattlefieldImages(newCardIds);
+
+                    // Render battlefield card images (creates new ones, repositions existing ones)
+                    if (positions && positions.length > 0) {
+                        // Use the positions passed from WASM (avoids re-borrowing)
+                        // All coordinate translation happens through TUICoordinateSystem
+                        positions.forEach((cardPos) => {
+                            // Use layout pixel height for size selection if available
+                            const heightPx = cardPos.layout_height_px || (cardPos.height * (TUICoordinateSystem.cellHeightPx || 20));
+                            // Use ImageSource abstraction with fallback chain
+                            const { primary, fallback, fallback2 } = ImageSource.getImageUrlWithFallback(cardPos.name, heightPx);
+                            if (primary) {
+                                CardImageOverlay.setCardImageWithFallback(
+                                    cardPos.card_id,
+                                    cardPos.x,              // Column in cells (MIN)
+                                    cardPos.y,              // Row in cells (MIN)
+                                    cardPos.width,          // Width in cells (MIN)
+                                    cardPos.height,         // Height in cells (MIN)
+                                    primary,
+                                    fallback,
+                                    cardPos.is_tapped,
+                                    fallback2,
+                                    cardPos.layout_width_px,   // MAX width in pixels (from CardBounds)
+                                    cardPos.layout_height_px   // MAX height in pixels (from CardBounds)
+                                );
+                            }
+                        });
+                    }
+
+                    // Update Card Details image based on selected card
+                    // Pass the pane position from WASM for accurate positioning
+                    if (selectedCard && selectedCard.name) {
+                        CardImageOverlay.setCardDetailsImage(selectedCard.name, selectedCard.pane);
+                    } else {
+                        CardImageOverlay.clearCardDetailsImage();
+                    }
                 }
-
-                // Sync battlefield images: remove cards no longer present, keep existing ones
-                // This avoids re-fetching images for cards that haven't changed
-                const newCardIds = positions ? positions.map(p => p.card_id) : [];
-                CardImageOverlay.syncBattlefieldImages(newCardIds);
-
-                // Render battlefield card images (creates new ones, repositions existing ones)
-                if (positions && positions.length > 0) {
-                    // Use the positions passed from WASM (avoids re-borrowing)
-                    // All coordinate translation happens through TUICoordinateSystem
-                    positions.forEach((cardPos) => {
-                        // Calculate pixel height for size selection
-                        const heightPx = cardPos.height * (TUICoordinateSystem.cellHeightPx || 20);
-                        // Use ImageSource abstraction with fallback chain
-                        const { primary, fallback, fallback2 } = ImageSource.getImageUrlWithFallback(cardPos.name, heightPx);
-                        if (primary) {
-                            CardImageOverlay.setCardImageWithFallback(
-                                cardPos.card_id,
-                                cardPos.x,          // Column in cells
-                                cardPos.y,          // Row in cells
-                                cardPos.width,      // Width in cells
-                                cardPos.height,     // Height in cells
-                                primary,
-                                fallback,
-                                cardPos.is_tapped,
-                                fallback2
-                            );
-                        }
-                    });
-                }
-
-                // Update Card Details image based on selected card
-                // Pass the pane position from WASM for accurate positioning
-                if (selectedCard && selectedCard.name) {
-                    CardImageOverlay.setCardDetailsImage(selectedCard.name, selectedCard.pane);
-                } else {
-                    CardImageOverlay.clearCardDetailsImage();
+            } catch (error) {
+                // Report errors visually so they don't get silently swallowed
+                console.error('[onRenderComplete] Error:', error);
+                if (window.reportJsError) {
+                    window.reportJsError(`onRenderComplete: ${error.message}`, error);
                 }
             }
         };

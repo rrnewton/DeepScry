@@ -197,7 +197,155 @@ impl BattlefieldEntity for Entity {
 #[derive(Debug, Clone)]
 pub struct EntityPosition {
     pub entity: Entity,
+    /// MIN bounds (cell-based, for TUI text rendering)
     pub area: Rect,
+    /// MAX bounds (pixel-based, for image layout spacing)
+    /// If None, defaults to area converted to pixels
+    pub layout_area_px: Option<LayoutAreaPx>,
+}
+
+/// Pixel-based layout area for image positioning
+/// Uses f32 for sub-pixel precision (no rounding waste)
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutAreaPx {
+    pub x_px: f32,
+    pub y_px: f32,
+    pub width_px: f32,
+    pub height_px: f32,
+}
+
+/// Bounding boxes for card layout
+///
+/// MIN is in cells (for TUI text), MAX is in pixels (for images).
+/// In CLI mode, MAX equals MIN converted to pixels.
+/// In GUI mode, MAX may be larger to achieve correct MTG card aspect ratio.
+#[derive(Debug, Clone, Copy)]
+pub struct CardBounds {
+    /// Cell dimensions for TUI text rendering
+    pub min_width: u16,
+    pub min_height: u16,
+    /// Pixel dimensions for layout spacing (precise, no cell-rounding waste)
+    pub max_width_px: f32,
+    pub max_height_px: f32,
+}
+
+impl CardBounds {
+    /// MTG card aspect ratio: 63mm × 88mm = 0.716 (portrait, width/height)
+    pub const MTG_ASPECT_RATIO: f32 = 63.0 / 88.0;
+    /// MTG tapped card aspect ratio: 88mm × 63mm = 1.397 (landscape, width/height)
+    pub const MTG_TAPPED_RATIO: f32 = 88.0 / 63.0;
+
+    /// Create bounds for CLI mode (MAX = MIN in pixels)
+    pub fn for_cli(min_w: u16, min_h: u16, cell_w_px: f32, cell_h_px: f32) -> Self {
+        Self {
+            min_width: min_w,
+            min_height: min_h,
+            max_width_px: min_w as f32 * cell_w_px,
+            max_height_px: min_h as f32 * cell_h_px,
+        }
+    }
+
+    /// Create bounds for GUI mode (untapped card, portrait orientation)
+    ///
+    /// Expands one dimension to achieve MTG 63:88 aspect ratio.
+    /// The MIN cell bounds are preserved, MAX is expanded as needed.
+    pub fn for_gui(min_w: u16, min_h: u16, cell_w_px: f32, cell_h_px: f32) -> Self {
+        let min_w_px = min_w as f32 * cell_w_px;
+        let min_h_px = min_h as f32 * cell_h_px;
+
+        // Current aspect ratio vs target (portrait: 63/88 ≈ 0.716)
+        let current_ratio = min_w_px / min_h_px;
+
+        let (max_w_px, max_h_px) = if current_ratio > Self::MTG_ASPECT_RATIO {
+            // Too wide: expand height
+            let expanded_h = min_w_px / Self::MTG_ASPECT_RATIO;
+            (min_w_px, expanded_h)
+        } else {
+            // Too tall: expand width
+            let expanded_w = min_h_px * Self::MTG_ASPECT_RATIO;
+            (expanded_w, min_h_px)
+        };
+
+        Self {
+            min_width: min_w,
+            min_height: min_h,
+            max_width_px: max_w_px,
+            max_height_px: max_h_px,
+        }
+    }
+
+    /// Create bounds for GUI mode (tapped card, landscape orientation)
+    ///
+    /// Uses MTG 88:63 aspect ratio (tapped = rotated 90°).
+    pub fn for_gui_tapped(min_w: u16, min_h: u16, cell_w_px: f32, cell_h_px: f32) -> Self {
+        let min_w_px = min_w as f32 * cell_w_px;
+        let min_h_px = min_h as f32 * cell_h_px;
+
+        // Current aspect ratio vs target (landscape: 88/63 ≈ 1.397)
+        let current_ratio = min_w_px / min_h_px;
+
+        let (max_w_px, max_h_px) = if current_ratio > Self::MTG_TAPPED_RATIO {
+            // Too wide: expand height
+            let expanded_h = min_w_px / Self::MTG_TAPPED_RATIO;
+            (min_w_px, expanded_h)
+        } else {
+            // Too tall: expand width
+            let expanded_w = min_h_px * Self::MTG_TAPPED_RATIO;
+            (expanded_w, min_h_px)
+        };
+
+        Self {
+            min_width: min_w,
+            min_height: min_h,
+            max_width_px: max_w_px,
+            max_height_px: max_h_px,
+        }
+    }
+}
+
+/// Runtime configuration for rendering
+///
+/// Initialized from compile-time feature (`wasm-tui` → gui_mode=true)
+/// and runtime cell dimension measurements from JavaScript.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderConfig {
+    /// Whether we're in GUI mode (images enabled)
+    /// Set by wasm-tui feature at compile time
+    pub gui_mode: bool,
+    /// Cell width in pixels (measured from browser font metrics)
+    pub cell_width_px: f32,
+    /// Cell height in pixels (measured from browser font metrics)
+    pub cell_height_px: f32,
+}
+
+impl Default for RenderConfig {
+    fn default() -> Self {
+        Self {
+            gui_mode: false,
+            cell_width_px: 10.0,
+            cell_height_px: 20.0,
+        }
+    }
+}
+
+impl RenderConfig {
+    /// Create config for CLI mode (no image layout expansion)
+    pub fn cli() -> Self {
+        Self {
+            gui_mode: false,
+            cell_width_px: 10.0, // RatZilla default
+            cell_height_px: 20.0,
+        }
+    }
+
+    /// Create config for GUI mode with specified cell dimensions
+    pub fn gui(cell_width_px: f32, cell_height_px: f32) -> Self {
+        Self {
+            gui_mode: true,
+            cell_width_px,
+            cell_height_px,
+        }
+    }
 }
 
 /// UI state for the fancy TUI renderer
@@ -273,6 +421,8 @@ pub struct FancyTuiRenderer {
     pub state: FancyTuiState,
     /// Whether to use visual stacking (diagonal offsets) or simple stacking
     pub visual_stacks: bool,
+    /// Render configuration (GUI mode, cell dimensions)
+    pub render_config: RenderConfig,
 }
 
 impl FancyTuiRenderer {
@@ -304,13 +454,35 @@ impl FancyTuiRenderer {
     /// Maximum number of cards in a visual stack (prevents huge stacks of 5+ lands)
     const MAX_VISUAL_STACK_SIZE: usize = 4;
 
-    /// Create a new renderer for a player
+    /// Create a new renderer for a player (CLI mode - no image layout expansion)
     pub fn new(player_id: PlayerId, visual_stacks: bool) -> Self {
         FancyTuiRenderer {
             player_id,
             state: FancyTuiState::new(),
             visual_stacks,
+            render_config: RenderConfig::cli(),
         }
+    }
+
+    /// Create a new renderer for GUI mode with specified cell dimensions
+    pub fn new_gui(player_id: PlayerId, visual_stacks: bool, cell_width_px: f32, cell_height_px: f32) -> Self {
+        FancyTuiRenderer {
+            player_id,
+            state: FancyTuiState::new(),
+            visual_stacks,
+            render_config: RenderConfig::gui(cell_width_px, cell_height_px),
+        }
+    }
+
+    /// Update cell dimensions (called when JavaScript measures actual font metrics)
+    pub fn set_cell_dimensions(&mut self, cell_width_px: f32, cell_height_px: f32) {
+        self.render_config.cell_width_px = cell_width_px;
+        self.render_config.cell_height_px = cell_height_px;
+    }
+
+    /// Enable or disable GUI mode
+    pub fn set_gui_mode(&mut self, enabled: bool) {
+        self.render_config.gui_mode = enabled;
     }
 
     /// Get abbreviated phase name for display
@@ -565,6 +737,77 @@ impl FancyTuiRenderer {
                 (base_width, base_height)
             }
         }
+    }
+
+    /// Get LAYOUT dimensions for an entity (MAX bounds in cells).
+    ///
+    /// In GUI mode, this returns larger dimensions that respect MTG card aspect ratio.
+    /// In CLI mode, this returns the same as `get_entity_dimensions()`.
+    ///
+    /// The layout dimensions are the card's "public" size - used for:
+    /// - Spacing between cards
+    /// - Row wrapping decisions
+    /// - Hit-testing / click detection
+    /// - Image overlay sizing
+    ///
+    /// The MIN dimensions (from `get_entity_dimensions`) are internal - used only for
+    /// determining where TUI text is rendered within the larger layout box.
+    pub fn get_entity_layout_dimensions(
+        &self,
+        entity: &Entity,
+        view: &GameStateView,
+        base_width: u16,
+        base_height: u16,
+    ) -> (u16, u16) {
+        // Get MIN dimensions first (TUI text area)
+        let (min_w, min_h) = Self::get_entity_dimensions(entity, view, base_width, base_height);
+
+        if !self.render_config.gui_mode {
+            // CLI mode: layout = min (no expansion)
+            return (min_w, min_h);
+        }
+
+        // GUI mode: calculate MAX bounds with correct MTG aspect ratio
+        let is_tapped = entity.is_tapped(view);
+        let bounds = if is_tapped {
+            CardBounds::for_gui_tapped(
+                min_w,
+                min_h,
+                self.render_config.cell_width_px,
+                self.render_config.cell_height_px,
+            )
+        } else {
+            CardBounds::for_gui(
+                min_w,
+                min_h,
+                self.render_config.cell_width_px,
+                self.render_config.cell_height_px,
+            )
+        };
+
+        // Convert MAX pixels back to cells (ceiling to ensure we don't undersell space)
+        let layout_w = (bounds.max_width_px / self.render_config.cell_width_px).ceil() as u16;
+        let layout_h = (bounds.max_height_px / self.render_config.cell_height_px).ceil() as u16;
+
+        // Layout dimensions must be at least as large as MIN
+        (layout_w.max(min_w), layout_h.max(min_h))
+    }
+
+    /// Get both MIN and LAYOUT dimensions for an entity.
+    ///
+    /// Returns ((min_w, min_h), (layout_w, layout_h)).
+    /// - MIN: TUI text rendering area (internal)
+    /// - LAYOUT: Card's public bounding box (spacing, hit-testing, images)
+    pub fn get_entity_min_and_layout_dimensions(
+        &self,
+        entity: &Entity,
+        view: &GameStateView,
+        base_width: u16,
+        base_height: u16,
+    ) -> ((u16, u16), (u16, u16)) {
+        let min_dims = Self::get_entity_dimensions(entity, view, base_width, base_height);
+        let layout_dims = self.get_entity_layout_dimensions(entity, view, base_width, base_height);
+        (min_dims, layout_dims)
     }
 
     /// Test if all cards fit in the battlefield area with given card size
@@ -1278,11 +1521,11 @@ impl FancyTuiRenderer {
         let mut current_x = 0u16;
 
         for (section_idx, &(start, end)) in sections.iter().enumerate() {
-            // Calculate width and max height of this section
+            // Calculate width and max height of this section using LAYOUT dimensions
             let mut section_width = 0u16;
             for item in &items[start..end] {
                 if let BattlefieldItem::Card { entity } = item {
-                    let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    let (card_w, _) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
                     section_width += card_w + Self::CARD_SPACING;
                 }
             }
@@ -1421,7 +1664,8 @@ impl FancyTuiRenderer {
                     // They appear in the header row above cards
                 }
                 BattlefieldItem::Card { entity } => {
-                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    // Use LAYOUT dimensions for spacing decisions
+                    let (card_w, card_h) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
 
                     // Check if card fits on current row
                     if current_x > 0 && current_x + card_w > area.width {
@@ -1467,12 +1711,12 @@ impl FancyTuiRenderer {
         let mut total_height = 0u16;
 
         for (section_idx, &(start, end)) in sections.iter().enumerate() {
-            // Calculate width and max height of this entire section
+            // Calculate width and max height of this entire section using LAYOUT dimensions
             let mut section_width = 0u16;
             let mut section_max_h = card_height;
             for item in &items[start..end] {
                 if let BattlefieldItem::Card { entity } = item {
-                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    let (card_w, card_h) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
                     section_width += card_w + Self::CARD_SPACING;
                     section_max_h = section_max_h.max(card_h);
                 }
@@ -1493,7 +1737,7 @@ impl FancyTuiRenderer {
             if section_width > area.width {
                 for item in &items[start..end] {
                     if let BattlefieldItem::Card { entity } = item {
-                        let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                        let (card_w, card_h) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
                         if current_x > 0 && current_x + card_w > area.width {
                             total_height += 1 + current_row_max_h + Self::CARD_SPACING;
                             rows += 1;
@@ -1546,12 +1790,13 @@ impl FancyTuiRenderer {
         let section_break_set: std::collections::HashSet<usize> = section_breaks.iter().copied().collect();
 
         // Precompute which sections can fit on a single row vs need internal wrapping
+        // Use LAYOUT dimensions for width calculations
         let mut section_fits_on_row: Vec<bool> = Vec::new();
         for &(start, end) in &sections {
             let mut section_width = 0u16;
             for item in &items[start..end] {
                 if let BattlefieldItem::Card { entity } = item {
-                    let (card_w, _) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    let (card_w, _) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
                     section_width += card_w + Self::CARD_SPACING;
                 }
             }
@@ -1590,7 +1835,9 @@ impl FancyTuiRenderer {
                     pending_label = Some((format!("{}:", text), *color));
                 }
                 BattlefieldItem::Card { entity } => {
-                    let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+                    // Use LAYOUT dimensions for spacing and positioning
+                    // This is the card's public bounding box
+                    let (card_w, card_h) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
 
                     // Check if card fits on current row (width check)
                     // In section-aware mode, only wrap mid-section if section is too wide to fit
@@ -1622,7 +1869,7 @@ impl FancyTuiRenderer {
                         stack_count_positions.push((current_x, y_offset, card_w, stack_count));
                     }
 
-                    // Card position: below the header line
+                    // Card position uses LAYOUT dimensions (public bounding box)
                     let card_y = y_offset + 1;
                     // Always add card position - ratatui will handle clipping if needed.
                     // The test_wordwrap_layout_fits function should have already ensured
@@ -1724,9 +1971,13 @@ impl FancyTuiRenderer {
         for item in items {
             if let BattlefieldItem::Card { entity } = item {
                 if card_idx < card_positions.len() {
-                    let (x, y, w, h) = card_positions[card_idx];
+                    // card_positions contains LAYOUT dimensions (MAX bounds)
+                    let (x, y, layout_w, layout_h) = card_positions[card_idx];
                     let entity_x = area.x + x + x_offset;
                     let entity_y = area.y + y;
+
+                    // Get MIN dimensions for text rendering
+                    let (min_w, min_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
 
                     // Clip entity to not exceed area bounds
                     let max_w = area.x.saturating_add(area.width).saturating_sub(entity_x);
@@ -1734,13 +1985,16 @@ impl FancyTuiRenderer {
 
                     // Only render if entity has some visible area
                     if max_w > 0 && max_h > 0 {
-                        let entity_area = Rect {
+                        // render_area uses MIN dimensions for text rendering
+                        let render_area = Rect {
                             x: entity_x,
                             y: entity_y,
-                            width: w.min(max_w),
-                            height: h.min(max_h),
+                            width: min_w.min(max_w),
+                            height: min_h.min(max_h),
                         };
-                        self.render_entity(f, entity_area, view, entity);
+                        // layout_dimensions uses MAX for hit-testing (clipped to visible area)
+                        let layout_dims = Some((layout_w.min(max_w), layout_h.min(max_h)));
+                        self.render_entity(f, render_area, layout_dims, view, entity);
                     }
                     card_idx += 1;
                 }
@@ -1792,7 +2046,8 @@ impl FancyTuiRenderer {
         let mut current_row_width = 0u16;
 
         for entity in &entities {
-            let (card_w, card_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+            // Use LAYOUT dimensions for spacing (card's public bounding box)
+            let (card_w, card_h) = self.get_entity_layout_dimensions(entity, view, card_width, card_height);
 
             let entity_width_with_spacing = card_w + Self::CARD_SPACING;
 
@@ -1838,16 +2093,23 @@ impl FancyTuiRenderer {
             let mut current_x = area.x + x_offset;
 
             // Render entities in this row
-            for (entity, card_w, card_h) in row {
-                let entity_area = Rect {
+            // (card_w, card_h) are LAYOUT dimensions (MAX bounds)
+            for (entity, layout_w, layout_h) in row {
+                // Get MIN dimensions for text rendering
+                let (min_w, min_h) = Self::get_entity_dimensions(entity, view, card_width, card_height);
+
+                // render_area uses MIN dimensions for text rendering
+                let render_area = Rect {
                     x: current_x,
                     y: current_y,
-                    width: *card_w,
-                    height: *card_h,
+                    width: min_w,
+                    height: min_h,
                 };
-                self.render_entity(f, entity_area, view, entity);
+                // layout_dimensions uses MAX for hit-testing
+                let layout_dims = Some((*layout_w, *layout_h));
+                self.render_entity(f, render_area, layout_dims, view, entity);
 
-                current_x += card_w + Self::CARD_SPACING;
+                current_x += layout_w + Self::CARD_SPACING;
             }
 
             current_y += row_height + Self::CARD_SPACING;
@@ -2105,6 +2367,7 @@ impl FancyTuiRenderer {
                     owner: owner_id,
                 },
                 area: card_area,
+                layout_area_px: None,
             });
         }
     }
@@ -2265,6 +2528,7 @@ impl FancyTuiRenderer {
                 self.state.entity_positions.push(EntityPosition {
                     entity: Entity::HandCard { card_id, index: i },
                     area: card_area,
+                    layout_area_px: None,
                 });
             }
         }
@@ -2518,18 +2782,54 @@ impl FancyTuiRenderer {
     }
 
     /// Render a single entity as a box with priority-based content layout
-    pub fn render_entity(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, entity: &Entity) {
+    ///
+    /// Parameters:
+    /// - `render_area`: MIN bounds (cells) where TUI text is actually rendered
+    /// - `layout_dimensions`: Optional (layout_w, layout_h) in cells - MAX bounds for hit-testing/images
+    ///   If None, uses render_area dimensions (CLI mode behavior)
+    pub fn render_entity(
+        &mut self,
+        f: &mut Frame,
+        render_area: Rect,
+        layout_dimensions: Option<(u16, u16)>,
+        view: &GameStateView,
+        entity: &Entity,
+    ) {
         use ratatui::text::Text;
 
+        // Calculate layout area (MAX bounds) for hit-testing and image positioning
+        // In GUI mode, this is larger than render_area to match MTG aspect ratio
+        let (layout_w, layout_h) = layout_dimensions.unwrap_or((render_area.width, render_area.height));
+        let layout_area = Rect {
+            x: render_area.x,
+            y: render_area.y,
+            width: layout_w,
+            height: layout_h,
+        };
+
+        // Calculate pixel-based layout area if in GUI mode
+        let layout_area_px = if self.render_config.gui_mode {
+            Some(LayoutAreaPx {
+                x_px: render_area.x as f32 * self.render_config.cell_width_px,
+                y_px: render_area.y as f32 * self.render_config.cell_height_px,
+                width_px: layout_w as f32 * self.render_config.cell_width_px,
+                height_px: layout_h as f32 * self.render_config.cell_height_px,
+            })
+        } else {
+            None
+        };
+
         // Track entity position for mouse hit testing
+        // Uses MAX bounds (layout_area) as the public bounding box
         self.state.entity_positions.push(EntityPosition {
             entity: entity.clone(),
-            area,
+            area: layout_area, // MAX bounds - the public bounding box
+            layout_area_px,
         });
 
         // Dispatch to visual stack renderer if applicable
         if matches!(entity, Entity::VisualStack { .. }) {
-            self.render_visual_stack(f, area, view, entity);
+            self.render_visual_stack(f, render_area, view, entity);
             return;
         }
 
@@ -2543,8 +2843,9 @@ impl FancyTuiRenderer {
             Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
 
         // Calculate available content dimensions (excluding borders)
-        let content_width = area.width.saturating_sub(2) as usize;
-        let content_height = area.height.saturating_sub(2);
+        // Use render_area (MIN bounds) for text content calculation
+        let content_width = render_area.width.saturating_sub(2) as usize;
+        let content_height = render_area.height.saturating_sub(2);
 
         // Determine border color and text style
         let border_color = if let Some(card) = card.as_ref() {
@@ -2832,7 +3133,7 @@ impl FancyTuiRenderer {
 
         let text = Text::from(lines);
         let paragraph = Paragraph::new(text).block(block);
-        f.render_widget(paragraph, area);
+        f.render_widget(paragraph, render_area);
     }
 }
 

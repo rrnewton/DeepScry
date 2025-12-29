@@ -627,6 +627,7 @@ mod tests {
                 width: 15,
                 height: 1,
             },
+            layout_area_px: None,
         });
 
         // Verify initial state
@@ -683,6 +684,7 @@ mod tests {
                 width: 15,
                 height: 1,
             },
+            layout_area_px: None,
         };
 
         // Click outside the area (y=6 is below the entity at y=5, height=1)

@@ -45,6 +45,9 @@ thread_local! {
     static GLOBAL_TUI_STATE: RefCell<Option<Rc<RefCell<WasmFancyTuiState>>>> = const { RefCell::new(None) };
     // Thread-local storage for the fixed script (set before launching TUI)
     static FIXED_SCRIPT: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    // Thread-local storage for measured cell dimensions from JavaScript
+    // Default to RatZilla's magic numbers (10x20 pixels per cell)
+    static CELL_DIMENSIONS: RefCell<(f32, f32)> = const { RefCell::new((10.0, 20.0)) };
 }
 
 /// Set the fixed script for player 1's Fixed controller
@@ -90,6 +93,23 @@ pub fn cleanup_tui_state() {
         *s.borrow_mut() = None;
     });
     log::debug!(target: "wasm_tui", "Cleaned up global TUI state");
+}
+
+/// Set cell dimensions measured by JavaScript
+///
+/// Call this after measuring the browser's font metrics to get accurate
+/// pixel dimensions for layout calculations. The values are used by
+/// `tui_get_card_positions()` to calculate `layout_width_px` and `layout_height_px`.
+///
+/// # Arguments
+/// * `width_px` - Cell width in pixels (typically 10.0 for RatZilla)
+/// * `height_px` - Cell height in pixels (typically 20.0 for RatZilla)
+#[wasm_bindgen]
+pub fn tui_set_cell_dimensions(width_px: f32, height_px: f32) {
+    CELL_DIMENSIONS.with(|dims| {
+        *dims.borrow_mut() = (width_px, height_px);
+    });
+    log::debug!(target: "wasm_tui", "Cell dimensions set: {}x{} px", width_px, height_px);
 }
 
 /// Run one turn or continue game - called from JavaScript button
@@ -180,19 +200,63 @@ pub fn tui_get_battlefield_cards() -> String {
 
 /// Helper function to export card positions from renderer state
 /// This is called from within the render loop, so it doesn't need to borrow GLOBAL_TUI_STATE
+///
+/// EntityPosition now stores:
+/// - `area`: MAX bounds (cells) - the card's public bounding box
+/// - `layout_area_px`: Optional pixel-based layout (if in GUI mode)
 fn export_card_positions_from_renderer(
     entity_positions: &[crate::game::fancy_tui_renderer::EntityPosition],
     game: &GameState,
     player_id: PlayerId,
 ) -> String {
-    use crate::game::fancy_tui_renderer::Entity;
+    use crate::game::fancy_tui_renderer::{CardBounds, Entity};
 
     let mut positions = Vec::new();
     let view = GameStateView::new(game, player_id);
 
+    // Get cell dimensions from thread-local storage (for fallback calculation)
+    let (cell_w_px, cell_h_px) = CELL_DIMENSIONS.with(|dims| *dims.borrow());
+
+    // Helper to create JSON object with layout bounds
+    // If layout_area_px is provided, use it; otherwise calculate from cell dimensions
+    let make_card_json = |card_id: &crate::core::CardId,
+                          name: &str,
+                          x: u16,
+                          y: u16,
+                          width: u16,
+                          height: u16,
+                          is_tapped: bool,
+                          layout_area_px: Option<&crate::game::fancy_tui_renderer::LayoutAreaPx>|
+     -> serde_json::Value {
+        // Use stored pixel layout if available, otherwise calculate using CardBounds
+        let (layout_w_px, layout_h_px) = if let Some(layout) = layout_area_px {
+            (layout.width_px, layout.height_px)
+        } else {
+            // Fallback: calculate MAX bounds using CardBounds for correct MTG aspect ratio
+            let bounds = if is_tapped {
+                CardBounds::for_gui_tapped(width, height, cell_w_px, cell_h_px)
+            } else {
+                CardBounds::for_gui(width, height, cell_w_px, cell_h_px)
+            };
+            (bounds.max_width_px, bounds.max_height_px)
+        };
+
+        serde_json::json!({
+            "card_id": format!("{:?}", card_id),
+            "name": name,
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+            "is_tapped": is_tapped,
+            "layout_width_px": layout_w_px,
+            "layout_height_px": layout_h_px,
+        })
+    };
+
     // Extract card positions from renderer state
-    // We'll include SingleCard entities (individual battlefield cards)
-    // and cards from VisualStack/SimpleStack (grouped cards on battlefield)
+    // EntityPosition.area is now MAX bounds (the card's public bounding box)
+    // We include SingleCard entities and cards from VisualStack/SimpleStack
     for entity_pos in entity_positions {
         match &entity_pos.entity {
             Entity::SingleCard { card_id, .. } => {
@@ -200,15 +264,16 @@ fn export_card_positions_from_renderer(
                 if game.battlefield.cards.contains(card_id) {
                     if let Ok(card) = game.cards.get(*card_id) {
                         let is_tapped = view.is_tapped(*card_id);
-                        positions.push(serde_json::json!({
-                            "card_id": format!("{:?}", card_id),
-                            "name": format!("{}", card.name),
-                            "x": entity_pos.area.x,
-                            "y": entity_pos.area.y,
-                            "width": entity_pos.area.width,
-                            "height": entity_pos.area.height,
-                            "is_tapped": is_tapped,
-                        }));
+                        positions.push(make_card_json(
+                            card_id,
+                            &card.name.to_string(),
+                            entity_pos.area.x,
+                            entity_pos.area.y,
+                            entity_pos.area.width,
+                            entity_pos.area.height,
+                            is_tapped,
+                            entity_pos.layout_area_px.as_ref(),
+                        ));
                     }
                 }
             }
@@ -226,15 +291,26 @@ fn export_card_positions_from_renderer(
                             let stack_depth = card_ids.len() as u16;
                             let offset = stack_depth.saturating_sub(1); // DIAGONAL_OFFSET = 1
 
-                            positions.push(serde_json::json!({
-                                "card_id": format!("{:?}", card_id),
-                                "name": format!("{}", card.name),
-                                "x": entity_pos.area.x + offset,  // Offset to top card position
-                                "y": entity_pos.area.y + offset,
-                                "width": entity_pos.area.width.saturating_sub(offset),   // Top card takes remaining space
-                                "height": entity_pos.area.height.saturating_sub(offset),
-                                "is_tapped": is_tapped,
-                            }));
+                            // Adjust layout_area_px for offset if present
+                            let adjusted_layout = entity_pos.layout_area_px.as_ref().map(|l| {
+                                crate::game::fancy_tui_renderer::LayoutAreaPx {
+                                    x_px: l.x_px + offset as f32 * cell_w_px,
+                                    y_px: l.y_px + offset as f32 * cell_h_px,
+                                    width_px: l.width_px - offset as f32 * cell_w_px,
+                                    height_px: l.height_px - offset as f32 * cell_h_px,
+                                }
+                            });
+
+                            positions.push(make_card_json(
+                                &card_id,
+                                &card.name.to_string(),
+                                entity_pos.area.x + offset,
+                                entity_pos.area.y + offset,
+                                entity_pos.area.width.saturating_sub(offset),
+                                entity_pos.area.height.saturating_sub(offset),
+                                is_tapped,
+                                adjusted_layout.as_ref(),
+                            ));
                         }
                     }
                 }
@@ -246,15 +322,16 @@ fn export_card_positions_from_renderer(
                 if let Some(&card_id) = card_ids.first() {
                     if game.battlefield.cards.contains(&card_id) {
                         if let Ok(card) = game.cards.get(card_id) {
-                            positions.push(serde_json::json!({
-                                "card_id": format!("{:?}", card_id),
-                                "name": format!("{}", card.name),
-                                "x": entity_pos.area.x,
-                                "y": entity_pos.area.y,
-                                "width": entity_pos.area.width,
-                                "height": entity_pos.area.height,
-                                "is_tapped": *is_tapped,
-                            }));
+                            positions.push(make_card_json(
+                                &card_id,
+                                &card.name.to_string(),
+                                entity_pos.area.x,
+                                entity_pos.area.y,
+                                entity_pos.area.width,
+                                entity_pos.area.height,
+                                *is_tapped,
+                                entity_pos.layout_area_px.as_ref(),
+                            ));
                         }
                     }
                 }
