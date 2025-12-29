@@ -687,6 +687,8 @@ async fn run_game(
     let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx);
     p1_controller.set_last_reveal_index(opening_hand_count);
     p2_controller.set_last_reveal_index(opening_hand_count);
+    p1_controller.set_network_debug(config.network_debug);
+    p2_controller.set_network_debug(config.network_debug);
 
     // Wrap game state for sharing between tasks
     let game = Arc::new(Mutex::new(game));
@@ -926,8 +928,7 @@ async fn handle_player_websocket(
                                 action_count: choice_request.action_count,
                                 timestamp_ms: now_ms(),
                                 context: None,
-                                // TODO(mtg-037fw): Populate in debug mode
-                                debug_info: None,
+                                debug_info: choice_request.debug_info,
                             }).await?;
                         }
                     }

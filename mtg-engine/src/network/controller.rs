@@ -57,6 +57,8 @@ pub struct ChoiceRequest {
     /// The server should send `CardRevealed` messages for these before
     /// sending the `ChoiceRequest` to the client.
     pub reveals: Vec<CardRevealInfo>,
+    /// Debug synchronization info (only when network_debug is enabled)
+    pub debug_info: Option<super::DebugSyncInfo>,
 }
 
 /// Response received from the network handler
@@ -131,6 +133,8 @@ pub struct NetworkController {
     /// This prevents re-sending opening hand reveals that were already sent
     /// during the GameStarted handshake phase.
     last_reveal_index: usize,
+    /// Network debug mode - include debug info in choice requests
+    network_debug: bool,
 }
 
 impl NetworkController {
@@ -146,6 +150,7 @@ impl NetworkController {
             response_rx,
             choice_seq: 0,
             last_reveal_index: 0, // Will be set by set_last_reveal_index
+            network_debug: false,
         }
     }
 
@@ -156,6 +161,13 @@ impl NetworkController {
     /// were already sent during the GameStarted handshake.
     pub fn set_last_reveal_index(&mut self, index: usize) {
         self.last_reveal_index = index;
+    }
+
+    /// Enable network debug mode
+    ///
+    /// When enabled, debug synchronization info is included in each choice request.
+    pub fn set_network_debug(&mut self, enabled: bool) {
+        self.network_debug = enabled;
     }
 
     /// Send a choice request and wait for response
@@ -175,6 +187,13 @@ impl NetworkController {
         // Get action count from GameState undo log for synchronization
         let action_count = view.action_count() as u64;
 
+        // Build debug info if network debug mode is enabled
+        let debug_info = if self.network_debug {
+            Some(crate::game::build_debug_sync_info(view, 10))
+        } else {
+            None
+        };
+
         let request = ChoiceRequest {
             choice_seq: self.choice_seq + 1,
             choice_type,
@@ -182,6 +201,7 @@ impl NetworkController {
             state_hash,
             action_count,
             reveals,
+            debug_info,
         };
 
         // Send request
