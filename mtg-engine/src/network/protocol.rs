@@ -2,12 +2,54 @@
 //!
 //! Defines all messages exchanged between client and server.
 //!
-//! ## Global Ordering
+//! ## Global Ordering via action_count
 //!
 //! All messages include timing information for debugging synchronization issues:
-//! - `action_count`: Position in the global action log (like a blockchain block number).
-//!   This is the authoritative ordering - server and all clients must agree.
+//! - `action_count`: Length of the undo_log at a specific point in time.
 //! - `timestamp_ms`: Wall-clock milliseconds since Unix epoch for debugging.
+//!
+//! ### What is action_count?
+//!
+//! The `action_count` is the length of the `GameState.undo_log`, which records
+//! every `GameAction` that has been applied to the game state. Each action
+//! (including ChoicePoint actions that record player decisions) increments the log.
+//!
+//! ### action_count semantics by message type
+//!
+//! **ChoiceRequest** (server → client):
+//! - `action_count = D`: The server's undo_log has D entries BEFORE this choice is made.
+//! - This is the server's authoritative sync point - client should validate their
+//!   shadow state matches before making the choice.
+//!
+//! **SubmitChoice** (client → server):
+//! - `action_count`: Client ECHOES the server's action_count from ChoiceRequest.
+//! - This confirms the client was at the expected state when making the choice.
+//! - Note: By the time client sends this, their GameLoop may have run ahead
+//!   internally to `D + N` (where N ≥ 1), but they report the sync point D.
+//!
+//! **ChoiceAccepted** (server → client):
+//! - `action_count`: Server's undo_log length AFTER applying the choice.
+//! - Typically `D + 1` if only a ChoicePoint action was logged.
+//! - Could be `D + N` if the choice triggered additional actions (e.g., casting
+//!   a spell logs the spell resolution actions too).
+//!
+//! **OpponentChoice** (server → client):
+//! - `action_count`: The server's undo_log length when this choice was made.
+//! - Client uses this to validate their shadow state is synchronized.
+//!
+//! ### Example flow
+//!
+//! ```text
+//! Server undo_log: [a1, a2, a3]  (length = 3)
+//! Server sends: ChoiceRequest { action_count: 3, ... }
+//!
+//! Client shadow log: [a1, a2, a3]  (should match!)
+//! Client makes choice, logs ChoicePoint to shadow: [a1, a2, a3, choice]
+//! Client sends: SubmitChoice { action_count: 3, ... }  (echoes server's count)
+//!
+//! Server applies choice, logs ChoicePoint: [a1, a2, a3, choice]
+//! Server sends: ChoiceAccepted { action_count: 4, ... }
+//! ```
 //!
 //! ## Player Identification
 //!
@@ -57,8 +99,11 @@ pub enum ClientMessage {
         choice_seq: u32,
         /// The chosen option index (into the options array)
         choice_index: usize,
-        /// Action count at time of choice (undo log position)
-        /// Used for synchronization validation - server verifies this matches expected
+        /// ECHOES the server's action_count from the ChoiceRequest
+        ///
+        /// Client sends back the same action_count it received in ChoiceRequest to
+        /// confirm they were at the expected sync point when making this choice.
+        /// Server validates this matches to detect sync drift early.
         #[serde(default)]
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
@@ -179,8 +224,11 @@ pub enum ServerMessage {
         options: Vec<String>,
         /// Game state hash at this decision point (excludes hidden info)
         state_hash: u64,
-        /// Action count at this decision point (undo log position)
-        /// Client should verify this matches their local action count
+        /// Server's undo_log length BEFORE this choice is made
+        ///
+        /// This is the authoritative sync point. Client should validate their
+        /// shadow state's action_count matches before proceeding with the choice.
+        /// Client echoes this value back in SubmitChoice.action_count.
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         timestamp_ms: u64,
@@ -204,8 +252,11 @@ pub enum ServerMessage {
         choice_index: usize,
         /// Human-readable description of what was chosen
         description: String,
-        /// Action count when this choice was made
-        /// Client uses this to verify they're at the same position
+        /// Server's undo_log length when this opponent choice was recorded
+        ///
+        /// Client uses this to verify their shadow state is synchronized.
+        /// Should match the action_count from the ChoiceRequest that prompted
+        /// this opponent's decision.
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         timestamp_ms: u64,
@@ -224,8 +275,11 @@ pub enum ServerMessage {
     ChoiceAccepted {
         /// Echo of the choice sequence for correlation
         choice_seq: u32,
-        /// Server's action count after processing the choice
-        /// Client can verify this matches their expected count
+        /// Server's undo_log length AFTER processing the choice
+        ///
+        /// This is typically `D + 1` where D was the action_count in ChoiceRequest,
+        /// because a ChoicePoint action was logged. May be higher if the choice
+        /// triggered additional automatic actions (e.g., spell resolution).
         #[serde(default)]
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
