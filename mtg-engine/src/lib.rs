@@ -13,6 +13,8 @@
 
 pub mod core;
 #[cfg(feature = "native")]
+pub mod deck_builder;
+#[cfg(feature = "native")]
 pub mod download;
 pub mod error;
 pub mod game;

@@ -410,6 +410,31 @@ enum Commands {
     /// Print statistics about the card database
     Stats {},
 
+    /// Fast deck entry mode - Interactive TUI for rapid deck building
+    ///
+    /// Provides a streamlined interface for entering paper decks with minimal keystrokes:
+    /// - Start typing to fuzzy search cards
+    /// - Press Enter to add 1 copy, or 1-9 to add N copies
+    /// - Arrow keys to navigate results
+    /// - Escape to save and exit
+    DeckBuild {
+        /// Output file path (default: output.dck)
+        #[arg(long, short = 'o', default_value = "output.dck")]
+        output_file: PathBuf,
+
+        /// Path to cardsfolder (default: cardsfolder)
+        #[arg(long, default_value = "cardsfolder")]
+        cardsfolder: PathBuf,
+
+        /// Only include cards from sets released on or after this year
+        #[arg(long)]
+        start_year: Option<u16>,
+
+        /// Only include cards from sets released on or before this year
+        #[arg(long)]
+        end_year: Option<u16>,
+    },
+
     /// Export card database and decks for WASM (browser) builds
     ExportWasm {
         /// Output directory for exported data (default: web/data)
@@ -769,6 +794,12 @@ async fn main() -> Result<()> {
             .await?
         }
         Commands::Stats {} => run_stats().await?,
+        Commands::DeckBuild {
+            output_file,
+            cardsfolder,
+            start_year,
+            end_year,
+        } => run_deck_build(output_file, cardsfolder, start_year, end_year).await?,
         Commands::ExportWasm { output, deck_globs } => run_export_wasm(output, deck_globs).await?,
         Commands::Download {
             output,
@@ -2497,6 +2528,40 @@ async fn run_resume(
     }
 
     Ok(())
+}
+
+/// Run the fast deck entry mode TUI
+async fn run_deck_build(
+    output_file: PathBuf,
+    cardsfolder: PathBuf,
+    start_year: Option<u16>,
+    end_year: Option<u16>,
+) -> Result<()> {
+    use mtg_forge_rs::deck_builder::{run_deck_builder, DeckBuilderConfig};
+    use mtg_forge_rs::download::load_card_names_from_cardsfolder;
+
+    println!("=== MTG Forge - Fast Deck Builder ===\n");
+
+    // Verify cardsfolder exists
+    if !cardsfolder.exists() {
+        return Err(mtg_forge_rs::MtgError::InvalidDeckFormat(format!(
+            "Cardsfolder not found: {:?}",
+            cardsfolder
+        )));
+    }
+
+    // Load all card names
+    println!("Loading card names from {:?}...", cardsfolder);
+    let card_names = load_card_names_from_cardsfolder(&cardsfolder).await?;
+    println!("Found {} cards\n", card_names.len());
+
+    let config = DeckBuilderConfig {
+        output_file: output_file.to_string_lossy().to_string(),
+        start_year,
+        end_year,
+    };
+
+    run_deck_builder(config, card_names).await
 }
 
 /// Print statistics about the card database
