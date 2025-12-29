@@ -180,6 +180,12 @@ struct PlayerConnection {
     /// Used for sync validation when the client responds with SubmitChoice.
     /// This is the authoritative source - NOT the shared game state (which is stale).
     expected_action_count: Option<u64>,
+    /// Expected state_hash from the last ChoiceRequest sent to this client.
+    /// Used for sync validation in network debug mode.
+    expected_state_hash: Option<u64>,
+    /// Server's DebugSyncInfo from the last ChoiceRequest sent to this client.
+    /// Used for detailed diff logging when hashes mismatch.
+    expected_debug_info: Option<crate::network::DebugSyncInfo>,
     /// A choice that arrived before the corresponding ChoiceRequest.
     /// In synchronized GameLoop mode, the client may submit a choice before
     /// the server's NetworkController sends its ChoiceRequest due to timing.
@@ -190,6 +196,8 @@ struct PlayerConnection {
     /// This prevents re-sending opening hand reveals that were already sent
     /// during the GameStarted handshake phase.
     last_reveal_index: usize,
+    /// Network debug mode - when enabled, validate client state hashes
+    network_debug: bool,
 }
 
 impl PlayerConnection {
@@ -507,8 +515,11 @@ async fn run_game(
         opponent_reveal_tx: p1_reveal_tx, // P1 sends reveals to P2 (when P1 gets ChoiceRequest)
         current_choice_type: None,
         expected_action_count: None,
+        expected_state_hash: None,
+        expected_debug_info: None,
         pending_choice: None,
         last_reveal_index: 0, // Will be set after opening hands are determined
+        network_debug: config.network_debug,
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
@@ -522,8 +533,11 @@ async fn run_game(
         opponent_reveal_tx: p2_reveal_tx, // P2 sends reveals to P1 (when P2 gets ChoiceRequest)
         current_choice_type: None,
         expected_action_count: None,
+        expected_state_hash: None,
+        expected_debug_info: None,
         pending_choice: None,
         last_reveal_index: 0, // Will be set after opening hands are determined
+        network_debug: config.network_debug,
     };
 
     // Convert deck submissions to DeckList format
@@ -869,6 +883,10 @@ async fn handle_player_websocket(
                         // This is the authoritative source - NOT the stale game state mutex.
                         conn.expected_action_count = Some(choice_request.action_count);
 
+                        // Track state_hash and debug_info for network debug validation
+                        conn.expected_state_hash = Some(choice_request.state_hash);
+                        conn.expected_debug_info = choice_request.debug_info.clone();
+
                         // Check if client already sent a choice (pending_choice)
                         // This happens in synchronized GameLoop mode when client is faster
                         if let Some(pending) = conn.pending_choice.take() {
@@ -946,7 +964,7 @@ async fn handle_player_websocket(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count, .. }) => {
+                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count, client_state_hash, debug_info: client_debug_info, .. }) => {
                                 // Check if we've sent a ChoiceRequest yet (tracked by expected_action_count)
                                 // If not, the client is ahead of us (synchronized GameLoop timing)
                                 // and we need to queue this choice for later processing.
@@ -963,6 +981,79 @@ async fn handle_player_websocket(
                                             "SYNC WARNING: Player {:?} action_count mismatch! client={} expected={}",
                                             conn.player_id, client_action_count, expected
                                         );
+                                    }
+
+                                    // Validate state hash in network debug mode
+                                    if conn.network_debug {
+                                        if let (Some(client_hash), Some(server_hash)) = (client_state_hash, conn.expected_state_hash.take()) {
+                                            if client_hash != server_hash {
+                                                // FATAL: State hash mismatch - game state has diverged
+                                                log::error!(
+                                                    "FATAL SYNC ERROR: Player {:?} state hash mismatch at action_count={}!",
+                                                    conn.player_id, expected
+                                                );
+                                                log::error!(
+                                                    "  Server hash: 0x{:016x}",
+                                                    server_hash
+                                                );
+                                                log::error!(
+                                                    "  Client hash: 0x{:016x}",
+                                                    client_hash
+                                                );
+
+                                                // Log detailed diff if debug_info is available
+                                                if let Some(server_info) = conn.expected_debug_info.take() {
+                                                    log::error!("  Server state: turn={} phase={} active={:?}",
+                                                        server_info.turn, server_info.phase, server_info.active_player);
+                                                    log::error!("  Server life: P1={} P2={}",
+                                                        server_info.life_totals[0], server_info.life_totals[1]);
+                                                    log::error!("  Server zones: P1 hand={} lib={} grave={}, P2 hand={} lib={} grave={}",
+                                                        server_info.hand_sizes[0], server_info.library_sizes[0], server_info.graveyard_sizes[0],
+                                                        server_info.hand_sizes[1], server_info.library_sizes[1], server_info.graveyard_sizes[1]);
+                                                    log::error!("  Server battlefield={} stack={}",
+                                                        server_info.battlefield_count, server_info.stack_size);
+                                                    if !server_info.last_actions.is_empty() {
+                                                        log::error!("  Server last actions:");
+                                                        for action in &server_info.last_actions {
+                                                            log::error!("    {}", action);
+                                                        }
+                                                    }
+                                                }
+
+                                                if let Some(client_info) = client_debug_info {
+                                                    log::error!("  Client state: turn={} phase={} active={:?}",
+                                                        client_info.turn, client_info.phase, client_info.active_player);
+                                                    log::error!("  Client life: P1={} P2={}",
+                                                        client_info.life_totals[0], client_info.life_totals[1]);
+                                                    log::error!("  Client zones: P1 hand={} lib={} grave={}, P2 hand={} lib={} grave={}",
+                                                        client_info.hand_sizes[0], client_info.library_sizes[0], client_info.graveyard_sizes[0],
+                                                        client_info.hand_sizes[1], client_info.library_sizes[1], client_info.graveyard_sizes[1]);
+                                                    log::error!("  Client battlefield={} stack={}",
+                                                        client_info.battlefield_count, client_info.stack_size);
+                                                    if !client_info.last_actions.is_empty() {
+                                                        log::error!("  Client last actions:");
+                                                        for action in &client_info.last_actions {
+                                                            log::error!("    {}", action);
+                                                        }
+                                                    }
+                                                }
+
+                                                // Send fatal error to client and terminate game
+                                                conn.send(&ServerMessage::Error {
+                                                    message: format!(
+                                                        "FATAL: State hash mismatch! Server=0x{:016x} Client=0x{:016x} at action_count={}",
+                                                        server_hash, client_hash, expected
+                                                    ),
+                                                    fatal: true,
+                                                }).await?;
+                                                break;
+                                            } else {
+                                                log::trace!(
+                                                    "Player {:?}: state hash validated 0x{:016x}",
+                                                    conn.player_id, client_hash
+                                                );
+                                            }
+                                        }
                                     }
 
                                     // Send response to NetworkController
