@@ -1039,9 +1039,17 @@ cast dark ritual</textarea>
                 const imgId = `card-image-${cardId}`;
                 let img = document.getElementById(imgId);
 
+                // Determine source names for logging
+                const primarySource = primaryUrl.includes('gatherer.wizards.com') ? 'Gatherer' :
+                                     primaryUrl.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
+                const fallbackSource = fallbackUrl ?
+                    (fallbackUrl.includes('gatherer.wizards.com') ? 'Gatherer' :
+                     fallbackUrl.includes('scryfall.com') ? 'Scryfall' : 'Unknown') : null;
+
                 // Debug: log the URLs being loaded
                 if (this.debugMode) {
-                    console.log(`[CardImage] ${cardId}: primary=${primaryUrl}, fallback=${fallbackUrl || 'none'}`);
+                    console.log(`[CardImage] ${cardId}: Loading from ${primarySource}` +
+                        (fallbackSource ? ` (fallback: ${fallbackSource})` : ' (no fallback)'));
                 }
 
                 if (!img) {
@@ -1052,6 +1060,8 @@ cast dark ritual</textarea>
                     img.src = primaryUrl;
                     img.dataset.fallback = fallbackUrl || '';
                     img.dataset.cardId = cardId;  // Store for debugging
+                    img.dataset.primarySource = primarySource;  // Track which source was primary
+                    img.dataset.fallbackSource = fallbackSource || '';
 
                     // Error handler with fallback support
                     img.onerror = (event) => {
@@ -1059,13 +1069,14 @@ cast dark ritual</textarea>
                         const fallback = imgEl.dataset.fallback;
                         const currentSrc = imgEl.src;
                         const cid = imgEl.dataset.cardId;
+                        const fbSource = imgEl.dataset.fallbackSource;
                         // Try fallback if available and not already tried
                         if (fallback && !currentSrc.includes(fallback.split('/')[2])) {
-                            console.log(`[CardImage] ${cid}: Primary FAILED, trying fallback: ${fallback}`);
+                            console.log(`[CardImage] ${cid}: ${imgEl.dataset.primarySource} FAILED (HTTP error), switching to ${fbSource}`);
                             imgEl.src = fallback;
                             imgEl.dataset.fallback = '';  // Clear to prevent loop
                         } else {
-                            console.warn(`[CardImage] ${cid}: FAILED (both sources)`);
+                            console.warn(`[CardImage] ${cid}: FAILED - both ${imgEl.dataset.primarySource} and ${fbSource} failed`);
                         }
                     };
 
@@ -1074,22 +1085,28 @@ cast dark ritual</textarea>
                         const imgEl = event.target;
                         const cid = imgEl.dataset.cardId;
                         const fallback = imgEl.dataset.fallback;
+                        const fbSource = imgEl.dataset.fallbackSource;
+
+                        // Determine which source this image came from
+                        const loadedFrom = imgEl.src.includes('gatherer.wizards.com') ? 'Gatherer' :
+                                          imgEl.src.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
+                        const usedFallback = loadedFrom !== imgEl.dataset.primarySource;
 
                         // Gatherer returns a ~8KB card back image for unknown cards
                         // Check if natural dimensions suggest a card back (Gatherer card backs are ~200x285)
                         // Real card fronts should be ~223x310 or larger
-                        // The card back specifically is typically 200x285 pixels
                         const isGathererUrl = imgEl.src.includes('gatherer.wizards.com');
                         const isProbablyCardBack = isGathererUrl &&
                             imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0 &&
                             imgEl.naturalWidth < 210 && imgEl.naturalHeight < 295;
 
                         if (isProbablyCardBack && fallback) {
-                            console.log(`[CardImage] ${cid}: Gatherer returned card back (${imgEl.naturalWidth}x${imgEl.naturalHeight}), trying fallback`);
+                            console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK (${imgEl.naturalWidth}x${imgEl.naturalHeight}), switching to ${fbSource}`);
                             imgEl.src = fallback;
                             imgEl.dataset.fallback = '';  // Clear to prevent loop
                         } else if (CardImageOverlay.debugMode) {
-                            console.log(`[CardImage] ${cid}: Loaded OK (${imgEl.naturalWidth}x${imgEl.naturalHeight}) from ${imgEl.src.split('/')[2]}`);
+                            const fallbackNote = usedFallback ? ' [FALLBACK USED]' : '';
+                            console.log(`[CardImage] ${cid}: ✓ Loaded from ${loadedFrom} (${imgEl.naturalWidth}x${imgEl.naturalHeight})${fallbackNote}`);
                         }
                     };
 
@@ -1103,6 +1120,8 @@ cast dark ritual</textarea>
                     if (img.src !== primaryUrl) {
                         img.src = primaryUrl;
                         img.dataset.fallback = fallbackUrl || '';
+                        img.dataset.primarySource = primarySource;
+                        img.dataset.fallbackSource = fallbackSource || '';
                     }
                 }
 
@@ -1248,13 +1267,14 @@ cast dark ritual</textarea>
                         const img = event.target;
                         const fallbackUrl = img.dataset.fallback;
                         const currentSrc = img.src;
+                        const fbSource = img.dataset.fallbackSource;
                         // Try fallback if available and not already tried
                         if (fallbackUrl && !currentSrc.includes(fallbackUrl.split('/')[2])) {
-                            console.log(`[CardDetails] Primary FAILED, trying fallback: ${fallbackUrl}`);
+                            console.log(`[CardDetails] ${img.dataset.cardName}: ${img.dataset.primarySource} FAILED (HTTP error), switching to ${fbSource}`);
                             img.src = fallbackUrl;
                             img.dataset.fallback = '';  // Clear to prevent loop
                         } else {
-                            console.warn(`[CardDetails] FAILED (both sources)`);
+                            console.warn(`[CardDetails] ${img.dataset.cardName}: FAILED - both ${img.dataset.primarySource} and ${fbSource} failed`);
                             CardImageOverlay.clearCardDetailsImage();
                         }
                     };
@@ -1262,6 +1282,12 @@ cast dark ritual</textarea>
                     this.cardDetailsImg.onload = (event) => {
                         const img = event.target;
                         const fallbackUrl = img.dataset.fallback;
+                        const fbSource = img.dataset.fallbackSource;
+
+                        // Determine which source this image came from
+                        const loadedFrom = img.src.includes('gatherer.wizards.com') ? 'Gatherer' :
+                                          img.src.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
+                        const usedFallback = loadedFrom !== img.dataset.primarySource;
 
                         // Gatherer returns a ~200x285 card back image for unknown cards
                         const isGathererUrl = img.src.includes('gatherer.wizards.com');
@@ -1270,11 +1296,12 @@ cast dark ritual</textarea>
                             img.naturalWidth < 210 && img.naturalHeight < 295;
 
                         if (isProbablyCardBack && fallbackUrl) {
-                            console.log(`[CardDetails] Gatherer returned card back (${img.naturalWidth}x${img.naturalHeight}), trying fallback`);
+                            console.log(`[CardDetails] ${img.dataset.cardName}: Gatherer returned CARD BACK (${img.naturalWidth}x${img.naturalHeight}), switching to ${fbSource}`);
                             img.src = fallbackUrl;
                             img.dataset.fallback = '';  // Clear to prevent loop
                         } else if (CardImageOverlay.debugMode) {
-                            console.log(`[CardDetails] Loaded OK (${img.naturalWidth}x${img.naturalHeight}) from ${img.src.split('/')[2]}`);
+                            const fallbackNote = usedFallback ? ' [FALLBACK USED]' : '';
+                            console.log(`[CardDetails] ${img.dataset.cardName}: ✓ Loaded from ${loadedFrom} (${img.naturalWidth}x${img.naturalHeight})${fallbackNote}`);
                         }
                     };
                     terminal.appendChild(this.cardDetailsImg);
@@ -1288,15 +1315,26 @@ cast dark ritual</textarea>
                     return;
                 }
 
+                // Determine source names for logging
+                const primarySource = primary.includes('gatherer.wizards.com') ? 'Gatherer' :
+                                     primary.includes('scryfall.com') ? 'Scryfall' : 'Unknown';
+                const fallbackSource = fallback ?
+                    (fallback.includes('gatherer.wizards.com') ? 'Gatherer' :
+                     fallback.includes('scryfall.com') ? 'Scryfall' : 'Unknown') : null;
+
                 // Debug logging
                 if (this.debugMode) {
-                    console.log(`[CardDetails] ${cardName}: primary=${primary}, fallback=${fallback || 'none'}`);
+                    console.log(`[CardDetails] ${cardName}: Loading from ${primarySource}` +
+                        (fallbackSource ? ` (fallback: ${fallbackSource})` : ' (no fallback)'));
                 }
 
                 this.cardDetailsImg.src = primary;
 
-                // Store fallback URL for error handler
+                // Store info for error/success handlers
                 this.cardDetailsImg.dataset.fallback = fallback || '';
+                this.cardDetailsImg.dataset.cardName = cardName;
+                this.cardDetailsImg.dataset.primarySource = primarySource;
+                this.cardDetailsImg.dataset.fallbackSource = fallbackSource || '';
 
                 // Position image centered within the backdrop area
                 // MTG card aspect ratio is 63:88 ≈ 0.716
