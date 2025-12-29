@@ -159,7 +159,13 @@ impl<'a> GameLoop<'a> {
             if !self.replaying {
                 let player_name = self.get_player_name(active_player);
                 if let Some(zones) = self.game.get_player_zones(active_player) {
-                    if let Some(&card_id) = zones.hand.cards.last() {
+                    // If this player's library is remote, we're viewing an opponent's draw
+                    // from their hidden deck - don't log specific card names (they'd be wrong)
+                    let is_remote_draw = zones.library.is_remote_library();
+                    if is_remote_draw {
+                        // For opponent draws from remote library, just log "draws a card"
+                        log_gamelog!(self, "{} draws a card", player_name);
+                    } else if let Some(&card_id) = zones.hand.cards.last() {
                         if let Ok(card) = self.game.cards.get(card_id) {
                             // Use gamelog for official draw action
                             log_gamelog!(self, "{} draws {} ({})", player_name, card.name, card_id);

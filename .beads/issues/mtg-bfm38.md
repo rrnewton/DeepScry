@@ -100,8 +100,8 @@ networking layer with existing E2E test scripts.
 ### Features
 - **Automatic port allocation**: Uses random free port for concurrent safety
 - **Argument translation**: Maps `mtg tui` args to `mtg connect` equivalents
-- **Unsupported option detection**: Exits with code 2 for options like `--seed`, `--stop-on-choice`
-- **Uses `--message-based` mode**: Simpler protocol, avoids race conditions with GameLoop
+- **Unsupported option detection**: Exits with code 2 for options like `--stop-on-choice`
+- **Synchronized GameLoop**: Clients run shadow game state synchronized with server
 
 ### Usage
 ```bash

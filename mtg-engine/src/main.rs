@@ -541,17 +541,22 @@ enum Commands {
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
 
-        /// Use message-based protocol instead of synchronized GameLoop
-        /// The message-based approach is simpler but doesn't run a local GameLoop.
-        /// Default is to run a synchronized GameLoop on the client side.
-        #[arg(long)]
-        message_based: bool,
-
         /// Enable debug mode for action_count synchronization validation.
         /// When enabled, the client validates action_count at each choice point
         /// and fails fast if a mismatch is detected.
         #[arg(long)]
         debug: bool,
+
+        /// Enable gamelog tagging for equivalence testing.
+        /// When enabled, the client's shadow GameLoop logs [GAMELOG] entries
+        /// to stdout, which can be compared with server-side logs.
+        #[arg(long)]
+        tag_gamelogs: bool,
+
+        /// Output file for client gamelogs (default: stdout).
+        /// Use this to capture client gamelogs to a file for comparison.
+        #[arg(long, value_name = "FILE")]
+        gamelog_output: Option<PathBuf>,
     },
 }
 
@@ -820,17 +825,19 @@ async fn main() -> Result<()> {
             seed_player,
             visual_stacks,
             verbosity,
-            message_based,
             debug,
+            tag_gamelogs,
+            gamelog_output,
         } => {
             use mtg_forge_rs::core::PlayerId;
             use mtg_forge_rs::game::{HeuristicController, RichInputController, VerbosityLevel};
             use mtg_forge_rs::network::{ClientConfig, NetworkClient};
 
-            // Validate controller type - FancyFixed not supported for network
-            if matches!(controller_type, ControllerType::FancyFixed) {
+            // Validate controller type - Fancy/FancyFixed not supported for network
+            // (Fancy TUI requires local terminal and doesn't work with synchronized GameLoop)
+            if matches!(controller_type, ControllerType::FancyFixed | ControllerType::Fancy) {
                 return Err(mtg_forge_rs::MtgError::InvalidAction(
-                    "--controller=fancy-fixed is not supported for network games".to_string(),
+                    "--controller=fancy and --controller=fancy-fixed are not supported for network games".to_string(),
                 ));
             }
 
@@ -858,6 +865,10 @@ async fn main() -> Result<()> {
             client.set_verbosity(verbosity_level);
             client.set_visual_stacks(visual_stacks);
             client.set_debug_mode(debug);
+            client.set_tag_gamelogs(tag_gamelogs);
+            if let Some(ref path) = gamelog_output {
+                client.set_gamelog_output(path.clone());
+            }
 
             client
                 .connect()
@@ -872,17 +883,11 @@ async fn main() -> Result<()> {
             // Get our player ID from the client state
             let our_player_id = client.our_player_id().unwrap_or(PlayerId::new(0));
 
-            // Create controller based on type
-            // Default: run_game() uses synchronized GameLoop
-            // With --message-based: run_game_message_based() just responds to server messages
+            // Create controller based on type and run the synchronized GameLoop
             let result: Option<PlayerId> = match controller_type {
                 ControllerType::Zero => {
                     let ctrl = ZeroController::new(our_player_id);
-                    if message_based {
-                        client.run_game_message_based(ctrl).await
-                    } else {
-                        client.run_game(ctrl).await
-                    }
+                    client.run_game(ctrl).await
                 }
                 ControllerType::Random => {
                     let ctrl = if let Some(seed) = seed_resolved {
@@ -895,50 +900,24 @@ async fn main() -> Result<()> {
                         );
                         RandomController::with_seed(our_player_id, entropy_seed)
                     };
-                    if message_based {
-                        client.run_game_message_based(ctrl).await
-                    } else {
-                        client.run_game(ctrl).await
-                    }
+                    client.run_game(ctrl).await
                 }
                 ControllerType::Tui => {
                     let ctrl = InteractiveController::new(our_player_id);
-                    if message_based {
-                        client.run_game_message_based(ctrl).await
-                    } else {
-                        client.run_game(ctrl).await
-                    }
-                }
-                ControllerType::Fancy => {
-                    // Fancy TUI requires message-based mode (not Send)
-                    if !message_based {
-                        log::info!("Fancy TUI requires --message-based mode, enabling automatically");
-                    }
-                    let ctrl = FancyTuiController::new(our_player_id, visual_stacks).map_err(|e| {
-                        mtg_forge_rs::MtgError::InvalidAction(format!("Failed to init Fancy TUI: {}", e))
-                    })?;
-                    client.run_game_message_based(ctrl).await
+                    client.run_game(ctrl).await
                 }
                 ControllerType::Heuristic => {
                     let ctrl = HeuristicController::new(our_player_id);
-                    if message_based {
-                        client.run_game_message_based(ctrl).await
-                    } else {
-                        client.run_game(ctrl).await
-                    }
+                    client.run_game(ctrl).await
                 }
                 ControllerType::Fixed => {
                     let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap()).map_err(|e| {
                         mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
                     })?;
                     let ctrl = RichInputController::new(our_player_id, script);
-                    if message_based {
-                        client.run_game_message_based(ctrl).await
-                    } else {
-                        client.run_game(ctrl).await
-                    }
+                    client.run_game(ctrl).await
                 }
-                ControllerType::FancyFixed => unreachable!(), // Already validated above
+                ControllerType::Fancy | ControllerType::FancyFixed => unreachable!(), // Already validated above
             }
             .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
 

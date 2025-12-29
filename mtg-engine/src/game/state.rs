@@ -587,6 +587,14 @@ impl GameState {
     /// Draw a card for a player
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<Option<CardId>> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
+            // Debug: check if library is in remote mode
+            log::debug!(
+                "draw_card: player {} library is_remote={}, pending_reveals={}, cards_len={}",
+                player_id.as_u32(),
+                zones.library.is_remote_library(),
+                zones.library.pending_reveals_count(),
+                zones.library.len()
+            );
             if let Some(card_id) = zones.library.draw_top() {
                 zones.hand.add(card_id);
 

@@ -7,7 +7,7 @@
 //! - Proxies choices to local PlayerController
 
 use crate::core::{CardId, PlayerId};
-use crate::game::{print_battlefield_state, print_separator, GameState, PlayerController, VerbosityLevel};
+use crate::game::{GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 use anyhow::{anyhow, Result};
@@ -279,6 +279,10 @@ pub struct NetworkClient {
     visual_stacks: bool,
     /// Debug mode: validate action_count synchronization at each choice point
     debug_mode: bool,
+    /// Enable gamelog tagging ([GAMELOG ...] prefix)
+    tag_gamelogs: bool,
+    /// Output file for gamelogs (None = stdout)
+    gamelog_output: Option<PathBuf>,
 }
 
 impl NetworkClient {
@@ -294,6 +298,8 @@ impl NetworkClient {
             verbosity: VerbosityLevel::Normal,
             visual_stacks: false,
             debug_mode: false,
+            tag_gamelogs: false,
+            gamelog_output: None,
         }
     }
 
@@ -318,27 +324,28 @@ impl NetworkClient {
         }
     }
 
+    /// Enable gamelog tagging for equivalence testing
+    ///
+    /// When enabled, the client's shadow GameLoop logs [GAMELOG] entries.
+    /// This enables 4-way equivalence testing (local, server, client1, client2).
+    pub fn set_tag_gamelogs(&mut self, enabled: bool) {
+        self.tag_gamelogs = enabled;
+        if enabled {
+            log::info!("Tag gamelogs ENABLED: client shadow state will emit [GAMELOG] entries");
+        }
+    }
+
+    /// Set output file for gamelogs
+    ///
+    /// If set, gamelogs will be written to this file instead of stdout.
+    /// This allows capturing client-side gamelogs for comparison in equivalence tests.
+    pub fn set_gamelog_output(&mut self, path: PathBuf) {
+        self.gamelog_output = Some(path);
+    }
+
     /// Get our player ID (after game start)
     pub fn our_player_id(&self) -> Option<PlayerId> {
         self.state.as_ref().map(|s| s.our_player_id)
-    }
-
-    /// Print the current game state (battlefield, life totals, etc.)
-    ///
-    /// Uses the shared display function, showing our player's hand contents.
-    fn print_game_state(&self) {
-        if self.verbosity < VerbosityLevel::Normal {
-            return;
-        }
-
-        let state = match &self.state {
-            Some(s) => s,
-            None => return,
-        };
-
-        print_separator(Some("GAME STATE"));
-        // Show our hand contents (not active player, since we're a network client)
-        print_battlefield_state(&state.game, Some(state.our_player_id));
     }
 
     /// Connect to the server and authenticate
@@ -481,6 +488,22 @@ impl NetworkClient {
             (opponent_deck, our_deck, opponent_name.clone(), "You".to_string())
         };
 
+        // Debug: log deck order for entity ID verification
+        log::debug!(
+            "Client init: we_are_p1={}, p1_deck entries={}, p2_deck entries={}",
+            we_are_p1,
+            p1_deck.main_deck.len(),
+            p2_deck.main_deck.len()
+        );
+        if log::log_enabled!(log::Level::Trace) {
+            for (i, entry) in p1_deck.main_deck.iter().enumerate() {
+                log::trace!("P1 deck[{}]: {}x {}", i, entry.count, entry.card_name);
+            }
+            for (i, entry) in p2_deck.main_deck.iter().enumerate() {
+                log::trace!("P2 deck[{}]: {}x {}", i, entry.count, entry.card_name);
+            }
+        }
+
         // Initialize game using GameInitializer for deterministic card IDs
         let card_db = self.card_db.as_ref().expect("Card DB not loaded");
         let initializer = GameInitializer::new(card_db);
@@ -560,173 +583,6 @@ impl NetworkClient {
 
         log::info!("Received {} opening hand reveals, shadow state ready", reveals_received);
         Ok(())
-    }
-
-    /// Run the game using message-based protocol (no local GameLoop)
-    ///
-    /// This is the simpler approach where the client just responds to server messages.
-    /// The server runs the authoritative GameLoop and sends choice requests.
-    /// Use `run_game()` for the preferred GameLoop-based approach.
-    pub async fn run_game_message_based<C: PlayerController>(&mut self, mut controller: C) -> Result<Option<PlayerId>> {
-        let card_db = self.card_db.clone().expect("Card DB not loaded");
-
-        // Print initial game state
-        self.print_game_state();
-
-        loop {
-            let msg = self.receive_message().await?;
-
-            match msg {
-                ServerMessage::ChoiceRequest {
-                    choice_seq,
-                    choice_type,
-                    options,
-                    state_hash,
-                    action_count,
-                    context,
-                } => {
-                    log::debug!(
-                        "Choice request #{}: {:?} with {} options (action_count={})",
-                        choice_seq,
-                        choice_type,
-                        options.len(),
-                        action_count
-                    );
-
-                    // Print current game state before choice
-                    self.print_game_state();
-
-                    // Verify state hash
-                    if let Some(ref mut state) = self.state {
-                        if !state.verify_hash(state_hash) {
-                            log::warn!("State hash mismatch! Expected {}", state_hash);
-                        }
-                        state.choice_seq = choice_seq;
-                    }
-
-                    // Get choice from local controller
-                    let choice_index =
-                        self.get_choice_from_controller(&mut controller, &choice_type, &options, context.as_ref())?;
-
-                    // Send response with echoed action_count (server provides the authoritative value)
-                    let response = ClientMessage::SubmitChoice {
-                        choice_seq,
-                        choice_index,
-                        action_count,
-                    };
-                    self.send_message(&response).await?;
-
-                    // Log the choice made
-                    if self.verbosity >= VerbosityLevel::Normal && choice_index < options.len() {
-                        println!("  → You chose: {}", options[choice_index]);
-                    }
-                }
-
-                ServerMessage::CardRevealed { owner, card, reason } => {
-                    if self.verbosity >= VerbosityLevel::Normal {
-                        let owner_str = if self.state.as_ref().map(|s| s.our_player_id) == Some(owner) {
-                            "You"
-                        } else {
-                            "Opponent"
-                        };
-                        println!("  Card revealed ({:?}): {} - {}", reason, owner_str, card.name);
-                    }
-                    if let Some(ref mut state) = self.state {
-                        state.process_card_revealed(owner, card, reason, &card_db)?;
-                    }
-                }
-
-                ServerMessage::OpponentChoice {
-                    choice_seq,
-                    choice_type,
-                    choice_index,
-                    description,
-                    action_count,
-                } => {
-                    log::trace!(
-                        "Opponent choice #{}: {} (action_count={})",
-                        choice_seq,
-                        description,
-                        action_count
-                    );
-                    if self.verbosity >= VerbosityLevel::Normal {
-                        println!("  Opponent chose: {}", description);
-                    }
-                    if let Some(ref mut state) = self.state {
-                        state.process_opponent_choice(choice_seq, choice_type, choice_index, &description)?;
-                    }
-                }
-
-                ServerMessage::GameEnded {
-                    winner,
-                    reason,
-                    final_state_hash,
-                    action_count,
-                } => {
-                    // Print final game state
-                    self.print_game_state();
-                    log::info!(
-                        "Game ended: {:?} - Winner: {:?}, action_count: {}",
-                        reason,
-                        winner,
-                        action_count
-                    );
-                    if let Some(ref mut state) = self.state {
-                        state.expected_hash = final_state_hash;
-                    }
-                    return Ok(winner);
-                }
-
-                ServerMessage::Error { message, fatal } => {
-                    if fatal {
-                        return Err(anyhow!("Server error: {}", message));
-                    }
-                    log::warn!("Server warning: {}", message);
-                }
-
-                ServerMessage::Pong { .. } => {
-                    // Ignore pong responses
-                }
-
-                _ => {
-                    log::debug!("Ignoring unexpected message");
-                }
-            }
-        }
-    }
-
-    /// Get a choice from the local controller
-    ///
-    /// Note: The network protocol uses simplified string-based options, so we can't
-    /// directly use the full PlayerController interface which expects CardIds and
-    /// detailed game state. Instead, we provide a simple index-based choice.
-    fn get_choice_from_controller<C: PlayerController>(
-        &self,
-        controller: &mut C,
-        choice_type: &ChoiceType,
-        options: &[String],
-        _context: Option<&crate::network::protocol::ChoiceContext>,
-    ) -> Result<usize> {
-        // Display options to user
-        if self.verbosity >= VerbosityLevel::Normal {
-            println!("\n=== Your Turn ===");
-            println!("Choice type: {:?}", choice_type);
-            println!("Options:");
-            for (i, opt) in options.iter().enumerate() {
-                println!("  {}: {}", i, opt);
-            }
-        }
-
-        // For AI controllers, use their simple choice from index
-        // For human controllers, read from stdin
-        let choice = controller.choose_from_options(options);
-
-        if choice >= options.len() {
-            log::warn!("Invalid choice {}, defaulting to 0", choice);
-            Ok(0)
-        } else {
-            Ok(choice)
-        }
     }
 
     /// Send a message to the server
@@ -876,6 +732,14 @@ impl NetworkClient {
         // Get game state for the game thread
         let mut game = client_state.game;
 
+        // Configure logger for gamelog tagging
+        let tag_gamelogs = self.tag_gamelogs;
+        let _gamelog_output = self.gamelog_output.clone(); // TODO(mtg-037fw): Use for file output
+        if tag_gamelogs {
+            game.logger.set_tag_gamelogs(true);
+            log::debug!("Client GameLoop: tag_gamelogs enabled");
+        }
+
         // Spawn WebSocket handler task
         // Track last sent action_count and action log for validation
         let ws_handler = tokio::spawn(async move {
@@ -903,20 +767,27 @@ impl NetworkClient {
                                         }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_index, description, .. }) => {
-                                        log::debug!("WebSocket: opponent chose {} (idx={})", description, choice_index);
-                                        let _ = remote_choice_tx.send(RemoteMessage::Choice {
+                                        log::debug!("WebSocket: opponent chose {} (idx={}), sending to RemoteController channel", description, choice_index);
+                                        match remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_index,
-                                            description,
-                                        });
+                                            description: description.clone(),
+                                        }) {
+                                            Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController channel successfully"),
+                                            Err(e) => log::error!("WebSocket: FAILED to send opponent choice to RemoteController channel: {:?}", e),
+                                        }
                                     }
                                     Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
-                                        // Server is asking for a choice - the game loop will handle this
-                                        // The inner controller will make a decision and send it
-                                        // CRITICAL: Store the server's authoritative action_count and choice_seq
-                                        // We MUST echo these back in SubmitChoice, not our shadow state's values
+                                        // Server is asking for a choice - forward to NetworkLocalController
+                                        // This is the synchronization point: the controller waits for this
+                                        // before making a choice, ensuring client doesn't run ahead of server
                                         server_action_count = Some(action_count);
                                         server_choice_seq = Some(choice_seq);
-                                        log::debug!("Received ChoiceRequest #{}, server action_count={}", choice_seq, action_count);
+                                        log::debug!("Player {:?}: Received ChoiceRequest #{}, server action_count={}", our_player_id, choice_seq, action_count);
+                                        // Notify the local controller that server is ready for a choice
+                                        let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
+                                            action_count,
+                                            choice_seq,
+                                        });
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count }) => {
                                         // Server accepted our choice - validate action_count in debug mode

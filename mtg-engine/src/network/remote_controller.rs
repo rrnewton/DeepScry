@@ -95,7 +95,8 @@ impl RemoteController {
                 description,
             }) => {
                 log::debug!(
-                    "RemoteController: Opponent chose index {} ({})",
+                    "RemoteController {:?}: Opponent chose index {} ({})",
+                    self.player_id,
                     choice_index,
                     description
                 );

@@ -7,7 +7,7 @@
 //! - Runs authoritative game state with NetworkControllers
 //! - Broadcasts card reveals and opponent choices
 
-use crate::core::PlayerId;
+use crate::core::{CardId, PlayerId};
 use crate::game::{GameEndReason, GameLoop, GameResult, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::protocol::{
@@ -124,6 +124,17 @@ struct OpponentChoiceInfo {
     action_count: u64,
 }
 
+/// Card reveal info to broadcast to a player
+#[derive(Clone)]
+struct RevealBroadcast {
+    /// Owner of the card
+    owner: PlayerId,
+    /// Card ID
+    card_id: CardId,
+    /// Zone the card moved to
+    to_zone: Zone,
+}
+
 /// A SubmitChoice that arrived before the corresponding ChoiceRequest.
 /// This can happen in synchronized GameLoop mode due to timing differences.
 /// We store it and process it once the ChoiceRequest arrives.
@@ -152,6 +163,10 @@ struct PlayerConnection {
     opponent_choice_tx: tokio_mpsc::Sender<OpponentChoiceInfo>,
     /// Channel to receive opponent's choices (for run_game mode)
     opponent_choice_rx: tokio_mpsc::Receiver<OpponentChoiceInfo>,
+    /// Channel to broadcast reveals to this player (receives from opponent's ChoiceRequest)
+    reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
+    /// Channel to send reveals to the opponent (when we receive ChoiceRequest with reveals)
+    opponent_reveal_tx: tokio_mpsc::Sender<Vec<RevealBroadcast>>,
     /// Current choice type being requested (for broadcasting)
     current_choice_type: Option<ChoiceType>,
     /// Expected action_count from the last ChoiceRequest sent to this client.
@@ -163,6 +178,11 @@ struct PlayerConnection {
     /// the server's NetworkController sends its ChoiceRequest due to timing.
     /// We store it here and process it once the ChoiceRequest arrives.
     pending_choice: Option<PendingChoice>,
+    /// The index into the undo_log where we last sent reveals.
+    /// Initialized to the number of opening hand draw actions (14 for 7+7).
+    /// This prevents re-sending opening hand reveals that were already sent
+    /// during the GameStarted handshake phase.
+    last_reveal_index: usize,
 }
 
 impl PlayerConnection {
@@ -460,7 +480,14 @@ async fn run_game(
     let (p1_choice_tx, p1_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16); // P1's choices
     let (p2_choice_tx, p2_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16); // P2's choices
 
+    // Create cross-player channels for reveal broadcasting
+    // When P1 receives a ChoiceRequest with reveals, those reveals are sent to P2 immediately
+    // (and vice versa). This ensures both clients have reveals before they need them.
+    let (p1_reveal_tx, p1_reveal_rx) = tokio_mpsc::channel::<Vec<RevealBroadcast>>(32);
+    let (p2_reveal_tx, p2_reveal_rx) = tokio_mpsc::channel::<Vec<RevealBroadcast>>(32);
+
     // Create PlayerConnections with tokio receivers
+    // Note: last_reveal_index will be set after we determine the opening hand sizes
     let mut p1_conn = PlayerConnection {
         player_id: PlayerId::new(0),
         ws_tx: p1_ws_tx,
@@ -469,9 +496,12 @@ async fn run_game(
         game_end_rx: p1_game_end_rx,
         opponent_choice_tx: p1_choice_tx, // P1 sends their choices on this channel
         opponent_choice_rx: p2_choice_rx, // P1 receives P2's choices from this channel
+        reveal_rx: p2_reveal_rx,          // P1 receives reveals from P2's ChoiceRequest
+        opponent_reveal_tx: p1_reveal_tx, // P1 sends reveals to P2 (when P1 gets ChoiceRequest)
         current_choice_type: None,
         expected_action_count: None,
         pending_choice: None,
+        last_reveal_index: 0, // Will be set after opening hands are determined
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
@@ -481,14 +511,32 @@ async fn run_game(
         game_end_rx: p2_game_end_rx,
         opponent_choice_tx: p2_choice_tx, // P2 sends their choices on this channel
         opponent_choice_rx: p1_choice_rx, // P2 receives P1's choices from this channel
+        reveal_rx: p1_reveal_rx,          // P2 receives reveals from P1's ChoiceRequest
+        opponent_reveal_tx: p2_reveal_tx, // P2 sends reveals to P1 (when P2 gets ChoiceRequest)
         current_choice_type: None,
         expected_action_count: None,
         pending_choice: None,
+        last_reveal_index: 0, // Will be set after opening hands are determined
     };
 
     // Convert deck submissions to DeckList format
     let p1_decklist = submission_to_decklist(&p1.deck);
     let p2_decklist = submission_to_decklist(&p2.deck);
+
+    // Debug: log deck order for entity ID verification
+    log::debug!(
+        "Server init: p1_deck entries={}, p2_deck entries={}",
+        p1_decklist.main_deck.len(),
+        p2_decklist.main_deck.len()
+    );
+    if log::log_enabled!(log::Level::Trace) {
+        for (i, entry) in p1_decklist.main_deck.iter().enumerate() {
+            log::trace!("P1 deck[{}]: {}x {}", i, entry.count, entry.card_name);
+        }
+        for (i, entry) in p2_decklist.main_deck.iter().enumerate() {
+            log::trace!("P2 deck[{}]: {}x {}", i, entry.count, entry.card_name);
+        }
+    }
 
     // Create game state using GameInitializer
     let initializer = GameInitializer::new(&card_db);
@@ -614,9 +662,24 @@ async fn run_game(
 
     log::info!("Game {}: Sent opening hand CardRevealed messages", game_id);
 
-    // Create NetworkControllers
-    let p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx);
-    let p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx);
+    // Set the baseline reveal index to skip the opening hand draws
+    // The undo_log will have p1_hand.len() + p2_hand.len() MoveCard entries
+    // after GameLoop draws the opening hands. We've already sent these reveals,
+    // so we need to skip them when collecting reveals for the first choice.
+    let opening_hand_count = p1_hand.len() + p2_hand.len();
+    p1_conn.last_reveal_index = opening_hand_count;
+    p2_conn.last_reveal_index = opening_hand_count;
+    log::debug!(
+        "Game {}: Set last_reveal_index to {} for both players",
+        game_id,
+        opening_hand_count
+    );
+
+    // Create NetworkControllers and set their baseline reveal index
+    let mut p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx);
+    let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx);
+    p1_controller.set_last_reveal_index(opening_hand_count);
+    p2_controller.set_last_reveal_index(opening_hand_count);
 
     // Wrap game state for sharing between tasks
     let game = Arc::new(Mutex::new(game));
@@ -749,8 +812,13 @@ async fn handle_player_websocket(
                 match request {
                     Some(choice_request) => {
                         // Send CardRevealed messages for each reveal before the choice
+                        // AND broadcast them to the opponent so they have reveals before their game loop needs them
                         if !choice_request.reveals.is_empty() {
                             let game_guard = game.lock().await;
+
+                            // Collect reveals to broadcast to opponent
+                            let mut reveals_to_broadcast = Vec::new();
+
                             for reveal_info in &choice_request.reveals {
                                 if let Some(card_reveal) = build_card_reveal(&game_guard, reveal_info) {
                                     let reason = zone_to_reveal_reason(reveal_info.to_zone);
@@ -759,6 +827,25 @@ async fn handle_player_websocket(
                                         card: card_reveal,
                                         reason,
                                     }).await?;
+
+                                    // Add to broadcast list
+                                    reveals_to_broadcast.push(RevealBroadcast {
+                                        owner: reveal_info.owner,
+                                        card_id: reveal_info.card_id,
+                                        to_zone: reveal_info.to_zone,
+                                    });
+                                }
+                            }
+
+                            // Broadcast reveals to the opponent immediately
+                            // This ensures the opponent's client has reveals before its game loop needs them
+                            if !reveals_to_broadcast.is_empty() {
+                                log::debug!(
+                                    "Player {:?}: Broadcasting {} reveals to opponent",
+                                    conn.player_id, reveals_to_broadcast.len()
+                                );
+                                if let Err(e) = conn.opponent_reveal_tx.send(reveals_to_broadcast).await {
+                                    log::error!("Failed to broadcast reveals: {:?}", e);
                                 }
                             }
                         }
@@ -942,6 +1029,54 @@ async fn handle_player_websocket(
                 }
             }
 
+            // Check for reveal broadcasts from the other player's ChoiceRequest
+            // These are reveals that the opponent received and is broadcasting to us
+            // so our client has them before its game loop needs them
+            reveals = conn.reveal_rx.recv() => {
+                if let Some(reveal_list) = reveals {
+                    log::debug!(
+                        "Player {:?}: Received {} broadcast reveals from opponent",
+                        conn.player_id, reveal_list.len()
+                    );
+                    let game_guard = game.lock().await;
+                    for reveal in reveal_list {
+                        // Build CardReveal from the broadcast info
+                        if let Some(card) = game_guard.cards.try_get(reveal.card_id) {
+                            let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
+                            let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
+                            let type_line = if subtypes_str.is_empty() {
+                                types_str.join(" ")
+                            } else {
+                                format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
+                            };
+
+                            let card_reveal = CardReveal {
+                                card_id: reveal.card_id,
+                                name: card.name.to_string(),
+                                mana_cost: card.mana_cost.to_string(),
+                                type_line,
+                                text: card.text.clone(),
+                                pt: if card.is_creature() {
+                                    match (card.base_power(), card.base_toughness()) {
+                                        (Some(p), Some(t)) => Some((p as i32, t as i32)),
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                },
+                            };
+
+                            let reason = zone_to_reveal_reason(reveal.to_zone);
+                            conn.send(&ServerMessage::CardRevealed {
+                                owner: reveal.owner,
+                                card: card_reveal,
+                                reason,
+                            }).await?;
+                        }
+                    }
+                }
+            }
+
             // Check for opponent's choice to forward (for run_game mode)
             opponent_choice = conn.opponent_choice_rx.recv() => {
                 if let Some(info) = opponent_choice {
@@ -950,7 +1085,11 @@ async fn handle_player_websocket(
                     // Collect and send CardRevealed messages for this player before the choice
                     // This includes any cards that moved from library since this player's last choice
                     let game_guard = game.lock().await;
-                    let reveals = collect_reveals_for_player(&game_guard, conn.player_id);
+                    let reveals = collect_reveals_for_player(
+                        &game_guard,
+                        conn.player_id,
+                        conn.last_reveal_index,
+                    );
                     for reveal_info in &reveals {
                         if let Some(card_reveal) = build_card_reveal(&game_guard, reveal_info) {
                             let reason = zone_to_reveal_reason(reveal_info.to_zone);
@@ -961,6 +1100,8 @@ async fn handle_player_websocket(
                             }).await?;
                         }
                     }
+                    // Update last_reveal_index to current undo_log length
+                    conn.last_reveal_index = game_guard.undo_log.len();
                     drop(game_guard);
 
                     conn.send(&ServerMessage::OpponentChoice {
@@ -1126,7 +1267,8 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
 
 /// Collect card reveals that a player should see since their last choice
 ///
-/// Scans the undo log backwards until we find a `ChoicePoint` for this player.
+/// Scans the undo log backwards until we find a `ChoicePoint` for this player
+/// or until we reach `last_reveal_index` (actions before that were already sent).
 /// Returns all `MoveCard` actions from Library that this player should see.
 ///
 /// For the synchronized GameLoop mode, we need to send ALL library movements
@@ -1134,14 +1276,27 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
 /// - Own cards (e.g., own draws)
 /// - Public zone movements (battlefield, graveyard, stack, exile)
 /// - Opponent's draws (so client can track opponent's library/hand sizes)
-fn collect_reveals_for_player(game: &GameState, player_id: PlayerId) -> Vec<CardRevealInfo> {
+///
+/// `last_reveal_index` is the index into the undo_log where we last sent reveals.
+/// This is used to skip opening hand reveals that were already sent during handshake.
+fn collect_reveals_for_player(game: &GameState, player_id: PlayerId, last_reveal_index: usize) -> Vec<CardRevealInfo> {
     use crate::undo::GameAction;
 
     let actions = game.undo_log.actions();
     let mut reveals = Vec::new();
 
-    // Scan backwards from the end of the log
-    for action in actions.iter().rev() {
+    // Scan backwards from the end of the log, but stop at last_reveal_index
+    // Using enumerate to track the index
+    let total_actions = actions.len();
+    for (rev_idx, action) in actions.iter().rev().enumerate() {
+        // Convert reverse index to forward index
+        let forward_idx = total_actions.saturating_sub(rev_idx + 1);
+
+        // Stop if we've reached actions that were already handled
+        if forward_idx < last_reveal_index {
+            break;
+        }
+
         match action {
             // Stop when we hit this player's last choice
             GameAction::ChoicePoint {

@@ -126,6 +126,11 @@ pub struct NetworkController {
     response_rx: mpsc::Receiver<ChoiceResponse>,
     /// Current choice sequence number
     choice_seq: u32,
+    /// The index into the undo_log where we last sent reveals.
+    /// Initialized to the number of opening hand draw actions (14 for 7+7).
+    /// This prevents re-sending opening hand reveals that were already sent
+    /// during the GameStarted handshake phase.
+    last_reveal_index: usize,
 }
 
 impl NetworkController {
@@ -140,7 +145,17 @@ impl NetworkController {
             request_tx,
             response_rx,
             choice_seq: 0,
+            last_reveal_index: 0, // Will be set by set_last_reveal_index
         }
+    }
+
+    /// Set the baseline reveal index
+    ///
+    /// This should be called after opening hands are dealt but before the game loop starts.
+    /// It tells the controller to skip reveals for actions before this index, since they
+    /// were already sent during the GameStarted handshake.
+    pub fn set_last_reveal_index(&mut self, index: usize) {
+        self.last_reveal_index = index;
     }
 
     /// Send a choice request and wait for response
@@ -170,6 +185,13 @@ impl NetworkController {
         };
 
         // Send request
+        log::debug!(
+            "Server NetworkController {:?}: sending ChoiceRequest #{} (action_count={}, type={:?})",
+            self.player_id,
+            request.choice_seq,
+            request.action_count,
+            request.choice_type
+        );
         self.request_tx
             .send(request)
             .map_err(|e| NetworkError::ChannelError(e.to_string()))?;
@@ -231,7 +253,8 @@ impl NetworkController {
     /// Collect card reveals since this player's last choice
     ///
     /// Scans the undo log backwards from the current position until we find
-    /// a `ChoicePoint` for this player (or reach the start of the log).
+    /// a `ChoicePoint` for this player, or until we reach `last_reveal_index`
+    /// (actions before that were already sent during handshake).
     /// Returns all `MoveCard` actions from Library that this player should see.
     ///
     /// A player sees a reveal if:
@@ -240,9 +263,18 @@ impl NetworkController {
     fn collect_reveals_since_last_choice(&self, view: &GameStateView) -> Vec<CardRevealInfo> {
         let actions = view.undo_log_actions();
         let mut reveals = Vec::new();
+        let total_actions = actions.len();
 
-        // Scan backwards from the end of the log
-        for action in actions.iter().rev() {
+        // Scan backwards from the end of the log, but stop at last_reveal_index
+        for (rev_idx, action) in actions.iter().rev().enumerate() {
+            // Convert reverse index to forward index
+            let forward_idx = total_actions.saturating_sub(rev_idx + 1);
+
+            // Stop if we've reached actions that were already handled
+            if forward_idx < self.last_reveal_index {
+                break;
+            }
+
             match action {
                 // Stop when we hit this player's last choice
                 GameAction::ChoicePoint { player_id, .. } if *player_id == self.player_id => {

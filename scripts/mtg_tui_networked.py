@@ -12,12 +12,14 @@ Environment variables:
     MTG_BINARY: Path to mtg binary (default: ./target/release/mtg)
     MTG_CARDSFOLDER: Path to cardsfolder (default: mtg-engine/cardsfolder)
     RUST_LOG: Passed through to all processes
+    MTG_GAMELOG_DIR: Directory to capture per-process gamelogs (for 4-way equivalence)
 
 Supported options:
     - --seed (passed to server for deterministic games)
     - --p1, --p2 (controller types)
     - --seed-p1, --seed-p2 (controller seeds)
     - --verbosity, --visual-stacks, etc.
+    - --tag-gamelogs (enables [GAMELOG] tagging on server AND clients)
 
 Limitations (will error if used):
     - --deck-seed (library ordering not supported)
@@ -29,6 +31,10 @@ Limitations (will error if used):
     - --stop-when-fixed-exhausted (not supported)
     - --log-tail (not supported in network mode)
     - --debug-state-hash (different mechanism in network mode)
+
+For 4-way gamelog equivalence testing:
+    Set MTG_GAMELOG_DIR to capture gamelogs from all 3 processes (server, P1, P2)
+    to separate files that can be compared for equivalence.
 """
 
 import argparse
@@ -180,12 +186,16 @@ def main():
     env['RUST_LOG'] = rust_log
 
     # Start server
+    # NOTE: --deck-visibility is REQUIRED for synchronized GameLoop mode
+    # Without it, clients don't receive opponent decklists and fall back to
+    # using their own deck for both players, causing entity ID mismatches.
     server_cmd = [
         mtg_binary, 'server',
         '--port', str(port),
         '--password', password,
         '--cardsfolder', cardsfolder,
         '--verbosity', args.verbosity,
+        '--deck-visibility',  # Required for entity ID synchronization
     ]
     if args.seed:
         server_cmd.extend(['--seed', args.seed])
@@ -194,9 +204,25 @@ def main():
 
     print(f"[mtg_tui_networked] Starting server: {' '.join(server_cmd)}")
 
-    # If tag_gamelogs is enabled, output server logs to stdout so they can be captured
+    # Check for gamelog capture mode (4-way equivalence testing)
+    gamelog_dir = os.environ.get('MTG_GAMELOG_DIR')
+    gamelog_files = {}
+    if gamelog_dir:
+        os.makedirs(gamelog_dir, exist_ok=True)
+        gamelog_files['server'] = open(os.path.join(gamelog_dir, 'server.log'), 'w')
+        gamelog_files['p1'] = open(os.path.join(gamelog_dir, 'p1.log'), 'w')
+        gamelog_files['p2'] = open(os.path.join(gamelog_dir, 'p2.log'), 'w')
+        print(f"[mtg_tui_networked] Capturing gamelogs to {gamelog_dir}/")
+
+    # If tag_gamelogs is enabled, output server logs so they can be captured
     # Otherwise discard to prevent blocking
-    server_stdout = sys.stdout if args.tag_gamelogs else subprocess.DEVNULL
+    if gamelog_dir:
+        server_stdout = gamelog_files['server']
+    elif args.tag_gamelogs:
+        server_stdout = sys.stdout
+    else:
+        server_stdout = subprocess.DEVNULL
+
     server_stderr = sys.stderr if args.tag_gamelogs else subprocess.DEVNULL
 
     server_proc = subprocess.Popen(
@@ -234,6 +260,7 @@ def main():
 
     try:
         # Build client commands
+        # Clients run a synchronized GameLoop that stays in sync with the server
         def build_client_cmd(deck, controller, name, fixed_inputs, seed_player, is_p1):
             cmd = [
                 mtg_binary, 'connect',
@@ -243,7 +270,6 @@ def main():
                 '--controller', controller,
                 '--cardsfolder', cardsfolder,
                 '--verbosity', args.verbosity,
-                '--message-based',  # Use message-based protocol (simpler, no sync issues)
                 deck,
             ]
 
@@ -256,6 +282,11 @@ def main():
             if args.visual_stacks:
                 cmd.append('--visual-stacks')
 
+            # Note: We don't pass --tag-gamelogs to clients by default because:
+            # 1. The 2-way equivalence test (local vs server) only needs server logs
+            # 2. Client logs are for 4-way testing which requires separate file outputs
+            # TODO(mtg-037fw): Add --tag-gamelogs-clients flag for 4-way testing
+
             return cmd
 
         # Start client 1
@@ -264,10 +295,11 @@ def main():
             args.p1_fixed_inputs, args.seed_p1, True
         )
         print(f"[mtg_tui_networked] Starting P1: {' '.join(p1_cmd)}")
+        p1_stdout = gamelog_files.get('p1', sys.stdout)
         p1_proc = subprocess.Popen(
             p1_cmd,
             env=env,
-            stdout=sys.stdout,
+            stdout=p1_stdout,
             stderr=sys.stderr,
         )
         processes.append(p1_proc)
@@ -281,10 +313,11 @@ def main():
             args.p2_fixed_inputs, args.seed_p2, False
         )
         print(f"[mtg_tui_networked] Starting P2: {' '.join(p2_cmd)}")
+        p2_stdout = gamelog_files.get('p2', sys.stdout)
         p2_proc = subprocess.Popen(
             p2_cmd,
             env=env,
-            stdout=sys.stdout,
+            stdout=p2_stdout,
             stderr=sys.stderr,
         )
         processes.append(p2_proc)
@@ -301,6 +334,9 @@ def main():
 
     finally:
         cleanup()
+        # Close gamelog files
+        for f in gamelog_files.values():
+            f.close()
 
     sys.exit(exit_code)
 

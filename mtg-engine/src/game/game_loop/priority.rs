@@ -216,6 +216,27 @@ impl<'a> GameLoop<'a> {
                     // (avoiding heap allocation for typical hand sizes up to 16 cards).
                     let available_count = self.get_available_spell_abilities(current_priority).len();
 
+                    // Log abilities for debugging network sync issues
+                    if available_count > 0 && available_count <= 5 {
+                        // Log the actual abilities available
+                        let abilities: smallvec::SmallVec<[String; 8]> =
+                            self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
+                        log::debug!(
+                            "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
+                            current_priority,
+                            available_count,
+                            self.game.action_count(),
+                            abilities
+                        );
+                    } else {
+                        log::debug!(
+                            "Priority check: player {:?} has {} available abilities, action_count={}",
+                            current_priority,
+                            available_count,
+                            self.game.action_count()
+                        );
+                    }
+
                     // If no actions available, automatically pass priority without asking controller
                     // Only invoke controller when there's an actual choice to make
                     if available_count == 0 {
