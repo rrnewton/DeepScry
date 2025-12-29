@@ -594,8 +594,7 @@ cast dark ritual</textarea>
                 }
                 if (settings.imageSource) {
                     document.getElementById('image-source').value = settings.imageSource;
-                    ImageSource.setSource(settings.imageSource);
-                    updateImageSourceDescription();
+                    // Note: ImageSource.setSource() is called later after ImageSource is defined
                 }
                 if (settings.debugMode) {
                     document.getElementById('debug-mode').checked = settings.debugMode;
@@ -649,8 +648,7 @@ cast dark ritual</textarea>
             updateImageSourceDescription();
         });
 
-        // Initialize description on load
-        updateImageSourceDescription();
+        // Note: updateImageSourceDescription() is called after ImageSource is defined (see below)
 
         let tuiLaunched = false;
         let cardImagesEnabled = false;
@@ -979,6 +977,15 @@ cast dark ritual</textarea>
 
         // Load saved preference on startup
         ImageSource.loadPreference();
+
+        // Sync ImageSource with the UI dropdown (which may have been restored from settings)
+        const imageSourceDropdown = document.getElementById('image-source');
+        if (imageSourceDropdown && imageSourceDropdown.value && ImageSource.sources[imageSourceDropdown.value]) {
+            ImageSource.currentSource = imageSourceDropdown.value;
+        }
+
+        // Initialize the image source description in the UI (deferred until after ImageSource is defined)
+        updateImageSourceDescription();
 
         // Simple card image overlay manager (JavaScript implementation)
         // Expose on window for debugging and testing

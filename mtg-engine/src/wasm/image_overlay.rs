@@ -249,6 +249,7 @@ impl ImageOverlayManager {
     /// - ID: `card-image-{card_id}`
     /// - Absolute positioning over terminal
     /// - Z-index to appear above terminal but below UI elements
+    #[allow(clippy::too_many_arguments)]
     pub fn set_card_image_with_fallback(
         &self,
         card_id: &str,
@@ -295,9 +296,9 @@ impl ImageOverlayManager {
                                 )));
                                 img_elem.set_src(fallback_src);
                             } else {
-                                web_sys::console::warn_1(&JsValue::from_str(&format!(
-                                    "Both Gatherer and Scryfall failed for image"
-                                )));
+                                web_sys::console::warn_1(&JsValue::from_str(
+                                    "Both Gatherer and Scryfall failed for image",
+                                ));
                             }
                         }
                     }
