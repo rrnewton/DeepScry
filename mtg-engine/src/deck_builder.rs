@@ -10,9 +10,11 @@
 use crate::core::{CardType, Color as MtgColor};
 use crate::loader::{CardDefinition, DeckEntry, DeckList, DeckLoader};
 use crate::Result;
-use std::path::Path;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -26,7 +28,11 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
+use std::path::Path;
 use std::sync::Arc;
+
+/// Type alias for grouped card entries: (card_name, count, optional_definition)
+type CardEntryGroup<'a> = Vec<(&'a String, &'a u8, Option<&'a CardDefinition>)>;
 
 /// Deck builder configuration
 pub struct DeckBuilderConfig {
@@ -308,17 +314,8 @@ pub async fn run_deck_builder(
     card_names: Vec<String>,
     card_definitions: HashMap<String, Arc<CardDefinition>>,
 ) -> Result<()> {
-    // Filter cards by year if specified (placeholder - we don't have set year data yet)
-    let filtered_cards = if config.start_year.is_some() || config.end_year.is_some() {
-        // TODO: Filter by set release year when we have that data
-        eprintln!(
-            "Note: Year filtering not yet implemented, showing all {} cards",
-            card_names.len()
-        );
-        card_names
-    } else {
-        card_names
-    };
+    // Cards are already filtered by year in main.rs if start_year/end_year were specified
+    let filtered_cards = card_names;
 
     println!("Loaded {} cards for deck building", filtered_cards.len());
     println!("Output will be saved to: {}", config.output_file);
@@ -329,7 +326,11 @@ pub async fn run_deck_builder(
         if path.exists() {
             match DeckLoader::load_from_file(path) {
                 Ok(deck_list) => {
-                    println!("Loaded existing deck: {} ({} cards)", input_file, deck_list.total_cards());
+                    println!(
+                        "Loaded existing deck: {} ({} cards)",
+                        input_file,
+                        deck_list.total_cards()
+                    );
                     Some(deck_list)
                 }
                 Err(e) => {
@@ -410,11 +411,14 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                     // Handle exit dialog
                     if state.show_exit_dialog {
                         match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
                                 return Ok(true); // Save and exit
                             }
+                            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                                return Ok(false); // Exit without saving
+                            }
                             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                                state.show_exit_dialog = false;
+                                state.show_exit_dialog = false; // Cancel, go back
                             }
                             _ => {}
                         }
@@ -500,15 +504,66 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
     }
 }
 
+/// Column width for card display: "3 CardName..." = count(1) + space(1) + name(CARD_NAME_WIDTH)
+const CARD_NAME_WIDTH: usize = 16;
+const CARD_COLUMN_WIDTH: usize = 1 + 1 + CARD_NAME_WIDTH + 2; // "3 CardName...  "
+
+/// Calculate the height needed for the deck summary based on content
+fn calculate_deck_summary_height(state: &DeckBuilderState, available_width: u16) -> u16 {
+    if state.deck.is_empty() {
+        return 3; // Minimum: border + "No cards" message
+    }
+
+    // Group cards by category (same logic as draw_deck_summary)
+    let mut by_category: HashMap<CardCategory, CardEntryGroup<'_>> = HashMap::new();
+    for (name, count) in &state.deck {
+        let card_def = state.card_definitions.get(name).map(|arc| arc.as_ref());
+        let category = card_def
+            .map(|c| CardCategory::from_types(&c.types))
+            .unwrap_or(CardCategory::Spell);
+        by_category.entry(category).or_default().push((name, count, card_def));
+    }
+
+    // Calculate number of columns that fit
+    let inner_width = available_width.saturating_sub(2) as usize; // Account for borders
+    let num_columns = (inner_width / CARD_COLUMN_WIDTH).max(1);
+
+    // Count lines needed:
+    // 1 for header (total + mana curve)
+    // For each category: 1 for header + ceil(cards / num_columns) for card rows
+    let mut total_lines = 1u16; // Header line
+
+    let category_order = [
+        CardCategory::Creature,
+        CardCategory::Spell,
+        CardCategory::Artifact,
+        CardCategory::Land,
+    ];
+
+    for category in category_order {
+        if let Some(entries) = by_category.get(&category) {
+            total_lines += 1; // Category header
+            let card_rows = entries.len().div_ceil(num_columns);
+            total_lines += card_rows as u16;
+        }
+    }
+
+    // Add 2 for borders, cap at reasonable max
+    (total_lines + 2).min(20)
+}
+
 /// Draw the TUI
 fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
+    // Calculate deck summary height dynamically based on content
+    let deck_summary_height = calculate_deck_summary_height(state, f.area().width.saturating_sub(2));
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Deck summary
-            Constraint::Length(3), // Search input
-            Constraint::Min(10),   // Search results + card details
-            Constraint::Length(2), // Status/help bar
+            Constraint::Length(deck_summary_height), // Deck summary (dynamic)
+            Constraint::Length(3),                   // Search input
+            Constraint::Min(10),                     // Search results + card details
+            Constraint::Length(2),                   // Status/help bar
         ])
         .split(f.area());
 
@@ -631,7 +686,11 @@ fn card_sort_key(card: &CardDefinition) -> (u8, i16, String) {
 fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let is_focused = state.focused_pane == FocusedPane::DeckSummary;
     let border_color = if is_focused { Color::Yellow } else { Color::Cyan };
-    let title = if is_focused { " Deck Summary [focused] " } else { " Deck Summary " };
+    let title = if is_focused {
+        " Deck Summary [focused] "
+    } else {
+        " Deck Summary "
+    };
 
     let block = Block::default()
         .title(title)
@@ -648,7 +707,7 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     }
 
     // Group cards by category
-    let mut by_category: HashMap<CardCategory, Vec<(&String, &u8, Option<&CardDefinition>)>> = HashMap::new();
+    let mut by_category: HashMap<CardCategory, CardEntryGroup<'_>> = HashMap::new();
 
     for (name, count) in &state.deck {
         let card_def = state.card_definitions.get(name).map(|arc| arc.as_ref());
@@ -683,7 +742,7 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         }
     }
 
-    // Header line: total cards + mana curve
+    // Header line: total cards + mana curve (bar chart + numeric)
     let total = state.total_cards();
     let unique = state.unique_cards();
     let mut header_spans = vec![
@@ -694,37 +753,48 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         Span::raw(" ("),
         Span::raw(format!("{} unique", unique)),
         Span::raw(")  "),
-        Span::styled("Curve:", Style::default().fg(Color::Cyan)),
+        Span::styled("Curve: ", Style::default().fg(Color::Cyan)),
     ];
 
-    // Add mana curve as compact bar
+    // Build mana curve bar chart (uninterrupted bars)
     let max_cmc_count = *cmc_counts.iter().max().unwrap_or(&0);
+    let mut bar_string = String::new();
+    for &count in &cmc_counts {
+        let bar_char = if max_cmc_count == 0 {
+            '▁'
+        } else {
+            let height = (count * 8) / max_cmc_count.max(1);
+            match height {
+                0 => '▁',
+                1 => '▂',
+                2 => '▃',
+                3 => '▄',
+                4 => '▅',
+                5 => '▆',
+                6 => '▇',
+                _ => '█',
+            }
+        };
+        bar_string.push(bar_char);
+    }
+    header_spans.push(Span::styled(bar_string, Style::default().fg(Color::Cyan)));
+
+    // Add numeric counts after bars: 0(0) 1(2) 2(10) ...
+    header_spans.push(Span::raw(" "));
     for (cmc, &count) in cmc_counts.iter().enumerate() {
         if count > 0 || cmc <= 5 {
             let label = if cmc == 7 { "7+".to_string() } else { cmc.to_string() };
-            // Use block characters for compact bar: ▁▂▃▄▅▆▇█
-            let bar_char = if max_cmc_count == 0 {
-                ' '
-            } else {
-                let height = (count * 8) / max_cmc_count.max(1);
-                match height {
-                    0 => '▁',
-                    1 => '▂',
-                    2 => '▃',
-                    3 => '▄',
-                    4 => '▅',
-                    5 => '▆',
-                    6 => '▇',
-                    _ => '█',
-                }
-            };
             header_spans.push(Span::styled(
-                format!(" {}{}", label, bar_char),
-                Style::default().fg(Color::Cyan),
+                format!("{}({}) ", label, count),
+                Style::default().fg(Color::DarkGray),
             ));
         }
     }
     lines.push(Line::from(header_spans));
+
+    // Calculate number of columns for multi-column layout
+    let inner_width = inner.width as usize;
+    let num_columns = (inner_width / CARD_COLUMN_WIDTH).max(1);
 
     // Categories in order: Creatures, Spells, Artifacts, Lands
     let category_order = [
@@ -737,34 +807,36 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     for category in category_order {
         if let Some(entries) = by_category.get(&category) {
             let cat_count: usize = entries.iter().map(|(_, c, _)| **c as usize).sum();
-            let mut spans = vec![Span::styled(
-                format!("{}: ", category.label()),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            )];
 
-            // Show cards with colors (limit to fit in line)
-            let max_display = 8;
-            for (i, (name, count, card_def)) in entries.iter().take(max_display).enumerate() {
-                if i > 0 {
-                    spans.push(Span::raw(", "));
+            // Category header line
+            lines.push(Line::from(vec![Span::styled(
+                format!("{}: [{}]", category.label(), cat_count),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            )]));
+
+            // Arrange cards in columns (N-order: down first, then across)
+            let num_cards = entries.len();
+            let num_rows = num_cards.div_ceil(num_columns);
+
+            for row in 0..num_rows {
+                let mut row_spans = Vec::new();
+                for col in 0..num_columns {
+                    // N-order index: row + col * num_rows
+                    let idx = row + col * num_rows;
+                    if idx < num_cards {
+                        let (name, count, card_def) = &entries[idx];
+                        let color = card_def.map(|c| mtg_color_to_term(&c.colors)).unwrap_or(Color::White);
+
+                        // Format: "3 CardName..." padded to column width
+                        let card_text = format!("{} {}", count, truncate_name(name, CARD_NAME_WIDTH));
+                        let padded = format!("{:width$}", card_text, width = CARD_COLUMN_WIDTH);
+                        row_spans.push(Span::styled(padded, Style::default().fg(color)));
+                    }
                 }
-                let color = card_def.map(|c| mtg_color_to_term(&c.colors)).unwrap_or(Color::White);
-                spans.push(Span::styled(
-                    format!("{}x{}", count, truncate_name(name, 12)),
-                    Style::default().fg(color),
-                ));
+                if !row_spans.is_empty() {
+                    lines.push(Line::from(row_spans));
+                }
             }
-            if entries.len() > max_display {
-                spans.push(Span::styled(
-                    format!(" (+{})", entries.len() - max_display),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            spans.push(Span::styled(
-                format!(" [{}]", cat_count),
-                Style::default().fg(Color::DarkGray),
-            ));
-            lines.push(Line::from(spans));
         }
     }
 
@@ -977,8 +1049,13 @@ fn draw_exit_dialog(f: &mut Frame) {
         ]),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("[N]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::raw(" Cancel"),
+            Span::styled("[Q]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(" Quit without saving"),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("[N]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Cancel (go back)"),
         ]),
     ];
 

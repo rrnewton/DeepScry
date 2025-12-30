@@ -2544,7 +2544,7 @@ async fn run_deck_build(
     end_year: Option<u16>,
 ) -> Result<()> {
     use mtg_forge_rs::deck_builder::{run_deck_builder, DeckBuilderConfig};
-    use mtg_forge_rs::loader::AsyncCardDatabase as CardDatabase;
+    use mtg_forge_rs::loader::{AsyncCardDatabase as CardDatabase, CardEditionIndex};
 
     println!("=== MTG Forge - Fast Deck Builder ===\n");
 
@@ -2566,20 +2566,69 @@ async fn run_deck_build(
         )));
     }
 
+    // Load edition data for year filtering if needed
+    let edition_index = if start_year.is_some() || end_year.is_some() {
+        // Look for editions directory (symlink in repo root)
+        let editions_dir = PathBuf::from("editions");
+        if editions_dir.exists() {
+            print!("Loading edition data for year filtering...");
+            std::io::Write::flush(&mut std::io::stdout()).ok();
+            match CardEditionIndex::load_from_directory(&editions_dir) {
+                Ok(index) => {
+                    println!(" {} cards indexed", index.card_count());
+                    Some(index)
+                }
+                Err(e) => {
+                    println!(" failed: {}", e);
+                    eprintln!("Warning: Year filtering disabled due to edition load error");
+                    None
+                }
+            }
+        } else {
+            eprintln!("Warning: editions/ directory not found, year filtering disabled");
+            None
+        }
+    } else {
+        None
+    };
+
     // Load all cards (including definitions for card details display)
     println!("Loading card database from {:?}...", cardsfolder);
     let card_db = CardDatabase::new(cardsfolder);
     let (loaded, duration) = card_db.eager_load().await?;
-    println!("Loaded {} cards in {:?}\n", loaded, duration);
+    println!("Loaded {} cards in {:?}", loaded, duration);
 
     // Get card names and definitions
     let all_cards = card_db.all_cards().await;
-    let mut card_names: Vec<String> = all_cards.iter().map(|c| c.name.to_string()).collect();
+
+    // Filter by year if edition index is available
+    let filtered_cards: Vec<_> = if let Some(ref index) = edition_index {
+        let before_count = all_cards.len();
+        let filtered: Vec<_> = all_cards
+            .into_iter()
+            .filter(|c| index.card_in_year_range(c.name.as_str(), start_year, end_year))
+            .collect();
+        let after_count = filtered.len();
+        println!(
+            "Year filter ({}-{}): {} -> {} cards",
+            start_year.map(|y| y.to_string()).unwrap_or_else(|| "any".to_string()),
+            end_year.map(|y| y.to_string()).unwrap_or_else(|| "any".to_string()),
+            before_count,
+            after_count
+        );
+        filtered
+    } else {
+        all_cards.into_iter().collect()
+    };
+
+    let mut card_names: Vec<String> = filtered_cards.iter().map(|c| c.name.to_string()).collect();
     card_names.sort();
 
     // Build definitions map for card details
     let card_definitions: std::collections::HashMap<String, std::sync::Arc<mtg_forge_rs::loader::CardDefinition>> =
-        all_cards.into_iter().map(|c| (c.name.to_string(), c)).collect();
+        filtered_cards.into_iter().map(|c| (c.name.to_string(), c)).collect();
+
+    println!();
 
     let config = DeckBuilderConfig {
         output_file: output_path.to_string_lossy().to_string(),

@@ -1,0 +1,56 @@
+---
+title: Implement --start-year and --end-year filtering for deck-build
+status: closed
+priority: 4
+issue_type: task
+created_at: 2025-12-30T17:28:36.421571382+00:00
+updated_at: 2025-12-30T18:15:37.706829363+00:00
+---
+
+# Description
+
+## Deck-build Year Filtering
+
+The `mtg deck-build` command has `--start-year` and `--end-year` flags that are now implemented.
+
+## Implementation
+
+1. **Edition Loader** (`mtg-engine/src/loader/edition.rs`)
+   - Parses all edition files from `editions/` directory
+   - Extracts set code, date (year), and card list for each
+   - Builds a HashMap<CardName, (earliest_year, latest_year)> for quick lookups
+   - Uses range overlap check: card's [earliest, latest] must overlap with [start_year, end_year]
+
+2. **Integration with Deck Builder** (`mtg-engine/src/main.rs`)
+   - Loads edition data at startup when year filters are specified
+   - Filters card list based on `--start-year` and `--end-year` constraints
+   - Shows filtered card count to user
+
+## Example Usage
+
+```bash
+## Cards printed in 2020 or later
+mtg deck-build --start-year 2020
+
+## Cards printed in 1995 or earlier (early MTG)
+mtg deck-build --end-year 1995
+
+## Cards printed between 2020 and 2021
+mtg deck-build --start-year 2020 --end-year 2021
+```
+
+## Performance
+
+- Edition loading takes ~1 second (32,087 cards indexed from 654 edition files)
+- Edition data is only loaded when year filters are specified
+
+## Note on Semantics
+
+We only track earliest/latest printing per card (not all individual printings). The filter checks if the card's range overlaps with the requested range. This means a card like Lightning Bolt (1993, 2011, 2021) will match a 2000-2010 filter even though it wasn't reprinted in that exact window - because its availability range spans that period.
+
+## Related Files
+
+- `editions` - Symlink to forge-java/forge-gui/res/editions/ (added to git)
+- `mtg-engine/src/loader/edition.rs` - New edition loader module
+- `mtg-engine/src/loader/mod.rs` - Module exports
+- `mtg-engine/src/main.rs` - Integration point

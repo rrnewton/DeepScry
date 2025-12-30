@@ -11,6 +11,8 @@ pub mod database_async;
 pub mod deck;
 #[cfg(feature = "native")]
 pub mod deck_async;
+#[cfg(feature = "native")]
+pub mod edition;
 pub mod effect_converter;
 #[cfg(feature = "native")]
 pub mod game_init;
@@ -23,6 +25,8 @@ pub use database_async::CardDatabase as AsyncCardDatabase;
 pub use deck::{DeckEntry, DeckList, DeckLoader};
 #[cfg(feature = "native")]
 pub use deck_async::prefetch_deck_cards;
+#[cfg(feature = "native")]
+pub use edition::CardEditionIndex;
 #[cfg(feature = "native")]
 pub use game_init::GameInitializer;
 
