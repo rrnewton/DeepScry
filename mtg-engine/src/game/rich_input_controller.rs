@@ -126,6 +126,12 @@ impl PlayerController for RichInputController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
+        // If there are no available abilities, just pass - no point trying to match commands
+        // This can happen in network mode when server asks for priority with 0 abilities
+        if available.is_empty() {
+            return ChoiceResult::Ok(None);
+        }
+
         // Peek at the next command without consuming it
         if let Some(command_str) = self.peek_command() {
             let command = command_str.to_string();

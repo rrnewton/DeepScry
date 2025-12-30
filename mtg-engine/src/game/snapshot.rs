@@ -38,6 +38,9 @@ pub enum ControllerType {
     /// Remote controller - receives choices from network server
     /// Used in network games where the opponent's choices are unknown locally
     Remote,
+    /// Network controller - server-side controller that proxies to remote client
+    /// Used on server to represent remote players, must not auto-pass
+    Network,
 }
 
 /// Default controller type for backward compatibility with old snapshots

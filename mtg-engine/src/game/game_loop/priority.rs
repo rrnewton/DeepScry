@@ -241,11 +241,13 @@ impl<'a> GameLoop<'a> {
                     // If no actions available, automatically pass priority without asking controller
                     // Only invoke controller when there's an actual choice to make
                     //
-                    // EXCEPTION: Remote controllers MUST always be asked, because we don't know
-                    // opponent's hidden hand contents and thus can't compute their available actions.
+                    // EXCEPTION: Remote/Network controllers MUST always be asked:
+                    // - Remote: Client-side opponent controller, we don't know hidden hand contents
+                    // - Network: Server-side controller, must notify clients even on 0-ability pass
                     // The server will send the actual ability via OpponentChoice.
-                    let is_remote = controller.get_controller_type() == ControllerType::Remote;
-                    if available_count == 0 && !is_remote {
+                    let ctrl_type = controller.get_controller_type();
+                    let is_network_controlled = matches!(ctrl_type, ControllerType::Remote | ControllerType::Network);
+                    if available_count == 0 && !is_network_controlled {
                         // No available actions - automatically pass priority
                         break None;
                     }

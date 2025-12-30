@@ -775,8 +775,9 @@ impl PlayerController for NetworkController {
     }
 
     fn get_controller_type(&self) -> ControllerType {
-        // FIXME-UNFINISHED: Add ControllerType::Network variant
-        ControllerType::Zero
+        // Network controller must not auto-pass - always go through ChoiceRequest flow
+        // so clients are notified even when there are 0 available abilities
+        ControllerType::Network
     }
 }
 

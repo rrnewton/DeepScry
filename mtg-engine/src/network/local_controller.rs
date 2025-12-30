@@ -664,6 +664,9 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
     }
 
     fn get_controller_type(&self) -> ControllerType {
-        self.inner.get_controller_type()
+        // Return Network type so we don't auto-pass when available_count=0.
+        // This ensures we always wait for ChoiceRequest and send SubmitChoice,
+        // even when there are no abilities available.
+        ControllerType::Network
     }
 }
