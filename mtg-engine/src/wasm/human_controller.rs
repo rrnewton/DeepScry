@@ -55,6 +55,7 @@ pub enum PendingChoice {
 ///
 /// The pending choice is typically set by JavaScript event handlers after
 /// the user makes a selection in the UI.
+#[derive(Clone)]
 pub struct WasmHumanController {
     player_id: PlayerId,
     /// The next choice to return (set by UI before resuming game)
