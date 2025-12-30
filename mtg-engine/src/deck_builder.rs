@@ -7,6 +7,7 @@
 //! - Arrow keys to navigate results
 //! - First ESC clears search, second ESC saves and exits
 
+use crate::core::{CardType, Color as MtgColor};
 use crate::loader::{CardDefinition, DeckEntry, DeckList};
 use crate::Result;
 use crossterm::{
@@ -440,6 +441,78 @@ fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
     }
 }
 
+/// Get terminal color for MTG card color(s)
+fn mtg_color_to_term(colors: &[MtgColor]) -> Color {
+    if colors.is_empty() {
+        return Color::Gray; // Colorless
+    }
+    if colors.len() > 1 {
+        return Color::Rgb(218, 165, 32); // Gold for multicolor
+    }
+    match colors[0] {
+        MtgColor::White => Color::Rgb(255, 255, 224), // Light yellow/cream for white
+        MtgColor::Blue => Color::Rgb(100, 149, 237),  // Cornflower blue
+        MtgColor::Black => Color::Rgb(139, 69, 139),  // Dark magenta for black
+        MtgColor::Red => Color::Rgb(220, 20, 60),     // Crimson
+        MtgColor::Green => Color::Rgb(34, 139, 34),   // Forest green
+        MtgColor::Colorless => Color::Gray,
+    }
+}
+
+/// Card category for deck summary grouping
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CardCategory {
+    Creature,
+    Land,
+    Artifact,
+    Spell, // Instants, Sorceries, Enchantments, Planeswalkers
+}
+
+impl CardCategory {
+    fn from_types(types: &[CardType]) -> Self {
+        if types.contains(&CardType::Creature) {
+            CardCategory::Creature
+        } else if types.contains(&CardType::Land) {
+            CardCategory::Land
+        } else if types.contains(&CardType::Artifact) {
+            CardCategory::Artifact
+        } else {
+            CardCategory::Spell
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            CardCategory::Creature => "Creatures",
+            CardCategory::Land => "Lands",
+            CardCategory::Artifact => "Artifacts",
+            CardCategory::Spell => "Spells",
+        }
+    }
+}
+
+/// Sort key for cards: (color_order, -cmc, name)
+fn card_sort_key(card: &CardDefinition) -> (u8, i16, String) {
+    // Color order: W, U, B, R, G, Colorless, Multicolor
+    let color_order = if card.colors.is_empty() {
+        5 // Colorless
+    } else if card.colors.len() > 1 {
+        6 // Multicolor last
+    } else {
+        match card.colors[0] {
+            MtgColor::White => 0,
+            MtgColor::Blue => 1,
+            MtgColor::Black => 2,
+            MtgColor::Red => 3,
+            MtgColor::Green => 4,
+            MtgColor::Colorless => 5,
+        }
+    };
+    // Negative CMC for descending sort
+    let cmc = -(card.mana_cost.cmc() as i16);
+    (color_order, cmc, card.name.to_string())
+}
+
 fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let block = Block::default()
         .title(" Deck Summary ")
@@ -449,11 +522,42 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Build summary text
+    if state.deck.is_empty() {
+        let hint = Paragraph::new("No cards added yet")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(hint, inner);
+        return;
+    }
+
+    // Group cards by category
+    let mut by_category: HashMap<CardCategory, Vec<(&String, &u8, Option<&CardDefinition>)>> = HashMap::new();
+
+    for (name, count) in &state.deck {
+        let card_def = state.card_definitions.get(name).map(|arc| arc.as_ref());
+        let category = card_def
+            .map(|c| CardCategory::from_types(&c.types))
+            .unwrap_or(CardCategory::Spell);
+        by_category.entry(category).or_default().push((name, count, card_def));
+    }
+
+    // Sort each category by color, then descending CMC
+    for entries in by_category.values_mut() {
+        entries.sort_by(|a, b| {
+            match (a.2, b.2) {
+                (Some(ca), Some(cb)) => card_sort_key(ca).cmp(&card_sort_key(cb)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.0.cmp(b.0),
+            }
+        });
+    }
+
+    let mut lines = Vec::new();
+
+    // Header line: total cards
     let total = state.total_cards();
     let unique = state.unique_cards();
-
-    let mut lines = vec![Line::from(vec![
+    lines.push(Line::from(vec![
         Span::styled(
             format!("{} cards", total),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -461,34 +565,60 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         Span::raw(" ("),
         Span::raw(format!("{} unique", unique)),
         Span::raw(")"),
-    ])];
+    ]));
 
-    // Show last few cards added (up to 3)
-    if !state.deck.is_empty() {
-        let mut entries: Vec<_> = state.deck.iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        let preview_count = entries.len().min(3);
-        let mut preview_line = vec![Span::raw("  ")];
-        for (i, (name, count)) in entries.iter().take(preview_count).enumerate() {
-            if i > 0 {
-                preview_line.push(Span::raw(", "));
+    // Categories in order: Creatures, Spells, Artifacts, Lands
+    let category_order = [CardCategory::Creature, CardCategory::Spell, CardCategory::Artifact, CardCategory::Land];
+
+    for category in category_order {
+        if let Some(entries) = by_category.get(&category) {
+            let cat_count: usize = entries.iter().map(|(_, c, _)| **c as usize).sum();
+            let mut spans = vec![
+                Span::styled(
+                    format!("{}: ", category.label()),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+            ];
+
+            // Show cards with colors (limit to fit in line)
+            let max_display = 8;
+            for (i, (name, count, card_def)) in entries.iter().take(max_display).enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw(", "));
+                }
+                let color = card_def
+                    .map(|c| mtg_color_to_term(&c.colors))
+                    .unwrap_or(Color::White);
+                spans.push(Span::styled(
+                    format!("{}x{}", count, truncate_name(name, 12)),
+                    Style::default().fg(color),
+                ));
             }
-            preview_line.push(Span::styled(
-                format!("{}x {}", count, name),
-                Style::default().fg(Color::White),
-            ));
-        }
-        if entries.len() > preview_count {
-            preview_line.push(Span::styled(
-                format!(" (+{} more)", entries.len() - preview_count),
+            if entries.len() > max_display {
+                spans.push(Span::styled(
+                    format!(" (+{})", entries.len() - max_display),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            spans.push(Span::styled(
+                format!(" [{}]", cat_count),
                 Style::default().fg(Color::DarkGray),
             ));
+            lines.push(Line::from(spans));
         }
-        lines.push(Line::from(preview_line));
     }
 
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, inner);
+}
+
+/// Truncate a card name to max_len characters
+fn truncate_name(name: &str, max_len: usize) -> String {
+    if name.len() <= max_len {
+        name.to_string()
+    } else {
+        format!("{}…", &name[..max_len - 1])
+    }
 }
 
 fn draw_search_input(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
