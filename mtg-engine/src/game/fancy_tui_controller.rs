@@ -362,7 +362,9 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
-                                    _ => {
+                                    FocusedPane::Info => {
+                                        // Scroll log up (toward older messages)
+                                        self.renderer.state.log_scroll_up(usize::MAX, 10);
                                         return Ok(InputAction::Continue);
                                     }
                                 }
@@ -430,7 +432,9 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
-                                    _ => {
+                                    FocusedPane::Info => {
+                                        // Scroll log down (toward newer messages)
+                                        self.renderer.state.log_scroll_down();
                                         return Ok(InputAction::Continue);
                                     }
                                 }
@@ -628,6 +632,41 @@ impl FancyTuiController {
                                     if digit < num_choices {
                                         return Ok(InputAction::Select(digit));
                                     }
+                                }
+                            }
+                            KeyCode::Char('w') | KeyCode::Char('W') => {
+                                // W: Toggle line wrapping in log (only when Info pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                    self.renderer.state.log_toggle_wrap();
+                                    return Ok(InputAction::Continue);
+                                }
+                            }
+                            KeyCode::PageUp => {
+                                // Page up in log (only when Info pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                    self.renderer.state.log_page_up(usize::MAX, 10);
+                                    return Ok(InputAction::Continue);
+                                }
+                            }
+                            KeyCode::PageDown => {
+                                // Page down in log (only when Info pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                    self.renderer.state.log_page_down(10);
+                                    return Ok(InputAction::Continue);
+                                }
+                            }
+                            KeyCode::Home => {
+                                // Scroll to beginning (only when Info pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                    self.renderer.state.log_scroll_home(usize::MAX, 10);
+                                    return Ok(InputAction::Continue);
+                                }
+                            }
+                            KeyCode::End => {
+                                // Scroll to end (only when Info pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                    self.renderer.state.log_scroll_end();
+                                    return Ok(InputAction::Continue);
                                 }
                             }
                             _ => {}

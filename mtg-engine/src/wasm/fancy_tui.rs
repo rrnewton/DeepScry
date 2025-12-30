@@ -1212,11 +1212,16 @@ pub fn launch_fancy_tui(
                     return;
                 }
                 KeyCode::Char('?') => Some(KeyInput::Help),
+                KeyCode::Char('w') | KeyCode::Char('W') => Some(KeyInput::ToggleWrap),
                 KeyCode::Tab => Some(KeyInput::Tab),
                 KeyCode::Up => Some(KeyInput::Up),
                 KeyCode::Down => Some(KeyInput::Down),
                 KeyCode::Left => Some(KeyInput::Left),
                 KeyCode::Right => Some(KeyInput::Right),
+                KeyCode::PageUp => Some(KeyInput::PageUp),
+                KeyCode::PageDown => Some(KeyInput::PageDown),
+                KeyCode::Home => Some(KeyInput::Home),
+                KeyCode::End => Some(KeyInput::End),
                 KeyCode::Enter => Some(KeyInput::Enter),
                 KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
                 _ => None,

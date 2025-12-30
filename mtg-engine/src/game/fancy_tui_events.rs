@@ -50,6 +50,10 @@ pub enum KeyInput {
     Enter,
     Escape,
     Space,
+    PageUp,
+    PageDown,
+    Home,
+    End,
 
     // Pane focus shortcuts
     FocusHand,       // H
@@ -67,6 +71,7 @@ pub enum KeyInput {
     Digit(u8),       // 0-9 for quick choice selection
     ShowBattlefield, // B - log battlefield state
     Help,            // ? - show keyboard shortcuts
+    ToggleWrap,      // W - toggle line wrapping in log
 }
 
 /// Constants for 2D battlefield navigation
@@ -182,6 +187,53 @@ pub fn handle_key_event(
             }
         }
 
+        // Page navigation (only effective for Info pane log)
+        KeyInput::PageUp => {
+            if state.focused_pane == FocusedPane::Info {
+                // Page size of 10 - renderer will clamp based on actual log size
+                state.log_page_up(usize::MAX, 10);
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+        KeyInput::PageDown => {
+            if state.focused_pane == FocusedPane::Info {
+                state.log_page_down(10);
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+        KeyInput::Home => {
+            if state.focused_pane == FocusedPane::Info {
+                // Scroll to beginning (oldest messages)
+                state.log_scroll_home(usize::MAX, 10);
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+        KeyInput::End => {
+            if state.focused_pane == FocusedPane::Info {
+                // Scroll to end (follow mode - newest messages)
+                state.log_scroll_end();
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+
+        // Toggle line wrapping in log (W key)
+        KeyInput::ToggleWrap => {
+            if state.focused_pane == FocusedPane::Info {
+                state.log_toggle_wrap();
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+
         // Space - for WASM this advances turn, for native it depends on context
         KeyInput::Space => EventResult::NotHandled,
     }
@@ -227,7 +279,12 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
             }
             EventResult::Handled
         }
-        _ => EventResult::Handled,
+        FocusedPane::Info => {
+            // Scroll log up (toward older messages)
+            // Use large values - renderer will clamp based on actual log size
+            state.log_scroll_up(usize::MAX, 10);
+            EventResult::Handled
+        }
     }
 }
 
@@ -271,7 +328,11 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
             }
             EventResult::Handled
         }
-        _ => EventResult::Handled,
+        FocusedPane::Info => {
+            // Scroll log down (toward newer messages)
+            state.log_scroll_down();
+            EventResult::Handled
+        }
     }
 }
 
@@ -569,7 +630,10 @@ pub fn get_help_text(include_wasm_only: bool) -> String {
     help.push_str("  Arrow Keys  - Navigate within panes\n");
     help.push_str("  Tab         - Cycle through panes\n");
     help.push_str("  Enter       - Select/Confirm\n");
-    help.push_str("  1-9         - Quick select (Actions pane)\n\n");
+    help.push_str("  1-9         - Quick select (Actions pane)\n");
+    help.push_str("  PgUp/PgDn   - Page scroll (Info pane)\n");
+    help.push_str("  Home/End    - Jump to start/end (Info pane)\n");
+    help.push_str("  W           - Toggle line wrap (Info pane)\n\n");
 
     help.push_str("Pane Focus:\n");
     help.push_str("  H           - Focus Hand\n");

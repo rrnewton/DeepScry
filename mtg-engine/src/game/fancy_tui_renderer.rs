@@ -388,6 +388,10 @@ pub struct FancyTuiState {
     pub card_details_pane_area: Option<Rect>,
     /// Rewind message to display after undo operation
     pub rewind_message: Option<String>,
+    /// Log scroll offset (0 = follow mode, showing latest; >0 = scrolled up by N lines)
+    pub log_scroll_offset: usize,
+    /// Whether to wrap lines in the log pane
+    pub log_wrap_lines: bool,
 }
 
 impl Default for FancyTuiState {
@@ -414,7 +418,53 @@ impl FancyTuiState {
             hand_pane_area: None,
             card_details_pane_area: None,
             rewind_message: None,
+            log_scroll_offset: 0,  // 0 = follow mode (show latest)
+            log_wrap_lines: false, // Default: no line wrapping (truncate)
         }
+    }
+
+    /// Scroll log up by one line (away from latest)
+    pub fn log_scroll_up(&mut self, total_lines: usize, visible_lines: usize) {
+        // Can only scroll up if there are more lines than visible
+        let max_offset = total_lines.saturating_sub(visible_lines);
+        if self.log_scroll_offset < max_offset {
+            self.log_scroll_offset += 1;
+        }
+    }
+
+    /// Scroll log down by one line (toward latest)
+    pub fn log_scroll_down(&mut self) {
+        if self.log_scroll_offset > 0 {
+            self.log_scroll_offset -= 1;
+        }
+    }
+
+    /// Scroll log up by a page
+    pub fn log_page_up(&mut self, total_lines: usize, visible_lines: usize) {
+        let max_offset = total_lines.saturating_sub(visible_lines);
+        let page_size = visible_lines.saturating_sub(1).max(1);
+        self.log_scroll_offset = (self.log_scroll_offset + page_size).min(max_offset);
+    }
+
+    /// Scroll log down by a page
+    pub fn log_page_down(&mut self, visible_lines: usize) {
+        let page_size = visible_lines.saturating_sub(1).max(1);
+        self.log_scroll_offset = self.log_scroll_offset.saturating_sub(page_size);
+    }
+
+    /// Scroll to beginning of log (oldest messages)
+    pub fn log_scroll_home(&mut self, total_lines: usize, visible_lines: usize) {
+        self.log_scroll_offset = total_lines.saturating_sub(visible_lines);
+    }
+
+    /// Scroll to end of log (latest messages, follow mode)
+    pub fn log_scroll_end(&mut self) {
+        self.log_scroll_offset = 0;
+    }
+
+    /// Toggle line wrapping in log
+    pub fn log_toggle_wrap(&mut self) {
+        self.log_wrap_lines = !self.log_wrap_lines;
     }
 }
 
@@ -1045,7 +1095,7 @@ impl FancyTuiRenderer {
     }
 
     /// Draw the left column tabs (Combat/Log)
-    fn draw_left_tabs(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+    fn draw_left_tabs(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let is_focused = self.state.focused_pane == FocusedPane::Info;
 
         // Create tab titles with highlighting for selected tab
@@ -1228,15 +1278,29 @@ impl FancyTuiRenderer {
         f.render_widget(paragraph, area);
     }
 
-    /// Draw the game log view panel
-    fn draw_log_view(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
+    /// Draw the game log view panel with scrolling support
+    fn draw_log_view(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let logs = view.logger().logs();
+        let total_lines = logs.len();
+        let visible_lines = area.height.saturating_sub(1) as usize; // Reserve 1 line for status
 
-        // Show last N log entries that fit in the area
-        let max_lines = area.height as usize;
-        let start_idx = logs.len().saturating_sub(max_lines);
+        if visible_lines == 0 || area.width < 10 {
+            return;
+        }
 
-        let log_lines: Vec<ListItem> = logs[start_idx..]
+        // Calculate which lines to show based on scroll offset
+        // scroll_offset=0 means show the latest lines (follow mode)
+        // scroll_offset>0 means scrolled up by that many lines
+        let end_idx = total_lines.saturating_sub(self.state.log_scroll_offset);
+        let start_idx = end_idx.saturating_sub(visible_lines);
+
+        // Clamp scroll offset if log got shorter
+        if self.state.log_scroll_offset > total_lines.saturating_sub(visible_lines) {
+            self.state.log_scroll_offset = total_lines.saturating_sub(visible_lines);
+        }
+
+        // Build log lines with proper styling
+        let log_lines: Vec<ListItem> = logs[start_idx..end_idx]
             .iter()
             .map(|entry| {
                 // Color based on verbosity level
@@ -1246,12 +1310,53 @@ impl FancyTuiRenderer {
                     VerbosityLevel::Normal => Style::default().fg(Color::White),
                     VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
                 };
-                ListItem::new(Line::from(Span::styled(&entry.message, style)))
+                // Truncate or wrap based on setting
+                let message = if self.state.log_wrap_lines {
+                    entry.message.clone()
+                } else {
+                    // Truncate to fit width
+                    let max_width = area.width.saturating_sub(1) as usize;
+                    if entry.message.len() > max_width {
+                        format!("{}…", &entry.message[..max_width.saturating_sub(1)])
+                    } else {
+                        entry.message.clone()
+                    }
+                };
+                ListItem::new(Line::from(Span::styled(message, style)))
             })
             .collect();
 
+        // Render log content (leaving room for status line)
+        let log_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height.saturating_sub(1),
+        };
         let log_list = List::new(log_lines);
-        f.render_widget(log_list, area);
+        f.render_widget(log_list, log_area);
+
+        // Render status indicator at bottom right
+        // Format: "Lines X-Y of Z" or "Following" if at end
+        let status_text = if self.state.log_scroll_offset == 0 {
+            format!("Lines {}-{} of {} [F]", start_idx + 1, end_idx, total_lines)
+        } else {
+            format!("Lines {}-{} of {}", start_idx + 1, end_idx, total_lines)
+        };
+        let wrap_indicator = if self.state.log_wrap_lines { " [W]" } else { "" };
+        let full_status = format!("{}{}", status_text, wrap_indicator);
+
+        let status_width = full_status.len() as u16;
+        if status_width < area.width {
+            let status_area = Rect {
+                x: area.x + area.width - status_width,
+                y: area.y + area.height - 1,
+                width: status_width,
+                height: 1,
+            };
+            let status_span = Span::styled(full_status, Style::default().fg(Color::DarkGray));
+            f.render_widget(Paragraph::new(Line::from(status_span)), status_area);
+        }
     }
 
     /// Draw the prompt/actions panel (now includes stack at bottom)
@@ -1814,6 +1919,9 @@ impl FancyTuiRenderer {
         // First pass: compute layout positions relative to (0, 0)
         // Track max entity height per row for proper row advancement
         let mut card_positions: Vec<(u16, u16, u16, u16)> = Vec::new(); // (x, y, w, h) for each card
+        let mut card_section_idx: Vec<usize> = Vec::new(); // section index for each card (for spacing)
+        let mut card_label_idx: Vec<Option<usize>> = Vec::new(); // label index for each card (if it has one)
+        let mut card_stack_idx: Vec<Option<usize>> = Vec::new(); // stack_count index for each card (if it's a stack)
         let mut label_positions: Vec<(u16, u16, String, Color)> = Vec::new(); // (x, y, text, color)
         let mut stack_count_positions: Vec<(u16, u16, u16, usize)> = Vec::new(); // (x, y, card_w, count) for stacks
 
@@ -1867,15 +1975,22 @@ impl FancyTuiRenderer {
                     current_row_max_h = current_row_max_h.max(card_h);
 
                     // If there's a pending label, place it above this card
-                    if let Some((label_text, label_color)) = pending_label.take() {
+                    let label_idx = if let Some((label_text, label_color)) = pending_label.take() {
+                        let idx = label_positions.len();
                         label_positions.push((current_x, y_offset, label_text, label_color));
-                    }
+                        Some(idx)
+                    } else {
+                        None
+                    };
 
                     // Check if this entity is a stack with count > 1
-                    let stack_count = entity.count();
-                    if stack_count > 1 {
-                        stack_count_positions.push((current_x, y_offset, card_w, stack_count));
-                    }
+                    let stack_idx = if entity.count() > 1 {
+                        let idx = stack_count_positions.len();
+                        stack_count_positions.push((current_x, y_offset, card_w, entity.count()));
+                        Some(idx)
+                    } else {
+                        None
+                    };
 
                     // Card position uses LAYOUT dimensions (public bounding box)
                     let card_y = y_offset + 1;
@@ -1883,19 +1998,123 @@ impl FancyTuiRenderer {
                     // The test_wordwrap_layout_fits function should have already ensured
                     // proper card sizing, but we render regardless for robustness.
                     card_positions.push((current_x, card_y, card_w, card_h));
+                    card_section_idx.push(current_section_idx);
+                    card_label_idx.push(label_idx);
+                    card_stack_idx.push(stack_idx);
 
                     current_x += card_w + Self::CARD_SPACING;
                 }
             }
         }
 
-        // Calculate bounding box of the card grid
+        // Calculate bounding box of the card grid (before redistribution)
         let mut grid_width = 0u16;
         let mut grid_height = 0u16;
         for &(x, y, w, h) in &card_positions {
             grid_width = grid_width.max(x + w);
             grid_height = grid_height.max(y + h);
         }
+
+        // Horizontal redistribution: spread cards to use available width
+        // Only applies if we have extra space (more than 2 chars of padding)
+        const MIN_EDGE_PADDING: u16 = 1;
+        let extra_space = area
+            .width
+            .saturating_sub(grid_width)
+            .saturating_sub(MIN_EDGE_PADDING * 2);
+
+        if extra_space > 2 && !card_positions.is_empty() {
+            // Group cards by row (same y value) and track their indices
+            let mut rows: Vec<Vec<usize>> = Vec::new();
+            let mut current_row_y: Option<u16> = None;
+
+            for (idx, &(_, y, _, _)) in card_positions.iter().enumerate() {
+                if current_row_y != Some(y) {
+                    rows.push(Vec::new());
+                    current_row_y = Some(y);
+                }
+                if let Some(row) = rows.last_mut() {
+                    row.push(idx);
+                }
+            }
+
+            // For each row, calculate and apply extra spacing
+            for row_indices in &rows {
+                if row_indices.len() < 2 {
+                    continue; // Single card, no gaps to expand
+                }
+
+                // Calculate weighted gap count:
+                // - 1 unit for gaps between cards in same section
+                // - 2 units for gaps between sections
+                let mut total_gap_weight = 0u16;
+                for i in 1..row_indices.len() {
+                    let prev_section = card_section_idx[row_indices[i - 1]];
+                    let curr_section = card_section_idx[row_indices[i]];
+                    if curr_section != prev_section {
+                        total_gap_weight += 2; // Section boundary: 2X spacing
+                    } else {
+                        total_gap_weight += 1; // Same section: 1X spacing
+                    }
+                }
+
+                if total_gap_weight == 0 {
+                    continue;
+                }
+
+                // Calculate row width and extra space for this row
+                let first_idx = row_indices[0];
+                let last_idx = row_indices[row_indices.len() - 1];
+                let (first_x, _, _, _) = card_positions[first_idx];
+                let (last_x, _, last_w, _) = card_positions[last_idx];
+                let row_width = last_x + last_w - first_x;
+                let row_extra = area
+                    .width
+                    .saturating_sub(row_width)
+                    .saturating_sub(MIN_EDGE_PADDING * 2);
+
+                if row_extra <= 2 {
+                    continue; // Not enough extra space for this row
+                }
+
+                // Calculate extra spacing per weight unit (integer division)
+                let extra_per_unit = row_extra / total_gap_weight;
+                if extra_per_unit == 0 {
+                    continue;
+                }
+
+                // Apply cumulative offset to cards in this row
+                // Also update their associated labels and stack counts
+                let mut cumulative_extra = 0u16;
+                for i in 1..row_indices.len() {
+                    let prev_section = card_section_idx[row_indices[i - 1]];
+                    let curr_section = card_section_idx[row_indices[i]];
+                    let gap_weight = if curr_section != prev_section { 2 } else { 1 };
+                    cumulative_extra += extra_per_unit * gap_weight;
+
+                    // Update card position
+                    let card_idx = row_indices[i];
+                    card_positions[card_idx].0 += cumulative_extra;
+
+                    // Update associated label position if any
+                    if let Some(label_idx) = card_label_idx[card_idx] {
+                        label_positions[label_idx].0 += cumulative_extra;
+                    }
+
+                    // Update associated stack_count position if any
+                    if let Some(stack_idx) = card_stack_idx[card_idx] {
+                        stack_count_positions[stack_idx].0 += cumulative_extra;
+                    }
+                }
+            }
+
+            // Recalculate grid_width after redistribution
+            grid_width = 0;
+            for &(x, _, w, _) in &card_positions {
+                grid_width = grid_width.max(x + w);
+            }
+        }
+
         // Include header row in height
         if !label_positions.is_empty() || !stack_count_positions.is_empty() {
             // The first row has y_offset=0, so card starts at y=1
