@@ -13,6 +13,16 @@ use crate::zones::Zone;
 use smallvec::SmallVec;
 use std::sync::mpsc;
 
+/// Message sent from NetworkController to WebSocket handler after a priority choice
+/// This allows the handler to include the actual ability in OpponentChoice
+#[derive(Debug, Clone)]
+pub struct ChosenAbilityInfo {
+    /// The choice sequence number this ability corresponds to
+    pub choice_seq: u32,
+    /// The ability chosen (None = pass priority)
+    pub ability: Option<SpellAbility>,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CARD REVEAL INFO
 // ═══════════════════════════════════════════════════════════════════════════
@@ -135,6 +145,9 @@ pub struct NetworkController {
     last_reveal_index: usize,
     /// Network debug mode - include debug info in choice requests
     network_debug: bool,
+    /// Channel to send the chosen ability back to WebSocket handler
+    /// This allows OpponentChoice to include the actual ability for opponent sync
+    ability_tx: Option<mpsc::Sender<ChosenAbilityInfo>>,
 }
 
 impl NetworkController {
@@ -151,6 +164,7 @@ impl NetworkController {
             choice_seq: 0,
             last_reveal_index: 0, // Will be set by set_last_reveal_index
             network_debug: false,
+            ability_tx: None,
         }
     }
 
@@ -161,6 +175,14 @@ impl NetworkController {
     /// were already sent during the GameStarted handshake.
     pub fn set_last_reveal_index(&mut self, index: usize) {
         self.last_reveal_index = index;
+    }
+
+    /// Set the channel for sending chosen abilities back to WebSocket handler
+    ///
+    /// When a priority choice is made, the chosen ability (or None for pass) is sent
+    /// on this channel so the WebSocket handler can include it in OpponentChoice.
+    pub fn set_ability_tx(&mut self, tx: mpsc::Sender<ChosenAbilityInfo>) {
+        self.ability_tx = Some(tx);
     }
 
     /// Enable network debug mode
@@ -379,6 +401,13 @@ impl PlayerController for NetworkController {
         match self.request_choice(view, choice_type, options, state_hash) {
             Ok(0) => {
                 self.increment_choice_seq();
+                // Send ability info (None = pass priority)
+                if let Some(tx) = &self.ability_tx {
+                    let _ = tx.send(ChosenAbilityInfo {
+                        choice_seq: self.choice_seq,
+                        ability: None,
+                    });
+                }
                 ChoiceResult::Ok(None) // Pass priority
             }
             Ok(idx) => {
@@ -386,7 +415,15 @@ impl PlayerController for NetworkController {
                 // Subtract 1 because option 0 is "Pass priority"
                 let ability_idx = idx - 1;
                 if ability_idx < available.len() {
-                    ChoiceResult::Ok(Some(available[ability_idx].clone()))
+                    let ability = available[ability_idx].clone();
+                    // Send ability info to WebSocket handler for OpponentChoice
+                    if let Some(tx) = &self.ability_tx {
+                        let _ = tx.send(ChosenAbilityInfo {
+                            choice_seq: self.choice_seq,
+                            ability: Some(ability.clone()),
+                        });
+                    }
+                    ChoiceResult::Ok(Some(ability))
                 } else {
                     ChoiceResult::Error("Invalid ability index from network".to_string())
                 }

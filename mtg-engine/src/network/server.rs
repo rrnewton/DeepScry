@@ -13,7 +13,9 @@ use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::protocol::{
     now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
 };
-use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
+use crate::network::{
+    CardRevealInfo, ChoiceRequest, ChoiceResponse, ChosenAbilityInfo, NetworkController, DEFAULT_PORT,
+};
 use crate::undo::GameAction;
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
@@ -180,6 +182,9 @@ struct PlayerConnection {
     opponent_reveal_tx: tokio_mpsc::Sender<Vec<RevealBroadcast>>,
     /// Channel to receive immediate reveals from the game thread (after automatic actions like draws)
     immediate_reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
+    /// Channel to receive chosen abilities from NetworkController (for Priority choices)
+    /// This allows the WebSocket handler to include the actual ability in OpponentChoice
+    ability_rx: tokio_mpsc::Receiver<ChosenAbilityInfo>,
     /// Current choice type being requested (for broadcasting)
     current_choice_type: Option<ChoiceType>,
     /// Expected action_count from the last ChoiceRequest sent to this client.
@@ -532,6 +537,31 @@ async fn run_game(
     let _p1_immed_bridge = p1_immed_bridge; // Keep the handle alive
     let _p2_immed_bridge = p2_immed_bridge;
 
+    // Create channels for chosen abilities from NetworkController (for OpponentChoice)
+    // These sync channels are used by NetworkController to send the ability after a priority choice
+    let (p1_ability_sync_tx, p1_ability_sync_rx) = std::sync::mpsc::channel::<ChosenAbilityInfo>();
+    let (p2_ability_sync_tx, p2_ability_sync_rx) = std::sync::mpsc::channel::<ChosenAbilityInfo>();
+    let (p1_ability_async_tx, p1_ability_async_rx) = tokio_mpsc::channel::<ChosenAbilityInfo>(16);
+    let (p2_ability_async_tx, p2_ability_async_rx) = tokio_mpsc::channel::<ChosenAbilityInfo>(16);
+
+    // Bridge ability channels from sync to async
+    let p1_ability_bridge = tokio::task::spawn_blocking(move || {
+        while let Ok(ability_info) = p1_ability_sync_rx.recv() {
+            if p1_ability_async_tx.blocking_send(ability_info).is_err() {
+                break;
+            }
+        }
+    });
+    let p2_ability_bridge = tokio::task::spawn_blocking(move || {
+        while let Ok(ability_info) = p2_ability_sync_rx.recv() {
+            if p2_ability_async_tx.blocking_send(ability_info).is_err() {
+                break;
+            }
+        }
+    });
+    let _p1_ability_bridge = p1_ability_bridge; // Keep the handle alive
+    let _p2_ability_bridge = p2_ability_bridge;
+
     // Create PlayerConnections with tokio receivers
     // Note: last_reveal_index will be set after we determine the opening hand sizes
     let mut p1_conn = PlayerConnection {
@@ -545,6 +575,7 @@ async fn run_game(
         reveal_rx: p2_reveal_rx,                // P1 receives reveals from P2's ChoiceRequest
         opponent_reveal_tx: p1_reveal_tx,       // P1 sends reveals to P2 (when P1 gets ChoiceRequest)
         immediate_reveal_rx: p1_immed_async_rx, // P1 receives immediate reveals from game thread
+        ability_rx: p1_ability_async_rx,        // P1 receives ability info from NetworkController
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -564,6 +595,7 @@ async fn run_game(
         reveal_rx: p1_reveal_rx,                // P2 receives reveals from P1's ChoiceRequest
         opponent_reveal_tx: p2_reveal_tx,       // P2 sends reveals to P1 (when P2 gets ChoiceRequest)
         immediate_reveal_rx: p2_immed_async_rx, // P2 receives immediate reveals from game thread
+        ability_rx: p2_ability_async_rx,        // P2 receives ability info from NetworkController
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -738,6 +770,9 @@ async fn run_game(
     p2_controller.set_last_reveal_index(opening_hand_count);
     p1_controller.set_network_debug(config.network_debug);
     p2_controller.set_network_debug(config.network_debug);
+    // Wire up ability channels so NetworkControllers can report chosen abilities
+    p1_controller.set_ability_tx(p1_ability_sync_tx);
+    p2_controller.set_ability_tx(p2_ability_sync_tx);
 
     // Wrap game state for sharing between tasks
     let game = Arc::new(Mutex::new(game));
@@ -962,16 +997,46 @@ async fn handle_player_websocket(
                             }).await?;
 
                             // Broadcast to opponent with proper choice_type
+                            let choice_type = conn.current_choice_type.take().unwrap();
+
+                            // For Priority choices, wait for the actual ability from NetworkController
+                            let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_millis(100),
+                                    conn.ability_rx.recv()
+                                ).await {
+                                    Ok(Some(ability_info)) => {
+                                        log::debug!(
+                                            "Player {:?}: Received ability info for pending choice {}: {:?}",
+                                            conn.player_id, ability_info.choice_seq, ability_info.ability
+                                        );
+                                        ability_info.ability
+                                    }
+                                    Ok(None) => {
+                                        log::warn!("Player {:?}: ability channel closed (pending)", conn.player_id);
+                                        None
+                                    }
+                                    Err(_) => {
+                                        log::warn!(
+                                            "Player {:?}: timeout waiting for ability info for pending choice {}",
+                                            conn.player_id, pending.choice_seq
+                                        );
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+
                             let opponent_info = OpponentChoiceInfo {
                                 choice_seq: pending.choice_seq,
                                 player: conn.player_id,
-                                choice_type: conn.current_choice_type.take().unwrap(),
+                                choice_type,
                                 choice_index: pending.choice_index,
                                 description: format!("Choice #{}", pending.choice_seq),
                                 action_count: choice_request.action_count,
                                 timestamp_ms: now_ms(),
-                                // TODO(mtg-037fw): Populate with actual ability for Priority choices
-                                spell_ability: None,
+                                spell_ability,
                             };
                             log::info!(
                                 "Player {:?}: Broadcasting pending choice {} to opponent",
@@ -1117,6 +1182,39 @@ async fn handle_player_websocket(
                                     // current_choice_type should always be set since we processed ChoiceRequest
                                     let choice_type = conn.current_choice_type.take()
                                         .expect("current_choice_type should be set when expected_action_count is set");
+
+                                    // For Priority choices, wait for the actual ability from NetworkController
+                                    // This is needed so the client can execute the opponent's action correctly
+                                    let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
+                                        // NetworkController sends ability info immediately after processing the choice
+                                        // Use a short timeout to avoid blocking forever on edge cases
+                                        match tokio::time::timeout(
+                                            std::time::Duration::from_millis(100),
+                                            conn.ability_rx.recv()
+                                        ).await {
+                                            Ok(Some(ability_info)) => {
+                                                log::debug!(
+                                                    "Player {:?}: Received ability info for choice {}: {:?}",
+                                                    conn.player_id, ability_info.choice_seq, ability_info.ability
+                                                );
+                                                ability_info.ability
+                                            }
+                                            Ok(None) => {
+                                                log::warn!("Player {:?}: ability channel closed", conn.player_id);
+                                                None
+                                            }
+                                            Err(_) => {
+                                                log::warn!(
+                                                    "Player {:?}: timeout waiting for ability info for choice {}",
+                                                    conn.player_id, choice_seq
+                                                );
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
+
                                     let opponent_info = OpponentChoiceInfo {
                                         choice_seq,
                                         player: conn.player_id,
@@ -1125,8 +1223,7 @@ async fn handle_player_websocket(
                                         description: format!("Choice #{}", choice_seq),
                                         action_count: expected,
                                         timestamp_ms: now_ms(),
-                                        // TODO(mtg-037fw): Populate with actual ability for Priority choices
-                                        spell_ability: None,
+                                        spell_ability,
                                     };
                                     log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
                                     if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
@@ -1287,13 +1384,58 @@ async fn handle_player_websocket(
                 if let Some(info) = opponent_choice {
                     log::debug!("Player {:?}: Forwarding opponent choice {}", conn.player_id, info.choice_seq);
 
-                    // NOTE: Reveals are now handled by the immediate reveal system (reveal_pusher hook)
-                    // which sends CardRevealed messages directly after automatic actions like draws.
-                    // We no longer collect reveals here to avoid duplicate messages.
-                    // Just update last_reveal_index to track progress.
-                    {
-                        let game_guard = game.lock().await;
-                        conn.last_reveal_index = game_guard.undo_log.len();
+                    // If opponent played a card, send CardRevealed so client knows what card it is
+                    // This is essential because the client's shadow library doesn't have card identities
+                    // for the opponent's hand
+                    if let Some(ref ability) = info.spell_ability {
+                        // Extract card_id from the ability
+                        let card_id = match ability {
+                            SpellAbility::PlayLand { card_id } => Some(*card_id),
+                            SpellAbility::CastSpell { card_id } => Some(*card_id),
+                            SpellAbility::ActivateAbility { card_id, .. } => Some(*card_id),
+                        };
+
+                        if let Some(card_id) = card_id {
+                            let game_guard = game.lock().await;
+                            if let Some(card) = game_guard.cards.try_get(card_id) {
+                                // Build type line from types and subtypes
+                                let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
+                                let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
+                                let type_line = if subtypes_str.is_empty() {
+                                    types_str.join(" ")
+                                } else {
+                                    format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
+                                };
+
+                                let card_reveal = CardReveal {
+                                    card_id,
+                                    name: card.name.to_string(),
+                                    mana_cost: card.mana_cost.to_string(),
+                                    type_line,
+                                    text: card.text.clone(),
+                                    pt: if card.is_creature() {
+                                        match (card.base_power(), card.base_toughness()) {
+                                            (Some(p), Some(t)) => Some((p as i32, t as i32)),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    },
+                                };
+
+                                log::debug!(
+                                    "Player {:?}: Sending CardRevealed for opponent's played card: {} (id={:?})",
+                                    conn.player_id, card.name, card_id
+                                );
+                                conn.send(&ServerMessage::CardRevealed {
+                                    owner: info.player,
+                                    card: card_reveal,
+                                    reason: RevealReason::Played,
+                                }).await?;
+                            }
+                            // Update last_reveal_index
+                            conn.last_reveal_index = game_guard.undo_log.len();
+                        }
                     }
 
                     conn.send(&ServerMessage::OpponentChoice {

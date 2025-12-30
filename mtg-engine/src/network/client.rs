@@ -20,7 +20,8 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 /// Reveal message sent from WebSocket handler to game thread
-type RevealMsg = (PlayerId, CardId, RevealReason);
+/// Includes full CardReveal info so game thread can instantiate cards
+type RevealMsg = (PlayerId, CardReveal, RevealReason);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT CONFIGURATION
@@ -770,8 +771,8 @@ impl NetworkClient {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
                                         log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
-                                        // Send reveal to game thread via channel
-                                        if let Err(e) = reveal_tx.send((owner, card.card_id, reason)) {
+                                        // Send full CardReveal to game thread so it can instantiate the card
+                                        if let Err(e) = reveal_tx.send((owner, card, reason)) {
                                             log::error!("Failed to send reveal to game thread: {:?}", e);
                                         }
                                     }
@@ -931,6 +932,9 @@ impl NetworkClient {
             }
         });
 
+        // Clone card_db for use in the blocking thread
+        let card_db_clone = self.card_db.clone().expect("Card DB not loaded");
+
         // Run game loop in blocking thread
         // The game loop has a reveal drainer that will drain the queue before each draw
         let mut local_controller = local_controller;
@@ -941,15 +945,66 @@ impl NetworkClient {
             // (meaning we need to receive the draw reveal before proceeding)
             let drain_reveals = move |game: &mut GameState| {
                 // Helper to process a single reveal
-                let process_reveal = |game: &mut GameState, owner: PlayerId, card_id: CardId, reason: RevealReason| {
-                    if matches!(reason, RevealReason::Draw) {
-                        if let Some(zones) = game.get_player_zones_mut(owner) {
-                            zones.library.queue_reveal(card_id);
-                            log::debug!("Queued reveal for {:?}: {:?}", owner, card_id);
+                // Now handles all reveal types by instantiating cards when needed
+                let process_reveal = |game: &mut GameState,
+                                      owner: PlayerId,
+                                      card_reveal: CardReveal,
+                                      reason: RevealReason| {
+                    let card_id = card_reveal.card_id;
+
+                    match reason {
+                        RevealReason::Draw => {
+                            // Queue the card_id in the library for the next draw
+                            if let Some(zones) = game.get_player_zones_mut(owner) {
+                                zones.library.queue_reveal(card_id);
+                                log::debug!("Queued draw reveal for {:?}: {:?}", owner, card_id);
+                            }
+                        }
+                        RevealReason::Played => {
+                            // Opponent played a card from hand - instantiate it in game.cards
+                            // This is needed before RemoteController can execute the SpellAbility
+                            if game.cards.get(card_id).is_err() {
+                                // Try to get card definition from database
+                                if let Ok(Some(card_def)) =
+                                    futures_executor::block_on(card_db_clone.get_card(&card_reveal.name))
+                                {
+                                    let card_instance = card_def.instantiate(card_id, owner);
+                                    game.cards.insert(card_id, card_instance);
+                                    log::debug!(
+                                        "Instantiated played card for {:?}: {} ({:?})",
+                                        owner,
+                                        card_reveal.name,
+                                        card_id
+                                    );
+                                } else {
+                                    log::warn!("Could not find card '{}' in database for reveal", card_reveal.name);
+                                }
+                            }
+                        }
+                        RevealReason::TokenCreated => {
+                            // Token created - instantiate and add to battlefield
+                            if game.cards.get(card_id).is_err() {
+                                if let Ok(Some(card_def)) =
+                                    futures_executor::block_on(card_db_clone.get_card(&card_reveal.name))
+                                {
+                                    let card_instance = card_def.instantiate(card_id, owner);
+                                    game.cards.insert(card_id, card_instance);
+                                    game.battlefield.add(card_id);
+                                    log::debug!("Created token for {:?}: {} ({:?})", owner, card_reveal.name, card_id);
+                                }
+                            }
+                        }
+                        _ => {
+                            // Other reveal reasons (Effect, Searched, etc.) - just track the card
+                            log::debug!(
+                                "Received {:?} reveal for {:?}: {} ({:?})",
+                                reason,
+                                owner,
+                                card_reveal.name,
+                                card_id
+                            );
                         }
                     }
-                    // Other reveal reasons (TokenCreated, etc.) would need card instantiation
-                    // which requires access to card_db - skip for now
                 };
 
                 // Check if the active player's library is remote
@@ -970,8 +1025,8 @@ impl NetworkClient {
                         active_player
                     );
                     match reveal_rx.recv_timeout(Duration::from_secs(10)) {
-                        Ok((owner, card_id, reason)) => {
-                            process_reveal(game, owner, card_id, reason);
+                        Ok((owner, card_reveal, reason)) => {
+                            process_reveal(game, owner, card_reveal, reason);
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             log::error!(
@@ -986,8 +1041,8 @@ impl NetworkClient {
                 }
 
                 // Also drain any additional reveals that may have arrived
-                while let Ok((owner, card_id, reason)) = reveal_rx.try_recv() {
-                    process_reveal(game, owner, card_id, reason);
+                while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
+                    process_reveal(game, owner, card_reveal, reason);
                 }
             };
 
