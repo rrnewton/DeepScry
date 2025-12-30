@@ -332,18 +332,85 @@ impl DeckBuilderState {
         }
     }
 
-    /// Move deck selection up
-    fn deck_select_previous(&mut self) {
-        if self.deck_selected_index > 0 {
-            self.deck_selected_index -= 1;
+    /// Move deck selection up (vertical navigation within column)
+    fn deck_select_previous(&mut self, num_columns: usize) {
+        if self.deck.is_empty() || num_columns == 0 {
+            return;
+        }
+
+        let category_info = self.get_category_layout_info(num_columns);
+        if let Some((cat_idx, cat_start, _cat_size, num_rows)) = self.find_category_for_index_with_idx(&category_info) {
+            let local_idx = self.deck_selected_index - cat_start;
+            let row = local_idx % num_rows;
+            let col = local_idx / num_rows;
+
+            if row > 0 {
+                // Move up within same category
+                self.deck_selected_index = cat_start + (row - 1) + col * num_rows;
+            } else if cat_idx > 0 {
+                // Move to previous category, same column, last row
+                let (prev_start, prev_size, prev_num_rows) = category_info[cat_idx - 1];
+                let prev_num_cols = prev_size.div_ceil(prev_num_rows);
+                // Clamp column to what's available in previous category
+                let target_col = col.min(prev_num_cols.saturating_sub(1));
+                // Go to last row of that column
+                let last_row_in_col = if target_col == prev_num_cols - 1 {
+                    // Last column may be partial
+                    (prev_size - 1) % prev_num_rows
+                } else {
+                    prev_num_rows - 1
+                };
+                let target_idx = prev_start + last_row_in_col + target_col * prev_num_rows;
+                if target_idx < prev_start + prev_size {
+                    self.deck_selected_index = target_idx;
+                }
+            }
+            // If already at top of first category, stay put
         }
     }
 
-    /// Move deck selection down
-    fn deck_select_next(&mut self) {
-        let count = self.deck.len();
-        if count > 0 && self.deck_selected_index < count - 1 {
-            self.deck_selected_index += 1;
+    /// Move deck selection down (vertical navigation within column)
+    fn deck_select_next(&mut self, num_columns: usize) {
+        if self.deck.is_empty() || num_columns == 0 {
+            return;
+        }
+
+        let category_info = self.get_category_layout_info(num_columns);
+
+        if let Some((cat_idx, cat_start, cat_size, num_rows)) = self.find_category_for_index_with_idx(&category_info) {
+            let local_idx = self.deck_selected_index - cat_start;
+            let row = local_idx % num_rows;
+            let col = local_idx / num_rows;
+
+            // Check if there's a card below in the same column
+            let next_row_idx = cat_start + (row + 1) + col * num_rows;
+            if row + 1 < num_rows && next_row_idx < cat_start + cat_size {
+                // Move down within same category
+                self.deck_selected_index = next_row_idx;
+            } else if cat_idx + 1 < category_info.len() {
+                // Move to next category, same column, first row
+                let (next_start, next_size, next_num_rows) = category_info[cat_idx + 1];
+                let next_num_cols = next_size.div_ceil(next_num_rows);
+                // Clamp column to what's available in next category
+                let target_col = col.min(next_num_cols.saturating_sub(1));
+                let target_idx = next_start + target_col * next_num_rows;
+                if target_idx < next_start + next_size {
+                    self.deck_selected_index = target_idx;
+                }
+            } else {
+                // At bottom of last category - wrap to next column if possible
+                if col + 1 < num_columns {
+                    // Find first card in next column (could be in any category)
+                    for (start, size, rows) in &category_info {
+                        let target_idx = start + (col + 1) * rows;
+                        if target_idx < start + size {
+                            self.deck_selected_index = target_idx;
+                            return;
+                        }
+                    }
+                }
+                // If no next column or no card there, stay put
+            }
         }
     }
 
@@ -425,6 +492,20 @@ impl DeckBuilderState {
         for &(start, size, num_rows) in category_info {
             if self.deck_selected_index >= start && self.deck_selected_index < start + size {
                 return Some((start, size, num_rows));
+            }
+        }
+        None
+    }
+
+    /// Find which category contains the current deck_selected_index, with category index
+    /// Returns (cat_idx, cat_start, cat_size, num_rows)
+    fn find_category_for_index_with_idx(
+        &self,
+        category_info: &[(usize, usize, usize)],
+    ) -> Option<(usize, usize, usize, usize)> {
+        for (cat_idx, &(start, size, num_rows)) in category_info.iter().enumerate() {
+            if self.deck_selected_index >= start && self.deck_selected_index < start + size {
+                return Some((cat_idx, start, size, num_rows));
             }
         }
         None
@@ -653,11 +734,17 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                         }
                         KeyCode::Up => match state.focused_pane {
                             FocusedPane::Search => state.select_previous(),
-                            FocusedPane::DeckSummary => state.deck_select_previous(),
+                            FocusedPane::DeckSummary => {
+                                let num_cols = state.deck_num_columns;
+                                state.deck_select_previous(num_cols);
+                            }
                         },
                         KeyCode::Down => match state.focused_pane {
                             FocusedPane::Search => state.select_next(),
-                            FocusedPane::DeckSummary => state.deck_select_next(),
+                            FocusedPane::DeckSummary => {
+                                let num_cols = state.deck_num_columns;
+                                state.deck_select_next(num_cols);
+                            }
                         },
                         KeyCode::Left => {
                             if state.focused_pane == FocusedPane::DeckSummary {
