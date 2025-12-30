@@ -11,7 +11,7 @@ use crate::core::{CardType, Color as MtgColor};
 use crate::loader::{CardDefinition, DeckEntry, DeckList};
 use crate::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -47,6 +47,13 @@ impl Default for DeckBuilderConfig {
     }
 }
 
+/// Which pane currently has keyboard focus
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusedPane {
+    Search,
+    DeckSummary,
+}
+
 /// State for the deck builder TUI
 struct DeckBuilderState {
     /// All available card names (sorted)
@@ -67,6 +74,11 @@ struct DeckBuilderState {
     status_message: Option<String>,
     /// Maximum number of results to show (dynamic based on pane height)
     max_results: usize,
+    /// Which pane has keyboard focus
+    focused_pane: FocusedPane,
+    /// Rect areas for click detection (set during draw)
+    deck_summary_area: Option<Rect>,
+    search_results_area: Option<Rect>,
 }
 
 impl DeckBuilderState {
@@ -81,7 +93,18 @@ impl DeckBuilderState {
             show_exit_dialog: false,
             status_message: None,
             max_results: 10, // Will be updated based on pane height
+            focused_pane: FocusedPane::Search,
+            deck_summary_area: None,
+            search_results_area: None,
         }
+    }
+
+    /// Toggle focus between panes
+    fn toggle_focus(&mut self) {
+        self.focused_pane = match self.focused_pane {
+            FocusedPane::Search => FocusedPane::DeckSummary,
+            FocusedPane::DeckSummary => FocusedPane::Search,
+        };
     }
 
     /// Update search results based on current query
@@ -302,10 +325,10 @@ pub async fn run_deck_builder(
 
     let mut state = DeckBuilderState::new(filtered_cards, card_definitions);
 
-    // Setup terminal
+    // Setup terminal with mouse support
     enable_raw_mode().map_err(crate::MtgError::IoError)?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen).map_err(crate::MtgError::IoError)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(crate::MtgError::IoError)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(crate::MtgError::IoError)?;
 
@@ -314,7 +337,7 @@ pub async fn run_deck_builder(
 
     // Restore terminal
     disable_raw_mode().map_err(crate::MtgError::IoError)?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(crate::MtgError::IoError)?;
+    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen).map_err(crate::MtgError::IoError)?;
     terminal.show_cursor().map_err(crate::MtgError::IoError)?;
 
     // Handle result
@@ -343,68 +366,101 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
 
         // Handle input
         if event::poll(std::time::Duration::from_millis(100)).map_err(crate::MtgError::IoError)? {
-            if let Event::Key(key) = event::read().map_err(crate::MtgError::IoError)? {
-                // Only process key press events, not release
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+            match event::read().map_err(crate::MtgError::IoError)? {
+                Event::Key(key) => {
+                    // Only process key press events, not release
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
 
-                // Handle exit dialog
-                if state.show_exit_dialog {
-                    match key.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                            return Ok(true); // Save and exit
+                    // Handle exit dialog
+                    if state.show_exit_dialog {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                                return Ok(true); // Save and exit
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                state.show_exit_dialog = false;
+                            }
+                            _ => {}
                         }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                            state.show_exit_dialog = false;
+                        continue;
+                    }
+
+                    // Clear status message on any key
+                    state.status_message = None;
+
+                    match key.code {
+                        KeyCode::Tab => {
+                            state.toggle_focus();
+                        }
+                        KeyCode::Esc => {
+                            // First ESC clears search, second ESC shows exit dialog
+                            if !state.search_query.is_empty() {
+                                state.search_query.clear();
+                                state.update_search();
+                            } else {
+                                state.show_exit_dialog = true;
+                            }
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(false); // Exit without saving
+                        }
+                        KeyCode::Up => {
+                            state.select_previous();
+                        }
+                        KeyCode::Down => {
+                            state.select_next();
+                        }
+                        KeyCode::Enter => {
+                            state.add_selected(1);
+                        }
+                        KeyCode::Delete => {
+                            state.remove_selected();
+                        }
+                        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                            let count = c.to_digit(10).unwrap() as u8;
+                            state.add_selected(count);
+                        }
+                        KeyCode::Char(c) => {
+                            // Only allow typing in search mode
+                            if state.focused_pane == FocusedPane::Search {
+                                state.search_query.push(c);
+                                state.update_search();
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if state.focused_pane == FocusedPane::Search {
+                                state.search_query.pop();
+                                state.update_search();
+                            }
                         }
                         _ => {}
                     }
-                    continue;
                 }
+                Event::Mouse(mouse) => {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        let x = mouse.column;
+                        let y = mouse.row;
 
-                // Clear status message on any key
-                state.status_message = None;
+                        // Check if click is within deck summary area
+                        if let Some(area) = state.deck_summary_area {
+                            if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height {
+                                state.focused_pane = FocusedPane::DeckSummary;
+                                state.status_message = None;
+                            }
+                        }
 
-                match key.code {
-                    KeyCode::Esc => {
-                        // First ESC clears search, second ESC shows exit dialog
-                        if !state.search_query.is_empty() {
-                            state.search_query.clear();
-                            state.update_search();
-                        } else {
-                            state.show_exit_dialog = true;
+                        // Check if click is within search results area
+                        if let Some(area) = state.search_results_area {
+                            if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height {
+                                state.focused_pane = FocusedPane::Search;
+                                state.status_message = None;
+                            }
                         }
                     }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(false); // Exit without saving
-                    }
-                    KeyCode::Up => {
-                        state.select_previous();
-                    }
-                    KeyCode::Down => {
-                        state.select_next();
-                    }
-                    KeyCode::Enter => {
-                        state.add_selected(1);
-                    }
-                    KeyCode::Delete => {
-                        state.remove_selected();
-                    }
-                    KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                        let count = c.to_digit(10).unwrap() as u8;
-                        state.add_selected(count);
-                    }
-                    KeyCode::Char(c) => {
-                        state.search_query.push(c);
-                        state.update_search();
-                    }
-                    KeyCode::Backspace => {
-                        state.search_query.pop();
-                        state.update_search();
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
     }
@@ -421,6 +477,9 @@ fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
             Constraint::Length(2), // Status/help bar
         ])
         .split(f.area());
+
+    // Store deck summary area for click detection
+    state.deck_summary_area = Some(chunks[0]);
 
     // Deck summary
     draw_deck_summary(f, chunks[0], state);
@@ -444,6 +503,9 @@ fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
             Constraint::Percentage(50), // Card details
         ])
         .split(results_area);
+
+    // Store search results area for click detection
+    state.search_results_area = Some(horizontal_chunks[0]);
 
     // Search results (left side)
     draw_search_results(f, horizontal_chunks[0], state);
@@ -533,10 +595,14 @@ fn card_sort_key(card: &CardDefinition) -> (u8, i16, String) {
 }
 
 fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
+    let is_focused = state.focused_pane == FocusedPane::DeckSummary;
+    let border_color = if is_focused { Color::Yellow } else { Color::Cyan };
+    let title = if is_focused { " Deck Summary [focused] " } else { " Deck Summary " };
+
     let block = Block::default()
-        .title(" Deck Summary ")
+        .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -654,10 +720,18 @@ fn draw_search_input(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
 }
 
 fn draw_search_results(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
+    let is_focused = state.focused_pane == FocusedPane::Search;
+    let border_color = if is_focused { Color::Yellow } else { Color::Blue };
+    let title = if is_focused {
+        " Results [focused] (↑↓ navigate, Enter/1-9 add) "
+    } else {
+        " Results (↑↓ navigate, Enter/1-9 add) "
+    };
+
     let block = Block::default()
-        .title(" Results (↑↓ navigate, Enter/1-9 add) ")
+        .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -787,10 +861,12 @@ fn draw_status_bar(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         ])
     } else {
         Line::from(vec![
+            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::raw(" focus  "),
             Span::styled("ESC", Style::default().fg(Color::Yellow)),
             Span::raw(" clear/exit  "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw(" add 1  "),
+            Span::raw(" add  "),
             Span::styled("1-9", Style::default().fg(Color::Yellow)),
             Span::raw(" add N  "),
             Span::styled("Del", Style::default().fg(Color::Yellow)),
