@@ -1134,9 +1134,9 @@ impl WasmFancyTuiState {
             WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
-            WasmControllerType::Human | WasmControllerType::Fixed => {
-                // Human and Fixed controllers for P1 are handled separately in run_until_choice
-                // For P2 as human/fixed, fall back to Zero
+            WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
+                // Human, Fixed, and Network controllers for P1 are handled separately in run_until_choice
+                // For P2 as human/fixed/network, fall back to Zero (network uses RemoteController instead)
                 Box::new(ZeroController::new(player_id))
             }
         }

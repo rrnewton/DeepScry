@@ -191,3 +191,10 @@ network = [
     "tokio",  # Needs async runtime
 ]
 
+# WASM Networking (browser WebSocket via JavaScript)
+# Enables network play in browser - JavaScript manages WebSocket,
+# WASM provides non-blocking controllers that return NeedInput
+wasm-network = [
+    "wasm-tui",  # Network requires TUI base
+]
+

@@ -29,8 +29,8 @@ pub mod zones;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-// Networking modules (native only)
-#[cfg(feature = "network")]
+// Networking modules
+// Protocol types are always available; client/server require "network" feature
 pub mod network;
 
 pub use error::{MtgError, Result};

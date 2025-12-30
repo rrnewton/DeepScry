@@ -48,6 +48,13 @@ pub mod rich_input_controller;
 #[cfg(target_arch = "wasm32")]
 pub mod image_overlay;
 
+/// Network module for WASM multiplayer
+///
+/// Provides non-blocking network controllers that return `NeedInput` instead
+/// of blocking on channels. JavaScript manages WebSocket and queues messages.
+#[cfg(all(feature = "wasm-network", target_arch = "wasm32"))]
+pub mod network;
+
 pub use human_controller::{PendingChoice, WasmHumanController};
 pub use rich_input_controller::WasmRichInputController;
 
@@ -277,6 +284,9 @@ pub enum WasmControllerType {
     /// Fixed script controller (uses WasmRichInputController)
     /// Script must be set separately via set_p1_script() before launching
     Fixed,
+    /// Network player (connects to remote server)
+    /// Uses WasmNetworkLocalController for local player, WasmRemoteController for opponent
+    Network,
 }
 
 /// WASM-compatible game wrapper
@@ -489,8 +499,8 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-            WasmControllerType::Human | WasmControllerType::Fixed => {
-                todo!("Human/Fixed controllers use fancy_tui, not run_ai_game")
+            WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
+                todo!("Human/Fixed/Network controllers use fancy_tui, not run_ai_game")
             }
         };
 
@@ -498,8 +508,8 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-            WasmControllerType::Human | WasmControllerType::Fixed => {
-                todo!("Human/Fixed controllers use fancy_tui, not run_ai_game")
+            WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
+                todo!("Human/Fixed/Network controllers use fancy_tui, not run_ai_game")
             }
         };
 
@@ -535,8 +545,8 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-            WasmControllerType::Human | WasmControllerType::Fixed => {
-                todo!("Human/Fixed controllers use fancy_tui, not run_one_turn")
+            WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
+                todo!("Human/Fixed/Network controllers use fancy_tui, not run_one_turn")
             }
         };
 
@@ -544,8 +554,8 @@ impl WasmGame {
             WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
             WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-            WasmControllerType::Human | WasmControllerType::Fixed => {
-                todo!("Human/Fixed controllers use fancy_tui, not run_one_turn")
+            WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
+                todo!("Human/Fixed/Network controllers use fancy_tui, not run_one_turn")
             }
         };
 

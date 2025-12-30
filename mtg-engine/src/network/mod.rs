@@ -20,23 +20,30 @@
 //!
 //! The default port is 17771.
 
-mod controller;
-mod local_controller;
+// Protocol types are always available (needed by WASM network module)
 mod protocol;
-mod remote_controller;
+pub use protocol::*;
 
+// Native controller types (require std::sync::mpsc and network feature)
 #[cfg(feature = "network")]
 mod client;
 #[cfg(feature = "network")]
+mod controller;
+#[cfg(feature = "network")]
+mod local_controller;
+#[cfg(feature = "network")]
+mod remote_controller;
+#[cfg(feature = "network")]
 mod server;
-
-pub use controller::*;
-pub use local_controller::*;
-pub use protocol::*;
-pub use remote_controller::*;
 
 #[cfg(feature = "network")]
 pub use client::*;
+#[cfg(feature = "network")]
+pub use controller::*;
+#[cfg(feature = "network")]
+pub use local_controller::*;
+#[cfg(feature = "network")]
+pub use remote_controller::*;
 #[cfg(feature = "network")]
 pub use server::*;
 
