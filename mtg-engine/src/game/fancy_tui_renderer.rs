@@ -316,6 +316,9 @@ pub struct RenderConfig {
     pub cell_width_px: f32,
     /// Cell height in pixels (measured from browser font metrics)
     pub cell_height_px: f32,
+    /// Background color for panes in GUI mode (None = transparent/default)
+    /// In CLI mode this is always None to preserve terminal background
+    pub pane_bg_color: Option<Color>,
 }
 
 impl Default for RenderConfig {
@@ -324,6 +327,7 @@ impl Default for RenderConfig {
             gui_mode: false,
             cell_width_px: 10.0,
             cell_height_px: 20.0,
+            pane_bg_color: None,
         }
     }
 }
@@ -335,6 +339,7 @@ impl RenderConfig {
             gui_mode: false,
             cell_width_px: 10.0, // RatZilla default
             cell_height_px: 20.0,
+            pane_bg_color: None, // Preserve terminal background
         }
     }
 
@@ -344,6 +349,9 @@ impl RenderConfig {
             gui_mode: true,
             cell_width_px,
             cell_height_px,
+            // Dark grey background so black card borders are visible
+            // #1c1c1c = RGB(28, 28, 28)
+            pane_bg_color: Some(Color::Rgb(28, 28, 28)),
         }
     }
 }
@@ -2195,10 +2203,17 @@ impl FancyTuiRenderer {
             ])
         };
 
+        // Create block with optional background color for GUI mode
+        let block_style = if let Some(bg_color) = self.render_config.pane_bg_color {
+            Style::default().bg(bg_color)
+        } else {
+            Style::default()
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title_line)
-            .border_style(Style::default().fg(border_color));
+            .border_style(Style::default().fg(border_color))
+            .style(block_style);
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 

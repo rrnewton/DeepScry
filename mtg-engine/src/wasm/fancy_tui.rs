@@ -101,6 +101,8 @@ pub fn cleanup_tui_state() {
 /// pixel dimensions for layout calculations. The values are used by
 /// `tui_get_card_positions()` to calculate `layout_width_px` and `layout_height_px`.
 ///
+/// This also updates the renderer's cell dimensions for layout calculations.
+///
 /// # Arguments
 /// * `width_px` - Cell width in pixels (typically 10.0 for RatZilla)
 /// * `height_px` - Cell height in pixels (typically 20.0 for RatZilla)
@@ -109,6 +111,15 @@ pub fn tui_set_cell_dimensions(width_px: f32, height_px: f32) {
     CELL_DIMENSIONS.with(|dims| {
         *dims.borrow_mut() = (width_px, height_px);
     });
+
+    // Also update the renderer's cell dimensions
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            s.renderer.set_cell_dimensions(width_px, height_px);
+        }
+    });
+
     log::debug!(target: "wasm_tui", "Cell dimensions set: {}x{} px", width_px, height_px);
 }
 
@@ -385,9 +396,11 @@ struct WasmFancyTuiState {
 impl WasmFancyTuiState {
     /// Create a new WASM fancy TUI state from a GameState
     fn new(game: GameState, p1_controller_type: WasmControllerType, p2_controller_type: WasmControllerType) -> Self {
-        // Create renderer for player 1's perspective
+        // Create renderer for player 1's perspective in GUI mode
+        // This enables image layout bounds and pane background colors
         let player_id = game.players[0].id;
-        let renderer = FancyTuiRenderer::new(player_id, true);
+        let (cell_w, cell_h) = CELL_DIMENSIONS.with(|dims| *dims.borrow());
+        let renderer = FancyTuiRenderer::new_gui(player_id, true, cell_w, cell_h);
 
         // Create human controller if player 1 is human
         let p1_human_controller = if p1_controller_type == WasmControllerType::Human {

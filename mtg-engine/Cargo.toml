@@ -2,6 +2,9 @@
 name = "mtg-forge-rs"
 version.workspace = true
 edition.workspace = true
+description = "A Rust reimplementation of the MTG Forge game engine"
+repository = "https://github.com/rrnewton/mtg-forge-rs"
+license = "GPL-3.0"
 
 [[bin]]
 name = "mtg"

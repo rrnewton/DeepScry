@@ -910,6 +910,50 @@ cast dark ritual</textarea>
             // TODO: Make this dynamic based on actual rendered card size
             LOCAL_SIZE_THRESHOLD_PX: 204,
 
+            // Failure tracking for automatic source disabling
+            // After FAILURE_THRESHOLD consecutive failures, a source is disabled
+            FAILURE_THRESHOLD: 2,
+            failureCounts: { local: 0, scryfall: 0, gatherer: 0 },
+            disabledSources: new Set(),
+
+            /**
+             * Record a failure for a source and potentially disable it
+             * @param {string} sourceId - 'local', 'scryfall', or 'gatherer'
+             * @returns {boolean} True if source was newly disabled
+             */
+            recordFailure(sourceId) {
+                if (!this.failureCounts.hasOwnProperty(sourceId)) return false;
+                if (this.disabledSources.has(sourceId)) return false;  // Already disabled
+
+                this.failureCounts[sourceId]++;
+                if (this.failureCounts[sourceId] >= this.FAILURE_THRESHOLD) {
+                    this.disabledSources.add(sourceId);
+                    const sourceName = this.sources[sourceId]?.name || sourceId;
+                    console.warn(`[ImageSource] ${sourceName} DISABLED after ${this.failureCounts[sourceId]} consecutive failures`);
+                    return true;
+                }
+                return false;
+            },
+
+            /**
+             * Reset failure count for a source (called on success)
+             * @param {string} sourceId - 'local', 'scryfall', or 'gatherer'
+             */
+            resetFailureCount(sourceId) {
+                if (this.failureCounts.hasOwnProperty(sourceId)) {
+                    this.failureCounts[sourceId] = 0;
+                }
+            },
+
+            /**
+             * Check if a source is disabled
+             * @param {string} sourceId - Source ID
+             * @returns {boolean} True if source is disabled
+             */
+            isDisabled(sourceId) {
+                return this.disabledSources.has(sourceId);
+            },
+
             // Available sources with their characteristics
             sources: {
                 /**
@@ -965,13 +1009,20 @@ cast dark ritual</textarea>
 
             /**
              * Get which sources are currently enabled from UI checkboxes
+             * Filters out sources that have been automatically disabled due to failures
              * @returns {string[]} Array of enabled source IDs in fallback order
              */
             getEnabledSources() {
                 const enabled = [];
-                if (document.getElementById('img-src-local')?.checked) enabled.push('local');
-                if (document.getElementById('img-src-scryfall')?.checked) enabled.push('scryfall');
-                if (document.getElementById('img-src-gatherer')?.checked) enabled.push('gatherer');
+                if (document.getElementById('img-src-local')?.checked && !this.isDisabled('local')) {
+                    enabled.push('local');
+                }
+                if (document.getElementById('img-src-scryfall')?.checked && !this.isDisabled('scryfall')) {
+                    enabled.push('scryfall');
+                }
+                if (document.getElementById('img-src-gatherer')?.checked && !this.isDisabled('gatherer')) {
+                    enabled.push('gatherer');
+                }
                 return enabled;
             },
 
@@ -1107,11 +1158,21 @@ cast dark ritual</textarea>
                     img.dataset.fallbackSource = fallbackSource || '';
                     img.dataset.fallback2Source = fallback2Source || '';
 
-                    // Error handler with fallback chain support
+                    // Error handler with fallback chain support and failure tracking
                     img.onerror = (event) => {
                         const imgEl = event.target;
                         const cid = imgEl.dataset.cardId;
                         const currentSource = CardImageOverlay.getSourceFromUrl(imgEl.src);
+
+                        // Map source name to source ID for failure tracking
+                        const sourceIdMap = { 'Local': 'local', 'Scryfall': 'scryfall', 'Gatherer': 'gatherer' };
+                        const sourceId = sourceIdMap[currentSource];
+                        if (sourceId) {
+                            const wasDisabled = ImageSource.recordFailure(sourceId);
+                            if (wasDisabled) {
+                                console.warn(`[CardImage] ${cid}: ${currentSource} source disabled after repeated failures`);
+                            }
+                        }
 
                         // Try first fallback
                         const fb1 = imgEl.dataset.fallback;
@@ -1133,7 +1194,10 @@ cast dark ritual</textarea>
                             return;
                         }
 
-                        console.warn(`[CardImage] ${cid}: ALL sources FAILED - no image available`);
+                        // All sources failed - remove image entirely (leave as text)
+                        console.warn(`[CardImage] ${cid}: ALL sources FAILED - removing image overlay`);
+                        imgEl.remove();
+                        CardImageOverlay.overlays.delete(cid);
                     };
 
                     // Success handler - check for Gatherer card backs
@@ -1143,16 +1207,22 @@ cast dark ritual</textarea>
                         const loadedFrom = CardImageOverlay.getSourceFromUrl(imgEl.src);
                         const usedFallback = loadedFrom !== imgEl.dataset.primarySource;
 
+                        // Map source name to source ID for failure tracking
+                        const sourceIdMap = { 'Local': 'local', 'Scryfall': 'scryfall', 'Gatherer': 'gatherer' };
+
                         // Gatherer redirects unknown cards to /assets/card_back.webp
-                        // Check the final URL for this redirect destination
+                        // This is a TRANSIENT failure - don't disable the source, but don't use the image
                         const isCardBackUrl = imgEl.src.includes('card_back.webp') ||
                             imgEl.src.includes('/assets/card_back');
 
                         if (isCardBackUrl) {
+                            // Card back is useless - try fallbacks or remove image
+                            console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK (transient, not counting as failure)`);
+
                             // Try first fallback
                             const fb1 = imgEl.dataset.fallback;
                             if (fb1) {
-                                console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK, trying ${imgEl.dataset.fallbackSource}`);
+                                console.log(`[CardImage] ${cid}: Trying ${imgEl.dataset.fallbackSource}`);
                                 imgEl.src = fb1;
                                 imgEl.dataset.fallback = '';
                                 return;
@@ -1160,14 +1230,22 @@ cast dark ritual</textarea>
                             // Try second fallback
                             const fb2 = imgEl.dataset.fallback2;
                             if (fb2) {
-                                console.log(`[CardImage] ${cid}: Gatherer returned CARD BACK, trying ${imgEl.dataset.fallback2Source}`);
+                                console.log(`[CardImage] ${cid}: Trying ${imgEl.dataset.fallback2Source}`);
                                 imgEl.src = fb2;
                                 imgEl.dataset.fallback2 = '';
                                 return;
                             }
-                            console.warn(`[CardImage] ${cid}: Gatherer returned CARD BACK and no fallbacks available`);
+                            // No fallbacks - remove image entirely (better to show TUI text than card back)
+                            console.warn(`[CardImage] ${cid}: No fallbacks - removing image (text is more useful than card back)`);
+                            imgEl.remove();
+                            CardImageOverlay.overlays.delete(cid);
                         } else {
-                            // Successfully loaded
+                            // Successfully loaded a real card image
+                            const sourceId = sourceIdMap[loadedFrom];
+                            if (sourceId) {
+                                ImageSource.resetFailureCount(sourceId);
+                            }
+
                             const fallbackNote = usedFallback ? ' [FALLBACK]' : '';
                             console.log(`[CardImage] ${cid}: ✓ LOADED from ${loadedFrom} (${imgEl.naturalWidth}x${imgEl.naturalHeight})${fallbackNote}`);
                             console.log(`[CardImage] ${cid}: Final URL = ${imgEl.src}`);
@@ -1362,11 +1440,21 @@ cast dark ritual</textarea>
                     this.cardDetailsImg.style.zIndex = '16';
                     this.cardDetailsImg.style.pointerEvents = 'none';
                     this.cardDetailsImg.style.objectFit = 'contain';  // Preserve aspect ratio
-                    // Error handler with fallback chain support
+                    // Error handler with fallback chain support and failure tracking
                     this.cardDetailsImg.onerror = (event) => {
                         const img = event.target;
                         const currentSource = CardImageOverlay.getSourceFromUrl(img.src);
                         const cName = img.dataset.cardName;
+
+                        // Map source name to source ID for failure tracking
+                        const sourceIdMap = { 'Local': 'local', 'Scryfall': 'scryfall', 'Gatherer': 'gatherer' };
+                        const sourceId = sourceIdMap[currentSource];
+                        if (sourceId) {
+                            const wasDisabled = ImageSource.recordFailure(sourceId);
+                            if (wasDisabled) {
+                                console.warn(`[CardDetails] ${cName}: ${currentSource} source disabled after repeated failures`);
+                            }
+                        }
 
                         // Try first fallback
                         const fb1 = img.dataset.fallback;
@@ -1388,7 +1476,7 @@ cast dark ritual</textarea>
                             return;
                         }
 
-                        console.warn(`[CardDetails] ${cName}: ALL sources FAILED - no image available`);
+                        console.warn(`[CardDetails] ${cName}: ALL sources FAILED - clearing image`);
                         CardImageOverlay.clearCardDetailsImage();
                     };
                     // Success handler - check for Gatherer card backs
@@ -1398,15 +1486,22 @@ cast dark ritual</textarea>
                         const loadedFrom = CardImageOverlay.getSourceFromUrl(img.src);
                         const usedFallback = loadedFrom !== img.dataset.primarySource;
 
+                        // Map source name to source ID for failure tracking
+                        const sourceIdMap = { 'Local': 'local', 'Scryfall': 'scryfall', 'Gatherer': 'gatherer' };
+
                         // Gatherer redirects unknown cards to /assets/card_back.webp
+                        // This is a TRANSIENT failure - don't disable the source
                         const isCardBackUrl = img.src.includes('card_back.webp') ||
                             img.src.includes('/assets/card_back');
 
                         if (isCardBackUrl) {
+                            // Card back is useless - try fallbacks or clear image
+                            console.log(`[CardDetails] ${cName}: Gatherer returned CARD BACK (transient, not counting as failure)`);
+
                             // Try first fallback
                             const fb1 = img.dataset.fallback;
                             if (fb1) {
-                                console.log(`[CardDetails] ${cName}: Gatherer returned CARD BACK, trying ${img.dataset.fallbackSource}`);
+                                console.log(`[CardDetails] ${cName}: Trying ${img.dataset.fallbackSource}`);
                                 img.src = fb1;
                                 img.dataset.fallback = '';
                                 return;
@@ -1414,14 +1509,21 @@ cast dark ritual</textarea>
                             // Try second fallback
                             const fb2 = img.dataset.fallback2;
                             if (fb2) {
-                                console.log(`[CardDetails] ${cName}: Gatherer returned CARD BACK, trying ${img.dataset.fallback2Source}`);
+                                console.log(`[CardDetails] ${cName}: Trying ${img.dataset.fallback2Source}`);
                                 img.src = fb2;
                                 img.dataset.fallback2 = '';
                                 return;
                             }
-                            console.warn(`[CardDetails] ${cName}: Gatherer returned CARD BACK and no fallbacks available`);
+                            // No fallbacks - clear image (text is more useful than card back)
+                            console.warn(`[CardDetails] ${cName}: No fallbacks - clearing image (text is more useful than card back)`);
+                            CardImageOverlay.clearCardDetailsImage();
                         } else {
-                            // Successfully loaded
+                            // Successfully loaded a real card image
+                            const sourceId = sourceIdMap[loadedFrom];
+                            if (sourceId) {
+                                ImageSource.resetFailureCount(sourceId);
+                            }
+
                             const fallbackNote = usedFallback ? ' [FALLBACK]' : '';
                             console.log(`[CardDetails] ${cName}: ✓ LOADED from ${loadedFrom} (${img.naturalWidth}x${img.naturalHeight})${fallbackNote}`);
                             console.log(`[CardDetails] ${cName}: Final URL = ${img.src}`);
