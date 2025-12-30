@@ -1257,10 +1257,16 @@ impl WasmFancyTuiState {
                 // For P2 as human/fixed/network, fall back to Zero
                 Box::new(ZeroController::new(player_id))
             }
+            #[cfg(feature = "wasm-network")]
             WasmControllerType::Remote => {
-                // Remote controller for network opponent
-                // TODO(mtg-dbzrp): Implement WasmRemoteController that polls network client
-                // For now, fall back to Zero
+                // Remote controller for network opponent - polls network client for choices
+                let client = ensure_client();
+                Box::new(WasmRemoteController::new(player_id, client))
+            }
+            #[cfg(not(feature = "wasm-network"))]
+            WasmControllerType::Remote => {
+                // Remote controller requires wasm-network feature
+                log::warn!("Remote controller type requires wasm-network feature, falling back to Zero");
                 Box::new(ZeroController::new(player_id))
             }
         }
