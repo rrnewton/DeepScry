@@ -571,6 +571,7 @@ impl FancyTuiRenderer {
         // Estimate max lengths for both parts of the status line:
         // Left: "Opp: 20 life | Hand: 7 | GY: 99 | Lib: 99" (~42 chars)
         // Right: "Turn: 99 (99) | UP UK DR M1 BC DA DB CD EC M2 ET" (~48 chars)
+        // Format: Turn: <global_turn> (<player_turn>)
         const STATS_MAX_LEN: u16 = 42;
         const PHASE_MAX_LEN: u16 = 48;
         const MIN_SPACING: u16 = 3;
@@ -2856,7 +2857,8 @@ impl FancyTuiRenderer {
             "_".to_string()
         };
 
-        let mut phase_spans = vec![Span::raw(format!("Turn: {} ({}) | ", turn_display, turn_number))];
+        // Format: Turn: <global> (<player>) to match log format
+        let mut phase_spans = vec![Span::raw(format!("Turn: {} ({}) | ", turn_number, turn_display))];
 
         for (i, step) in all_steps.iter().enumerate() {
             let abbrev = Self::step_abbrev(*step);
@@ -2879,7 +2881,7 @@ impl FancyTuiRenderer {
         // Phase text without underline formatting for length calc (use max width with turn number)
         let phase_text_plain = format!(
             "Turn: {} ({}) | UP UK DR M1 BC DA DB CD EC M2 ET",
-            turn_display, turn_number
+            turn_number, turn_display
         );
         let phase_len = phase_text_plain.len() as u16;
 
