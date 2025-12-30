@@ -2573,7 +2573,7 @@ async fn run_deck_build(
         std::io::Write::flush(&mut std::io::stdout()).ok();
         match CardEditionIndex::load_from_directory(&editions_dir) {
             Ok(index) => {
-                println!(" {} cards indexed", index.card_count());
+                println!(" {} sets, {} cards indexed", index.set_count(), index.card_count());
                 Some(index)
             }
             Err(e) => {

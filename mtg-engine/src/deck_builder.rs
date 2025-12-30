@@ -95,6 +95,8 @@ struct DeckBuilderState {
     deck_selected_index: usize,
     /// Edition index for showing card release info (optional)
     edition_index: Option<crate::loader::CardEditionIndex>,
+    /// Number of columns in deck summary (updated during draw)
+    deck_num_columns: usize,
 }
 
 impl DeckBuilderState {
@@ -119,6 +121,7 @@ impl DeckBuilderState {
             search_results_area: None,
             deck_selected_index: 0,
             edition_index,
+            deck_num_columns: 1, // Will be updated during draw
         }
     }
 
@@ -342,6 +345,89 @@ impl DeckBuilderState {
         if count > 0 && self.deck_selected_index < count - 1 {
             self.deck_selected_index += 1;
         }
+    }
+
+    /// Move deck selection left (to previous column in same row)
+    fn deck_select_left(&mut self, num_columns: usize) {
+        if num_columns <= 1 || self.deck.is_empty() {
+            return;
+        }
+
+        // Get category layout info for the current selection
+        let category_info = self.get_category_layout_info(num_columns);
+        if let Some((cat_start, _cat_size, num_rows)) = self.find_category_for_index(&category_info) {
+            let local_idx = self.deck_selected_index - cat_start;
+            let row = local_idx % num_rows;
+            let col = local_idx / num_rows;
+
+            if col > 0 {
+                // Move left one column
+                self.deck_selected_index = cat_start + row + (col - 1) * num_rows;
+            }
+            // If already in first column, stay put
+        }
+    }
+
+    /// Move deck selection right (to next column in same row)
+    fn deck_select_right(&mut self, num_columns: usize) {
+        if num_columns <= 1 || self.deck.is_empty() {
+            return;
+        }
+
+        let category_info = self.get_category_layout_info(num_columns);
+        if let Some((cat_start, cat_size, num_rows)) = self.find_category_for_index(&category_info) {
+            let local_idx = self.deck_selected_index - cat_start;
+            let row = local_idx % num_rows;
+            let col = local_idx / num_rows;
+
+            // Check if there's a card in the next column at this row
+            let next_idx = row + (col + 1) * num_rows;
+            if next_idx < cat_size {
+                self.deck_selected_index = cat_start + next_idx;
+            }
+            // If no card to the right, stay put
+        }
+    }
+
+    /// Get layout info for each category: (start_index, size, num_rows)
+    fn get_category_layout_info(&self, num_columns: usize) -> Vec<(usize, usize, usize)> {
+        let category_order = [
+            CardCategory::Creature,
+            CardCategory::Spell,
+            CardCategory::Artifact,
+            CardCategory::Land,
+        ];
+
+        let mut by_category: HashMap<CardCategory, usize> = HashMap::new();
+        for name in self.deck.keys() {
+            let card_def = self.card_definitions.get(name).map(|arc| arc.as_ref());
+            let category = card_def
+                .map(|c| CardCategory::from_types(&c.types))
+                .unwrap_or(CardCategory::Spell);
+            *by_category.entry(category).or_insert(0) += 1;
+        }
+
+        let mut result = Vec::new();
+        let mut start_idx = 0;
+        for category in category_order {
+            if let Some(&size) = by_category.get(&category) {
+                let num_rows = size.div_ceil(num_columns);
+                result.push((start_idx, size, num_rows));
+                start_idx += size;
+            }
+        }
+        result
+    }
+
+    /// Find which category contains the current deck_selected_index
+    /// Returns (cat_start, cat_size, num_rows)
+    fn find_category_for_index(&self, category_info: &[(usize, usize, usize)]) -> Option<(usize, usize, usize)> {
+        for &(start, size, num_rows) in category_info {
+            if self.deck_selected_index >= start && self.deck_selected_index < start + size {
+                return Some((start, size, num_rows));
+            }
+        }
+        None
     }
 }
 
@@ -573,6 +659,18 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                             FocusedPane::Search => state.select_next(),
                             FocusedPane::DeckSummary => state.deck_select_next(),
                         },
+                        KeyCode::Left => {
+                            if state.focused_pane == FocusedPane::DeckSummary {
+                                let num_cols = state.deck_num_columns;
+                                state.deck_select_left(num_cols);
+                            }
+                        }
+                        KeyCode::Right => {
+                            if state.focused_pane == FocusedPane::DeckSummary {
+                                let num_cols = state.deck_num_columns;
+                                state.deck_select_right(num_cols);
+                            }
+                        }
                         KeyCode::PageUp => {
                             match state.focused_pane {
                                 FocusedPane::Search => {
@@ -591,8 +689,10 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                                 let page_size = state.max_results;
                                 let max_idx = state.search_results.len().saturating_sub(1);
                                 state.selected_index = (state.selected_index + page_size).min(max_idx);
-                                state.scroll_offset =
-                                    (state.scroll_offset + page_size).min(max_idx.saturating_sub(page_size));
+                                // Ensure selected_index is visible: scroll so it's at the bottom of the view
+                                if state.selected_index >= state.scroll_offset + page_size {
+                                    state.scroll_offset = state.selected_index.saturating_sub(page_size - 1);
+                                }
                             }
                             FocusedPane::DeckSummary => {
                                 let max_idx = state.deck.len().saturating_sub(1);
@@ -612,7 +712,8 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                             FocusedPane::Search => {
                                 let max_idx = state.search_results.len().saturating_sub(1);
                                 state.selected_index = max_idx;
-                                state.scroll_offset = max_idx.saturating_sub(state.max_results);
+                                // Scroll so the last item is at the bottom of the view
+                                state.scroll_offset = max_idx.saturating_sub(state.max_results - 1);
                             }
                             FocusedPane::DeckSummary => {
                                 state.deck_selected_index = state.deck.len().saturating_sub(1);
@@ -851,7 +952,7 @@ fn card_sort_key(card: &CardDefinition) -> (u8, i16, String) {
     (color_order, cmc, card.name.to_string())
 }
 
-fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
+fn draw_deck_summary(f: &mut Frame, area: Rect, state: &mut DeckBuilderState) {
     let is_focused = state.focused_pane == FocusedPane::DeckSummary;
     let border_color = if is_focused { Color::Yellow } else { Color::Cyan };
     let title = if is_focused {
@@ -963,6 +1064,7 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     // Calculate number of columns for multi-column layout
     let inner_width = inner.width as usize;
     let num_columns = (inner_width / CARD_COLUMN_WIDTH).max(1);
+    state.deck_num_columns = num_columns; // Store for left/right navigation
 
     // Categories in order: Creatures, Spells, Artifacts, Lands
     let category_order = [
@@ -1175,12 +1277,36 @@ fn draw_card_details(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
             ]));
         }
 
-        // Set codes and years (from edition index)
+        // Set codes and years (from edition index) - deduplicated
         if let Some(ref edition_index) = state.edition_index {
             if let Some(printings) = edition_index.get_card_printings(card.name.as_str()) {
                 if !printings.is_empty() {
-                    let set_codes: Vec<&str> = printings.iter().map(|p| p.set_code.as_str()).collect();
-                    let years: Vec<String> = printings.iter().map(|p| p.year.to_string()).collect();
+                    // Deduplicate set codes while preserving order
+                    let mut seen_sets = std::collections::HashSet::new();
+                    let set_codes: Vec<&str> = printings
+                        .iter()
+                        .filter_map(|p| {
+                            if seen_sets.insert(p.set_code.as_str()) {
+                                Some(p.set_code.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Deduplicate years while preserving order
+                    let mut seen_years = std::collections::HashSet::new();
+                    let years: Vec<String> = printings
+                        .iter()
+                        .filter_map(|p| {
+                            if seen_years.insert(p.year) {
+                                Some(p.year.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
                     lines.push(Line::from(vec![
                         Span::raw("Sets: "),
                         Span::styled(set_codes.join(", "), Style::default().fg(Color::DarkGray)),

@@ -37,6 +37,8 @@ pub struct CardEditionIndex {
     card_years: HashMap<String, (u16, u16)>,
     /// Map from card name (normalized) to all printings, sorted by year
     card_printings: HashMap<String, Vec<CardPrinting>>,
+    /// Set of all unique set codes loaded
+    set_codes: std::collections::HashSet<String>,
 }
 
 impl CardEditionIndex {
@@ -171,6 +173,9 @@ impl CardEditionIndex {
 
         let normalized = normalize_card_name(card_name);
 
+        // Track unique set codes
+        self.set_codes.insert(set_code.to_string());
+
         // Update earliest/latest years
         self.card_years
             .entry(normalized.clone())
@@ -233,6 +238,11 @@ impl CardEditionIndex {
     /// Number of unique cards indexed
     pub fn card_count(&self) -> usize {
         self.card_years.len()
+    }
+
+    /// Number of unique sets loaded
+    pub fn set_count(&self) -> usize {
+        self.set_codes.len()
     }
 }
 
