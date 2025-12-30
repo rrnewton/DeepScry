@@ -165,6 +165,22 @@ impl DeckBuilderState {
         }
     }
 
+    /// Remove one copy of the selected card from the deck
+    fn remove_selected(&mut self) {
+        if let Some(card_name) = self.selected_card() {
+            let card_name = card_name.to_string();
+            if let Some(count) = self.deck.get_mut(&card_name) {
+                if *count > 1 {
+                    *count -= 1;
+                    self.status_message = Some(format!("Removed 1x {} ({}x remaining)", card_name, *count));
+                } else {
+                    self.deck.remove(&card_name);
+                    self.status_message = Some(format!("Removed {} from deck", card_name));
+                }
+            }
+        }
+    }
+
     /// Move selection up
     fn select_previous(&mut self) {
         if !self.search_results.is_empty() && self.selected_index > 0 {
@@ -372,6 +388,9 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                     KeyCode::Enter => {
                         state.add_selected(1);
                     }
+                    KeyCode::Delete => {
+                        state.remove_selected();
+                    }
                     KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                         let count = c.to_digit(10).unwrap() as u8;
                         state.add_selected(count);
@@ -460,7 +479,7 @@ fn mtg_color_to_term(colors: &[MtgColor]) -> Color {
 }
 
 /// Card category for deck summary grouping
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum CardCategory {
     Creature,
     Land,
@@ -523,8 +542,7 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     f.render_widget(block, area);
 
     if state.deck.is_empty() {
-        let hint = Paragraph::new("No cards added yet")
-            .style(Style::default().fg(Color::DarkGray));
+        let hint = Paragraph::new("No cards added yet").style(Style::default().fg(Color::DarkGray));
         f.render_widget(hint, inner);
         return;
     }
@@ -542,13 +560,11 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
 
     // Sort each category by color, then descending CMC
     for entries in by_category.values_mut() {
-        entries.sort_by(|a, b| {
-            match (a.2, b.2) {
-                (Some(ca), Some(cb)) => card_sort_key(ca).cmp(&card_sort_key(cb)),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.0.cmp(b.0),
-            }
+        entries.sort_by(|a, b| match (a.2, b.2) {
+            (Some(ca), Some(cb)) => card_sort_key(ca).cmp(&card_sort_key(cb)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(b.0),
         });
     }
 
@@ -568,17 +584,20 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     ]));
 
     // Categories in order: Creatures, Spells, Artifacts, Lands
-    let category_order = [CardCategory::Creature, CardCategory::Spell, CardCategory::Artifact, CardCategory::Land];
+    let category_order = [
+        CardCategory::Creature,
+        CardCategory::Spell,
+        CardCategory::Artifact,
+        CardCategory::Land,
+    ];
 
     for category in category_order {
         if let Some(entries) = by_category.get(&category) {
             let cat_count: usize = entries.iter().map(|(_, c, _)| **c as usize).sum();
-            let mut spans = vec![
-                Span::styled(
-                    format!("{}: ", category.label()),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-                ),
-            ];
+            let mut spans = vec![Span::styled(
+                format!("{}: ", category.label()),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            )];
 
             // Show cards with colors (limit to fit in line)
             let max_display = 8;
@@ -586,9 +605,7 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
                 if i > 0 {
                     spans.push(Span::raw(", "));
                 }
-                let color = card_def
-                    .map(|c| mtg_color_to_term(&c.colors))
-                    .unwrap_or(Color::White);
+                let color = card_def.map(|c| mtg_color_to_term(&c.colors)).unwrap_or(Color::White);
                 spans.push(Span::styled(
                     format!("{}x{}", count, truncate_name(name, 12)),
                     Style::default().fg(color),
@@ -772,12 +789,12 @@ fn draw_status_bar(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         Line::from(vec![
             Span::styled("ESC", Style::default().fg(Color::Yellow)),
             Span::raw(" clear/exit  "),
-            Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
-            Span::raw(" quit  "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
             Span::raw(" add 1  "),
             Span::styled("1-9", Style::default().fg(Color::Yellow)),
-            Span::raw(" add N"),
+            Span::raw(" add N  "),
+            Span::styled("Del", Style::default().fg(Color::Yellow)),
+            Span::raw(" remove"),
         ])
     };
 
@@ -899,5 +916,22 @@ mod tests {
         // Total count
         assert_eq!(state.total_cards(), 4);
         assert_eq!(state.unique_cards(), 1);
+
+        // Remove one copy
+        state.remove_selected();
+        assert_eq!(state.deck.get("Lightning Bolt"), Some(&3));
+        assert_eq!(state.total_cards(), 3);
+
+        // Remove remaining copies
+        state.remove_selected();
+        state.remove_selected();
+        state.remove_selected();
+        assert_eq!(state.deck.get("Lightning Bolt"), None);
+        assert_eq!(state.total_cards(), 0);
+        assert_eq!(state.unique_cards(), 0);
+
+        // Removing from empty deck should do nothing
+        state.remove_selected();
+        assert_eq!(state.total_cards(), 0);
     }
 }
