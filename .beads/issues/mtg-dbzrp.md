@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: epic
 created_at: 2025-12-30T19:23:47.819632157+00:00
-updated_at: 2025-12-30T19:57:41.610381971+00:00
+updated_at: 2025-12-30T21:14:31.072497649+00:00
 ---
 
 # Description
@@ -34,21 +34,51 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 - [x] Updated network/mod.rs to expose protocol types unconditionally
 - [x] Added wasm-network Cargo feature
 
-### Phase 2: Game Loop Integration
-- [x] Add WasmControllerType::Network variant (done in Phase 1)
-- [ ] Extend fancy_tui.rs run_until_choice() for Network branch
-- [ ] Wire up WasmNetworkLocalController and WasmRemoteController
-- [ ] Handle reveal draining before game loop resume
+### Phase 2: Game Loop Integration ✅ COMPLETE (29afb99)
+- [x] Add WasmControllerType::Network variant
+- [x] Extend fancy_tui.rs run_until_choice() for Network branch
+- [x] Add run_network_mode() method with rewind/replay pattern
+- [x] Clone derive for WasmHumanController for network mode
 
-### Phase 3: JavaScript Integration
-- [ ] `web/network.js` - WebSocket wrapper
-- [ ] Modify `web/fancy.html` - Add Network controller option
-- [ ] Connection UI (server URL, password, player name)
+### Phase 3: JavaScript Integration ✅ COMPLETE (8983a9f)
+- [x] `web/network.js` - WebSocket wrapper class (MTGNetworkClient)
+- [x] Modify `web/fancy.html` - Add Network controller option
+- [x] Connection UI (server URL, password, player name)
+- [x] Settings persistence for network fields
+- [x] Conditional network imports (graceful fallback when not built)
+- [x] launch_network_game() WASM export (placeholder)
+- [x] network_init(), network_is_game_ready() exports
+- [x] WasmCardDatabase.get_deck_json() for deck submission
 
-### Phase 4: Testing (Web vs Native)
-- [ ] `web/test_network_e2e.js` - Playwright E2E tests
-- [ ] Web client + Native fixed client against native server
-- [ ] Secondary: Web vs Web (both Playwright browsers)
+### Phase 4: E2E Testing (Web vs Native) ✅ COMPLETE
+- [x] `web/test_network_e2e.js` - Playwright E2E tests
+- [x] Web client + Native fixed client against native server
+- [x] Test verifies: server start, native client connect, browser launch, network mode selection, connection, game UI
+- [ ] Secondary: Web vs Web (both Playwright browsers) - future work
+
+### Phase 5: Complete Game Initialization - TODO
+- [ ] Receive GameStarted message with seed, player order, starting life
+- [ ] Create game state from server-provided parameters (not placeholder)
+- [ ] Wire up WasmRemoteController for P2 opponent
+- [ ] Process CardRevealed messages to instantiate opponent cards
+
+### Phase 6: Full Network Game Loop - TODO
+- [ ] Integrate reveal draining before game loop resume
+- [ ] Handle ChoiceRequest/ChoiceAccepted synchronization properly
+- [ ] Process OpponentChoice messages through WasmRemoteController
+- [ ] Update game state hash verification
+
+### Phase 7: Error Handling & Robustness - TODO
+- [ ] Network reconnection after disconnect
+- [ ] Graceful handling of server errors
+- [ ] Timeout handling for unresponsive server
+- [ ] UI feedback for connection state changes
+
+### Phase 8: Polish & UX - TODO  
+- [ ] Show opponent name in game UI
+- [ ] Display "Waiting for opponent..." status properly
+- [ ] Add disconnect/reconnect button during game
+- [ ] Show network latency/status indicator
 
 ## Architecture
 
@@ -72,4 +102,7 @@ Browser (WASM)                          Native Server
 
 ## Progress Log
 
-- 2025-12-30: Phase 1 complete - created wasm/network module with client, controllers, exports
+- 2025-12-30_#1376: Phase 4 complete - E2E test with Playwright (web/test_network_e2e.js)
+- 2025-12-30_#1364: Phase 3 complete - JavaScript/HTML integration (8983a9f)
+- 2025-12-30_#1363: Phase 2 complete - fancy_tui.rs network integration (29afb99)
+- 2025-12-30_#1362: Phase 1 complete - wasm/network module infrastructure (5a47626)
