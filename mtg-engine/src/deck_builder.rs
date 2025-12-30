@@ -670,18 +670,61 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
 
     let mut lines = Vec::new();
 
-    // Header line: total cards
+    // Calculate mana curve (CMC distribution, excluding lands)
+    let mut cmc_counts: [usize; 8] = [0; 8]; // 0, 1, 2, 3, 4, 5, 6, 7+
+    for (name, count) in &state.deck {
+        if let Some(card) = state.card_definitions.get(name) {
+            // Skip lands for mana curve
+            if !card.types.contains(&CardType::Land) {
+                let cmc = card.mana_cost.cmc() as usize;
+                let bucket = cmc.min(7);
+                cmc_counts[bucket] += *count as usize;
+            }
+        }
+    }
+
+    // Header line: total cards + mana curve
     let total = state.total_cards();
     let unique = state.unique_cards();
-    lines.push(Line::from(vec![
+    let mut header_spans = vec![
         Span::styled(
             format!("{} cards", total),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" ("),
         Span::raw(format!("{} unique", unique)),
-        Span::raw(")"),
-    ]));
+        Span::raw(")  "),
+        Span::styled("Curve:", Style::default().fg(Color::Cyan)),
+    ];
+
+    // Add mana curve as compact bar
+    let max_cmc_count = *cmc_counts.iter().max().unwrap_or(&0);
+    for (cmc, &count) in cmc_counts.iter().enumerate() {
+        if count > 0 || cmc <= 5 {
+            let label = if cmc == 7 { "7+".to_string() } else { cmc.to_string() };
+            // Use block characters for compact bar: ▁▂▃▄▅▆▇█
+            let bar_char = if max_cmc_count == 0 {
+                ' '
+            } else {
+                let height = (count * 8) / max_cmc_count.max(1);
+                match height {
+                    0 => '▁',
+                    1 => '▂',
+                    2 => '▃',
+                    3 => '▄',
+                    4 => '▅',
+                    5 => '▆',
+                    6 => '▇',
+                    _ => '█',
+                }
+            };
+            header_spans.push(Span::styled(
+                format!(" {}{}", label, bar_char),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+    }
+    lines.push(Line::from(header_spans));
 
     // Categories in order: Creatures, Spells, Artifacts, Lands
     let category_order = [
