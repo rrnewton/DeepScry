@@ -103,6 +103,18 @@ pub struct WasmNetworkClient {
     /// Game winner (if game ended)
     winner: Option<Option<PlayerId>>,
 
+    // Game initialization data (from GameStarted message)
+    /// Starting life total
+    starting_life: i32,
+    /// Initial state hash for verification
+    initial_state_hash: u64,
+    /// Our library size after drawing
+    library_size: usize,
+    /// Opponent's library size
+    opponent_library_size: usize,
+    /// Opponent's hand count
+    opponent_hand_count: usize,
+
     // Connection parameters (set before connecting)
     /// Server URL
     server_url: Option<String>,
@@ -130,6 +142,11 @@ impl WasmNetworkClient {
             outbound_queue: VecDeque::new(),
             last_error: None,
             winner: None,
+            starting_life: 20, // Default, updated by GameStarted
+            initial_state_hash: 0,
+            library_size: 0,
+            opponent_library_size: 0,
+            opponent_hand_count: 0,
             server_url: None,
             password: None,
             player_name: None,
@@ -170,6 +187,31 @@ impl WasmNetworkClient {
     /// Check if network debug mode is enabled
     pub fn is_network_debug(&self) -> bool {
         self.network_debug
+    }
+
+    /// Get the starting life total from GameStarted
+    pub fn starting_life(&self) -> i32 {
+        self.starting_life
+    }
+
+    /// Get the initial state hash from GameStarted
+    pub fn initial_state_hash(&self) -> u64 {
+        self.initial_state_hash
+    }
+
+    /// Get our library size after drawing (from GameStarted)
+    pub fn library_size(&self) -> usize {
+        self.library_size
+    }
+
+    /// Get opponent's library size (from GameStarted)
+    pub fn opponent_library_size(&self) -> usize {
+        self.opponent_library_size
+    }
+
+    /// Get opponent's hand count (from GameStarted)
+    pub fn opponent_hand_count(&self) -> usize {
+        self.opponent_hand_count
     }
 
     /// Set connection parameters before connecting
@@ -292,13 +334,19 @@ impl WasmNetworkClient {
                 your_player_id,
                 opponent_name,
                 opening_hand,
+                opponent_hand_count,
+                library_size,
+                opponent_library_size,
+                starting_life,
+                initial_state_hash,
                 network_debug,
                 ..
             } => {
                 log::info!(
-                    "WasmNetworkClient: Game started! We are {:?}, opponent: {}",
+                    "WasmNetworkClient: Game started! We are {:?}, opponent: {}, life: {}",
                     your_player_id,
-                    opponent_name
+                    opponent_name,
+                    starting_life
                 );
                 self.our_player_id = Some(your_player_id);
                 self.opponent_id = Some(if your_player_id.as_u32() == 0 {
@@ -308,6 +356,11 @@ impl WasmNetworkClient {
                 });
                 self.opponent_name = Some(opponent_name);
                 self.network_debug = network_debug;
+                self.starting_life = starting_life;
+                self.initial_state_hash = initial_state_hash;
+                self.library_size = library_size;
+                self.opponent_library_size = opponent_library_size;
+                self.opponent_hand_count = opponent_hand_count;
                 self.state = NetworkState::InGame;
 
                 // Queue opening hand reveals

@@ -214,6 +214,30 @@ pub fn network_get_winner() -> i32 {
     })
 }
 
+/// Get the starting life total from GameStarted message
+#[wasm_bindgen]
+pub fn network_get_starting_life() -> i32 {
+    with_client(|client| client.starting_life())
+}
+
+/// Get our library size after drawing
+#[wasm_bindgen]
+pub fn network_get_library_size() -> usize {
+    with_client(|client| client.library_size())
+}
+
+/// Get opponent's library size
+#[wasm_bindgen]
+pub fn network_get_opponent_library_size() -> usize {
+    with_client(|client| client.opponent_library_size())
+}
+
+/// Get opponent's hand count
+#[wasm_bindgen]
+pub fn network_get_opponent_hand_count() -> usize {
+    with_client(|client| client.opponent_hand_count())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CHOICE/SYNC STATE
 // ═══════════════════════════════════════════════════════════════════════════

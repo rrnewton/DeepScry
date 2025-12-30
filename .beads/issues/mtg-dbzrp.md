@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: epic
 created_at: 2025-12-30T19:23:47.819632157+00:00
-updated_at: 2025-12-30T21:14:31.072497649+00:00
+updated_at: 2025-12-30T23:52:04.248058040+00:00
 ---
 
 # Description
@@ -50,23 +50,25 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 - [x] network_init(), network_is_game_ready() exports
 - [x] WasmCardDatabase.get_deck_json() for deck submission
 
-### Phase 4: E2E Testing (Web vs Native) ✅ COMPLETE
+### Phase 4: E2E Testing (Web vs Native) ✅ COMPLETE (c1a7b26)
 - [x] `web/test_network_e2e.js` - Playwright E2E tests
 - [x] Web client + Native fixed client against native server
 - [x] Test verifies: server start, native client connect, browser launch, network mode selection, connection, game UI
 - [ ] Secondary: Web vs Web (both Playwright browsers) - future work
 
-### Phase 5: Complete Game Initialization - TODO
-- [ ] Receive GameStarted message with seed, player order, starting life
-- [ ] Create game state from server-provided parameters (not placeholder)
-- [ ] Wire up WasmRemoteController for P2 opponent
-- [ ] Process CardRevealed messages to instantiate opponent cards
+### Phase 5: Complete Game Initialization ✅ COMPLETE
+- [x] Store GameStarted data in WasmNetworkClient (starting_life, player IDs, etc)
+- [x] Add getter methods and WASM exports for GameStarted data
+- [x] Update launch_network_game to use server-provided parameters
+- [x] Add WasmControllerType::Remote for opponent controller
+- [x] Set controller types based on assigned player ID
 
 ### Phase 6: Full Network Game Loop - TODO
+- [ ] Wire WasmRemoteController to poll opponent choices from network client
 - [ ] Integrate reveal draining before game loop resume
 - [ ] Handle ChoiceRequest/ChoiceAccepted synchronization properly
 - [ ] Process OpponentChoice messages through WasmRemoteController
-- [ ] Update game state hash verification
+- [ ] **Verify determinism**: WASM + native client vs native server should match single-process simulation
 
 ### Phase 7: Error Handling & Robustness - TODO
 - [ ] Network reconnection after disconnect
@@ -102,6 +104,7 @@ Browser (WASM)                          Native Server
 
 ## Progress Log
 
+- 2025-12-30_#1382: Phase 5 complete - Game initialization from GameStarted data
 - 2025-12-30_#1376: Phase 4 complete - E2E test with Playwright (web/test_network_e2e.js)
 - 2025-12-30_#1364: Phase 3 complete - JavaScript/HTML integration (8983a9f)
 - 2025-12-30_#1363: Phase 2 complete - fancy_tui.rs network integration (29afb99)

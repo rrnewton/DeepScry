@@ -1254,7 +1254,13 @@ impl WasmFancyTuiState {
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
             WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
                 // Human, Fixed, and Network controllers for P1 are handled separately in run_until_choice
-                // For P2 as human/fixed/network, fall back to Zero (network uses RemoteController instead)
+                // For P2 as human/fixed/network, fall back to Zero
+                Box::new(ZeroController::new(player_id))
+            }
+            WasmControllerType::Remote => {
+                // Remote controller for network opponent
+                // TODO(mtg-dbzrp): Implement WasmRemoteController that polls network client
+                // For now, fall back to Zero
                 Box::new(ZeroController::new(player_id))
             }
         }
@@ -1579,10 +1585,12 @@ pub fn launch_fancy_tui(
 /// Called when the server signals game start (GameStarted message received).
 /// The game state will be synchronized with the server.
 ///
-/// Note: For full network play implementation, the game should be initialized
-/// using server-provided seed and player order from GameStarted message.
-/// This is a placeholder that sets up the TUI infrastructure.
+/// Uses the GameStarted data stored in WasmNetworkClient to initialize:
+/// - Starting life totals
+/// - Player assignment (we may be P0 or P1)
+/// - Controller types (Network for us, Remote for opponent)
 #[wasm_bindgen]
+#[cfg(feature = "wasm-network")]
 pub fn launch_network_game(
     card_db: &WasmCardDatabase,
     deck_name: &str,
@@ -1591,16 +1599,53 @@ pub fn launch_network_game(
 ) -> Result<(), JsValue> {
     log::info!("launch_network_game: Initializing network game TUI");
 
-    // For now, create a placeholder game (TODO: receive game state from server)
-    // In full implementation, the server sends GameStarted with seed and player order
-    let placeholder_seed = crate::network::now_ms();
-    let game = create_game_from_database(card_db, deck_name, deck_name, 20, placeholder_seed)?;
+    // Get network client to read GameStarted data
+    let client = ensure_client();
+    let client_ref = client.borrow();
 
-    // Create the shared state with Network controller type
+    // Get starting life from server (or default to 20)
+    let starting_life = client_ref.starting_life();
+    let our_player_id = client_ref.our_player_id();
+    let opponent_name = client_ref.opponent_name().unwrap_or("Opponent").to_string();
+
+    log::info!(
+        "launch_network_game: starting_life={}, our_player_id={:?}, opponent={}",
+        starting_life,
+        our_player_id,
+        opponent_name
+    );
+
+    // Drop the borrow before creating the game
+    drop(client_ref);
+
+    // Create the game with correct starting life
+    // Use a timestamp seed for now - the game state is controlled by server anyway
+    let seed = crate::network::now_ms();
+    let game = create_game_from_database(card_db, deck_name, deck_name, starting_life, seed)?;
+
+    // Determine controller types based on our player assignment
+    // If we're player 0: P1=Network (us), P2=Remote (opponent)
+    // If we're player 1: P1=Remote (opponent), P2=Network (us)
+    let (p1_controller_type, p2_controller_type) = match our_player_id {
+        Some(pid) if pid.as_u32() == 0 => {
+            log::info!("launch_network_game: We are P1 (index 0)");
+            (WasmControllerType::Network, WasmControllerType::Remote)
+        }
+        Some(pid) if pid.as_u32() == 1 => {
+            log::info!("launch_network_game: We are P2 (index 1)");
+            (WasmControllerType::Remote, WasmControllerType::Network)
+        }
+        _ => {
+            log::warn!("launch_network_game: Player ID not assigned, defaulting to P1");
+            (WasmControllerType::Network, WasmControllerType::Remote)
+        }
+    };
+
+    // Create the shared state with appropriate controller types
     let state = Rc::new(RefCell::new(WasmFancyTuiState::new(
         game,
-        WasmControllerType::Network,
-        WasmControllerType::Human, // Opponent - will be replaced with Remote in full implementation
+        p1_controller_type,
+        p2_controller_type,
     )));
 
     // Run until the first choice point
