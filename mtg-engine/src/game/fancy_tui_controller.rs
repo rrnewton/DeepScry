@@ -499,6 +499,12 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
+                                    FocusedPane::Info => {
+                                        // Scroll to previous turn header
+                                        let logs = view.logger().logs();
+                                        self.renderer.state.log_scroll_prev_turn(&logs, 20);
+                                        return Ok(InputAction::Continue);
+                                    }
                                     _ => {
                                         return Ok(InputAction::Continue);
                                     }
@@ -562,6 +568,12 @@ impl FancyTuiController {
                                                 }
                                             }
                                         }
+                                        return Ok(InputAction::Continue);
+                                    }
+                                    FocusedPane::Info => {
+                                        // Scroll to next turn header
+                                        let logs = view.logger().logs();
+                                        self.renderer.state.log_scroll_next_turn(&logs, 20);
                                         return Ok(InputAction::Continue);
                                     }
                                     _ => {

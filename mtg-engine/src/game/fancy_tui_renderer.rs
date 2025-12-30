@@ -386,6 +386,8 @@ pub struct FancyTuiState {
     pub hand_pane_area: Option<Rect>,
     /// Card Details pane area (for image overlay positioning)
     pub card_details_pane_area: Option<Rect>,
+    /// Info pane area (for mouse click detection and scroll wheel)
+    pub info_pane_area: Option<Rect>,
     /// Rewind message to display after undo operation
     pub rewind_message: Option<String>,
     /// Log scroll offset (0 = follow mode, showing latest; >0 = scrolled up by N lines)
@@ -417,6 +419,7 @@ impl FancyTuiState {
             actions_pane_area: None,
             hand_pane_area: None,
             card_details_pane_area: None,
+            info_pane_area: None,
             rewind_message: None,
             log_scroll_offset: 0,  // 0 = follow mode (show latest)
             log_wrap_lines: false, // Default: no line wrapping (truncate)
@@ -465,6 +468,60 @@ impl FancyTuiState {
     /// Toggle line wrapping in log
     pub fn log_toggle_wrap(&mut self) {
         self.log_wrap_lines = !self.log_wrap_lines;
+    }
+
+    /// Scroll log to previous turn (Left arrow)
+    /// Scrolls up until a new ">>> Turn" header appears at the top of the visible area
+    pub fn log_scroll_prev_turn(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
+        let total_lines = logs.len();
+        let max_offset = total_lines.saturating_sub(visible_lines);
+
+        // Calculate current first visible line index
+        let current_end = total_lines.saturating_sub(self.log_scroll_offset);
+        let current_start = current_end.saturating_sub(visible_lines);
+
+        // Find the next turn header above current_start
+        // We need to find a turn header that would be at line 0 of the visible area
+        for (idx, entry) in logs[..current_start].iter().enumerate().rev() {
+            if entry.message.contains(">>> Turn") {
+                // Found a turn header - calculate offset to put it at top
+                // If this line is at index `idx`, we want:
+                // start_idx = idx, so end_idx = idx + visible_lines
+                // scroll_offset = total_lines - end_idx
+                let new_end = (idx + visible_lines).min(total_lines);
+                self.log_scroll_offset = total_lines.saturating_sub(new_end);
+                self.log_scroll_offset = self.log_scroll_offset.min(max_offset);
+                return;
+            }
+        }
+
+        // No turn header found above - scroll to beginning
+        self.log_scroll_offset = max_offset;
+    }
+
+    /// Scroll log to next turn (Right arrow)
+    /// Scrolls down until the next ">>> Turn" header appears at the top of the visible area
+    pub fn log_scroll_next_turn(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
+        let total_lines = logs.len();
+
+        // Calculate current first visible line index
+        let current_end = total_lines.saturating_sub(self.log_scroll_offset);
+        let current_start = current_end.saturating_sub(visible_lines);
+
+        // Find the next turn header after current_start
+        let search_slice = &logs[(current_start + 1).min(total_lines)..];
+        for (offset, entry) in search_slice.iter().enumerate() {
+            if entry.message.contains(">>> Turn") {
+                // Found a turn header - calculate offset to put it at top
+                let idx = current_start + 1 + offset;
+                let new_end = (idx + visible_lines).min(total_lines);
+                self.log_scroll_offset = total_lines.saturating_sub(new_end);
+                return;
+            }
+        }
+
+        // No turn header found below - scroll to end (follow mode)
+        self.log_scroll_offset = 0;
     }
 }
 
@@ -1000,6 +1057,7 @@ impl FancyTuiRenderer {
         self.state.entity_positions.clear();
         self.state.actions_pane_area = None;
         self.state.hand_pane_area = None;
+        self.state.info_pane_area = None;
 
         // Calculate optimal column widths
         // Try to boost left column width by 20% if all panes remain above their minimums
@@ -1072,6 +1130,7 @@ impl FancyTuiRenderer {
 
         // Draw all panels
         self.draw_left_tabs(f, left_chunks[0], view);
+        self.state.info_pane_area = Some(left_chunks[0]);
         self.draw_prompt(f, left_chunks[1], view, current_prompt, choices);
         self.state.actions_pane_area = Some(left_chunks[1]);
 
@@ -1143,7 +1202,41 @@ impl FancyTuiRenderer {
 
         match self.state.left_tab {
             LeftTab::Combat => self.draw_combat_view(f, content_area, view),
-            LeftTab::Log => self.draw_log_view(f, content_area, view),
+            LeftTab::Log => {
+                self.draw_log_view(f, content_area, view);
+
+                // Render log status on the tab header line (right side)
+                let logs = view.logger().logs();
+                let total_lines = logs.len();
+                let visible_lines = content_area.height as usize;
+                let max_offset = total_lines.saturating_sub(visible_lines);
+                let scroll_offset = self.state.log_scroll_offset.min(max_offset);
+                let end_idx = total_lines.saturating_sub(scroll_offset);
+                let start_idx = end_idx.saturating_sub(visible_lines);
+
+                // Build status string
+                let status_text = if scroll_offset == 0 {
+                    format!("{}-{}/{} [F]", start_idx + 1, end_idx, total_lines)
+                } else {
+                    format!("{}-{}/{}", start_idx + 1, end_idx, total_lines)
+                };
+                let wrap_indicator = if self.state.log_wrap_lines { " [W]" } else { "" };
+                let full_status = format!("{}{}", status_text, wrap_indicator);
+
+                // Render on the tab header line (row 1 inside border = area.y + 1)
+                let status_width = full_status.len() as u16;
+                let inner_width = area.width.saturating_sub(2); // Account for borders
+                if status_width < inner_width {
+                    let status_area = Rect {
+                        x: area.x + area.width - status_width - 1, // -1 for right border
+                        y: area.y + 1,                             // Tab header line
+                        width: status_width,
+                        height: 1,
+                    };
+                    let status_span = Span::styled(full_status, Style::default().fg(Color::DarkGray));
+                    f.render_widget(Paragraph::new(Line::from(status_span)), status_area);
+                }
+            }
         }
     }
 
@@ -1280,13 +1373,21 @@ impl FancyTuiRenderer {
     }
 
     /// Draw the game log view panel with scrolling support
+    /// Status indicator is now rendered in draw_left_tabs on the tab header line
     fn draw_log_view(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let logs = view.logger().logs();
         let total_lines = logs.len();
-        let visible_lines = area.height.saturating_sub(1) as usize; // Reserve 1 line for status
+        let visible_lines = area.height as usize;
 
         if visible_lines == 0 || area.width < 10 {
             return;
+        }
+
+        // Clamp scroll offset FIRST - must happen before calculating indices
+        // This handles cases where offset was set with placeholder values (usize::MAX)
+        let max_offset = total_lines.saturating_sub(visible_lines);
+        if self.state.log_scroll_offset > max_offset {
+            self.state.log_scroll_offset = max_offset;
         }
 
         // Calculate which lines to show based on scroll offset
@@ -1294,11 +1395,6 @@ impl FancyTuiRenderer {
         // scroll_offset>0 means scrolled up by that many lines
         let end_idx = total_lines.saturating_sub(self.state.log_scroll_offset);
         let start_idx = end_idx.saturating_sub(visible_lines);
-
-        // Clamp scroll offset if log got shorter
-        if self.state.log_scroll_offset > total_lines.saturating_sub(visible_lines) {
-            self.state.log_scroll_offset = total_lines.saturating_sub(visible_lines);
-        }
 
         // Build log lines with proper styling
         let log_lines: Vec<ListItem> = logs[start_idx..end_idx]
@@ -1327,37 +1423,9 @@ impl FancyTuiRenderer {
             })
             .collect();
 
-        // Render log content (leaving room for status line)
-        let log_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: area.height.saturating_sub(1),
-        };
+        // Render log content using full area
         let log_list = List::new(log_lines);
-        f.render_widget(log_list, log_area);
-
-        // Render status indicator at bottom right
-        // Format: "Lines X-Y of Z" or "Following" if at end
-        let status_text = if self.state.log_scroll_offset == 0 {
-            format!("Lines {}-{} of {} [F]", start_idx + 1, end_idx, total_lines)
-        } else {
-            format!("Lines {}-{} of {}", start_idx + 1, end_idx, total_lines)
-        };
-        let wrap_indicator = if self.state.log_wrap_lines { " [W]" } else { "" };
-        let full_status = format!("{}{}", status_text, wrap_indicator);
-
-        let status_width = full_status.len() as u16;
-        if status_width < area.width {
-            let status_area = Rect {
-                x: area.x + area.width - status_width,
-                y: area.y + area.height - 1,
-                width: status_width,
-                height: 1,
-            };
-            let status_span = Span::styled(full_status, Style::default().fg(Color::DarkGray));
-            f.render_widget(Paragraph::new(Line::from(status_span)), status_area);
-        }
+        f.render_widget(log_list, area);
     }
 
     /// Draw the prompt/actions panel (now includes stack at bottom)

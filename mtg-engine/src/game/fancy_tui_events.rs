@@ -359,6 +359,13 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
             }
             EventResult::Handled
         }
+        FocusedPane::Info => {
+            // Scroll to previous turn header
+            let logs = view.logger().logs();
+            // Estimate visible lines (will be clamped by renderer)
+            state.log_scroll_prev_turn(&logs, 20);
+            EventResult::Handled
+        }
         _ => EventResult::Handled,
     }
 }
@@ -384,6 +391,13 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
                     opp_id,
                 );
             }
+            EventResult::Handled
+        }
+        FocusedPane::Info => {
+            // Scroll to next turn header
+            let logs = view.logger().logs();
+            // Estimate visible lines (will be clamped by renderer)
+            state.log_scroll_next_turn(&logs, 20);
             EventResult::Handled
         }
         _ => EventResult::Handled,
@@ -593,6 +607,18 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
         }
     }
 
+    // Check Info pane (for clicks on Combat/Log area)
+    if let Some(info_area) = state.info_pane_area {
+        if x >= info_area.x
+            && x < info_area.x + info_area.width
+            && y >= info_area.y
+            && y < info_area.y + info_area.height
+        {
+            state.focused_pane = FocusedPane::Info;
+            return true;
+        }
+    }
+
     // Check Hand pane (for clicks on empty space in hand)
     if let Some(hand_area) = state.hand_pane_area {
         if x >= hand_area.x
@@ -633,6 +659,7 @@ pub fn get_help_text(include_wasm_only: bool) -> String {
     help.push_str("  1-9         - Quick select (Actions pane)\n");
     help.push_str("  PgUp/PgDn   - Page scroll (Info pane)\n");
     help.push_str("  Home/End    - Jump to start/end (Info pane)\n");
+    help.push_str("  Left/Right  - Scroll by turn (Info pane)\n");
     help.push_str("  W           - Toggle line wrap (Info pane)\n\n");
 
     help.push_str("Pane Focus:\n");

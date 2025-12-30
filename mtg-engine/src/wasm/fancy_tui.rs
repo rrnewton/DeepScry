@@ -1325,6 +1325,7 @@ pub fn launch_fancy_tui(
     });
 
     // Set up mouse event handling
+    // Note: RatZilla doesn't support scroll wheel events, so only handle clicks
     terminal.on_mouse_event({
         let state = state.clone();
         move |mouse_event| {
@@ -1340,7 +1341,7 @@ pub fn launch_fancy_tui(
             let cell_x = (mouse_event.x / CELL_WIDTH_PX) as u16;
             let cell_y = (mouse_event.y / CELL_HEIGHT_PX) as u16;
 
-            // Split borrows for mouse handling
+            // Split borrows for mouse click handling
             let WasmFancyTuiState {
                 ref game,
                 ref mut renderer,
