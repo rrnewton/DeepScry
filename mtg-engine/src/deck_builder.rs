@@ -8,8 +8,9 @@
 //! - First ESC clears search, second ESC saves and exits
 
 use crate::core::{CardType, Color as MtgColor};
-use crate::loader::{CardDefinition, DeckEntry, DeckList};
+use crate::loader::{CardDefinition, DeckEntry, DeckList, DeckLoader};
 use crate::Result;
+use std::path::Path;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
     execute,
@@ -31,6 +32,8 @@ use std::sync::Arc;
 pub struct DeckBuilderConfig {
     /// Output file path
     pub output_file: String,
+    /// Input file path (if editing existing deck)
+    pub input_file: Option<String>,
     /// Only include cards from sets released on or after this year
     pub start_year: Option<u16>,
     /// Only include cards from sets released on or before this year
@@ -41,6 +44,7 @@ impl Default for DeckBuilderConfig {
     fn default() -> Self {
         Self {
             output_file: "output.dck".to_string(),
+            input_file: None,
             start_year: None,
             end_year: None,
         }
@@ -318,12 +322,42 @@ pub async fn run_deck_builder(
 
     println!("Loaded {} cards for deck building", filtered_cards.len());
     println!("Output will be saved to: {}", config.output_file);
+
+    // Load existing deck if input_file is provided
+    let initial_deck = if let Some(ref input_file) = config.input_file {
+        let path = Path::new(input_file);
+        if path.exists() {
+            match DeckLoader::load_from_file(path) {
+                Ok(deck_list) => {
+                    println!("Loaded existing deck: {} ({} cards)", input_file, deck_list.total_cards());
+                    Some(deck_list)
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to load deck '{}': {}", input_file, e);
+                    None
+                }
+            }
+        } else {
+            println!("Creating new deck: {}", input_file);
+            None
+        }
+    } else {
+        None
+    };
+
     println!("\nStarting deck builder...\n");
 
     // Small delay so user can see the message
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     let mut state = DeckBuilderState::new(filtered_cards, card_definitions);
+
+    // Pre-populate deck if we loaded one
+    if let Some(deck_list) = initial_deck {
+        for entry in deck_list.main_deck {
+            state.deck.insert(entry.card_name, entry.count);
+        }
+    }
 
     // Setup terminal with mouse support
     enable_raw_mode().map_err(crate::MtgError::IoError)?;

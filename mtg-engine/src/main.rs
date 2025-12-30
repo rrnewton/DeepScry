@@ -418,9 +418,13 @@ enum Commands {
     /// - Arrow keys to navigate results
     /// - Escape to save and exit
     DeckBuild {
-        /// Output file path (default: output.dck)
-        #[arg(long, short = 'o', default_value = "output.dck")]
-        output_file: PathBuf,
+        /// Deck file to edit (if exists) or create. If not specified, uses output.dck
+        #[arg(value_name = "DECK_FILE")]
+        deck_file: Option<PathBuf>,
+
+        /// Output file path (overrides deck_file for saving)
+        #[arg(long, short = 'o')]
+        output_file: Option<PathBuf>,
 
         /// Path to cardsfolder (default: cardsfolder)
         #[arg(long, default_value = "cardsfolder")]
@@ -795,11 +799,12 @@ async fn main() -> Result<()> {
         }
         Commands::Stats {} => run_stats().await?,
         Commands::DeckBuild {
+            deck_file,
             output_file,
             cardsfolder,
             start_year,
             end_year,
-        } => run_deck_build(output_file, cardsfolder, start_year, end_year).await?,
+        } => run_deck_build(deck_file, output_file, cardsfolder, start_year, end_year).await?,
         Commands::ExportWasm { output, deck_globs } => run_export_wasm(output, deck_globs).await?,
         Commands::Download {
             output,
@@ -2532,7 +2537,8 @@ async fn run_resume(
 
 /// Run the fast deck entry mode TUI
 async fn run_deck_build(
-    output_file: PathBuf,
+    deck_file: Option<PathBuf>,
+    output_file: Option<PathBuf>,
     cardsfolder: PathBuf,
     start_year: Option<u16>,
     end_year: Option<u16>,
@@ -2541,6 +2547,16 @@ async fn run_deck_build(
     use mtg_forge_rs::loader::AsyncCardDatabase as CardDatabase;
 
     println!("=== MTG Forge - Fast Deck Builder ===\n");
+
+    // Determine input and output files
+    // If deck_file is provided, it's both input and output (unless output_file overrides)
+    // If neither is provided, default to output.dck
+    let (input_file, output_path) = match (deck_file, output_file) {
+        (Some(deck), Some(out)) => (Some(deck.to_string_lossy().to_string()), out),
+        (Some(deck), None) => (Some(deck.to_string_lossy().to_string()), deck),
+        (None, Some(out)) => (None, out),
+        (None, None) => (None, PathBuf::from("output.dck")),
+    };
 
     // Verify cardsfolder exists
     if !cardsfolder.exists() {
@@ -2566,7 +2582,8 @@ async fn run_deck_build(
         all_cards.into_iter().map(|c| (c.name.to_string(), c)).collect();
 
     let config = DeckBuilderConfig {
-        output_file: output_file.to_string_lossy().to_string(),
+        output_file: output_path.to_string_lossy().to_string(),
+        input_file,
         start_year,
         end_year,
     };
