@@ -21,11 +21,22 @@ pub struct EditionInfo {
     pub year: u16,
 }
 
+/// A single printing of a card in a set
+#[derive(Debug, Clone)]
+pub struct CardPrinting {
+    /// Set code (e.g., "MH2")
+    pub set_code: String,
+    /// Release year
+    pub year: u16,
+}
+
 /// Card to edition mapping, tracking earliest/latest printing years
 #[derive(Debug, Default)]
 pub struct CardEditionIndex {
     /// Map from card name (normalized) to (earliest_year, latest_year)
     card_years: HashMap<String, (u16, u16)>,
+    /// Map from card name (normalized) to all printings, sorted by year
+    card_printings: HashMap<String, Vec<CardPrinting>>,
 }
 
 impl CardEditionIndex {
@@ -52,11 +63,16 @@ impl CardEditionIndex {
                     // Process each card in this edition
                     if let Ok(cards) = Self::extract_cards_from_file(&path) {
                         for card_name in cards {
-                            index.add_card_printing(&card_name, edition.year);
+                            index.add_card_printing(&card_name, &edition.code, edition.year);
                         }
                     }
                 }
             }
+        }
+
+        // Sort all printings by year
+        for printings in index.card_printings.values_mut() {
+            printings.sort_by_key(|p| p.year);
         }
 
         Ok(index)
@@ -148,14 +164,16 @@ impl CardEditionIndex {
     }
 
     /// Add a card printing to the index
-    fn add_card_printing(&mut self, card_name: &str, year: u16) {
+    fn add_card_printing(&mut self, card_name: &str, set_code: &str, year: u16) {
         if year == 0 {
             return; // Skip unknown years
         }
 
         let normalized = normalize_card_name(card_name);
+
+        // Update earliest/latest years
         self.card_years
-            .entry(normalized)
+            .entry(normalized.clone())
             .and_modify(|(earliest, latest)| {
                 if year < *earliest {
                     *earliest = year;
@@ -165,6 +183,18 @@ impl CardEditionIndex {
                 }
             })
             .or_insert((year, year));
+
+        // Add to printings list
+        self.card_printings.entry(normalized).or_default().push(CardPrinting {
+            set_code: set_code.to_string(),
+            year,
+        });
+    }
+
+    /// Get all printings of a card, sorted by year (earliest first)
+    pub fn get_card_printings(&self, card_name: &str) -> Option<&[CardPrinting]> {
+        let normalized = normalize_card_name(card_name);
+        self.card_printings.get(&normalized).map(|v| v.as_slice())
     }
 
     /// Check if a card was printed within a year range
@@ -236,9 +266,9 @@ mod tests {
     #[test]
     fn test_card_in_year_range() {
         let mut index = CardEditionIndex::new();
-        index.add_card_printing("Lightning Bolt", 1993); // Alpha
-        index.add_card_printing("Lightning Bolt", 2011); // M12
-        index.add_card_printing("Lightning Bolt", 2021); // Strixhaven mystical archive
+        index.add_card_printing("Lightning Bolt", "LEA", 1993); // Alpha
+        index.add_card_printing("Lightning Bolt", "M12", 2011); // M12
+        index.add_card_printing("Lightning Bolt", "STA", 2021); // Strixhaven mystical archive
 
         // No filter = matches
         assert!(index.card_in_year_range("Lightning Bolt", None, None));
@@ -260,10 +290,16 @@ mod tests {
         assert!(index.card_in_year_range("Lightning Bolt", Some(1994), Some(2010)));
 
         // Test a card that truly doesn't overlap
-        index.add_card_printing("Serra Angel", 1993);
-        index.add_card_printing("Serra Angel", 1995);
+        index.add_card_printing("Serra Angel", "LEA", 1993);
+        index.add_card_printing("Serra Angel", "4ED", 1995);
         // Serra Angel [1993, 1995] doesn't overlap [2000, 2010]
         assert!(!index.card_in_year_range("Serra Angel", Some(2000), Some(2010)));
+
+        // Test get_card_printings
+        let printings = index.get_card_printings("Lightning Bolt").unwrap();
+        assert_eq!(printings.len(), 3);
+        assert_eq!(printings[0].set_code, "LEA");
+        assert_eq!(printings[0].year, 1993);
     }
 
     #[test]

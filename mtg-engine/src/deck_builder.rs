@@ -74,8 +74,10 @@ struct DeckBuilderState {
     search_query: String,
     /// Filtered search results (indices into all_cards)
     search_results: Vec<usize>,
-    /// Currently selected result index
+    /// Currently selected result index in search results
     selected_index: usize,
+    /// First visible result index (for pagination)
+    scroll_offset: usize,
     /// Current deck: card name -> count
     deck: HashMap<String, u8>,
     /// Whether to show exit confirmation dialog
@@ -89,16 +91,25 @@ struct DeckBuilderState {
     /// Rect areas for click detection (set during draw)
     deck_summary_area: Option<Rect>,
     search_results_area: Option<Rect>,
+    /// Selected card index in deck summary (flattened across all categories)
+    deck_selected_index: usize,
+    /// Edition index for showing card release info (optional)
+    edition_index: Option<crate::loader::CardEditionIndex>,
 }
 
 impl DeckBuilderState {
-    fn new(all_cards: Vec<String>, card_definitions: HashMap<String, Arc<CardDefinition>>) -> Self {
+    fn new(
+        all_cards: Vec<String>,
+        card_definitions: HashMap<String, Arc<CardDefinition>>,
+        edition_index: Option<crate::loader::CardEditionIndex>,
+    ) -> Self {
         Self {
             all_cards,
             card_definitions,
             search_query: String::new(),
             search_results: Vec::new(),
             selected_index: 0,
+            scroll_offset: 0,
             deck: HashMap::new(),
             show_exit_dialog: false,
             status_message: None,
@@ -106,6 +117,8 @@ impl DeckBuilderState {
             focused_pane: FocusedPane::Search,
             deck_summary_area: None,
             search_results_area: None,
+            deck_selected_index: 0,
+            edition_index,
         }
     }
 
@@ -122,6 +135,7 @@ impl DeckBuilderState {
         if self.search_query.is_empty() {
             self.search_results.clear();
             self.selected_index = 0;
+            self.scroll_offset = 0;
             return;
         }
 
@@ -153,22 +167,26 @@ impl DeckBuilderState {
                 .then_with(|| self.all_cards[*idx_a].cmp(&self.all_cards[*idx_b]))
         });
 
-        // Take top N results
-        self.search_results = scored_results
-            .into_iter()
-            .take(self.max_results)
-            .map(|(idx, _)| idx)
-            .collect();
+        // Keep all results for pagination (removed the take(max_results) limit)
+        self.search_results = scored_results.into_iter().map(|(idx, _)| idx).collect();
 
         // Try to follow the previously selected card
         if let Some(prev_idx) = previously_selected {
             if let Some(new_pos) = self.search_results.iter().position(|&idx| idx == prev_idx) {
                 self.selected_index = new_pos;
+                // Adjust scroll_offset to keep selection visible
+                if self.selected_index < self.scroll_offset {
+                    self.scroll_offset = self.selected_index;
+                } else if self.selected_index >= self.scroll_offset + self.max_results {
+                    self.scroll_offset = self.selected_index.saturating_sub(self.max_results - 1);
+                }
             } else {
                 self.selected_index = 0;
+                self.scroll_offset = 0;
             }
         } else {
             self.selected_index = 0;
+            self.scroll_offset = 0;
         }
     }
 
@@ -179,13 +197,6 @@ impl DeckBuilderState {
         }
         let idx = self.search_results.get(self.selected_index)?;
         Some(&self.all_cards[*idx])
-    }
-
-    /// Get the CardDefinition for the selected card (if available)
-    fn selected_card_definition(&self) -> Option<&CardDefinition> {
-        self.selected_card()
-            .and_then(|name| self.card_definitions.get(name))
-            .map(|arc| arc.as_ref())
     }
 
     /// Add copies of the selected card to the deck
@@ -218,6 +229,10 @@ impl DeckBuilderState {
     fn select_previous(&mut self) {
         if !self.search_results.is_empty() && self.selected_index > 0 {
             self.selected_index -= 1;
+            // Keep selected item visible
+            if self.selected_index < self.scroll_offset {
+                self.scroll_offset = self.selected_index;
+            }
         }
     }
 
@@ -225,6 +240,10 @@ impl DeckBuilderState {
     fn select_next(&mut self) {
         if !self.search_results.is_empty() && self.selected_index < self.search_results.len() - 1 {
             self.selected_index += 1;
+            // Keep selected item visible
+            if self.selected_index >= self.scroll_offset + self.max_results {
+                self.scroll_offset = self.selected_index.saturating_sub(self.max_results - 1);
+            }
         }
     }
 
@@ -257,6 +276,73 @@ impl DeckBuilderState {
             sideboard: Vec::new(),
         }
     }
+
+    /// Get flattened list of deck card names in display order (by category, then sorted within)
+    fn get_deck_cards_ordered(&self) -> Vec<String> {
+        let category_order = [
+            CardCategory::Creature,
+            CardCategory::Spell,
+            CardCategory::Artifact,
+            CardCategory::Land,
+        ];
+
+        // Group cards by category
+        let mut by_category: HashMap<CardCategory, CardEntryGroup<'_>> = HashMap::new();
+        for (name, count) in &self.deck {
+            let card_def = self.card_definitions.get(name).map(|arc| arc.as_ref());
+            let category = card_def
+                .map(|c| CardCategory::from_types(&c.types))
+                .unwrap_or(CardCategory::Spell);
+            by_category.entry(category).or_default().push((name, count, card_def));
+        }
+
+        // Sort each category by color, then descending CMC
+        for entries in by_category.values_mut() {
+            entries.sort_by(|a, b| match (a.2, b.2) {
+                (Some(ca), Some(cb)) => card_sort_key(ca).cmp(&card_sort_key(cb)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.0.cmp(b.0),
+            });
+        }
+
+        // Build flattened list
+        let mut result = Vec::new();
+        for category in category_order {
+            if let Some(entries) = by_category.get(&category) {
+                for (name, _, _) in entries {
+                    result.push((*name).clone());
+                }
+            }
+        }
+        result
+    }
+
+    /// Get the currently selected card name based on focused pane
+    fn get_active_selected_card(&self) -> Option<String> {
+        match self.focused_pane {
+            FocusedPane::Search => self.selected_card().map(|s| s.to_string()),
+            FocusedPane::DeckSummary => {
+                let ordered = self.get_deck_cards_ordered();
+                ordered.get(self.deck_selected_index).cloned()
+            }
+        }
+    }
+
+    /// Move deck selection up
+    fn deck_select_previous(&mut self) {
+        if self.deck_selected_index > 0 {
+            self.deck_selected_index -= 1;
+        }
+    }
+
+    /// Move deck selection down
+    fn deck_select_next(&mut self) {
+        let count = self.deck.len();
+        if count > 0 && self.deck_selected_index < count - 1 {
+            self.deck_selected_index += 1;
+        }
+    }
 }
 
 /// Match scoring: returns Some(score) if matches, None if no match
@@ -287,6 +373,40 @@ fn match_score(target: &str, query: &str) -> Option<u8> {
         return Some(2);
     }
 
+    // Tokenized match: "spider punk" matches "Spider-Punk"
+    // Split query by whitespace, check if all tokens are found (as word prefixes or substrings)
+    // in the target, considering both whitespace and hyphen as word separators
+    let query_tokens: Vec<&str> = query.split_whitespace().collect();
+    if query_tokens.len() > 1 {
+        // Split target by both whitespace and hyphens to get all "words"
+        let target_words: Vec<&str> = target
+            .split(|c: char| c.is_whitespace() || c == '-' || c == '\'')
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Check if all query tokens match word prefixes in target (in order)
+        let mut word_idx = 0;
+        let mut all_match = true;
+        for token in &query_tokens {
+            let mut found = false;
+            while word_idx < target_words.len() {
+                if target_words[word_idx].starts_with(token) {
+                    found = true;
+                    word_idx += 1;
+                    break;
+                }
+                word_idx += 1;
+            }
+            if !found {
+                all_match = false;
+                break;
+            }
+        }
+        if all_match {
+            return Some(2); // Score 2: same as substring match
+        }
+    }
+
     // For short queries (1-2 chars), don't allow subsequence match
     if query.len() <= 2 {
         return None;
@@ -313,6 +433,7 @@ pub async fn run_deck_builder(
     config: DeckBuilderConfig,
     card_names: Vec<String>,
     card_definitions: HashMap<String, Arc<CardDefinition>>,
+    edition_index: Option<crate::loader::CardEditionIndex>,
 ) -> Result<()> {
     // Cards are already filtered by year in main.rs if start_year/end_year were specified
     let filtered_cards = card_names;
@@ -351,7 +472,7 @@ pub async fn run_deck_builder(
     // Small delay so user can see the message
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let mut state = DeckBuilderState::new(filtered_cards, card_definitions);
+    let mut state = DeckBuilderState::new(filtered_cards, card_definitions, edition_index);
 
     // Pre-populate deck if we loaded one
     if let Some(deck_list) = initial_deck {
@@ -444,12 +565,59 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             return Ok(false); // Exit without saving
                         }
-                        KeyCode::Up => {
-                            state.select_previous();
+                        KeyCode::Up => match state.focused_pane {
+                            FocusedPane::Search => state.select_previous(),
+                            FocusedPane::DeckSummary => state.deck_select_previous(),
+                        },
+                        KeyCode::Down => match state.focused_pane {
+                            FocusedPane::Search => state.select_next(),
+                            FocusedPane::DeckSummary => state.deck_select_next(),
+                        },
+                        KeyCode::PageUp => {
+                            match state.focused_pane {
+                                FocusedPane::Search => {
+                                    // Page up by one screen
+                                    let page_size = state.max_results;
+                                    state.selected_index = state.selected_index.saturating_sub(page_size);
+                                    state.scroll_offset = state.scroll_offset.saturating_sub(page_size);
+                                }
+                                FocusedPane::DeckSummary => {
+                                    state.deck_selected_index = state.deck_selected_index.saturating_sub(10);
+                                }
+                            }
                         }
-                        KeyCode::Down => {
-                            state.select_next();
-                        }
+                        KeyCode::PageDown => match state.focused_pane {
+                            FocusedPane::Search => {
+                                let page_size = state.max_results;
+                                let max_idx = state.search_results.len().saturating_sub(1);
+                                state.selected_index = (state.selected_index + page_size).min(max_idx);
+                                state.scroll_offset =
+                                    (state.scroll_offset + page_size).min(max_idx.saturating_sub(page_size));
+                            }
+                            FocusedPane::DeckSummary => {
+                                let max_idx = state.deck.len().saturating_sub(1);
+                                state.deck_selected_index = (state.deck_selected_index + 10).min(max_idx);
+                            }
+                        },
+                        KeyCode::Home => match state.focused_pane {
+                            FocusedPane::Search => {
+                                state.selected_index = 0;
+                                state.scroll_offset = 0;
+                            }
+                            FocusedPane::DeckSummary => {
+                                state.deck_selected_index = 0;
+                            }
+                        },
+                        KeyCode::End => match state.focused_pane {
+                            FocusedPane::Search => {
+                                let max_idx = state.search_results.len().saturating_sub(1);
+                                state.selected_index = max_idx;
+                                state.scroll_offset = max_idx.saturating_sub(state.max_results);
+                            }
+                            FocusedPane::DeckSummary => {
+                                state.deck_selected_index = state.deck.len().saturating_sub(1);
+                            }
+                        },
                         KeyCode::Enter => {
                             state.add_selected(1);
                         }
@@ -504,9 +672,9 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
     }
 }
 
-/// Column width for card display: "3 CardName..." = count(1) + space(1) + name(CARD_NAME_WIDTH)
-const CARD_NAME_WIDTH: usize = 16;
-const CARD_COLUMN_WIDTH: usize = 1 + 1 + CARD_NAME_WIDTH + 2; // "3 CardName...  "
+/// Column width for card display: "▶ 3 CardName..." = cursor(2) + count(1) + space(1) + name(CARD_NAME_WIDTH)
+const CARD_NAME_WIDTH: usize = 26;
+const CARD_COLUMN_WIDTH: usize = 2 + 1 + 1 + CARD_NAME_WIDTH + 2; // "▶ 3 CardName...  "
 
 /// Calculate the height needed for the deck summary based on content
 fn calculate_deck_summary_height(state: &DeckBuilderState, available_width: u16) -> u16 {
@@ -804,6 +972,10 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         CardCategory::Land,
     ];
 
+    // Track flattened index for cursor display
+    let mut flat_index = 0usize;
+    let show_cursor = is_focused;
+
     for category in category_order {
         if let Some(entries) = by_category.get(&category) {
             let cat_count: usize = entries.iter().map(|(_, c, _)| **c as usize).sum();
@@ -827,8 +999,16 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
                         let (name, count, card_def) = &entries[idx];
                         let color = card_def.map(|c| mtg_color_to_term(&c.colors)).unwrap_or(Color::White);
 
-                        // Format: "3 CardName..." padded to column width
-                        let card_text = format!("{} {}", count, truncate_name(name, CARD_NAME_WIDTH));
+                        // Show cursor if this is the selected card
+                        let current_flat_idx = flat_index + idx;
+                        let cursor = if show_cursor && current_flat_idx == state.deck_selected_index {
+                            "▶ "
+                        } else {
+                            "  "
+                        };
+
+                        // Format: "▶ 3 CardName..." padded to column width
+                        let card_text = format!("{}{} {}", cursor, count, truncate_name(name, CARD_NAME_WIDTH));
                         let padded = format!("{:width$}", card_text, width = CARD_COLUMN_WIDTH);
                         row_spans.push(Span::styled(padded, Style::default().fg(color)));
                     }
@@ -837,6 +1017,8 @@ fn draw_deck_summary(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
                     lines.push(Line::from(row_spans));
                 }
             }
+
+            flat_index += num_cards;
         }
     }
 
@@ -871,10 +1053,20 @@ fn draw_search_input(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
 fn draw_search_results(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let is_focused = state.focused_pane == FocusedPane::Search;
     let border_color = if is_focused { Color::Yellow } else { Color::Blue };
-    let title = if is_focused {
-        " Results [focused] (↑↓ navigate, Enter/1-9 add) "
+
+    // Build title with hit count status
+    let title = if state.search_results.is_empty() {
+        if is_focused {
+            " Results [focused] (↑↓ navigate, Enter/1-9 add) ".to_string()
+        } else {
+            " Results (↑↓ navigate, Enter/1-9 add) ".to_string()
+        }
     } else {
-        " Results (↑↓ navigate, Enter/1-9 add) "
+        let total = state.search_results.len();
+        let start = state.scroll_offset + 1;
+        let end = (state.scroll_offset + state.max_results).min(total);
+        let focus_str = if is_focused { "[focused] " } else { "" };
+        format!(" Results {focus_str}({total} hits, {start}-{end} shown) ")
     };
 
     let block = Block::default()
@@ -897,21 +1089,23 @@ fn draw_search_results(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
         return;
     }
 
-    let items: Vec<ListItem> = state
-        .search_results
+    // Apply pagination: only show items from scroll_offset to scroll_offset + max_results
+    let visible_end = (state.scroll_offset + state.max_results).min(state.search_results.len());
+    let items: Vec<ListItem> = state.search_results[state.scroll_offset..visible_end]
         .iter()
         .enumerate()
-        .map(|(i, &card_idx)| {
+        .map(|(visible_i, &card_idx)| {
+            let actual_i = state.scroll_offset + visible_i;
             let card_name = &state.all_cards[card_idx];
             let in_deck = state.deck.get(card_name).copied().unwrap_or(0);
 
-            let style = if i == state.selected_index {
+            let style = if actual_i == state.selected_index {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
 
-            let prefix = if i == state.selected_index { "▶ " } else { "  " };
+            let prefix = if actual_i == state.selected_index { "▶ " } else { "  " };
 
             let text = if in_deck > 0 {
                 format!("{}{} ({}x)", prefix, card_name, in_deck)
@@ -937,7 +1131,13 @@ fn draw_card_details(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if let Some(card) = state.selected_card_definition() {
+    let selected_name = state.get_active_selected_card();
+    let card_def = selected_name
+        .as_ref()
+        .and_then(|name| state.card_definitions.get(name))
+        .map(|arc| arc.as_ref());
+
+    if let Some(card) = card_def {
         let mut lines = Vec::new();
 
         // Card name
@@ -975,6 +1175,24 @@ fn draw_card_details(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
             ]));
         }
 
+        // Set codes and years (from edition index)
+        if let Some(ref edition_index) = state.edition_index {
+            if let Some(printings) = edition_index.get_card_printings(card.name.as_str()) {
+                if !printings.is_empty() {
+                    let set_codes: Vec<&str> = printings.iter().map(|p| p.set_code.as_str()).collect();
+                    let years: Vec<String> = printings.iter().map(|p| p.year.to_string()).collect();
+                    lines.push(Line::from(vec![
+                        Span::raw("Sets: "),
+                        Span::styled(set_codes.join(", "), Style::default().fg(Color::DarkGray)),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::raw("Years: "),
+                        Span::styled(years.join(", "), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+            }
+        }
+
         // Oracle text
         if !card.oracle.is_empty() {
             lines.push(Line::from(""));
@@ -988,7 +1206,7 @@ fn draw_card_details(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
 
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(paragraph, inner);
-    } else if state.selected_card().is_some() {
+    } else if selected_name.is_some() {
         // Card selected but no definition available
         let hint = Paragraph::new("Card details not loaded")
             .style(Style::default().fg(Color::DarkGray))
@@ -1129,7 +1347,7 @@ mod tests {
             "Grizzly Bears".to_string(),
         ];
 
-        let mut state = DeckBuilderState::new(cards, HashMap::new());
+        let mut state = DeckBuilderState::new(cards, HashMap::new(), None);
 
         // Initially no results
         assert!(state.search_results.is_empty());

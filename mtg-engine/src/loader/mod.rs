@@ -26,7 +26,7 @@ pub use deck::{DeckEntry, DeckList, DeckLoader};
 #[cfg(feature = "native")]
 pub use deck_async::prefetch_deck_cards;
 #[cfg(feature = "native")]
-pub use edition::CardEditionIndex;
+pub use edition::{CardEditionIndex, CardPrinting};
 #[cfg(feature = "native")]
 pub use game_init::GameInitializer;
 

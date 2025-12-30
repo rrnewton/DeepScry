@@ -2566,29 +2566,28 @@ async fn run_deck_build(
         )));
     }
 
-    // Load edition data for year filtering if needed
-    let edition_index = if start_year.is_some() || end_year.is_some() {
-        // Look for editions directory (symlink in repo root)
-        let editions_dir = PathBuf::from("editions");
-        if editions_dir.exists() {
-            print!("Loading edition data for year filtering...");
-            std::io::Write::flush(&mut std::io::stdout()).ok();
-            match CardEditionIndex::load_from_directory(&editions_dir) {
-                Ok(index) => {
-                    println!(" {} cards indexed", index.card_count());
-                    Some(index)
-                }
-                Err(e) => {
-                    println!(" failed: {}", e);
-                    eprintln!("Warning: Year filtering disabled due to edition load error");
-                    None
-                }
+    // Load edition data (for year filtering and showing release info in card details)
+    let editions_dir = PathBuf::from("editions");
+    let edition_index = if editions_dir.exists() {
+        print!("Loading edition data...");
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        match CardEditionIndex::load_from_directory(&editions_dir) {
+            Ok(index) => {
+                println!(" {} cards indexed", index.card_count());
+                Some(index)
             }
-        } else {
-            eprintln!("Warning: editions/ directory not found, year filtering disabled");
-            None
+            Err(e) => {
+                println!(" failed: {}", e);
+                if start_year.is_some() || end_year.is_some() {
+                    eprintln!("Warning: Year filtering disabled due to edition load error");
+                }
+                None
+            }
         }
     } else {
+        if start_year.is_some() || end_year.is_some() {
+            eprintln!("Warning: editions/ directory not found, year filtering disabled");
+        }
         None
     };
 
@@ -2637,7 +2636,7 @@ async fn run_deck_build(
         end_year,
     };
 
-    run_deck_builder(config, card_names, card_definitions).await
+    run_deck_builder(config, card_names, card_definitions, edition_index).await
 }
 
 /// Print statistics about the card database
