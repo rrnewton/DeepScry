@@ -75,6 +75,17 @@ pub fn network_on_error(error: &str) {
     with_client(|client| client.on_error(error));
 }
 
+/// Initialize the network client with connection parameters
+///
+/// Call this before connecting to set up the connection parameters.
+/// The deck_json should be a valid DeckSubmission JSON.
+#[wasm_bindgen]
+pub fn network_init(server_url: &str, password: &str, player_name: &str, deck_json: &str) {
+    with_client(|client| {
+        client.set_connection_params(server_url, password, player_name, deck_json);
+    });
+}
+
 /// Queue authentication message
 ///
 /// Call this after the WebSocket opens to authenticate with the server.
@@ -165,6 +176,12 @@ pub fn network_is_waiting_for_opponent() -> bool {
 #[wasm_bindgen]
 pub fn network_is_game_ended() -> bool {
     with_client(|client| client.state() == NetworkState::GameEnded)
+}
+
+/// Check if game is ready to start (both players connected)
+#[wasm_bindgen]
+pub fn network_is_game_ready() -> bool {
+    with_client(|client| client.state() == NetworkState::InGame)
 }
 
 /// Get our player ID (0 or 1), or -1 if not assigned

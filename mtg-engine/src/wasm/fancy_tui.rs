@@ -1574,6 +1574,210 @@ pub fn launch_fancy_tui(
     Ok(())
 }
 
+/// Launch a network game TUI
+///
+/// Called when the server signals game start (GameStarted message received).
+/// The game state will be synchronized with the server.
+///
+/// Note: For full network play implementation, the game should be initialized
+/// using server-provided seed and player order from GameStarted message.
+/// This is a placeholder that sets up the TUI infrastructure.
+#[wasm_bindgen]
+pub fn launch_network_game(
+    card_db: &WasmCardDatabase,
+    deck_name: &str,
+    _canvas_width: u32,
+    _canvas_height: u32,
+) -> Result<(), JsValue> {
+    log::info!("launch_network_game: Initializing network game TUI");
+
+    // For now, create a placeholder game (TODO: receive game state from server)
+    // In full implementation, the server sends GameStarted with seed and player order
+    let placeholder_seed = crate::network::now_ms();
+    let game = create_game_from_database(card_db, deck_name, deck_name, 20, placeholder_seed)?;
+
+    // Create the shared state with Network controller type
+    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(
+        game,
+        WasmControllerType::Network,
+        WasmControllerType::Human, // Opponent - will be replaced with Remote in full implementation
+    )));
+
+    // Run until the first choice point
+    state.borrow_mut().run_until_choice();
+
+    // Create the RatZilla backend
+    let backend = DomBackend::new_by_id("ratzilla-terminal")
+        .map_err(|e| JsValue::from_str(&format!("Failed to create backend: {}", e)))?;
+    let terminal =
+        Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
+
+    // Set up keyboard event handling (same as launch_fancy_tui)
+    terminal.on_key_event({
+        let state = state.clone();
+        move |key_event| {
+            let mut state = state.borrow_mut();
+
+            // Convert RatZilla KeyCode to our abstract KeyInput
+            let key_input = match key_event.code {
+                KeyCode::Char(' ') => Some(KeyInput::Space),
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    state.auto_run = !state.auto_run;
+                    state.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Char('i') => {
+                    let _ = js_sys::eval("window.toggleCardImages && window.toggleCardImages()");
+                    return;
+                }
+                KeyCode::Char('q') | KeyCode::Char('Q') => Some(KeyInput::Pass),
+                KeyCode::Esc => Some(KeyInput::Escape),
+                KeyCode::Char('h') | KeyCode::Char('H') => Some(KeyInput::FocusHand),
+                KeyCode::Char('I') => Some(KeyInput::FocusInfo),
+                KeyCode::Char('y') | KeyCode::Char('Y') => Some(KeyInput::FocusYourBf),
+                KeyCode::Char('o') | KeyCode::Char('O') => Some(KeyInput::FocusOpponentBf),
+                KeyCode::Char('s') | KeyCode::Char('S') => Some(KeyInput::FocusStack),
+                KeyCode::Char('b') | KeyCode::Char('B') => Some(KeyInput::ShowBattlefield),
+                KeyCode::Char('c') | KeyCode::Char('C') => {
+                    let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
+                    return;
+                }
+                KeyCode::Char('?') => Some(KeyInput::Help),
+                KeyCode::Char('w') | KeyCode::Char('W') => Some(KeyInput::ToggleWrap),
+                KeyCode::Tab => Some(KeyInput::Tab),
+                KeyCode::Up => Some(KeyInput::Up),
+                KeyCode::Down => Some(KeyInput::Down),
+                KeyCode::Left => Some(KeyInput::Left),
+                KeyCode::Right => Some(KeyInput::Right),
+                KeyCode::PageUp => Some(KeyInput::PageUp),
+                KeyCode::PageDown => Some(KeyInput::PageDown),
+                KeyCode::Home => Some(KeyInput::Home),
+                KeyCode::End => Some(KeyInput::End),
+                KeyCode::Enter => Some(KeyInput::Enter),
+                KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
+                _ => None,
+            };
+
+            if let Some(key) = key_input {
+                // Handle input with the shared event handler
+                let has_pending_choice = state.pending_context.is_some();
+
+                if has_pending_choice {
+                    // Human player making a choice - handle navigation and selection
+                    match key {
+                        KeyInput::Up => {
+                            state.select_previous_choice();
+                            return;
+                        }
+                        KeyInput::Down => {
+                            state.select_next_choice();
+                            return;
+                        }
+                        KeyInput::Enter | KeyInput::Space => {
+                            state.select_current_choice();
+                            state.needs_redraw = true;
+                            return;
+                        }
+                        KeyInput::Digit(d) => {
+                            let idx = d as usize;
+                            if idx < state.current_choices.len() {
+                                state.selected_choice_idx = idx;
+                                state.update_choice_highlights();
+                                state.select_current_choice();
+                                state.needs_redraw = true;
+                            }
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
+                let WasmFancyTuiState {
+                    ref game,
+                    ref mut renderer,
+                    ref current_choices,
+                    ..
+                } = *state;
+
+                let view = GameStateView::new(game, renderer.player_id);
+                let result = handle_key_event(&mut renderer.state, key, &view, current_choices.len());
+
+                // Process event result
+                match result {
+                    EventResult::Handled => {
+                        state.needs_redraw = true;
+                    }
+                    EventResult::NotHandled => {
+                        if matches!(key, KeyInput::Space) {
+                            state.run_until_choice();
+                            state.needs_redraw = true;
+                        }
+                    }
+                    EventResult::Pass | EventResult::Exit => {
+                        let _ = js_sys::eval("window.showExitConfirmation && window.showExitConfirmation()");
+                    }
+                    EventResult::SelectChoice(idx) => {
+                        if idx < state.current_choices.len() {
+                            state.selected_choice_idx = idx;
+                            state.update_choice_highlights();
+                            state.select_current_choice();
+                            state.needs_redraw = true;
+                        }
+                    }
+                    EventResult::ShowBattlefield => {
+                        let WasmFancyTuiState {
+                            ref game, ref renderer, ..
+                        } = *state;
+                        let view = GameStateView::new(game, renderer.player_id);
+                        let bf_text = crate::game::display::format_battlefield_for_log(&view);
+                        log::info!("{}", bf_text);
+                    }
+                    EventResult::ShowHelp => {
+                        let _ = js_sys::eval("window.showHelpDialog && window.showHelpDialog()");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+
+    // Store state in global
+    GLOBAL_TUI_STATE.with(|s| {
+        *s.borrow_mut() = Some(state.clone());
+    });
+
+    // Set up render callback (simplified version for network)
+    terminal.draw_web({
+        let state = state.clone();
+        move |f| {
+            let mut state = state.borrow_mut();
+
+            if state.auto_run && !state.game_over && state.pending_context.is_none() {
+                state.run_until_choice();
+                state.needs_redraw = true;
+            }
+
+            let WasmFancyTuiState {
+                ref game,
+                ref mut renderer,
+                ref current_prompt,
+                ref current_choices,
+                ..
+            } = *state;
+
+            let player_id = renderer.player_id;
+            let view = GameStateView::new(game, player_id);
+            let prompt = current_prompt.as_deref();
+            let choices: Vec<(String, bool)> = current_choices.clone();
+
+            renderer.draw_ui(f, &view, prompt, &choices);
+        }
+    });
+
+    log::info!("launch_network_game: Network TUI ready (placeholder implementation)");
+    Ok(())
+}
+
 /// Helper function to create a game from database (mirrors WasmGame::from_database logic)
 fn create_game_from_database(
     card_db: &WasmCardDatabase,

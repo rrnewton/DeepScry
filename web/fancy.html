@@ -293,6 +293,7 @@
             <label>P1 Controller</label>
             <select id="p1-controller">
                 <option value="human">Human (You)</option>
+                <option value="network">Network (Multiplayer)</option>
                 <option value="fixed">Fixed Script</option>
                 <option value="heuristic">Heuristic AI</option>
                 <option value="random">Random</option>
@@ -308,7 +309,20 @@ play swamp
 cast dark ritual</textarea>
             <span style="color: #888; font-size: 11px;">play, cast, activate, pass, *, 0-9</span>
         </div>
-        <div class="control-group">
+        <div class="control-group" id="network-settings-group" style="display: none;">
+            <label>Network Settings</label>
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+                <input type="text" id="server-url" placeholder="ws://localhost:17771"
+                    style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 220px;">
+                <input type="password" id="server-password" placeholder="Password"
+                    style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 220px;">
+                <input type="text" id="player-name" placeholder="Your name"
+                    style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 220px;">
+            </div>
+            <span style="color: #888; font-size: 11px;">Connect to a game server. P2 deck selection is ignored (opponent brings their own).</span>
+            <div id="network-status" style="color: #4cc9f0; font-size: 12px; margin-top: 5px;"></div>
+        </div>
+        <div class="control-group" id="p2-controller-group">
             <label>P2 Controller</label>
             <select id="p2-controller">
                 <option value="heuristic">Heuristic AI</option>
@@ -445,6 +459,47 @@ cast dark ritual</textarea>
             set_log_level
         } from './pkg/mtg_forge_rs.js';
 
+        // Network exports are optional (only available when built with wasm-network feature)
+        let networkEnabled = false;
+        let launch_network_game = null;
+        let network_init = null;
+        let network_on_message = null;
+        let network_on_open = null;
+        let network_on_close = null;
+        let network_on_error = null;
+        let network_get_outbound_message = null;
+        let network_get_state = null;
+        let network_is_game_ready = null;
+        let network_get_our_player_id = null;
+        let getNetworkClient = null;
+        let resetNetworkClient = null;
+
+        // Try to import network functions
+        try {
+            const networkModule = await import('./pkg/mtg_forge_rs.js');
+            if (networkModule.network_init) {
+                launch_network_game = networkModule.launch_network_game;
+                network_init = networkModule.network_init;
+                network_on_message = networkModule.network_on_message;
+                network_on_open = networkModule.network_on_open;
+                network_on_close = networkModule.network_on_close;
+                network_on_error = networkModule.network_on_error;
+                network_get_outbound_message = networkModule.network_get_outbound_message;
+                network_get_state = networkModule.network_get_state;
+                network_is_game_ready = networkModule.network_is_game_ready;
+                network_get_our_player_id = networkModule.network_get_our_player_id;
+
+                const networkJs = await import('./network.js');
+                getNetworkClient = networkJs.getNetworkClient;
+                resetNetworkClient = networkJs.resetNetworkClient;
+
+                networkEnabled = true;
+                console.log('[Network] Network features available');
+            }
+        } catch (e) {
+            console.log('[Network] Network features not available:', e.message);
+        }
+
         // Expose set_log_level globally for console use
         // Usage: setLogLevel("debug") or setLogLevel("trace")
         window.setLogLevel = set_log_level;
@@ -511,6 +566,9 @@ cast dark ritual</textarea>
 
                 // Restore saved settings from localStorage
                 restoreSettings();
+
+                // Update network UI based on available features
+                updateNetworkUI();
 
                 // NOTE: Cards are NOT loaded yet - they load on game launch
                 status.textContent = `WASM v${version()} | ${deckCount} decks ready (cards load on launch)`;
@@ -601,11 +659,29 @@ cast dark ritual</textarea>
         function getControllerType(value) {
             switch (value) {
                 case 'human': return WasmControllerType.Human;
+                case 'network': return networkEnabled ? WasmControllerType.Network : WasmControllerType.Human;
                 case 'fixed': return WasmControllerType.Fixed;
                 case 'zero': return WasmControllerType.Zero;
                 case 'random': return WasmControllerType.Random;
                 case 'heuristic': return WasmControllerType.Heuristic;
                 default: return WasmControllerType.Heuristic;
+            }
+        }
+
+        // Hide Network option if network features aren't available
+        function updateNetworkUI() {
+            const networkOption = document.querySelector('#p1-controller option[value="network"]');
+            const networkSettingsGroup = document.getElementById('network-settings-group');
+
+            if (!networkEnabled) {
+                if (networkOption) {
+                    networkOption.disabled = true;
+                    networkOption.textContent = 'Network (Not Available)';
+                }
+                // Hide network settings if shown
+                if (networkSettingsGroup) {
+                    networkSettingsGroup.style.display = 'none';
+                }
             }
         }
 
@@ -625,7 +701,11 @@ cast dark ritual</textarea>
                 imgSrcLocal: document.getElementById('img-src-local').checked,
                 imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
                 imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
-                debugMode: document.getElementById('debug-mode').checked
+                debugMode: document.getElementById('debug-mode').checked,
+                // Network settings
+                serverUrl: document.getElementById('server-url').value,
+                serverPassword: document.getElementById('server-password').value,
+                playerName: document.getElementById('player-name').value
             };
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         }
@@ -682,6 +762,27 @@ cast dark ritual</textarea>
                     document.getElementById('debug-mode').checked = settings.debugMode;
                 }
 
+                // Restore network settings
+                if (settings.serverUrl) {
+                    document.getElementById('server-url').value = settings.serverUrl;
+                }
+                if (settings.serverPassword) {
+                    document.getElementById('server-password').value = settings.serverPassword;
+                }
+                if (settings.playerName) {
+                    document.getElementById('player-name').value = settings.playerName;
+                }
+
+                // Show/hide network settings group based on restored controller
+                if (settings.p1Controller === 'network') {
+                    document.getElementById('network-settings-group').style.display = 'flex';
+                    // Hide P2 options in network mode
+                    const p2ControllerGroup = document.getElementById('p2-controller-group');
+                    const p2DeckGroup = document.getElementById('p2-deck')?.closest('.control-group');
+                    if (p2ControllerGroup) p2ControllerGroup.style.display = 'none';
+                    if (p2DeckGroup) p2DeckGroup.style.display = 'none';
+                }
+
                 console.log('Restored settings from localStorage');
             } catch (e) {
                 console.warn('Failed to restore settings:', e);
@@ -693,7 +794,9 @@ cast dark ritual</textarea>
             const controls = [
                 'p1-deck', 'p2-deck', 'p1-controller', 'p2-controller',
                 'fixed-script', 'game-seed', 'show-card-images',
-                'img-src-local', 'img-src-scryfall', 'img-src-gatherer', 'debug-mode'
+                'img-src-local', 'img-src-scryfall', 'img-src-gatherer', 'debug-mode',
+                // Network settings
+                'server-url', 'server-password', 'player-name'
             ];
             controls.forEach(id => {
                 const el = document.getElementById(id);
@@ -710,10 +813,24 @@ cast dark ritual</textarea>
         // Initialize settings persistence after DOM is ready
         setupSettingsPersistence();
 
-        // Show/hide fixed script textarea when Fixed controller is selected
+        // Show/hide controller-specific settings
         document.getElementById('p1-controller').addEventListener('change', function() {
             const scriptGroup = document.getElementById('fixed-script-group');
+            const networkGroup = document.getElementById('network-settings-group');
+            const p2ControllerGroup = document.getElementById('p2-controller-group');
+            const p2DeckGroup = document.getElementById('p2-deck')?.closest('.control-group');
+
+            // Show appropriate settings group
             scriptGroup.style.display = this.value === 'fixed' ? 'flex' : 'none';
+            networkGroup.style.display = this.value === 'network' ? 'flex' : 'none';
+
+            // Hide P2 controller and deck when in network mode (opponent brings their own)
+            if (p2ControllerGroup) {
+                p2ControllerGroup.style.display = this.value === 'network' ? 'none' : 'flex';
+            }
+            if (p2DeckGroup) {
+                p2DeckGroup.style.display = this.value === 'network' ? 'none' : 'flex';
+            }
         });
 
         let tuiLaunched = false;
@@ -1599,6 +1716,9 @@ cast dark ritual</textarea>
             }
         };
 
+        // Network client instance (created when connecting)
+        let networkClient = null;
+
         async function launchTui() {
             const p1Deck = document.getElementById('p1-deck').value;
             const p2Deck = document.getElementById('p2-deck').value;
@@ -1606,10 +1726,41 @@ cast dark ritual</textarea>
             const p1Controller = getControllerType(p1ControllerValue);
             const p2Controller = getControllerType(document.getElementById('p2-controller').value);
             const showImages = document.getElementById('show-card-images').checked;
+            const isNetworkMode = p1ControllerValue === 'network';
 
-            if (!p1Deck || !p2Deck) {
-                alert('Please select decks for both players');
+            // Validate deck selection (only P1 deck needed for network mode)
+            if (!p1Deck) {
+                alert('Please select a deck for Player 1');
                 return;
+            }
+            if (!isNetworkMode && !p2Deck) {
+                alert('Please select a deck for Player 2');
+                return;
+            }
+
+            // Validate network settings
+            if (isNetworkMode) {
+                if (!networkEnabled) {
+                    alert('Network mode is not available in this build. Please rebuild with --features wasm-network.');
+                    return;
+                }
+
+                const serverUrl = document.getElementById('server-url').value.trim();
+                const password = document.getElementById('server-password').value;
+                const playerName = document.getElementById('player-name').value.trim();
+
+                if (!serverUrl) {
+                    alert('Please enter a server URL (e.g., ws://localhost:17771)');
+                    return;
+                }
+                if (!password) {
+                    alert('Please enter the server password');
+                    return;
+                }
+                if (!playerName) {
+                    alert('Please enter your player name');
+                    return;
+                }
             }
 
             // If using Fixed controller, set the script first
@@ -1649,11 +1800,17 @@ cast dark ritual</textarea>
             launchBtn.textContent = 'Loading cards...';
 
             try {
-                // Load cards for the selected decks (deferred loading)
+                // Load cards for the selected deck(s)
                 const startTime = performance.now();
-                const usedFastPath = await loadCardsForDecks(p1Deck, p2Deck);
+                if (isNetworkMode) {
+                    // Network mode: only load P1's deck (opponent brings their own)
+                    await loadCardsForDecks(p1Deck, p1Deck);  // Same deck twice to reuse function
+                } else {
+                    // Local mode: load both decks
+                    await loadCardsForDecks(p1Deck, p2Deck);
+                }
                 const loadTime = (performance.now() - startTime).toFixed(0);
-                console.log(`Card loading took ${loadTime}ms (fast path: ${usedFastPath})`);
+                console.log(`Card loading took ${loadTime}ms`);
 
                 // Hide setup bar and header to give full viewport to TUI
                 // RatZilla calculates terminal size from window dimensions, so we need full viewport
@@ -1669,34 +1826,107 @@ cast dark ritual</textarea>
                 const canvasWidth = container.clientWidth || window.innerWidth;
                 const canvasHeight = container.clientHeight || window.innerHeight;
 
-                // Launch the fancy TUI
-                const seedInput = document.getElementById('game-seed').value;
-                const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
-                console.log(`[GAME] Using seed: ${seed}`);
-                launch_fancy_tui(
-                    cardDb,
-                    p1Deck,
-                    p2Deck,
-                    20,  // starting life
-                    seed,
-                    p1Controller,
-                    p2Controller,
-                    canvasWidth,
-                    canvasHeight
-                );
+                if (isNetworkMode) {
+                    // Network mode: connect to server and wait for game to start
+                    const serverUrl = document.getElementById('server-url').value.trim();
+                    const password = document.getElementById('server-password').value;
+                    const playerName = document.getElementById('player-name').value.trim();
 
-                tuiLaunched = true;
+                    // Get deck as JSON for server submission
+                    const deckJson = cardDb.get_deck_json(p1Deck);
+                    console.log(`[Network] Connecting to ${serverUrl} as ${playerName}...`);
 
-                // Show game controls widget (collapsed by default)
-                document.getElementById('game-controls').style.display = 'block';
+                    // Create network client with WASM exports
+                    const wasmExports = {
+                        network_init,
+                        network_on_message,
+                        network_on_open,
+                        network_on_close,
+                        network_on_error,
+                        network_get_outbound_message,
+                        network_get_state,
+                        network_is_game_ready,
+                        network_get_our_player_id
+                    };
+                    networkClient = getNetworkClient(wasmExports);
 
-                // Show battlefield card images if enabled
-                if (cardImagesEnabled) {
-                    // Wait a bit for the TUI to render and game to start, then show images
-                    // Images will auto-update via window.onRenderComplete callback (event-driven, no polling!)
-                    setTimeout(() => {
-                        CardImageOverlay.displayBattlefieldCards();
-                    }, 1000);
+                    // Set up callbacks
+                    networkClient.onStateChange = (state) => {
+                        const statusEl = document.getElementById('network-status');
+                        if (statusEl) {
+                            statusEl.textContent = `Status: ${state}`;
+                        }
+                        console.log(`[Network] State: ${state}`);
+                    };
+
+                    networkClient.onError = (msg) => {
+                        console.error(`[Network] Error: ${msg}`);
+                        // Show error to user
+                        const statusEl = document.getElementById('network-status');
+                        if (statusEl) {
+                            statusEl.textContent = `Error: ${msg}`;
+                            statusEl.style.color = '#ff6b6b';
+                        }
+                    };
+
+                    networkClient.onGameReady = () => {
+                        console.log('[Network] Game is ready!');
+                        // Launch network TUI mode
+                        launch_network_game(
+                            cardDb,
+                            p1Deck,
+                            canvasWidth,
+                            canvasHeight
+                        );
+
+                        tuiLaunched = true;
+                        document.getElementById('game-controls').style.display = 'block';
+
+                        if (cardImagesEnabled) {
+                            setTimeout(() => {
+                                CardImageOverlay.displayBattlefieldCards();
+                            }, 1000);
+                        }
+
+                        console.log('[Network] Launched network game TUI');
+                    };
+
+                    // Connect to server
+                    networkClient.connect(serverUrl, password, playerName, deckJson);
+                    launchBtn.textContent = 'Connecting...';
+
+                } else {
+                    // Local mode: Launch the fancy TUI immediately
+                    const seedInput = document.getElementById('game-seed').value;
+                    const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
+                    console.log(`[GAME] Using seed: ${seed}`);
+                    launch_fancy_tui(
+                        cardDb,
+                        p1Deck,
+                        p2Deck,
+                        20,  // starting life
+                        seed,
+                        p1Controller,
+                        p2Controller,
+                        canvasWidth,
+                        canvasHeight
+                    );
+
+                    tuiLaunched = true;
+
+                    // Show game controls widget (collapsed by default)
+                    document.getElementById('game-controls').style.display = 'block';
+
+                    // Show battlefield card images if enabled
+                    if (cardImagesEnabled) {
+                        // Wait a bit for the TUI to render and game to start, then show images
+                        // Images will auto-update via window.onRenderComplete callback (event-driven, no polling!)
+                        setTimeout(() => {
+                            CardImageOverlay.displayBattlefieldCards();
+                        }, 1000);
+                    }
+
+                    console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
                 }
 
                 // Sync toggle button state with CardImageOverlay.enabled
@@ -1705,8 +1935,6 @@ cast dark ritual</textarea>
                     toggleBtn.textContent = CardImageOverlay.enabled ? 'Hide Images' : 'Show Images';
                     toggleBtn.style.background = CardImageOverlay.enabled ? '#30a030' : '#4361ee';
                 }
-
-                console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
             } catch (error) {
                 // Re-enable launch button on error
                 launchBtn.disabled = false;
@@ -1964,6 +2192,13 @@ cast dark ritual</textarea>
             // Clean up WASM global state BEFORE anything else
             cleanup_tui_state();
 
+            // Clean up network client if connected
+            if (networkClient) {
+                networkClient.disconnect();
+                resetNetworkClient();
+                networkClient = null;
+            }
+
             // Clean up JavaScript state
             tuiLaunched = false;
             cardImagesEnabled = false;
@@ -1990,6 +2225,13 @@ cast dark ritual</textarea>
             const launchBtn = document.getElementById('btn-launch');
             launchBtn.disabled = false;
             launchBtn.textContent = 'Launch Fancy TUI';
+
+            // Reset network status display
+            const networkStatus = document.getElementById('network-status');
+            if (networkStatus) {
+                networkStatus.textContent = '';
+                networkStatus.style.color = '#4cc9f0';
+            }
 
             console.log('[EXIT] TUI exited cleanly. Ready to launch new game.');
         };

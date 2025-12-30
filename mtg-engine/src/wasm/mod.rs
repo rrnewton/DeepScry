@@ -206,6 +206,26 @@ impl WasmCardDatabase {
         }
     }
 
+    /// Get deck as JSON for network submission
+    ///
+    /// Returns a DeckSubmission-compatible JSON object with main_deck and sideboard
+    /// as arrays of [card_name, count] pairs.
+    pub fn get_deck_json(&self, deck_name: &str) -> String {
+        if let Some(deck) = self.decks.get(deck_name) {
+            // Convert deck to network submission format
+            let main_deck: Vec<(String, u8)> = deck.main_deck.iter().map(|e| (e.card_name.clone(), e.count)).collect();
+            let sideboard: Vec<(String, u8)> = deck.sideboard.iter().map(|e| (e.card_name.clone(), e.count)).collect();
+
+            let submission = serde_json::json!({
+                "main_deck": main_deck,
+                "sideboard": sideboard
+            });
+            serde_json::to_string(&submission).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            format!("{{\"error\": \"Deck '{}' not found\"}}", deck_name)
+        }
+    }
+
     /// Check if a card is available in the database
     pub fn has_card(&self, card_name: &str) -> bool {
         self.cards.contains_key(card_name)

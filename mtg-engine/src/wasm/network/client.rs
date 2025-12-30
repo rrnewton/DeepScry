@@ -102,6 +102,16 @@ pub struct WasmNetworkClient {
 
     /// Game winner (if game ended)
     winner: Option<Option<PlayerId>>,
+
+    // Connection parameters (set before connecting)
+    /// Server URL
+    server_url: Option<String>,
+    /// Password for authentication
+    password: Option<String>,
+    /// Player name
+    player_name: Option<String>,
+    /// Deck JSON for submission
+    deck_json: Option<String>,
 }
 
 impl WasmNetworkClient {
@@ -120,6 +130,10 @@ impl WasmNetworkClient {
             outbound_queue: VecDeque::new(),
             last_error: None,
             winner: None,
+            server_url: None,
+            password: None,
+            player_name: None,
+            deck_json: None,
         }
     }
 
@@ -158,14 +172,42 @@ impl WasmNetworkClient {
         self.network_debug
     }
 
+    /// Set connection parameters before connecting
+    pub fn set_connection_params(&mut self, server_url: &str, password: &str, player_name: &str, deck_json: &str) {
+        self.server_url = Some(server_url.to_string());
+        self.password = Some(password.to_string());
+        self.player_name = Some(player_name.to_string());
+        self.deck_json = Some(deck_json.to_string());
+        log::info!("WasmNetworkClient: Connection params set for {}", player_name);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // CONNECTION LIFECYCLE
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Called when WebSocket connection opens
+    ///
+    /// Automatically sends authentication if connection params are set.
     pub fn on_open(&mut self) {
         log::info!("WasmNetworkClient: WebSocket connected");
         self.state = NetworkState::Connecting;
+
+        // Auto-authenticate if we have stored params
+        if let (Some(password), Some(player_name), Some(deck_json)) =
+            (self.password.clone(), self.player_name.clone(), self.deck_json.clone())
+        {
+            match serde_json::from_str::<DeckSubmission>(&deck_json) {
+                Ok(deck) => {
+                    self.authenticate(&password, &player_name, deck);
+                    log::info!("WasmNetworkClient: Auto-authenticated as {}", player_name);
+                }
+                Err(e) => {
+                    log::error!("WasmNetworkClient: Failed to parse deck JSON: {}", e);
+                    self.last_error = Some(format!("Invalid deck JSON: {}", e));
+                    self.state = NetworkState::Error;
+                }
+            }
+        }
     }
 
     /// Called when WebSocket connection closes
