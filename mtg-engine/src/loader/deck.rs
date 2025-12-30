@@ -104,6 +104,38 @@ impl DeckList {
         }
         names.into_iter().collect()
     }
+
+    /// Format deck as .dck file content
+    pub fn to_dck_format(&self, name: Option<&str>) -> String {
+        let mut content = String::new();
+
+        // Metadata section
+        content.push_str("[metadata]\n");
+        content.push_str(&format!("Name={}\n", name.unwrap_or("Deck")));
+
+        // Main deck section
+        content.push_str("\n[Main]\n");
+        for entry in &self.main_deck {
+            content.push_str(&format!("{} {}\n", entry.count, entry.card_name));
+        }
+
+        // Sideboard section (if any)
+        if !self.sideboard.is_empty() {
+            content.push_str("\n[Sideboard]\n");
+            for entry in &self.sideboard {
+                content.push_str(&format!("{} {}\n", entry.count, entry.card_name));
+            }
+        }
+
+        content
+    }
+
+    /// Save deck to a .dck file
+    #[cfg(feature = "native")]
+    pub fn save_to_file(&self, path: &Path, name: Option<&str>) -> Result<()> {
+        let content = self.to_dck_format(name);
+        fs::write(path, content).map_err(MtgError::IoError)
+    }
 }
 
 #[cfg(test)]
@@ -163,5 +195,42 @@ Name=Foil Test
 
         assert_eq!(deck.main_deck[2].card_name, "Grizzly Bears");
         assert_eq!(deck.main_deck[2].count, 1);
+    }
+
+    #[test]
+    fn test_to_dck_format_roundtrip() {
+        // Create a deck
+        let deck = DeckList {
+            main_deck: vec![
+                DeckEntry {
+                    card_name: "Lightning Bolt".to_string(),
+                    count: 4,
+                },
+                DeckEntry {
+                    card_name: "Mountain".to_string(),
+                    count: 20,
+                },
+            ],
+            sideboard: vec![DeckEntry {
+                card_name: "Shock".to_string(),
+                count: 2,
+            }],
+        };
+
+        // Convert to .dck format
+        let content = deck.to_dck_format(Some("Test Deck"));
+
+        // Parse it back
+        let parsed = DeckLoader::parse(&content).unwrap();
+
+        // Verify roundtrip
+        assert_eq!(parsed.main_deck.len(), 2);
+        assert_eq!(parsed.main_deck[0].card_name, "Lightning Bolt");
+        assert_eq!(parsed.main_deck[0].count, 4);
+        assert_eq!(parsed.main_deck[1].card_name, "Mountain");
+        assert_eq!(parsed.main_deck[1].count, 20);
+        assert_eq!(parsed.sideboard.len(), 1);
+        assert_eq!(parsed.sideboard[0].card_name, "Shock");
+        assert_eq!(parsed.sideboard[0].count, 2);
     }
 }

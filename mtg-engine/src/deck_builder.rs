@@ -707,22 +707,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Save deck to file in .dck format
+/// Save deck to file in .dck format (uses shared DeckList::save_to_file)
 fn save_deck(state: &DeckBuilderState, output_file: &str) -> Result<()> {
     let deck_list = state.to_deck_list();
-
-    let mut content = String::new();
-    content.push_str("[metadata]\n");
-    content.push_str("Name=Deck\n");
-    content.push_str("\n[Main]\n");
-
-    for entry in &deck_list.main_deck {
-        content.push_str(&format!("{} {}\n", entry.count, entry.card_name));
-    }
-
-    std::fs::write(output_file, content).map_err(crate::MtgError::IoError)?;
-
-    Ok(())
+    deck_list.save_to_file(std::path::Path::new(output_file), None)
 }
 
 #[cfg(test)]
