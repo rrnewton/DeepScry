@@ -89,10 +89,10 @@ async function runTest() {
             durationMs: Date.now() - loadStart
         });
 
-        // Wait for WASM to initialize (setup bar should be visible)
+        // Wait for WASM to initialize (launcher should be visible)
         log('Waiting for WASM to load...');
         const wasmStart = Date.now();
-        await page.waitForSelector('#setup-bar', { state: 'visible', timeout: 30000 });
+        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         testResults.steps.push({
             name: 'wasm_init',
             timestamp: new Date().toISOString(),

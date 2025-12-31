@@ -233,6 +233,250 @@
             margin-top: 15px;
             text-align: center;
         }
+
+        /* Three-pane launcher layout */
+        .launcher-container {
+            display: none;
+            flex-direction: column;
+            gap: 15px;
+            padding: 15px;
+            background: #0a0a0a;
+            min-height: calc(100vh - 60px);
+        }
+        .launcher-container.show {
+            display: flex;
+        }
+
+        /* Global options pane (top) */
+        .global-pane {
+            background: #16213e;
+            border: 1px solid #4361ee;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .global-pane h2 {
+            color: #ffd700;
+            font-size: 14px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .global-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        /* Player panes (side by side) */
+        .player-panes {
+            display: flex;
+            gap: 15px;
+            flex: 1;
+        }
+        .player-pane {
+            flex: 1;
+            background: #16213e;
+            border: 1px solid #4361ee;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            min-width: 300px;
+        }
+        .player-pane.p1 {
+            border-color: #4cc9f0;
+        }
+        .player-pane.p2 {
+            border-color: #f72585;
+        }
+        .player-pane h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .player-pane.p1 h2 {
+            color: #4cc9f0;
+        }
+        .player-pane.p2 h2 {
+            color: #f72585;
+        }
+        .player-pane .player-icon {
+            font-size: 20px;
+        }
+
+        /* Form elements in panes */
+        .pane-row {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-bottom: 12px;
+        }
+        .pane-row label {
+            color: #888;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .pane-row select,
+        .pane-row input[type="text"],
+        .pane-row input[type="number"],
+        .pane-row input[type="password"],
+        .pane-row textarea {
+            background: #0f3460;
+            color: white;
+            border: 1px solid #444;
+            padding: 8px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 100%;
+        }
+        .pane-row select:focus,
+        .pane-row input:focus,
+        .pane-row textarea:focus {
+            outline: none;
+            border-color: #4361ee;
+        }
+        .pane-row .hint {
+            color: #666;
+            font-size: 11px;
+        }
+
+        /* Deck management buttons */
+        .deck-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 5px;
+        }
+        .deck-buttons button {
+            flex: 1;
+            background: #2a9d8f;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .deck-buttons button:hover {
+            background: #21867a;
+        }
+        .deck-buttons button:disabled {
+            background: #333;
+            cursor: not-allowed;
+        }
+        .deck-buttons button.delete-btn {
+            background: #a03030;
+            flex: 0 0 auto;
+        }
+        .deck-buttons button.delete-btn:hover {
+            background: #8a2020;
+        }
+
+        /* Launch button area */
+        .launch-area {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            padding: 15px;
+        }
+        .launch-area button {
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            border: none;
+            font-weight: 500;
+        }
+        .launch-area .btn-launch {
+            background: #4361ee;
+            color: white;
+        }
+        .launch-area .btn-launch:hover {
+            background: #3a0ca3;
+        }
+        .launch-area .btn-launch:disabled {
+            background: #333;
+            cursor: not-allowed;
+        }
+
+        /* Checkbox styling */
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .checkbox-row input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+        }
+        .checkbox-row label {
+            color: #ccc;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        /* Image source options */
+        .image-sources {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding-left: 5px;
+            margin-top: 5px;
+        }
+        .image-sources label {
+            font-size: 11px;
+            color: #888;
+        }
+
+        /* Collapsible sections */
+        .collapsible-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 5px 0;
+        }
+        .collapsible-header:hover {
+            color: #4cc9f0;
+        }
+        .collapsible-content {
+            display: none;
+            padding-left: 10px;
+            margin-top: 8px;
+        }
+        .collapsible-content.show {
+            display: block;
+        }
+        .collapse-icon {
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+        .collapse-icon.expanded {
+            transform: rotate(90deg);
+        }
+
+        /* Network settings styling */
+        .network-inputs {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .network-status {
+            color: #4cc9f0;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        /* Help text at bottom */
+        .launcher-help {
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            padding: 10px;
+        }
     </style>
 </head>
 <body>
@@ -280,95 +524,143 @@
         </div>
     </div>
 
-    <div id="setup-bar" class="setup-bar" style="display: none;">
-        <div class="control-group">
-            <label>Player 1 Deck</label>
-            <select id="p1-deck"></select>
+    <!-- Three-pane launcher -->
+    <div id="launcher" class="launcher-container">
+        <!-- Global Options Pane (top) -->
+        <div class="global-pane">
+            <h2>Global Options</h2>
+            <div class="global-options">
+                <div class="pane-row" style="margin-bottom: 0;">
+                    <label>Seed (determinism)</label>
+                    <input type="number" id="game-seed" placeholder="Random" style="width: 120px;">
+                    <span class="hint">Leave empty for random</span>
+                </div>
+
+                <div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="show-card-images">
+                        <label for="show-card-images">Show Card Images</label>
+                    </div>
+                    <div class="image-sources" id="image-source-options">
+                        <label><input type="checkbox" id="img-src-local" checked> Local (fastest, offline)</label>
+                        <label><input type="checkbox" id="img-src-scryfall" checked> Scryfall (high quality)</label>
+                        <label><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
+                    </div>
+                </div>
+
+                <div class="checkbox-row" style="margin-bottom: 0;">
+                    <input type="checkbox" id="debug-mode">
+                    <label for="debug-mode">Debug Mode (TRACE logs)</label>
+                </div>
+            </div>
         </div>
-        <div class="control-group">
-            <label>Player 2 Deck</label>
-            <select id="p2-deck"></select>
-        </div>
-        <div class="control-group">
-            <label>P1 Controller</label>
-            <select id="p1-controller">
-                <option value="human">Human (You)</option>
-                <option value="network">Network (Multiplayer)</option>
-                <option value="fixed">Fixed Script</option>
-                <option value="heuristic">Heuristic AI</option>
-                <option value="random">Random</option>
-                <option value="zero">Zero (Pass)</option>
-            </select>
-        </div>
-        <div class="control-group" id="fixed-script-group" style="display: none;">
-            <label>Fixed Script (one command per line)</label>
-            <textarea id="fixed-script" rows="5" style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; resize: vertical; min-width: 250px;"># Example commands:
+
+        <!-- Player Panes (side by side) -->
+        <div class="player-panes">
+            <!-- Player 1 Pane -->
+            <div class="player-pane p1">
+                <h2><span class="player-icon">&#9818;</span> Player 1</h2>
+
+                <div class="pane-row">
+                    <label>Controller</label>
+                    <select id="p1-controller">
+                        <option value="human">Human (You)</option>
+                        <option value="network">Network (Multiplayer)</option>
+                        <option value="fixed">Fixed Script</option>
+                        <option value="heuristic">Heuristic AI</option>
+                        <option value="random">Random</option>
+                        <option value="zero">Zero (Pass)</option>
+                    </select>
+                </div>
+
+                <!-- Network settings (shown when network selected) -->
+                <div id="network-settings-group" class="pane-row" style="display: none;">
+                    <label>Network Settings</label>
+                    <div class="network-inputs">
+                        <input type="text" id="server-url" placeholder="ws://localhost:17771">
+                        <input type="password" id="server-password" placeholder="Password">
+                        <input type="text" id="player-name" placeholder="Your name">
+                    </div>
+                    <span class="hint">P2 deck ignored - opponent brings their own</span>
+                    <div id="network-status" class="network-status"></div>
+                </div>
+
+                <!-- Fixed script (shown when fixed selected) -->
+                <div id="fixed-script-group" class="pane-row" style="display: none;">
+                    <label>Fixed Script (one command per line)</label>
+                    <textarea id="fixed-script" rows="4" style="font-family: monospace; font-size: 12px;"># Commands: play, cast, activate, pass, *, 0-9
 *
 play swamp
 *
 cast dark ritual</textarea>
-            <span style="color: #888; font-size: 11px;">play, cast, activate, pass, *, 0-9</span>
-        </div>
-        <div class="control-group" id="network-settings-group" style="display: none;">
-            <label>Network Settings</label>
-            <div style="display: flex; flex-direction: column; gap: 5px;">
-                <input type="text" id="server-url" placeholder="ws://localhost:17771"
-                    style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 220px;">
-                <input type="password" id="server-password" placeholder="Password"
-                    style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 220px;">
-                <input type="text" id="player-name" placeholder="Your name"
-                    style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 220px;">
+                </div>
+
+                <div class="pane-row">
+                    <label>Deck Collection</label>
+                    <select id="p1-collection">
+                        <option value="old_school">Old School 1994</option>
+                        <option value="test_decks">Test Decks</option>
+                        <option value="custom">Custom Decks (Local)</option>
+                    </select>
+                </div>
+
+                <div class="pane-row">
+                    <label>Deck</label>
+                    <select id="p1-deck"></select>
+                    <div class="deck-buttons" id="p1-deck-buttons" style="display: none;">
+                        <button id="p1-add-deck">+ New Deck</button>
+                        <button id="p1-edit-deck">Edit</button>
+                        <button id="p1-delete-deck" class="delete-btn">Delete</button>
+                    </div>
+                </div>
             </div>
-            <span style="color: #888; font-size: 11px;">Connect to a game server. P2 deck selection is ignored (opponent brings their own).</span>
-            <div id="network-status" style="color: #4cc9f0; font-size: 12px; margin-top: 5px;"></div>
-        </div>
-        <div class="control-group" id="p2-controller-group">
-            <label>P2 Controller</label>
-            <select id="p2-controller">
-                <option value="heuristic">Heuristic AI</option>
-                <option value="random">Random</option>
-                <option value="zero">Zero (Pass)</option>
-            </select>
-        </div>
-        <div class="control-group">
-            <label>Seed (for determinism)</label>
-            <input type="number" id="game-seed" value="" placeholder="Random" style="background: #16213e; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; width: 120px;">
-            <span style="color: #888; font-size: 11px;">Leave empty for random</span>
-        </div>
-        <div class="control-group">
-            <label>
-                <input type="checkbox" id="show-card-images" style="margin-right: 5px;">
-                Show Card Images
-            </label>
-        </div>
-        <div class="control-group" id="image-source-group">
-            <label>Image Sources (fallback order: Local → Scryfall → Gatherer)</label>
-            <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 4px;">
-                <label style="font-weight: normal; font-size: 12px;">
-                    <input type="checkbox" id="img-src-local" checked style="margin-right: 5px;">
-                    Local (fastest, works offline)
-                </label>
-                <label style="font-weight: normal; font-size: 12px;">
-                    <input type="checkbox" id="img-src-scryfall" checked style="margin-right: 5px;">
-                    Scryfall (high quality, may be blocked)
-                </label>
-                <label style="font-weight: normal; font-size: 12px;">
-                    <input type="checkbox" id="img-src-gatherer" checked style="margin-right: 5px;">
-                    Gatherer (official WotC)
-                </label>
+
+            <!-- Player 2 Pane -->
+            <div class="player-pane p2">
+                <h2><span class="player-icon">&#9820;</span> Player 2</h2>
+
+                <div class="pane-row" id="p2-controller-group">
+                    <label>Controller</label>
+                    <select id="p2-controller">
+                        <option value="heuristic">Heuristic AI</option>
+                        <option value="random">Random</option>
+                        <option value="zero">Zero (Pass)</option>
+                    </select>
+                </div>
+
+                <div class="pane-row">
+                    <label>Deck Collection</label>
+                    <select id="p2-collection">
+                        <option value="old_school">Old School 1994</option>
+                        <option value="test_decks">Test Decks</option>
+                        <option value="custom">Custom Decks (Local)</option>
+                    </select>
+                </div>
+
+                <div class="pane-row">
+                    <label>Deck</label>
+                    <select id="p2-deck"></select>
+                    <div class="deck-buttons" id="p2-deck-buttons" style="display: none;">
+                        <button id="p2-add-deck">+ New Deck</button>
+                        <button id="p2-edit-deck">Edit</button>
+                        <button id="p2-delete-deck" class="delete-btn">Delete</button>
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="control-group">
-            <label>
-                <input type="checkbox" id="debug-mode" style="margin-right: 5px;">
-                Debug Mode
-            </label>
-            <span style="color: #888; font-size: 11px;">Enable TRACE logging</span>
+
+        <!-- Launch Area -->
+        <div class="launch-area">
+            <button id="btn-launch" class="btn-launch">Launch Game</button>
         </div>
-        <button id="btn-launch">Launch Game</button>
-        <button id="btn-deck-builder" style="background: #2a9d8f;">Deck Builder</button>
-        <span class="help-text">Human: Up/Down=select, Enter=confirm, 1-9=quick select | AI: Space=turn, A=auto | Q=exit, Tab=cycle, ?=help</span>
+
+        <div class="launcher-help">
+            Human: Up/Down=select, Enter=confirm, 1-9=quick | AI: Space=turn, A=auto | Q=exit, Tab=cycle, ?=help
+        </div>
     </div>
+
+    <!-- Old setup-bar kept for compatibility but hidden -->
+    <div id="setup-bar" style="display: none;"></div>
 
     <div class="tui-container">
         <div id="loading" class="loading">
@@ -570,28 +862,9 @@ cast dark ritual</textarea>
                     console.warn('deck_index.json not found, will use fallback cards.bin');
                 }
 
-                // Get deck names and populate selectors
-                const deckNames = JSON.parse(cardDb.get_deck_names_json());
-                deckNames.sort();
-
-                const p1DeckSelect = document.getElementById('p1-deck');
-                const p2DeckSelect = document.getElementById('p2-deck');
-
-                for (const name of deckNames) {
-                    const info = JSON.parse(cardDb.get_deck_info_json(name));
-                    // Show card pack size if available from deck index
-                    const packInfo = deckIndex?.find(d => d.name === name);
-                    const sizeKB = packInfo ? ` ~${Math.round(packInfo.card_pack_bytes / 1024)}KB` : '';
-                    const optionText = `${name} (${info.main_deck_count} cards${sizeKB})`;
-
-                    p1DeckSelect.appendChild(new Option(optionText, name));
-                    p2DeckSelect.appendChild(new Option(optionText, name));
-                }
-
-                // Select different decks by default
-                if (deckNames.length >= 2) {
-                    p2DeckSelect.selectedIndex = 1;
-                }
+                // Store deck names for filtering by collection
+                window.allDeckNames = JSON.parse(cardDb.get_deck_names_json());
+                window.allDeckNames.sort();
 
                 // Restore saved settings from localStorage
                 restoreSettings();
@@ -602,22 +875,22 @@ cast dark ritual</textarea>
                 // NOTE: Cards are NOT loaded yet - they load on game launch
                 status.textContent = `WASM v${version()} | ${deckCount} decks ready (cards load on launch)`;
 
-                // Hide loading, show setup
+                // Hide loading, show launcher
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('setup-bar').style.display = 'flex';
+                document.getElementById('launcher').classList.add('show');
+
+                // Initialize deck collections and populate dropdowns
+                initDeckCollections();
 
                 // Set up launch button
                 document.getElementById('btn-launch').addEventListener('click', launchTui);
 
-                // Set up deck builder button (disabled if not available)
-                const deckBuilderBtn = document.getElementById('btn-deck-builder');
-                if (deckBuilderEnabled) {
-                    deckBuilderBtn.addEventListener('click', launchDeckBuilder);
-                } else {
-                    deckBuilderBtn.disabled = true;
-                    deckBuilderBtn.textContent = 'Deck Builder (N/A)';
-                    deckBuilderBtn.style.background = '#555';
-                }
+                // Set up deck builder buttons for both players
+                setupDeckBuilderButtons('p1');
+                setupDeckBuilderButtons('p2');
+
+                // Set up controller change handlers
+                setupControllerHandlers();
 
                 console.log(`MTG Forge WASM initialized: ${deckCount} decks ready (deferred card loading)`);
             } catch (error) {
@@ -729,6 +1002,9 @@ cast dark ritual</textarea>
 
         function saveSettings() {
             const settings = {
+                // Deck collections
+                p1Collection: document.getElementById('p1-collection').value,
+                p2Collection: document.getElementById('p2-collection').value,
                 p1Deck: document.getElementById('p1-deck').value,
                 p2Deck: document.getElementById('p2-deck').value,
                 p1Controller: document.getElementById('p1-controller').value,
@@ -756,22 +1032,15 @@ cast dark ritual</textarea>
 
                 const settings = JSON.parse(saved);
 
-                // Restore deck selections (only if the deck exists in the dropdown)
-                if (settings.p1Deck) {
-                    const p1Option = document.querySelector(`#p1-deck option[value="${settings.p1Deck}"]`);
-                    if (p1Option) document.getElementById('p1-deck').value = settings.p1Deck;
-                }
-                if (settings.p2Deck) {
-                    const p2Option = document.querySelector(`#p2-deck option[value="${settings.p2Deck}"]`);
-                    if (p2Option) document.getElementById('p2-deck').value = settings.p2Deck;
-                }
-
-                // Restore controller selections
+                // Restore controller selections first (affects UI visibility)
                 if (settings.p1Controller) {
                     document.getElementById('p1-controller').value = settings.p1Controller;
                     // Show/hide fixed script group based on restored controller
                     document.getElementById('fixed-script-group').style.display =
-                        settings.p1Controller === 'fixed' ? 'flex' : 'none';
+                        settings.p1Controller === 'fixed' ? 'block' : 'none';
+                    // Show/hide network settings
+                    document.getElementById('network-settings-group').style.display =
+                        settings.p1Controller === 'network' ? 'block' : 'none';
                 }
                 if (settings.p2Controller) {
                     document.getElementById('p2-controller').value = settings.p2Controller;
@@ -812,15 +1081,19 @@ cast dark ritual</textarea>
                     document.getElementById('player-name').value = settings.playerName;
                 }
 
-                // Show/hide network settings group based on restored controller
+                // Show/hide P2 options based on network mode
                 if (settings.p1Controller === 'network') {
-                    document.getElementById('network-settings-group').style.display = 'flex';
-                    // Hide P2 options in network mode
-                    const p2ControllerGroup = document.getElementById('p2-controller-group');
-                    const p2DeckGroup = document.getElementById('p2-deck')?.closest('.control-group');
-                    if (p2ControllerGroup) p2ControllerGroup.style.display = 'none';
-                    if (p2DeckGroup) p2DeckGroup.style.display = 'none';
+                    document.getElementById('p2-controller-group').style.display = 'none';
                 }
+
+                // Note: Deck collections are restored after initDeckCollections() populates them
+                // Store the desired collections/decks for later restoration
+                window.pendingSettings = {
+                    p1Collection: settings.p1Collection,
+                    p2Collection: settings.p2Collection,
+                    p1Deck: settings.p1Deck,
+                    p2Deck: settings.p2Deck
+                };
 
                 console.log('Restored settings from localStorage');
             } catch (e) {
@@ -828,10 +1101,53 @@ cast dark ritual</textarea>
             }
         }
 
+        // Restore deck selections after collections are initialized
+        function restoreDeckSelections() {
+            if (!window.pendingSettings) return;
+            const settings = window.pendingSettings;
+
+            // Valid collection values
+            const validCollections = ['old_school', 'test_decks', 'custom'];
+
+            // Restore collections and trigger dropdown updates
+            if (settings.p1Collection && validCollections.includes(settings.p1Collection)) {
+                document.getElementById('p1-collection').value = settings.p1Collection;
+                updateDeckDropdown('p1');
+            }
+            if (settings.p2Collection && validCollections.includes(settings.p2Collection)) {
+                document.getElementById('p2-collection').value = settings.p2Collection;
+                updateDeckDropdown('p2');
+            }
+
+            // Restore deck selections after dropdowns are populated
+            setTimeout(() => {
+                if (settings.p1Deck) {
+                    const p1Select = document.getElementById('p1-deck');
+                    for (let i = 0; i < p1Select.options.length; i++) {
+                        if (p1Select.options[i].value === settings.p1Deck) {
+                            p1Select.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+                if (settings.p2Deck) {
+                    const p2Select = document.getElementById('p2-deck');
+                    for (let i = 0; i < p2Select.options.length; i++) {
+                        if (p2Select.options[i].value === settings.p2Deck) {
+                            p2Select.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+                delete window.pendingSettings;
+            }, 0);
+        }
+
         // Add change listeners to save settings automatically
         function setupSettingsPersistence() {
             const controls = [
-                'p1-deck', 'p2-deck', 'p1-controller', 'p2-controller',
+                'p1-collection', 'p2-collection', 'p1-deck', 'p2-deck',
+                'p1-controller', 'p2-controller',
                 'fixed-script', 'game-seed', 'show-card-images',
                 'img-src-local', 'img-src-scryfall', 'img-src-gatherer', 'debug-mode',
                 // Network settings
@@ -2275,33 +2591,41 @@ cast dark ritual</textarea>
             console.log('[EXIT] TUI exited cleanly. Ready to launch new game.');
         };
 
-        // ==================== DECK BUILDER ====================
+        // ==================== DECK COLLECTIONS ====================
+
+        // Deck collections define which decks appear in each dropdown
+        const DECK_COLLECTIONS = {
+            'old_school': {
+                name: 'Old School 1994',
+                // Decks from old_school/ and old_school2/ directories
+                filter: (deckName) => deckName.includes('_') && (
+                    deckName.match(/^\d\d_/) || // 01_rogue, 02_thedeck, etc.
+                    deckName.includes('classic') ||
+                    deckName.includes('erhnam') ||
+                    deckName.includes('ponza') ||
+                    deckName.includes('stasis') ||
+                    deckName.includes('disco') ||
+                    deckName.includes('zoo') ||
+                    deckName.includes('monolith')
+                )
+            },
+            'test_decks': {
+                name: 'Test Decks',
+                // All other built-in decks
+                filter: (deckName) => !DECK_COLLECTIONS.old_school.filter(deckName)
+            },
+            'custom': {
+                name: 'Custom Decks (Local)',
+                filter: () => false // Custom decks handled separately
+            }
+        };
 
         // Custom decks storage key in localStorage
         const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
 
-        /**
-         * Load all cards for deck builder (needs full card database)
-         */
-        async function loadAllCards() {
-            const status = document.getElementById('status');
-            status.textContent = 'Loading full card database for deck builder...';
-
-            // Check if cards are already loaded (enough for deck builder)
-            if (cardDb.card_count() > 1000) {
-                console.log('[DeckBuilder] Card database already loaded');
-                return;
-            }
-
-            // Load full cards.bin for deck builder (it needs all cards for search)
-            const cardsResp = await fetch('./data/cards.bin');
-            if (!cardsResp.ok) {
-                throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-            }
-            const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-            cardDb.load_cards(cardsData);
-            console.log('[DeckBuilder] Loaded full card database');
-        }
+        // Track which player is currently editing (for deck builder callbacks)
+        let editingPlayer = null;
+        let editingDeckName = null;
 
         /**
          * Get custom decks from localStorage
@@ -2330,43 +2654,235 @@ cast dark ritual</textarea>
         }
 
         /**
-         * Launch the deck builder TUI
+         * Initialize deck collection dropdowns and wire up event handlers
          */
-        async function launchDeckBuilder() {
+        function initDeckCollections() {
+            // Set up collection change handlers
+            document.getElementById('p1-collection').addEventListener('change', () => updateDeckDropdown('p1'));
+            document.getElementById('p2-collection').addEventListener('change', () => updateDeckDropdown('p2'));
+
+            // Initial population
+            updateDeckDropdown('p1');
+            updateDeckDropdown('p2');
+
+            // Restore saved selections after initial population
+            restoreDeckSelections();
+        }
+
+        /**
+         * Update deck dropdown based on selected collection
+         */
+        function updateDeckDropdown(player) {
+            const collectionSelect = document.getElementById(`${player}-collection`);
+            const deckSelect = document.getElementById(`${player}-deck`);
+            const deckButtons = document.getElementById(`${player}-deck-buttons`);
+            const collection = collectionSelect.value;
+
+            // Clear existing options
+            deckSelect.innerHTML = '';
+
+            if (collection === 'custom') {
+                // Show custom deck management buttons
+                deckButtons.style.display = 'flex';
+
+                // Populate with custom decks from localStorage
+                const customDecks = getCustomDecks();
+                const deckNames = Object.keys(customDecks).sort();
+
+                if (deckNames.length === 0) {
+                    deckSelect.appendChild(new Option('(No custom decks yet)', ''));
+                } else {
+                    for (const name of deckNames) {
+                        const deck = customDecks[name];
+                        const cardCount = deck.main_deck?.reduce((sum, [_, count]) => sum + count, 0) || 0;
+                        deckSelect.appendChild(new Option(`${name} (${cardCount} cards)`, name));
+                    }
+                }
+
+                // Update edit/delete button states
+                updateDeckButtonStates(player);
+            } else {
+                // Hide custom deck buttons for built-in collections
+                deckButtons.style.display = 'none';
+
+                // Filter built-in decks by collection
+                const collectionConfig = DECK_COLLECTIONS[collection];
+                if (!collectionConfig) {
+                    // Invalid collection, default to test_decks
+                    collectionSelect.value = 'test_decks';
+                    updateDeckDropdown(player);
+                    return;
+                }
+                const matchingDecks = (window.allDeckNames || []).filter(collectionConfig.filter);
+
+                if (matchingDecks.length === 0) {
+                    deckSelect.appendChild(new Option('(No decks in this collection)', ''));
+                } else {
+                    for (const name of matchingDecks) {
+                        const info = JSON.parse(cardDb.get_deck_info_json(name));
+                        const packInfo = deckIndex?.find(d => d.name === name);
+                        const sizeKB = packInfo ? ` ~${Math.round(packInfo.card_pack_bytes / 1024)}KB` : '';
+                        deckSelect.appendChild(new Option(`${name} (${info.main_deck_count} cards${sizeKB})`, name));
+                    }
+                }
+            }
+
+            // Select different decks for P2 by default
+            if (player === 'p2' && deckSelect.options.length > 1) {
+                deckSelect.selectedIndex = 1;
+            }
+        }
+
+        /**
+         * Update edit/delete button states based on selection
+         */
+        function updateDeckButtonStates(player) {
+            const deckSelect = document.getElementById(`${player}-deck`);
+            const editBtn = document.getElementById(`${player}-edit-deck`);
+            const deleteBtn = document.getElementById(`${player}-delete-deck`);
+            const hasSelection = deckSelect.value && deckSelect.value !== '';
+
+            editBtn.disabled = !hasSelection || !deckBuilderEnabled;
+            deleteBtn.disabled = !hasSelection;
+        }
+
+        /**
+         * Set up deck builder buttons for a player
+         */
+        function setupDeckBuilderButtons(player) {
+            const addBtn = document.getElementById(`${player}-add-deck`);
+            const editBtn = document.getElementById(`${player}-edit-deck`);
+            const deleteBtn = document.getElementById(`${player}-delete-deck`);
+            const deckSelect = document.getElementById(`${player}-deck`);
+
+            // Disable buttons if deck builder not available
+            if (!deckBuilderEnabled) {
+                addBtn.disabled = true;
+                addBtn.title = 'Deck builder not available in this build';
+                editBtn.disabled = true;
+                editBtn.title = 'Deck builder not available in this build';
+            }
+
+            // Add deck button
+            addBtn.addEventListener('click', () => {
+                const deckName = prompt('Enter a name for the new deck:');
+                if (deckName && deckName.trim()) {
+                    launchDeckBuilderForPlayer(player, deckName.trim(), null);
+                }
+            });
+
+            // Edit deck button
+            editBtn.addEventListener('click', () => {
+                const selectedDeck = deckSelect.value;
+                if (selectedDeck) {
+                    const customDecks = getCustomDecks();
+                    const deckData = customDecks[selectedDeck];
+                    if (deckData) {
+                        launchDeckBuilderForPlayer(player, selectedDeck, deckData);
+                    }
+                }
+            });
+
+            // Delete deck button
+            deleteBtn.addEventListener('click', () => {
+                const selectedDeck = deckSelect.value;
+                if (selectedDeck && confirm(`Delete deck "${selectedDeck}"?`)) {
+                    const customDecks = getCustomDecks();
+                    delete customDecks[selectedDeck];
+                    saveCustomDecks(customDecks);
+                    updateDeckDropdown(player);
+                }
+            });
+
+            // Update button states when selection changes
+            deckSelect.addEventListener('change', () => updateDeckButtonStates(player));
+        }
+
+        /**
+         * Set up controller change handlers
+         */
+        function setupControllerHandlers() {
+            const p1Controller = document.getElementById('p1-controller');
+            const networkSettings = document.getElementById('network-settings-group');
+            const fixedScript = document.getElementById('fixed-script-group');
+            const p2ControllerGroup = document.getElementById('p2-controller-group');
+
+            p1Controller.addEventListener('change', () => {
+                const value = p1Controller.value;
+
+                // Show/hide network settings
+                networkSettings.style.display = value === 'network' ? 'block' : 'none';
+
+                // Show/hide fixed script
+                fixedScript.style.display = value === 'fixed' ? 'block' : 'none';
+
+                // Hide P2 controller when network mode (opponent brings their own)
+                p2ControllerGroup.style.display = value === 'network' ? 'none' : 'block';
+            });
+        }
+
+        /**
+         * Load all cards for deck builder (needs full card database)
+         */
+        async function loadAllCards() {
+            const status = document.getElementById('status');
+            status.textContent = 'Loading full card database for deck builder...';
+
+            // Check if cards are already loaded (enough for deck builder)
+            if (cardDb.card_count() > 1000) {
+                console.log('[DeckBuilder] Card database already loaded');
+                return;
+            }
+
+            // Load full cards.bin for deck builder (it needs all cards for search)
+            const cardsResp = await fetch('./data/cards.bin');
+            if (!cardsResp.ok) {
+                throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+            }
+            const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
+            cardDb.load_cards(cardsData);
+            console.log('[DeckBuilder] Loaded full card database');
+        }
+
+        /**
+         * Launch deck builder for a specific player
+         * @param {string} player - 'p1' or 'p2'
+         * @param {string} deckName - Name of deck to create/edit
+         * @param {object|null} existingDeck - Existing deck data to edit, or null for new deck
+         */
+        async function launchDeckBuilderForPlayer(player, deckName, existingDeck) {
             if (!deckBuilderEnabled) {
                 alert('Deck builder is not available in this build.');
                 return;
             }
 
-            const deckBuilderBtn = document.getElementById('btn-deck-builder');
-            deckBuilderBtn.disabled = true;
-            deckBuilderBtn.textContent = 'Loading...';
+            editingPlayer = player;
+            editingDeckName = deckName;
 
             try {
                 // Load all cards for deck builder
                 await loadAllCards();
 
-                // Hide setup bar and header
-                document.getElementById('setup-bar').style.display = 'none';
+                // Hide launcher and header
+                document.getElementById('launcher').classList.remove('show');
                 document.getElementById('header-bar').style.display = 'none';
 
                 // Show RatZilla terminal container
                 const terminal = document.getElementById('ratzilla-terminal');
                 terminal.style.display = 'block';
 
-                // Launch the deck builder
-                launch_deck_builder(cardDb, null);
+                // Convert existing deck to JSON format if provided
+                const initialDeckJson = existingDeck ? JSON.stringify(existingDeck) : null;
 
-                // Set up save callback - saves deck to localStorage
+                // Launch the deck builder
+                launch_deck_builder(cardDb, initialDeckJson);
+
+                // Set up save callback - saves deck to localStorage with the specified name
                 deck_builder_set_save_callback((deckJson) => {
-                    console.log('[DeckBuilder] Save callback received:', deckJson);
-                    const deckName = prompt('Enter a name for this deck:');
-                    if (deckName && deckName.trim()) {
-                        const customDecks = getCustomDecks();
-                        customDecks[deckName.trim()] = JSON.parse(deckJson);
-                        saveCustomDecks(customDecks);
-                        alert(`Deck "${deckName}" saved!`);
-                    }
+                    console.log('[DeckBuilder] Save callback received for:', editingDeckName);
+                    const customDecks = getCustomDecks();
+                    customDecks[editingDeckName] = JSON.parse(deckJson);
+                    saveCustomDecks(customDecks);
                     exitDeckBuilder();
                 });
 
@@ -2378,19 +2894,19 @@ cast dark ritual</textarea>
 
                 // Update status
                 const status = document.getElementById('status');
-                status.textContent = 'Deck Builder active | ESC to exit';
+                status.textContent = `Editing: ${deckName} | ESC to exit`;
 
-                console.log('[DeckBuilder] Deck builder launched');
+                console.log('[DeckBuilder] Deck builder launched for', player, deckName);
             } catch (error) {
                 console.error('[DeckBuilder] Failed to launch:', error);
                 alert('Failed to launch deck builder: ' + error.message);
-                deckBuilderBtn.disabled = false;
-                deckBuilderBtn.textContent = 'Deck Builder';
+                editingPlayer = null;
+                editingDeckName = null;
             }
         }
 
         /**
-         * Exit the deck builder and return to setup
+         * Exit the deck builder and return to launcher
          */
         function exitDeckBuilder() {
             // Clean up deck builder state
@@ -2403,14 +2919,31 @@ cast dark ritual</textarea>
             terminal.style.display = 'none';
             terminal.innerHTML = ''; // Clear RatZilla content
 
-            // Show setup bar and header
-            document.getElementById('setup-bar').style.display = 'flex';
+            // Show launcher and header
+            document.getElementById('launcher').classList.add('show');
             document.getElementById('header-bar').style.display = 'flex';
 
-            // Re-enable deck builder button
-            const deckBuilderBtn = document.getElementById('btn-deck-builder');
-            deckBuilderBtn.disabled = false;
-            deckBuilderBtn.textContent = 'Deck Builder';
+            // Refresh the deck dropdown for the player that was editing
+            if (editingPlayer) {
+                // Switch to custom collection if not already
+                const collectionSelect = document.getElementById(`${editingPlayer}-collection`);
+                collectionSelect.value = 'custom';
+                updateDeckDropdown(editingPlayer);
+
+                // Try to select the edited deck
+                const deckSelect = document.getElementById(`${editingPlayer}-deck`);
+                if (editingDeckName) {
+                    for (let i = 0; i < deckSelect.options.length; i++) {
+                        if (deckSelect.options[i].value === editingDeckName) {
+                            deckSelect.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            editingPlayer = null;
+            editingDeckName = null;
 
             console.log('[DeckBuilder] Exited deck builder');
         }
