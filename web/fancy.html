@@ -521,6 +521,8 @@
         <h1>MTG Forge - Fancy TUI</h1>
         <a href="index.html">Back to simple view</a>
         <span id="status">Loading...</span>
+        <span id="card-status" style="color: #888; font-size: 12px;"></span>
+        <button id="btn-load-all-cards" style="display: none; background: #4361ee; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;">Load All Cards</button>
     </div>
 
     <!-- Exit confirmation dialog -->
@@ -976,6 +978,12 @@ Name=My Deck
                 // Set up controller change handlers
                 setupControllerHandlers();
 
+                // Set up "Load All Cards" button
+                document.getElementById('btn-load-all-cards').addEventListener('click', loadAllCards);
+
+                // Update card status display (initially 0 cards loaded)
+                updateCardStatus();
+
                 console.log(`MTG Forge WASM initialized: ${deckCount} decks ready (deferred card loading)`);
             } catch (error) {
                 document.getElementById('loading').innerHTML = `
@@ -989,6 +997,75 @@ Name=My Deck
                     </div>
                 `;
                 console.error('Failed to initialize:', error);
+            }
+        }
+
+        // Track whether full card database has been loaded
+        let fullCardsLoaded = false;
+
+        /**
+         * Update the card status display in the header bar
+         * Shows current card count and Load All button if not fully loaded
+         */
+        function updateCardStatus() {
+            const cardStatus = document.getElementById('card-status');
+            const loadAllBtn = document.getElementById('btn-load-all-cards');
+
+            if (!cardDb) {
+                cardStatus.textContent = '';
+                loadAllBtn.style.display = 'none';
+                return;
+            }
+
+            const count = cardDb.card_count();
+            if (fullCardsLoaded) {
+                // Full database loaded - highlight in cyan
+                cardStatus.textContent = `| ${count.toLocaleString()} cards loaded`;
+                cardStatus.style.color = '#4cc9f0';
+                loadAllBtn.style.display = 'none';
+            } else if (count > 0) {
+                // Partial cards loaded (from deck packs)
+                cardStatus.textContent = `| ${count.toLocaleString()} cards loaded`;
+                cardStatus.style.color = '#888';
+                loadAllBtn.style.display = 'inline-block';
+            } else {
+                // No cards loaded yet
+                cardStatus.textContent = '';
+                loadAllBtn.style.display = 'inline-block';
+            }
+        }
+
+        /**
+         * Load all cards from the full cards.bin database
+         * Called when user clicks "Load All Cards" button
+         */
+        async function loadAllCards() {
+            const loadAllBtn = document.getElementById('btn-load-all-cards');
+            const cardStatus = document.getElementById('card-status');
+            const originalText = loadAllBtn.textContent;
+
+            try {
+                loadAllBtn.disabled = true;
+                loadAllBtn.textContent = 'Loading...';
+                cardStatus.textContent = '| Loading full database...';
+                cardStatus.style.color = '#ffd700';  // Yellow while loading
+
+                const cardsResp = await fetch('./data/cards.bin');
+                if (!cardsResp.ok) {
+                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                }
+                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
+                cardDb.load_cards(cardsData);
+                fullCardsLoaded = true;
+
+                console.log(`Loaded all ${cardDb.card_count()} cards`);
+                updateCardStatus();
+            } catch (e) {
+                console.error('Failed to load all cards:', e);
+                cardStatus.textContent = '| Load failed';
+                cardStatus.style.color = '#ff6b6b';
+                loadAllBtn.textContent = originalText;
+                loadAllBtn.disabled = false;
             }
         }
 
@@ -1059,8 +1136,8 @@ Name=My Deck
                 console.log('Loading full cards.bin...');
 
                 // Check if cards are already loaded (from deck builder session)
-                if (cardDb.card_count() > 1000) {
-                    console.log(`Cards already loaded (${cardDb.card_count()} cards), skipping reload`);
+                if (fullCardsLoaded) {
+                    console.log(`Full database already loaded (${cardDb.card_count()} cards), skipping reload`);
                 } else {
                     const cardsResp = await fetch('./data/cards.bin');
                     if (!cardsResp.ok) {
@@ -1068,6 +1145,7 @@ Name=My Deck
                     }
                     const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
                     cardDb.load_cards(cardsData);
+                    fullCardsLoaded = true;
                     console.log('Loaded full card database');
                 }
             }
@@ -1079,6 +1157,9 @@ Name=My Deck
                     throw new Error(`Missing cards for ${deckName}: ${missing.join(', ')}`);
                 }
             }
+
+            // Update card status display
+            updateCardStatus();
 
             status.textContent = `Cards loaded for ${uniqueDecks.join(' vs ')}`;
             return loadedFromPacks === uniqueDecks.length && !hasCustomDeck;  // true if all from packs
@@ -3224,12 +3305,12 @@ Name=My Deck
         /**
          * Load all cards for deck builder (needs full card database)
          */
-        async function loadAllCards() {
+        async function loadAllCardsForDeckBuilder() {
             const status = document.getElementById('status');
             status.textContent = 'Loading full card database for deck builder...';
 
-            // Check if cards are already loaded (enough for deck builder)
-            if (cardDb.card_count() > 1000) {
+            // Check if cards are already loaded
+            if (fullCardsLoaded) {
                 console.log('[DeckBuilder] Card database already loaded');
                 return;
             }
@@ -3241,6 +3322,8 @@ Name=My Deck
             }
             const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
             cardDb.load_cards(cardsData);
+            fullCardsLoaded = true;
+            updateCardStatus();
             console.log('[DeckBuilder] Loaded full card database');
         }
 
@@ -3277,7 +3360,7 @@ Name=My Deck
                 document.getElementById('header-bar').style.display = 'none';
 
                 // Load all cards for deck builder
-                await loadAllCards();
+                await loadAllCardsForDeckBuilder();
 
                 // Hide loading indicator
                 loading.style.display = 'none';
