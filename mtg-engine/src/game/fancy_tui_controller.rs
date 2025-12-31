@@ -188,10 +188,10 @@ impl FancyTuiController {
                     Event::Mouse(mouse_event) => {
                         let (x, y) = (mouse_event.column, mouse_event.row);
 
-                        // Handle scroll wheel for Info pane
+                        // Handle scroll wheel for Log pane
                         match mouse_event.kind {
                             MouseEventKind::ScrollUp => {
-                                if let Some(info_area) = self.renderer.state.info_pane_area {
+                                if let Some(info_area) = self.renderer.state.log_pane_area {
                                     if x >= info_area.x
                                         && x < info_area.x + info_area.width
                                         && y >= info_area.y
@@ -203,7 +203,7 @@ impl FancyTuiController {
                                 }
                             }
                             MouseEventKind::ScrollDown => {
-                                if let Some(info_area) = self.renderer.state.info_pane_area {
+                                if let Some(info_area) = self.renderer.state.log_pane_area {
                                     if x >= info_area.x
                                         && x < info_area.x + info_area.width
                                         && y >= info_area.y
@@ -215,8 +215,8 @@ impl FancyTuiController {
                                 }
                             }
                             MouseEventKind::ScrollLeft => {
-                                // Horizontal scroll left in Info pane (when not wrapping)
-                                if let Some(info_area) = self.renderer.state.info_pane_area {
+                                // Horizontal scroll left in Log pane (when not wrapping)
+                                if let Some(info_area) = self.renderer.state.log_pane_area {
                                     if x >= info_area.x
                                         && x < info_area.x + info_area.width
                                         && y >= info_area.y
@@ -229,8 +229,8 @@ impl FancyTuiController {
                                 }
                             }
                             MouseEventKind::ScrollRight => {
-                                // Horizontal scroll right in Info pane (when not wrapping)
-                                if let Some(info_area) = self.renderer.state.info_pane_area {
+                                // Horizontal scroll right in Log pane (when not wrapping)
+                                if let Some(info_area) = self.renderer.state.log_pane_area {
                                     if x >= info_area.x
                                         && x < info_area.x + info_area.width
                                         && y >= info_area.y
@@ -261,14 +261,14 @@ impl FancyTuiController {
                                 }
                             }
 
-                            // Check if Info pane was clicked
-                            if let Some(info_area) = self.renderer.state.info_pane_area {
+                            // Check if Log pane was clicked
+                            if let Some(info_area) = self.renderer.state.log_pane_area {
                                 if x >= info_area.x
                                     && x < info_area.x + info_area.width
                                     && y >= info_area.y
                                     && y < info_area.y + info_area.height
                                 {
-                                    self.renderer.state.focused_pane = FocusedPane::Info;
+                                    self.renderer.state.focused_pane = FocusedPane::Log;
                                     return Ok(InputAction::Continue); // Redraw with new focus
                                 }
                             }
@@ -331,8 +331,8 @@ impl FancyTuiController {
                                 }
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('i') | KeyCode::Char('I') => {
-                                self.renderer.state.focused_pane = FocusedPane::Info;
+                            KeyCode::Char('l') | KeyCode::Char('L') => {
+                                self.renderer.state.focused_pane = FocusedPane::Log;
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -436,7 +436,7 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
-                                    FocusedPane::Info => {
+                                    FocusedPane::Log => {
                                         // Scroll log up (toward older messages)
                                         self.renderer.state.log_scroll_up(usize::MAX, 10);
                                         return Ok(InputAction::Continue);
@@ -506,7 +506,7 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
-                                    FocusedPane::Info => {
+                                    FocusedPane::Log => {
                                         // Scroll log down (toward newer messages)
                                         self.renderer.state.log_scroll_down();
                                         return Ok(InputAction::Continue);
@@ -573,7 +573,7 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
-                                    FocusedPane::Info => {
+                                    FocusedPane::Log => {
                                         // Scroll to previous turn header
                                         let logs = view.logger().logs();
                                         let visible_lines = self.renderer.state.log_visible_lines;
@@ -645,7 +645,7 @@ impl FancyTuiController {
                                         }
                                         return Ok(InputAction::Continue);
                                     }
-                                    FocusedPane::Info => {
+                                    FocusedPane::Log => {
                                         // Scroll to next turn header
                                         let logs = view.logger().logs();
                                         let visible_lines = self.renderer.state.log_visible_lines;
@@ -683,8 +683,8 @@ impl FancyTuiController {
                                             self.renderer.state.selected_card_id = Some(card_id);
                                         }
                                     }
-                                    FocusedPane::Info | FocusedPane::Actions => {
-                                        // Info pane doesn't have cards to select
+                                    FocusedPane::Log | FocusedPane::Actions => {
+                                        // Log pane doesn't have cards to select
                                         // Actions pane (with Stack) already handled above
                                     }
                                 }
@@ -723,37 +723,37 @@ impl FancyTuiController {
                                 }
                             }
                             KeyCode::Char('w') | KeyCode::Char('W') => {
-                                // W: Toggle line wrapping in log (only when Info pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                // W: Toggle line wrapping in log (only when Log pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Log {
                                     let logs = view.logger().logs();
                                     self.renderer.state.log_toggle_wrap(logs.len());
                                     return Ok(InputAction::Continue);
                                 }
                             }
                             KeyCode::PageUp => {
-                                // Page up in log (only when Info pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                // Page up in log (only when Log pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Log {
                                     self.renderer.state.log_page_up(usize::MAX, 10);
                                     return Ok(InputAction::Continue);
                                 }
                             }
                             KeyCode::PageDown => {
-                                // Page down in log (only when Info pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                // Page down in log (only when Log pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Log {
                                     self.renderer.state.log_page_down(10);
                                     return Ok(InputAction::Continue);
                                 }
                             }
                             KeyCode::Home => {
-                                // Scroll to beginning (only when Info pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                // Scroll to beginning (only when Log pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Log {
                                     self.renderer.state.log_scroll_home(usize::MAX, 10);
                                     return Ok(InputAction::Continue);
                                 }
                             }
                             KeyCode::End => {
-                                // Scroll to end (only when Info pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Info {
+                                // Scroll to end (only when Log pane is focused)
+                                if self.renderer.state.focused_pane == FocusedPane::Log {
                                     self.renderer.state.log_scroll_end();
                                     return Ok(InputAction::Continue);
                                 }

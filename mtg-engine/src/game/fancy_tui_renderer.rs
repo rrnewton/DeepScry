@@ -24,26 +24,19 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use smallvec::SmallVec;
 use std::collections::HashMap;
-
-/// Tab indices for left panels (Combat|Log only)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LeftTab {
-    Combat = 0,
-    Log = 1,
-}
 
 /// Currently focused pane for keyboard navigation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPane {
     /// (H)and pane
     Hand,
-    /// (I)nfo pane (Combat/Log)
-    Info,
+    /// (L)og pane
+    Log,
     /// (Y)our battlefield
     YourBattlefield,
     /// (O)pponent battlefield
@@ -571,8 +564,6 @@ impl RenderConfig {
 
 /// UI state for the fancy TUI renderer
 pub struct FancyTuiState {
-    /// Currently selected left tab
-    pub left_tab: LeftTab,
     /// Currently highlighted choice index (if in choice mode)
     pub highlighted_choice: usize,
     /// Currently selected card for details view
@@ -599,8 +590,8 @@ pub struct FancyTuiState {
     pub hand_pane_area: Option<Rect>,
     /// Card Details pane area (for image overlay positioning)
     pub card_details_pane_area: Option<Rect>,
-    /// Info pane area (for mouse click detection and scroll wheel)
-    pub info_pane_area: Option<Rect>,
+    /// Log pane area (for mouse click detection and scroll wheel)
+    pub log_pane_area: Option<Rect>,
     /// Rewind message to display after undo operation
     pub rewind_message: Option<String>,
     /// Log scroll offset (0 = follow mode, showing latest; >0 = scrolled up by N lines)
@@ -626,7 +617,6 @@ impl Default for FancyTuiState {
 impl FancyTuiState {
     pub fn new() -> Self {
         Self {
-            left_tab: LeftTab::Log, // Log is default tab
             highlighted_choice: 0,
             selected_card_id: None,
             logger_memory_mode_enabled: false,
@@ -640,7 +630,7 @@ impl FancyTuiState {
             actions_pane_area: None,
             hand_pane_area: None,
             card_details_pane_area: None,
-            info_pane_area: None,
+            log_pane_area: None,
             rewind_message: None,
             log_scroll_offset: 0,     // 0 = follow mode (show latest)
             log_horizontal_offset: 0, // 0 = no horizontal scroll
@@ -884,7 +874,7 @@ pub struct FancyTuiRenderer {
 
 impl FancyTuiRenderer {
     // Minimum acceptable widths for each pane (in terminal columns)
-    pub const MIN_WIDTH_INFO_PANE: u16 = 40; // Combat/Log pane (left column top)
+    pub const MIN_WIDTH_LOG_PANE: u16 = 40; // Log pane (left column top)
     pub const MIN_WIDTH_ACTIONS_PANE: u16 = 40; // Prompt/Actions pane (left column bottom, includes stack)
     pub const MIN_WIDTH_CARD_DETAILS: u16 = 30; // Card details pane (right column top)
     pub const MIN_WIDTH_HAND: u16 = 30; // Hand pane (right column bottom)
@@ -1399,7 +1389,7 @@ impl FancyTuiRenderer {
         self.state.entity_positions.clear();
         self.state.actions_pane_area = None;
         self.state.hand_pane_area = None;
-        self.state.info_pane_area = None;
+        self.state.log_pane_area = None;
 
         // Calculate optimal column widths
         // Try to boost left column width by 20% if all panes remain above their minimums
@@ -1411,7 +1401,7 @@ impl FancyTuiRenderer {
         let boosted_right_width = total_width.saturating_sub(boosted_left_width + boosted_middle_width);
 
         // Check if all panes would meet their minimum widths with boosted layout
-        let can_boost = boosted_left_width >= Self::MIN_WIDTH_INFO_PANE
+        let can_boost = boosted_left_width >= Self::MIN_WIDTH_LOG_PANE
             && boosted_left_width >= Self::MIN_WIDTH_ACTIONS_PANE
             && boosted_middle_width >= Self::MIN_WIDTH_BATTLEFIELD
             && boosted_right_width >= Self::MIN_WIDTH_CARD_DETAILS
@@ -1442,7 +1432,7 @@ impl FancyTuiRenderer {
             ])
             .split(f.area());
 
-        // Left column: Info tabs (Combat/Log) on top, Actions/Prompt on bottom
+        // Left column: Log on top, Actions/Prompt on bottom
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -1481,16 +1471,16 @@ impl FancyTuiRenderer {
         let middle_chunks = [top_half[0], top_half[1], bottom_half[0], bottom_half[1]];
 
         // Right column: Card Details (top 50%), Hand+Stack (bottom 50%)
-        // Matches left column layout: Info tabs (top 50%), Actions (bottom 50%)
-        // Card Details starts at row 0, aligned with Info pane
+        // Matches left column layout: Log (top 50%), Actions (bottom 50%)
+        // Card Details starts at row 0, aligned with Log pane
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_chunks[2]);
 
         // Draw all panels
-        self.draw_left_tabs(f, left_chunks[0], view);
-        self.state.info_pane_area = Some(left_chunks[0]);
+        self.draw_log_pane(f, left_chunks[0], view);
+        self.state.log_pane_area = Some(left_chunks[0]);
         self.draw_prompt(f, left_chunks[1], view, current_prompt, choices);
         self.state.actions_pane_area = Some(left_chunks[1]);
 
@@ -1506,7 +1496,7 @@ impl FancyTuiRenderer {
         self.draw_player_info(f, middle_chunks[3], view, view.player_id());
 
         // Draw right column
-        // right_chunks[0] is Card Details (starts at row 0, aligned with Info pane)
+        // right_chunks[0] is Card Details (starts at row 0, aligned with Log pane)
         // right_chunks[1] is Hand+Stack (aligned with Actions pane)
         self.draw_card_details(f, right_chunks[0], view);
         self.draw_hand(f, right_chunks[1], view);
@@ -1514,233 +1504,73 @@ impl FancyTuiRenderer {
         self.state.card_details_pane_area = Some(right_chunks[0]);
     }
 
-    /// Draw the left column tabs (Combat/Log)
-    fn draw_left_tabs(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
-        let is_focused = self.state.focused_pane == FocusedPane::Info;
+    /// Draw the Log pane (left column top)
+    fn draw_log_pane(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
+        let is_focused = self.state.focused_pane == FocusedPane::Log;
 
-        // Create tab titles with highlighting for selected tab
-        let titles: Vec<Line> = ["Combat", "Log"]
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                let style = if i == self.state.left_tab as usize {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Gray)
-                };
-                Line::from(Span::styled(*t, style))
-            })
-            .collect();
+        // Draw the block with title
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(if is_focused { " Log (L) [FOCUSED] " } else { " Log (L) " })
+            .border_style(if is_focused {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            });
+        f.render_widget(block, area);
 
-        let tabs = Tabs::new(titles)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(if is_focused {
-                        " Info (I) [FOCUSED] "
-                    } else {
-                        " Info (I) "
-                    })
-                    .border_style(if is_focused {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    }),
-            )
-            .select(self.state.left_tab as usize)
-            .highlight_style(Style::default().fg(Color::Yellow));
-
-        f.render_widget(tabs, area);
-
-        // Draw content area below tabs
+        // Content area inside the border
         let content_area = Rect {
             x: area.x + 1,
-            y: area.y + 2,
+            y: area.y + 1,
             width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(3),
+            height: area.height.saturating_sub(2),
         };
 
-        match self.state.left_tab {
-            LeftTab::Combat => self.draw_combat_view(f, content_area, view),
-            LeftTab::Log => {
-                self.draw_log_view(f, content_area, view);
+        self.draw_log_view(f, content_area, view);
 
-                // Render log status on the tab header line (right side)
-                // Use wrapped line count when in wrap mode
-                let visible_lines = content_area.height as usize;
-                let (total_lines, scroll_offset) = if self.state.log_wrap_lines {
-                    let total = self.state.log_wrap_cache.lines.len();
-                    let max_offset = total.saturating_sub(visible_lines);
-                    (total, self.state.log_scroll_offset.min(max_offset))
-                } else {
-                    let logs = view.logger().logs();
-                    let total = logs.len();
-                    let max_offset = total.saturating_sub(visible_lines);
-                    (total, self.state.log_scroll_offset.min(max_offset))
-                };
-                let end_idx = total_lines.saturating_sub(scroll_offset);
-                let start_idx = end_idx.saturating_sub(visible_lines);
-
-                // Build status string
-                let status_text = if scroll_offset == 0 {
-                    format!("{}-{}/{} [F]", start_idx + 1, end_idx, total_lines)
-                } else {
-                    format!("{}-{}/{}", start_idx + 1, end_idx, total_lines)
-                };
-                let wrap_indicator = if self.state.log_wrap_lines { " [W]" } else { "" };
-                let full_status = format!("{}{}", status_text, wrap_indicator);
-
-                // Render on the tab header line (row 1 inside border = area.y + 1)
-                let status_width = full_status.len() as u16;
-                let inner_width = area.width.saturating_sub(2); // Account for borders
-                if status_width < inner_width {
-                    let status_area = Rect {
-                        x: area.x + area.width - status_width - 1, // -1 for right border
-                        y: area.y + 1,                             // Tab header line
-                        width: status_width,
-                        height: 1,
-                    };
-                    let status_span = Span::styled(full_status, Style::default().fg(Color::DarkGray));
-                    f.render_widget(Paragraph::new(Line::from(status_span)), status_area);
-                }
-            }
-        }
-    }
-
-    /// Draw the combat view panel
-    fn draw_combat_view(&self, f: &mut Frame, area: Rect, view: &GameStateView) {
-        let combat = view.combat();
-
-        let mut lines = Vec::new();
-
-        // Show phase info
-        let step_abbrev = Self::step_abbrev(view.current_step());
-        lines.push(Line::from(vec![
-            Span::raw("Phase: "),
-            Span::styled(format!("{:?}", view.current_step()), Style::default().fg(Color::Yellow)),
-            Span::raw(format!(" ({})", step_abbrev)),
-        ]));
-
-        lines.push(Line::from(""));
-
-        if combat.combat_active {
-            // Show attacking creatures
-            if !combat.attackers.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    format!("Attackers ({}):", combat.attackers.len()),
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )));
-
-                for &attacker_id in combat.attackers.keys() {
-                    let name = view
-                        .card_name(attacker_id)
-                        .unwrap_or_else(|| format!("{:?}", attacker_id));
-
-                    // Get P/T
-                    let pt = if let Some(card) = view.get_card(attacker_id) {
-                        let power = view
-                            .get_effective_power(attacker_id)
-                            .unwrap_or(card.current_power() as i32);
-                        let toughness = view
-                            .get_effective_toughness(attacker_id)
-                            .unwrap_or(card.current_toughness() as i32);
-                        format!(" {}/{}", power, toughness)
-                    } else {
-                        String::new()
-                    };
-
-                    // Check for blockers from attacker_blockers map
-                    let blockers = combat.attacker_blockers.get(&attacker_id);
-
-                    if blockers.is_none_or(|b| b.is_empty()) {
-                        lines.push(Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(name, Style::default().fg(Color::Red)),
-                            Span::styled(pt, Style::default().fg(Color::Gray)),
-                            Span::styled(" (unblocked)", Style::default().fg(Color::DarkGray)),
-                        ]));
-                    } else {
-                        let blocker_names: Vec<String> = blockers
-                            .unwrap()
-                            .iter()
-                            .map(|&b| view.card_name(b).unwrap_or_else(|| format!("{:?}", b)))
-                            .collect();
-                        lines.push(Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(name, Style::default().fg(Color::Red)),
-                            Span::styled(pt, Style::default().fg(Color::Gray)),
-                            Span::styled(
-                                format!(" <- {}", blocker_names.join(", ")),
-                                Style::default().fg(Color::Blue),
-                            ),
-                        ]));
-                    }
-                }
-            } else {
-                lines.push(Line::from(Span::styled(
-                    "No attackers",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-
-            lines.push(Line::from(""));
-
-            // Show defending creatures that are blocking
-            if !combat.blockers.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    format!("Blockers ({}):", combat.blockers.len()),
-                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
-                )));
-
-                for (&blocker_id, blocked_attackers) in &combat.blockers {
-                    let name = view
-                        .card_name(blocker_id)
-                        .unwrap_or_else(|| format!("{:?}", blocker_id));
-
-                    // Get what it's blocking
-                    let blocking_names: Vec<String> = blocked_attackers
-                        .iter()
-                        .map(|&a| view.card_name(a).unwrap_or_else(|| format!("{:?}", a)))
-                        .collect();
-
-                    let pt = if let Some(card) = view.get_card(blocker_id) {
-                        let power = view
-                            .get_effective_power(blocker_id)
-                            .unwrap_or(card.current_power() as i32);
-                        let toughness = view
-                            .get_effective_toughness(blocker_id)
-                            .unwrap_or(card.current_toughness() as i32);
-                        format!(" {}/{}", power, toughness)
-                    } else {
-                        String::new()
-                    };
-
-                    if !blocking_names.is_empty() {
-                        lines.push(Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(name, Style::default().fg(Color::Blue)),
-                            Span::styled(pt, Style::default().fg(Color::Gray)),
-                            Span::styled(
-                                format!(" -> {}", blocking_names.join(", ")),
-                                Style::default().fg(Color::Red),
-                            ),
-                        ]));
-                    }
-                }
-            }
+        // Render log status in the title bar (right side of top border)
+        let visible_lines = content_area.height as usize;
+        let (total_lines, scroll_offset) = if self.state.log_wrap_lines {
+            let total = self.state.log_wrap_cache.lines.len();
+            let max_offset = total.saturating_sub(visible_lines);
+            (total, self.state.log_scroll_offset.min(max_offset))
         } else {
-            lines.push(Line::from(Span::styled(
-                "No combat in progress",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
+            let logs = view.logger().logs();
+            let total = logs.len();
+            let max_offset = total.saturating_sub(visible_lines);
+            (total, self.state.log_scroll_offset.min(max_offset))
+        };
+        let end_idx = total_lines.saturating_sub(scroll_offset);
+        let start_idx = end_idx.saturating_sub(visible_lines);
 
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        f.render_widget(paragraph, area);
+        // Build status string
+        let status_text = if scroll_offset == 0 {
+            format!("{}-{}/{} [F]", start_idx + 1, end_idx, total_lines)
+        } else {
+            format!("{}-{}/{}", start_idx + 1, end_idx, total_lines)
+        };
+        let wrap_indicator = if self.state.log_wrap_lines { " [W]" } else { "" };
+        let full_status = format!("{}{}", status_text, wrap_indicator);
+
+        // Render status on the title bar line (y = area.y, right-aligned before border)
+        let status_width = full_status.len() as u16;
+        let title_len = if is_focused { 18 } else { 10 }; // " Log (L) [FOCUSED] " or " Log (L) "
+        let available_width = area.width.saturating_sub(title_len + 2); // -2 for border corners
+        if status_width <= available_width {
+            let status_area = Rect {
+                x: area.x + area.width - status_width - 1, // -1 for right border
+                y: area.y,                                 // Title bar line
+                width: status_width,
+                height: 1,
+            };
+            let status_span = Span::styled(full_status, Style::default().fg(Color::DarkGray));
+            f.render_widget(Paragraph::new(Line::from(status_span)), status_area);
+        }
     }
 
     /// Draw the game log view panel with scrolling support
-    /// Status indicator is now rendered in draw_left_tabs on the tab header line
+    /// Status indicator is rendered in draw_log_pane on the title bar
     fn draw_log_view(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let logs = view.logger().logs();
         let visible_lines = area.height as usize;

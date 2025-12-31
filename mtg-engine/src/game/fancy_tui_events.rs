@@ -100,7 +100,7 @@ pub fn handle_key_event(
             EventResult::Handled
         }
         KeyInput::FocusInfo => {
-            state.focused_pane = FocusedPane::Info;
+            state.focused_pane = FocusedPane::Log;
             EventResult::Handled
         }
         KeyInput::FocusYourBf => {
@@ -137,8 +137,8 @@ pub fn handle_key_event(
         KeyInput::Tab => {
             // Cycle through panes (Stack removed, now part of Actions)
             state.focused_pane = match state.focused_pane {
-                FocusedPane::Hand => FocusedPane::Info,
-                FocusedPane::Info => FocusedPane::YourBattlefield,
+                FocusedPane::Hand => FocusedPane::Log,
+                FocusedPane::Log => FocusedPane::YourBattlefield,
                 FocusedPane::YourBattlefield => FocusedPane::OpponentBattlefield,
                 FocusedPane::OpponentBattlefield => FocusedPane::Actions,
                 FocusedPane::Actions => FocusedPane::Hand,
@@ -189,7 +189,7 @@ pub fn handle_key_event(
 
         // Page navigation (only effective for Info pane log)
         KeyInput::PageUp => {
-            if state.focused_pane == FocusedPane::Info {
+            if state.focused_pane == FocusedPane::Log {
                 // Page size of 10 - renderer will clamp based on actual log size
                 state.log_page_up(usize::MAX, 10);
                 EventResult::Handled
@@ -198,7 +198,7 @@ pub fn handle_key_event(
             }
         }
         KeyInput::PageDown => {
-            if state.focused_pane == FocusedPane::Info {
+            if state.focused_pane == FocusedPane::Log {
                 state.log_page_down(10);
                 EventResult::Handled
             } else {
@@ -206,7 +206,7 @@ pub fn handle_key_event(
             }
         }
         KeyInput::Home => {
-            if state.focused_pane == FocusedPane::Info {
+            if state.focused_pane == FocusedPane::Log {
                 // Scroll to beginning (oldest messages)
                 state.log_scroll_home(usize::MAX, 10);
                 EventResult::Handled
@@ -215,7 +215,7 @@ pub fn handle_key_event(
             }
         }
         KeyInput::End => {
-            if state.focused_pane == FocusedPane::Info {
+            if state.focused_pane == FocusedPane::Log {
                 // Scroll to end (follow mode - newest messages)
                 state.log_scroll_end();
                 EventResult::Handled
@@ -226,7 +226,7 @@ pub fn handle_key_event(
 
         // Toggle line wrapping in log (W key)
         KeyInput::ToggleWrap => {
-            if state.focused_pane == FocusedPane::Info {
+            if state.focused_pane == FocusedPane::Log {
                 let logs = view.logger().logs();
                 state.log_toggle_wrap(logs.len());
                 EventResult::Handled
@@ -280,7 +280,7 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
             }
             EventResult::Handled
         }
-        FocusedPane::Info => {
+        FocusedPane::Log => {
             // Scroll log up (toward older messages)
             // Use large values - renderer will clamp based on actual log size
             state.log_scroll_up(usize::MAX, 10);
@@ -329,7 +329,7 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
             }
             EventResult::Handled
         }
-        FocusedPane::Info => {
+        FocusedPane::Log => {
             // Scroll log down (toward newer messages)
             state.log_scroll_down();
             EventResult::Handled
@@ -360,7 +360,7 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
             }
             EventResult::Handled
         }
-        FocusedPane::Info => {
+        FocusedPane::Log => {
             // Scroll to previous turn header
             let logs = view.logger().logs();
             let visible_lines = state.log_visible_lines;
@@ -394,7 +394,7 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
             }
             EventResult::Handled
         }
-        FocusedPane::Info => {
+        FocusedPane::Log => {
             // Scroll to next turn header
             let logs = view.logger().logs();
             let visible_lines = state.log_visible_lines;
@@ -432,7 +432,7 @@ fn handle_enter(state: &mut FancyTuiState, view: &GameStateView) -> EventResult 
                 state.selected_card_id = Some(card_id);
             }
         }
-        FocusedPane::Info | FocusedPane::Actions => {
+        FocusedPane::Log | FocusedPane::Actions => {
             // Info pane doesn't have cards to select
             // Actions pane could potentially show stack items for card details
             // but that's a future enhancement
@@ -608,14 +608,10 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
         }
     }
 
-    // Check Info pane (for clicks on Combat/Log area)
-    if let Some(info_area) = state.info_pane_area {
-        if x >= info_area.x
-            && x < info_area.x + info_area.width
-            && y >= info_area.y
-            && y < info_area.y + info_area.height
-        {
-            state.focused_pane = FocusedPane::Info;
+    // Check Log pane area
+    if let Some(log_area) = state.log_pane_area {
+        if x >= log_area.x && x < log_area.x + log_area.width && y >= log_area.y && y < log_area.y + log_area.height {
+            state.focused_pane = FocusedPane::Log;
             return true;
         }
     }
