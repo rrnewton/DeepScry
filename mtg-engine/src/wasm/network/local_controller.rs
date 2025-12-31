@@ -79,7 +79,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
     }
 
     /// Submit a choice to the server
-    fn submit_choice(&self, choice_index: usize, view: &GameStateView) {
+    fn submit_choice(&self, choice_indices: Vec<usize>, view: &GameStateView) {
         let action_count = view.action_count() as u64;
         let state_hash = if self.network_client.borrow().is_network_debug() {
             Some(crate::game::compute_view_hash(view))
@@ -88,7 +88,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
         };
         self.network_client
             .borrow_mut()
-            .submit_choice(choice_index, action_count, state_hash);
+            .submit_choice(choice_indices, action_count, state_hash);
     }
 }
 
@@ -112,11 +112,11 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         match self.inner.choose_spell_ability_to_play(view, available) {
             ChoiceResult::Ok(choice) => {
                 // 3. Submit choice to server
-                let choice_index = match &choice {
-                    None => 0, // Pass
-                    Some(ability) => sorted.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0),
+                let choice_indices = match &choice {
+                    None => vec![0], // Pass
+                    Some(ability) => vec![sorted.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0)],
                 };
-                self.submit_choice(choice_index, view);
+                self.submit_choice(choice_indices, view);
 
                 // 4. Check for acknowledgment
                 if !self.wait_for_choice_ack() {
@@ -143,14 +143,16 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_targets(view, spell, valid_targets) {
             ChoiceResult::Ok(targets) => {
-                // For targets, choice_index encodes the selection
-                // For simplicity, we send the first target's index
-                let choice_index = if targets.is_empty() {
-                    valid_targets.len() // "none" option
+                // Send all target indices
+                let choice_indices: Vec<usize> = if targets.is_empty() {
+                    vec![valid_targets.len()] // "none" option
                 } else {
-                    valid_targets.iter().position(|&t| t == targets[0]).unwrap_or(0)
+                    targets
+                        .iter()
+                        .filter_map(|&t| valid_targets.iter().position(|&vt| vt == t))
+                        .collect()
                 };
-                self.submit_choice(choice_index, view);
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -174,13 +176,16 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_mana_sources_to_pay(view, cost, available_sources) {
             ChoiceResult::Ok(sources) => {
-                // Encode as bitmask or first source index
-                let choice_index = if sources.is_empty() {
-                    0
+                // Send all mana source indices
+                let choice_indices: Vec<usize> = if sources.is_empty() {
+                    vec![available_sources.len()]
                 } else {
-                    available_sources.iter().position(|&s| s == sources[0]).unwrap_or(0)
+                    sources
+                        .iter()
+                        .filter_map(|&s| available_sources.iter().position(|&as_| as_ == s))
+                        .collect()
                 };
-                self.submit_choice(choice_index, view);
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -203,9 +208,18 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_attackers(view, available_creatures) {
             ChoiceResult::Ok(attackers) => {
-                // Encode attackers - for now just send count as a simple encoding
-                let choice_index = attackers.len();
-                self.submit_choice(choice_index, view);
+                // Send all attacker indices (multi-select)
+                // Index 0 means "done selecting" / no attackers
+                // Index N means attacker at position N-1 in available_creatures
+                let choice_indices: Vec<usize> = if attackers.is_empty() {
+                    vec![0]
+                } else {
+                    attackers
+                        .iter()
+                        .filter_map(|&a| available_creatures.iter().position(|&ac| ac == a).map(|i| i + 1))
+                        .collect()
+                };
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -229,9 +243,22 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_blockers(view, available_blockers, attackers) {
             ChoiceResult::Ok(blocks) => {
-                // Encode blockers
-                let choice_index = blocks.len();
-                self.submit_choice(choice_index, view);
+                // Send all blocker assignments (multi-select)
+                // Index 0 means "done selecting" / no blockers
+                // For each block, encode as blocker_idx * num_attackers + attacker_idx + 1
+                let choice_indices: Vec<usize> = if blocks.is_empty() {
+                    vec![0]
+                } else {
+                    blocks
+                        .iter()
+                        .filter_map(|&(blocker, attacker)| {
+                            let blocker_idx = available_blockers.iter().position(|&b| b == blocker)?;
+                            let attacker_idx = attackers.iter().position(|&a| a == attacker)?;
+                            Some(blocker_idx * attackers.len() + attacker_idx + 1)
+                        })
+                        .collect()
+                };
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -255,8 +282,16 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_damage_assignment_order(view, attacker, blockers) {
             ChoiceResult::Ok(order) => {
-                let choice_index = 0; // Default order
-                self.submit_choice(choice_index, view);
+                // Send all damage order indices
+                let choice_indices: Vec<usize> = if order.is_empty() {
+                    vec![0]
+                } else {
+                    order
+                        .iter()
+                        .filter_map(|&b| blockers.iter().position(|&bl| bl == b))
+                        .collect()
+                };
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -280,12 +315,16 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_cards_to_discard(view, hand, count) {
             ChoiceResult::Ok(discards) => {
-                let choice_index = if discards.is_empty() {
-                    0
+                // Send all discard indices (multi-select)
+                let choice_indices: Vec<usize> = if discards.is_empty() {
+                    vec![hand.len()]
                 } else {
-                    hand.iter().position(|&c| c == discards[0]).unwrap_or(0)
+                    discards
+                        .iter()
+                        .filter_map(|&c| hand.iter().position(|&h| h == c))
+                        .collect()
                 };
-                self.submit_choice(choice_index, view);
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -308,7 +347,7 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
                     None => valid_cards.len(),
                     Some(card) => valid_cards.iter().position(|&c| c == card).unwrap_or(0),
                 };
-                self.submit_choice(choice_index, view);
+                self.submit_choice(vec![choice_index], view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());
@@ -336,12 +375,16 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
         {
             ChoiceResult::Ok(sacrifices) => {
-                let choice_index = if sacrifices.is_empty() {
-                    0
+                // Send all sacrifice indices (multi-select)
+                let choice_indices: Vec<usize> = if sacrifices.is_empty() {
+                    vec![valid_permanents.len()] // "none" option
                 } else {
-                    valid_permanents.iter().position(|&c| c == sacrifices[0]).unwrap_or(0)
+                    sacrifices
+                        .iter()
+                        .filter_map(|&s| valid_permanents.iter().position(|&vp| vp == s))
+                        .collect()
                 };
-                self.submit_choice(choice_index, view);
+                self.submit_choice(choice_indices, view);
 
                 if !self.wait_for_choice_ack() {
                     return ChoiceResult::NeedInput(waiting_for_ack_context());

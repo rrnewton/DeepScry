@@ -124,8 +124,8 @@ struct OpponentChoiceInfo {
     player: PlayerId,
     /// Type of choice
     choice_type: ChoiceType,
-    /// Index of the chosen option
-    choice_index: usize,
+    /// Indices of the chosen options (multiple for attackers/blockers/discard)
+    choice_indices: Vec<usize>,
     /// Human-readable description
     description: String,
     /// Action count at time of choice (for sync validation)
@@ -155,8 +155,8 @@ struct RevealBroadcast {
 struct PendingChoice {
     /// Choice sequence number from the client
     choice_seq: u32,
-    /// Index of the chosen option
-    choice_index: usize,
+    /// Indices of the chosen options (multiple for attackers/blockers/discard)
+    choice_indices: Vec<usize>,
     /// Action count the client claims (for validation)
     action_count: u64,
 }
@@ -982,7 +982,7 @@ async fn handle_player_websocket(
                             // Send response to NetworkController
                             let response = ChoiceResponse {
                                 choice_seq: pending.choice_seq,
-                                choice_index: pending.choice_index,
+                                choice_indices: pending.choice_indices.clone(),
                             };
                             if conn.response_tx.send(response).is_err() {
                                 log::error!("Failed to send choice response for pending choice");
@@ -1032,7 +1032,7 @@ async fn handle_player_websocket(
                                 choice_seq: pending.choice_seq,
                                 player: conn.player_id,
                                 choice_type,
-                                choice_index: pending.choice_index,
+                                choice_indices: pending.choice_indices.clone(),
                                 description: format!("Choice #{}", pending.choice_seq),
                                 action_count: choice_request.action_count,
                                 timestamp_ms: now_ms(),
@@ -1072,7 +1072,7 @@ async fn handle_player_websocket(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_index, action_count: client_action_count, client_state_hash, debug_info: client_debug_info, .. }) => {
+                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_indices, action_count: client_action_count, client_state_hash, debug_info: client_debug_info, .. }) => {
                                 // Check if we've sent a ChoiceRequest yet (tracked by expected_action_count)
                                 // If not, the client is ahead of us (synchronized GameLoop timing)
                                 // and we need to queue this choice for later processing.
@@ -1165,7 +1165,7 @@ async fn handle_player_websocket(
                                     }
 
                                     // Send response to NetworkController
-                                    let response = ChoiceResponse { choice_seq, choice_index };
+                                    let response = ChoiceResponse { choice_seq, choice_indices: choice_indices.clone() };
                                     if conn.response_tx.send(response).is_err() {
                                         log::error!("Failed to send choice response");
                                         break;
@@ -1219,7 +1219,7 @@ async fn handle_player_websocket(
                                         choice_seq,
                                         player: conn.player_id,
                                         choice_type,
-                                        choice_index,
+                                        choice_indices: choice_indices.clone(),
                                         description: format!("Choice #{}", choice_seq),
                                         action_count: expected,
                                         timestamp_ms: now_ms(),
@@ -1237,7 +1237,7 @@ async fn handle_player_websocket(
                                     );
                                     conn.pending_choice = Some(PendingChoice {
                                         choice_seq,
-                                        choice_index,
+                                        choice_indices,
                                         action_count: client_action_count,
                                     });
                                 }
@@ -1442,7 +1442,7 @@ async fn handle_player_websocket(
                         choice_seq: info.choice_seq,
                         player: info.player,
                         choice_type: info.choice_type,
-                        choice_index: info.choice_index,
+                        choice_indices: info.choice_indices.clone(),
                         description: info.description,
                         action_count: info.action_count,
                         timestamp_ms: info.timestamp_ms,

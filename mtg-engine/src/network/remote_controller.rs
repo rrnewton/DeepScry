@@ -35,8 +35,8 @@ use std::sync::mpsc;
 pub enum RemoteMessage {
     /// An actual choice from the opponent
     Choice {
-        /// The choice index selected by the opponent
-        choice_index: usize,
+        /// The choice indices selected by the opponent (multiple for attackers/blockers)
+        choice_indices: Vec<usize>,
         /// Human-readable description of the choice
         description: String,
         /// The actual spell ability (for Priority choices)
@@ -89,9 +89,9 @@ impl RemoteController {
 
     /// Wait for the next choice from the server
     ///
-    /// Returns the choice index, or signals disconnect if channel is closed.
+    /// Returns the choice indices, or signals disconnect if channel is closed.
     /// Also stores any spell_ability for use by choose_spell_ability_to_play.
-    fn wait_for_choice(&mut self) -> ChoiceResult<usize> {
+    fn wait_for_choice(&mut self) -> ChoiceResult<Vec<usize>> {
         if self.disconnected || self.game_ended {
             return ChoiceResult::ExitGame;
         }
@@ -99,20 +99,20 @@ impl RemoteController {
         log::trace!("RemoteController {:?}: waiting for opponent choice", self.player_id);
         match self.choice_rx.recv() {
             Ok(RemoteMessage::Choice {
-                choice_index,
+                choice_indices,
                 description,
                 spell_ability,
             }) => {
                 log::debug!(
-                    "RemoteController {:?}: Opponent chose index {} ({}) spell_ability={:?}",
+                    "RemoteController {:?}: Opponent chose indices {:?} ({}) spell_ability={:?}",
                     self.player_id,
-                    choice_index,
+                    choice_indices,
                     description,
                     spell_ability
                 );
                 // Store spell_ability for choose_spell_ability_to_play to use
                 self.last_spell_ability = spell_ability;
-                ChoiceResult::Ok(choice_index)
+                ChoiceResult::Ok(choice_indices)
             }
             Ok(RemoteMessage::GameEnded) => {
                 log::debug!("RemoteController: Received game end signal, exiting gracefully");
@@ -130,10 +130,11 @@ impl RemoteController {
         }
     }
 
-    /// Helper to get a single item from a slice based on choice index
+    /// Helper to get a single item from a slice based on choice indices (uses first index)
     fn select_from_slice<T: Clone>(&mut self, items: &[T]) -> ChoiceResult<Option<T>> {
         match self.wait_for_choice() {
-            ChoiceResult::Ok(idx) => {
+            ChoiceResult::Ok(indices) => {
+                let idx = indices.first().copied().unwrap_or(items.len());
                 if idx < items.len() {
                     ChoiceResult::Ok(Some(items[idx].clone()))
                 } else if idx == items.len() {
@@ -172,11 +173,15 @@ impl PlayerController for RemoteController {
         _view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        // Server sends: 0 = pass, 1..N = ability indices
+        // Server sends: [0] = pass, [N] = ability index (1-based)
         // For remote controllers, we may receive the actual ability directly
         match self.wait_for_choice() {
-            ChoiceResult::Ok(0) => ChoiceResult::Ok(None), // Pass
-            ChoiceResult::Ok(idx) => {
+            ChoiceResult::Ok(indices) => {
+                let idx = indices.first().copied().unwrap_or(0);
+                if idx == 0 {
+                    return ChoiceResult::Ok(None); // Pass
+                }
+
                 // If server sent the actual spell ability, use it directly
                 // This handles the case where client doesn't know opponent's hand
                 if let Some(ability) = self.last_spell_ability.take() {
@@ -210,15 +215,16 @@ impl PlayerController for RemoteController {
         _spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // For now, single target selection
-        // Server sends index into valid_targets, or len() for no target
+        // Server sends indices into valid_targets, or [len()] for no target
         match self.wait_for_choice() {
-            ChoiceResult::Ok(idx) => {
-                if idx < valid_targets.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[valid_targets[idx]]))
-                } else {
-                    ChoiceResult::Ok(SmallVec::new()) // No target
+            ChoiceResult::Ok(indices) => {
+                let mut targets = SmallVec::new();
+                for idx in indices {
+                    if idx < valid_targets.len() {
+                        targets.push(valid_targets[idx]);
+                    }
                 }
+                ChoiceResult::Ok(targets)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -233,15 +239,16 @@ impl PlayerController for RemoteController {
         _cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Simplified: server sends single source index
-        // TODO: Multi-select for complex costs
+        // Server sends indices of mana sources to use
         match self.wait_for_choice() {
-            ChoiceResult::Ok(idx) => {
-                if idx < available_sources.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[available_sources[idx]]))
-                } else {
-                    ChoiceResult::Ok(SmallVec::new())
+            ChoiceResult::Ok(indices) => {
+                let mut sources = SmallVec::new();
+                for idx in indices {
+                    if idx < available_sources.len() {
+                        sources.push(available_sources[idx]);
+                    }
                 }
+                ChoiceResult::Ok(sources)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -255,17 +262,21 @@ impl PlayerController for RemoteController {
         _view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Server sends: 0 = done/no attackers, 1..N = creature indices
-        // TODO: Multi-select for multiple attackers
+        // Server sends indices: [0] = no attackers, [N, M, ...] = creature indices (1-based)
         match self.wait_for_choice() {
-            ChoiceResult::Ok(0) => ChoiceResult::Ok(SmallVec::new()),
-            ChoiceResult::Ok(idx) => {
-                let creature_idx = idx - 1;
-                if creature_idx < available_creatures.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[available_creatures[creature_idx]]))
-                } else {
-                    ChoiceResult::Ok(SmallVec::new())
+            ChoiceResult::Ok(indices) => {
+                let mut attackers = SmallVec::new();
+                for idx in indices {
+                    if idx == 0 {
+                        // 0 means "done selecting" - skip
+                        continue;
+                    }
+                    let creature_idx = idx - 1;
+                    if creature_idx < available_creatures.len() {
+                        attackers.push(available_creatures[creature_idx]);
+                    }
                 }
+                ChoiceResult::Ok(attackers)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -280,22 +291,23 @@ impl PlayerController for RemoteController {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        // Server sends: 0 = done/no blockers, 1..N = encoded blocker-attacker pair
-        // TODO: Multi-select for multiple blockers
+        // Server sends indices: [0] = no blockers, [N, M, ...] = encoded blocker-attacker pairs (1-based)
         match self.wait_for_choice() {
-            ChoiceResult::Ok(0) => ChoiceResult::Ok(SmallVec::new()),
-            ChoiceResult::Ok(idx) => {
-                let pair_idx = idx - 1;
-                let blocker_idx = pair_idx / attackers.len();
-                let attacker_idx = pair_idx % attackers.len();
-                if blocker_idx < available_blockers.len() && attacker_idx < attackers.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[(
-                        available_blockers[blocker_idx],
-                        attackers[attacker_idx],
-                    )]))
-                } else {
-                    ChoiceResult::Ok(SmallVec::new())
+            ChoiceResult::Ok(indices) => {
+                let mut blocks = SmallVec::new();
+                for idx in indices {
+                    if idx == 0 {
+                        // 0 means "done selecting" - skip
+                        continue;
+                    }
+                    let pair_idx = idx - 1;
+                    let blocker_idx = pair_idx / attackers.len();
+                    let attacker_idx = pair_idx % attackers.len();
+                    if blocker_idx < available_blockers.len() && attacker_idx < attackers.len() {
+                        blocks.push((available_blockers[blocker_idx], attackers[attacker_idx]));
+                    }
                 }
+                ChoiceResult::Ok(blocks)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -310,22 +322,24 @@ impl PlayerController for RemoteController {
         _attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Server sends index of first blocker to assign damage to
+        // Server sends indices specifying the damage assignment order
         match self.wait_for_choice() {
-            ChoiceResult::Ok(idx) => {
-                if idx < blockers.len() {
-                    // Return all blockers with chosen one first
-                    let mut result = SmallVec::new();
-                    result.push(blockers[idx]);
-                    for (i, &blocker) in blockers.iter().enumerate() {
-                        if i != idx {
+            ChoiceResult::Ok(indices) => {
+                let mut result = SmallVec::new();
+                for idx in indices {
+                    if idx < blockers.len() {
+                        result.push(blockers[idx]);
+                    }
+                }
+                // If we didn't get all blockers, add the remaining ones
+                if result.len() < blockers.len() {
+                    for &blocker in blockers {
+                        if !result.contains(&blocker) {
                             result.push(blocker);
                         }
                     }
-                    ChoiceResult::Ok(result)
-                } else {
-                    ChoiceResult::Ok(blockers.iter().copied().collect())
                 }
+                ChoiceResult::Ok(result)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -340,15 +354,16 @@ impl PlayerController for RemoteController {
         hand: &[CardId],
         _count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        // Server sends index of card to discard
-        // TODO: Multi-select for discarding multiple cards
+        // Server sends indices of cards to discard (multi-select)
         match self.wait_for_choice() {
-            ChoiceResult::Ok(idx) => {
-                if idx < hand.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[hand[idx]]))
-                } else {
-                    ChoiceResult::Ok(SmallVec::new())
+            ChoiceResult::Ok(indices) => {
+                let mut discards = SmallVec::new();
+                for idx in indices {
+                    if idx < hand.len() {
+                        discards.push(hand[idx]);
+                    }
                 }
+                ChoiceResult::Ok(discards)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -368,15 +383,16 @@ impl PlayerController for RemoteController {
         _count: usize,
         _card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Server sends index of permanent to sacrifice
-        // TODO: Multi-select for sacrificing multiple permanents
+        // Server sends indices of permanents to sacrifice (multi-select)
         match self.wait_for_choice() {
-            ChoiceResult::Ok(idx) => {
-                if idx < valid_permanents.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[valid_permanents[idx]]))
-                } else {
-                    ChoiceResult::Ok(SmallVec::new())
+            ChoiceResult::Ok(indices) => {
+                let mut sacrifices = SmallVec::new();
+                for idx in indices {
+                    if idx < valid_permanents.len() {
+                        sacrifices.push(valid_permanents[idx]);
+                    }
                 }
+                ChoiceResult::Ok(sacrifices)
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -418,7 +434,7 @@ mod tests {
 
         // Send a choice
         tx.send(RemoteMessage::Choice {
-            choice_index: 2,
+            choice_indices: vec![2],
             description: "Cast Lightning Bolt".to_string(),
             spell_ability: None,
         })
@@ -426,7 +442,7 @@ mod tests {
 
         // Controller should receive it
         let result = controller.wait_for_choice();
-        assert!(matches!(result, ChoiceResult::Ok(2)));
+        assert!(matches!(result, ChoiceResult::Ok(ref v) if v == &vec![2]));
     }
 
     #[test]

@@ -45,7 +45,7 @@ impl NetworkState {
 #[derive(Debug, Clone)]
 pub struct OpponentChoiceData {
     pub choice_seq: u32,
-    pub choice_index: usize,
+    pub choice_indices: Vec<usize>,
     pub description: String,
     pub spell_ability: Option<SpellAbility>,
     pub action_count: u64,
@@ -405,21 +405,21 @@ impl WasmNetworkClient {
 
             ServerMessage::OpponentChoice {
                 choice_seq,
-                choice_index,
+                choice_indices,
                 description,
                 spell_ability,
                 action_count,
                 ..
             } => {
                 log::debug!(
-                    "WasmNetworkClient: OpponentChoice seq={} index={} desc={}",
+                    "WasmNetworkClient: OpponentChoice seq={} indices={:?} desc={}",
                     choice_seq,
-                    choice_index,
+                    choice_indices,
                     description
                 );
                 self.opponent_choices.push_back(OpponentChoiceData {
                     choice_seq,
-                    choice_index,
+                    choice_indices,
                     description,
                     spell_ability,
                     action_count,
@@ -523,11 +523,11 @@ impl WasmNetworkClient {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Queue a SubmitChoice response
-    pub fn submit_choice(&mut self, choice_index: usize, action_count: u64, state_hash: Option<u64>) {
+    pub fn submit_choice(&mut self, choice_indices: Vec<usize>, action_count: u64, state_hash: Option<u64>) {
         if let Some(ref request) = self.current_choice_request {
             let msg = ClientMessage::SubmitChoice {
                 choice_seq: request.choice_seq,
-                choice_index,
+                choice_indices,
                 action_count,
                 timestamp_ms: crate::network::now_ms(),
                 client_state_hash: state_hash,

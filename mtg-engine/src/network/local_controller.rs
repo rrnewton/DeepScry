@@ -26,8 +26,8 @@ use std::sync::mpsc;
 /// A choice made by the local player, to be sent to the server
 #[derive(Debug, Clone)]
 pub struct LocalChoice {
-    /// The choice index selected
-    pub choice_index: usize,
+    /// The choice indices selected (multiple for attackers/blockers/discard)
+    pub choice_indices: Vec<usize>,
     /// Human-readable description
     pub description: String,
     /// Action count (undo log position) at the time of choice
@@ -210,7 +210,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// Send a choice to the server and wait for acknowledgment
     ///
     /// # Arguments
-    /// * `choice_index` - The selected choice index
+    /// * `choice_indices` - The selected choice indices (single for priority, multiple for attackers)
     /// * `description` - Human-readable description of the choice
     /// * `action_count` - Current action count (undo log position) for sync validation
     /// * `last_actions` - Formatted string of last N actions (debug mode only)
@@ -218,7 +218,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// * `debug_info` - Full debug sync info (debug mode only)
     fn send_choice(
         &mut self,
-        choice_index: usize,
+        choice_indices: Vec<usize>,
         description: String,
         action_count: u64,
         last_actions: Option<String>,
@@ -230,8 +230,8 @@ impl<C: PlayerController> NetworkLocalController<C> {
         }
 
         log::trace!(
-            "NetworkLocalController: sending choice {} ({}) at action_count={}",
-            choice_index,
+            "NetworkLocalController: sending choice {:?} ({}) at action_count={}",
+            choice_indices,
             description,
             action_count
         );
@@ -240,7 +240,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
         if self
             .choice_tx
             .send(LocalChoice {
-                choice_index,
+                choice_indices,
                 description,
                 action_count,
                 last_actions,
@@ -351,14 +351,21 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             ChoiceResult::Ok(Some(ability)) => {
                 let idx = available.iter().position(|a| a == ability).unwrap_or(0) + 1;
                 let desc = format!("Play: {:?}", ability);
-                if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+                if let Err(e) = self.send_choice(
+                    vec![idx],
+                    desc,
+                    action_count,
+                    last_actions,
+                    client_state_hash,
+                    debug_info,
+                ) {
                     log::error!("Failed to send choice: {}", e);
                     return ChoiceResult::ExitGame;
                 }
             }
             ChoiceResult::Ok(None) => {
                 if let Err(e) = self.send_choice(
-                    0,
+                    vec![0],
                     "Pass".to_string(),
                     action_count,
                     last_actions,
@@ -392,15 +399,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_targets(view, spell, valid_targets);
 
         if let ChoiceResult::Ok(targets) = &result {
-            let idx = if targets.is_empty() {
-                valid_targets.len() // No target
+            // For targets, send all selected indices
+            let indices: Vec<usize> = if targets.is_empty() {
+                vec![valid_targets.len()] // No target
             } else {
-                valid_targets.iter().position(|&t| t == targets[0]).unwrap_or(0)
+                targets
+                    .iter()
+                    .filter_map(|&t| valid_targets.iter().position(|&vt| vt == t))
+                    .collect()
             };
             let desc = format!("Target: {:?}", targets);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -426,16 +437,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_mana_sources_to_pay(view, cost, available_sources);
 
         if let ChoiceResult::Ok(sources) = &result {
-            // For now, just send first source index
-            let idx = if sources.is_empty() {
-                available_sources.len()
+            // Send all mana source indices
+            let indices: Vec<usize> = if sources.is_empty() {
+                vec![available_sources.len()]
             } else {
-                available_sources.iter().position(|&s| s == sources[0]).unwrap_or(0)
+                sources
+                    .iter()
+                    .filter_map(|&s| available_sources.iter().position(|&as_| as_ == s))
+                    .collect()
             };
             let desc = format!("Mana source: {:?}", sources);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -460,15 +474,21 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_attackers(view, available_creatures);
 
         if let ChoiceResult::Ok(attackers) = &result {
-            let idx = if attackers.is_empty() {
-                0 // No attackers
+            // Send all attacker indices (multi-select)
+            // Index 0 means "done selecting" / no attackers
+            // Index N means attacker at position N-1 in available_creatures
+            let indices: Vec<usize> = if attackers.is_empty() {
+                vec![0] // No attackers
             } else {
-                available_creatures.iter().position(|&a| a == attackers[0]).unwrap_or(0) + 1
+                attackers
+                    .iter()
+                    .filter_map(|&a| available_creatures.iter().position(|&ac| ac == a).map(|i| i + 1))
+                    .collect()
             };
             let desc = format!("Attackers: {:?}", attackers);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -494,19 +514,25 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_blockers(view, available_blockers, attackers);
 
         if let ChoiceResult::Ok(blocks) = &result {
-            let idx = if blocks.is_empty() {
-                0 // No blockers
+            // Send all blocker assignments (multi-select)
+            // Index 0 means "done selecting" / no blockers
+            // For each block, encode as blocker_idx * num_attackers + attacker_idx + 1
+            let indices: Vec<usize> = if blocks.is_empty() {
+                vec![0] // No blockers
             } else {
-                // Encode as blocker_idx * num_attackers + attacker_idx + 1
-                let (blocker, attacker) = blocks[0];
-                let blocker_idx = available_blockers.iter().position(|&b| b == blocker).unwrap_or(0);
-                let attacker_idx = attackers.iter().position(|&a| a == attacker).unwrap_or(0);
-                blocker_idx * attackers.len() + attacker_idx + 1
+                blocks
+                    .iter()
+                    .filter_map(|&(blocker, attacker)| {
+                        let blocker_idx = available_blockers.iter().position(|&b| b == blocker)?;
+                        let attacker_idx = attackers.iter().position(|&a| a == attacker)?;
+                        Some(blocker_idx * attackers.len() + attacker_idx + 1)
+                    })
+                    .collect()
             };
             let desc = format!("Blocks: {:?}", blocks);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -532,15 +558,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_damage_assignment_order(view, attacker, blockers);
 
         if let ChoiceResult::Ok(order) = &result {
-            let idx = if order.is_empty() {
-                0
+            // Send all damage order indices (the order matters for damage assignment)
+            let indices: Vec<usize> = if order.is_empty() {
+                vec![0]
             } else {
-                blockers.iter().position(|&b| b == order[0]).unwrap_or(0)
+                order
+                    .iter()
+                    .filter_map(|&b| blockers.iter().position(|&bl| bl == b))
+                    .collect()
             };
             let desc = format!("Damage order: {:?}", order);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -566,15 +596,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_cards_to_discard(view, hand, count);
 
         if let ChoiceResult::Ok(discards) = &result {
-            let idx = if discards.is_empty() {
-                hand.len()
+            // Send all discard indices (multi-select)
+            let indices: Vec<usize> = if discards.is_empty() {
+                vec![hand.len()]
             } else {
-                hand.iter().position(|&c| c == discards[0]).unwrap_or(0)
+                discards
+                    .iter()
+                    .filter_map(|&c| hand.iter().position(|&h| h == c))
+                    .collect()
             };
             let desc = format!("Discard: {:?}", discards);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -595,6 +629,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_from_library(view, valid_cards);
 
         if let ChoiceResult::Ok(card) = &result {
+            // Single-select from library
             let idx = match card {
                 Some(c) => valid_cards.iter().position(|&v| v == *c).unwrap_or(valid_cards.len()),
                 None => valid_cards.len(),
@@ -602,7 +637,14 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             let desc = format!("From library: {:?}", card);
             let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(
+                vec![idx],
+                desc,
+                action_count,
+                last_actions,
+                client_state_hash,
+                debug_info,
+            ) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }
@@ -628,17 +670,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description);
 
         if let ChoiceResult::Ok(permanents) = &result {
-            // Encode as first permanent index for now
-            // TODO: Multi-select encoding for multiple permanents
-            let idx = if permanents.is_empty() {
-                valid_permanents.len()
+            // Send all sacrifice indices (multi-select)
+            let indices: Vec<usize> = if permanents.is_empty() {
+                vec![valid_permanents.len()]
             } else {
-                valid_permanents.iter().position(|&p| p == permanents[0]).unwrap_or(0)
+                permanents
+                    .iter()
+                    .filter_map(|&p| valid_permanents.iter().position(|&vp| vp == p))
+                    .collect()
             };
             let desc = format!("Sacrifice: {:?}", permanents);
             let action_count = view.action_count() as u64;
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(idx, desc, action_count, last_actions, client_state_hash, debug_info) {
+            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
             }

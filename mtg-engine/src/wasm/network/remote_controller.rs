@@ -72,22 +72,23 @@ impl WasmRemoteController {
         let mut client = self.network_client.borrow_mut();
         if let Some(choice) = client.pop_opponent_choice() {
             log::debug!(
-                "WasmRemoteController: Opponent chose index {} ({})",
-                choice.choice_index,
+                "WasmRemoteController: Opponent chose indices {:?} ({})",
+                choice.choice_indices,
                 choice.description
             );
             // Store spell_ability for choose_spell_ability_to_play to use
             self.last_spell_ability = choice.spell_ability;
-            ChoiceResult::Ok(choice.choice_index)
+            ChoiceResult::Ok(choice.choice_indices)
         } else {
             ChoiceResult::NeedInput(waiting_for_opponent_context())
         }
     }
 
-    /// Helper to select from a slice based on choice index
+    /// Helper to select from a slice based on choice indices (uses first index)
     fn select_from_slice<T: Clone>(&mut self, items: &[T]) -> ChoiceResult<Option<T>> {
         match self.try_get_choice() {
-            ChoiceResult::Ok(idx) => {
+            ChoiceResult::Ok(indices) => {
+                let idx = indices.first().copied().unwrap_or(items.len());
                 if idx < items.len() {
                     ChoiceResult::Ok(Some(items[idx].clone()))
                 } else {
@@ -114,8 +115,12 @@ impl PlayerController for WasmRemoteController {
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
         match self.try_get_choice() {
-            ChoiceResult::Ok(0) => ChoiceResult::Ok(None), // Pass
-            ChoiceResult::Ok(idx) => {
+            ChoiceResult::Ok(indices) => {
+                let idx = indices.first().copied().unwrap_or(0);
+                if idx == 0 {
+                    return ChoiceResult::Ok(None); // Pass
+                }
+
                 // If server sent the actual spell ability, use it directly
                 // This handles the case where client doesn't know opponent's hand
                 if let Some(ability) = self.last_spell_ability.take() {
@@ -185,10 +190,19 @@ impl PlayerController for WasmRemoteController {
         _view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Choice index encodes number of attackers (simplified)
+        // Server sends indices: [0] = no attackers, [N, M, ...] = creature indices (1-based)
         match self.try_get_choice() {
-            ChoiceResult::Ok(count) => {
-                let attackers: SmallVec<[CardId; 8]> = available_creatures.iter().take(count).copied().collect();
+            ChoiceResult::Ok(indices) => {
+                let mut attackers = SmallVec::new();
+                for idx in indices {
+                    if idx == 0 {
+                        continue; // 0 means "done selecting"
+                    }
+                    let creature_idx = idx - 1;
+                    if creature_idx < available_creatures.len() {
+                        attackers.push(available_creatures[creature_idx]);
+                    }
+                }
                 ChoiceResult::Ok(attackers)
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
@@ -204,16 +218,21 @@ impl PlayerController for WasmRemoteController {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        // Choice index encodes number of blocks (simplified)
+        // Server sends indices: [0] = no blockers, [N, M, ...] = encoded blocker-attacker pairs (1-based)
         match self.try_get_choice() {
-            ChoiceResult::Ok(count) => {
-                // Simplified: first N blockers block first N attackers
-                let blocks: SmallVec<[(CardId, CardId); 8]> = available_blockers
-                    .iter()
-                    .zip(attackers.iter())
-                    .take(count)
-                    .map(|(&b, &a)| (b, a))
-                    .collect();
+            ChoiceResult::Ok(indices) => {
+                let mut blocks = SmallVec::new();
+                for idx in indices {
+                    if idx == 0 {
+                        continue; // 0 means "done selecting"
+                    }
+                    let pair_idx = idx - 1;
+                    let blocker_idx = pair_idx / attackers.len();
+                    let attacker_idx = pair_idx % attackers.len();
+                    if blocker_idx < available_blockers.len() && attacker_idx < attackers.len() {
+                        blocks.push((available_blockers[blocker_idx], attackers[attacker_idx]));
+                    }
+                }
                 ChoiceResult::Ok(blocks)
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
@@ -229,11 +248,24 @@ impl PlayerController for WasmRemoteController {
         _attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Default order
+        // Server sends indices specifying the damage assignment order
         match self.try_get_choice() {
-            ChoiceResult::Ok(_) => {
-                let order: SmallVec<[CardId; 4]> = blockers.iter().copied().collect();
-                ChoiceResult::Ok(order)
+            ChoiceResult::Ok(indices) => {
+                let mut result = SmallVec::new();
+                for idx in indices {
+                    if idx < blockers.len() {
+                        result.push(blockers[idx]);
+                    }
+                }
+                // Add remaining blockers
+                if result.len() < blockers.len() {
+                    for &blocker in blockers {
+                        if !result.contains(&blocker) {
+                            result.push(blocker);
+                        }
+                    }
+                }
+                ChoiceResult::Ok(result)
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
@@ -246,12 +278,17 @@ impl PlayerController for WasmRemoteController {
         &mut self,
         _view: &GameStateView,
         hand: &[CardId],
-        count: usize,
+        _count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
+        // Server sends indices of cards to discard (multi-select)
         match self.try_get_choice() {
-            ChoiceResult::Ok(start_idx) => {
-                // Discard 'count' cards starting from index
-                let discards: SmallVec<[CardId; 7]> = hand.iter().skip(start_idx).take(count).copied().collect();
+            ChoiceResult::Ok(indices) => {
+                let mut discards = SmallVec::new();
+                for idx in indices {
+                    if idx < hand.len() {
+                        discards.push(hand[idx]);
+                    }
+                }
                 ChoiceResult::Ok(discards)
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
@@ -269,13 +306,18 @@ impl PlayerController for WasmRemoteController {
         &mut self,
         _view: &GameStateView,
         valid_permanents: &[CardId],
-        count: usize,
+        _count: usize,
         _card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Server sends indices of permanents to sacrifice (multi-select)
         match self.try_get_choice() {
-            ChoiceResult::Ok(start_idx) => {
-                let sacrifices: SmallVec<[CardId; 8]> =
-                    valid_permanents.iter().skip(start_idx).take(count).copied().collect();
+            ChoiceResult::Ok(indices) => {
+                let mut sacrifices = SmallVec::new();
+                for idx in indices {
+                    if idx < valid_permanents.len() {
+                        sacrifices.push(valid_permanents[idx]);
+                    }
+                }
                 ChoiceResult::Ok(sacrifices)
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),

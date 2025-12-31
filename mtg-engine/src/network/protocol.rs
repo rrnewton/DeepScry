@@ -97,8 +97,12 @@ pub enum ClientMessage {
     SubmitChoice {
         /// Sequence number matching the ChoiceRequest
         choice_seq: u32,
-        /// The chosen option index (into the options array)
-        choice_index: usize,
+        /// The chosen option indices (into the options array)
+        ///
+        /// For single-select choices (priority, targets), this is a 1-element vec.
+        /// For multi-select choices (attackers, blockers), contains all selected indices.
+        /// Index 0 typically means "done" or "pass" for multi-select choices.
+        choice_indices: Vec<usize>,
         /// ECHOES the server's action_count from the ChoiceRequest
         ///
         /// Client sends back the same action_count it received in ChoiceRequest to
@@ -252,8 +256,11 @@ pub enum ServerMessage {
         player: PlayerId,
         /// What type of choice was made
         choice_type: ChoiceType,
-        /// The choice index selected
-        choice_index: usize,
+        /// The choice indices selected
+        ///
+        /// For single-select choices (priority, targets), this is a 1-element vec.
+        /// For multi-select choices (attackers, blockers), contains all selected indices.
+        choice_indices: Vec<usize>,
         /// Human-readable description of what was chosen
         description: String,
         /// Server's undo_log length when this opponent choice was recorded
@@ -951,7 +958,7 @@ mod tests {
                 choice_seq: 5,
                 player: player_id,
                 choice_type: ChoiceType::Priority { available_count: 0 },
-                choice_index: 0,
+                choice_indices: vec![0],
                 description: "Pass priority".to_string(),
                 action_count: 0,
                 timestamp_ms: 1234567891,
@@ -1003,7 +1010,7 @@ mod tests {
             },
             ClientMessage::SubmitChoice {
                 choice_seq: 42,
-                choice_index: 1,
+                choice_indices: vec![1],
                 action_count: 0,
                 timestamp_ms: 1234567890,
                 client_state_hash: None,

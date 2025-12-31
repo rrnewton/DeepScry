@@ -305,7 +305,7 @@ mod async_tests {
         // Client sends response
         let response = ClientMessage::SubmitChoice {
             choice_seq: 42,
-            choice_index: 2, // Cast Lightning Bolt
+            choice_indices: vec![2], // Cast Lightning Bolt
             action_count: 0,
             timestamp_ms: 1234567891,
             client_state_hash: None,
@@ -323,12 +323,12 @@ mod async_tests {
                 },
                 ClientMessage::SubmitChoice {
                     choice_seq: resp_seq,
-                    choice_index,
+                    choice_indices,
                     ..
                 },
             ) => {
                 assert_eq!(req_seq, resp_seq, "Choice sequence mismatch");
-                assert_eq!(choice_index, 2);
+                assert_eq!(choice_indices, vec![2]);
             }
             _ => panic!("Wrong message types"),
         }
@@ -833,7 +833,7 @@ mod websocket_integration {
                         &mut ws,
                         &ClientMessage::SubmitChoice {
                             choice_seq,
-                            choice_index,
+                            choice_indices: vec![choice_index],
                             action_count: 0,
                             timestamp_ms: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)

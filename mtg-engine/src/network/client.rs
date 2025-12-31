@@ -233,7 +233,7 @@ impl ClientGameState {
         &mut self,
         _choice_seq: u32,
         _choice_type: ChoiceType,
-        _choice_index: usize,
+        _choice_indices: &[usize],
         description: &str,
     ) -> Result<()> {
         log::debug!("Opponent chose: {}", description);
@@ -723,7 +723,7 @@ impl NetworkClient {
                 tokio::task::spawn_blocking(move || {
                     let runtime = tokio::runtime::Handle::current();
                     while let Ok(choice) = std_rx.recv() {
-                        log::trace!("Bridge: forwarding choice {} to tokio channel", choice.choice_index);
+                        log::trace!("Bridge: forwarding choice {:?} to tokio channel", choice.choice_indices);
                         let result = runtime.block_on(local_choice_tx_clone.send(choice));
                         if let Err(e) = result {
                             log::debug!("Bridge: failed to forward choice: {:?}", e);
@@ -776,10 +776,10 @@ impl NetworkClient {
                                             log::error!("Failed to send reveal to game thread: {:?}", e);
                                         }
                                     }
-                                    Ok(ServerMessage::OpponentChoice { choice_index, description, spell_ability, .. }) => {
-                                        log::debug!("WebSocket: opponent chose {} (idx={}), spell_ability={:?}, sending to RemoteController channel", description, choice_index, spell_ability);
+                                    Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
+                                        log::debug!("WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}, sending to RemoteController channel", description, choice_indices, spell_ability);
                                         match remote_choice_tx.send(RemoteMessage::Choice {
-                                            choice_index,
+                                            choice_indices,
                                             description: description.clone(),
                                             spell_ability,
                                         }) {
@@ -892,8 +892,8 @@ impl NetworkClient {
                             }
 
                             log::trace!(
-                                "WebSocket: sending choice {} (server_action_count={}) to server",
-                                choice.choice_index,
+                                "WebSocket: sending choice {:?} (server_action_count={}) to server",
+                                choice.choice_indices,
                                 action_count_to_send
                             );
                             // Track for debug validation
@@ -914,7 +914,7 @@ impl NetworkClient {
 
                             let msg = ClientMessage::SubmitChoice {
                                 choice_seq: choice_seq_to_send,
-                                choice_index: choice.choice_index,
+                                choice_indices: choice.choice_indices,
                                 action_count: action_count_to_send,
                                 timestamp_ms: crate::network::protocol::now_ms(),
                                 // Include debug fields when network_debug is enabled
