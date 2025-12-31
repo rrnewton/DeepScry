@@ -67,10 +67,12 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 - [x] Wire WasmRemoteController in create_ai_controller
 - [x] Make WasmNetworkLocalController generic over PlayerController (like native version)
 - [x] Update run_network_mode to support any controller type (Random, Heuristic, Zero, Human)
-- [x] Verified native network protocol works correctly with Random controllers
+- [ ] **BLOCKER: mtg-vmyf7** - Network protocol only supports single-select for attackers/blockers
+  - Determinism test: local game chooses 2 attackers, network only transmits 1
+  - Root cause: `FIXME-UNFINISHED` in controller.rs - multi-select not implemented
+  - Affects: attackers, blockers, discard, damage order, targets, mana sources
 - [ ] **WASM determinism verification**: WASM + native client vs native server
-  - Requires WASM test harness infrastructure
-  - Native Random controller divergence is expected (independent RNG state)
+  - Blocked by mtg-vmyf7 - protocol limitation causes divergence
 - [ ] Handle both player positions correctly (we may be P0 or P1)
   - Controller types are set correctly based on player assignment
   - Need to verify view perspective matches
