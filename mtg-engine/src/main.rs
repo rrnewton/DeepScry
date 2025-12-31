@@ -2643,18 +2643,18 @@ async fn run_deck_build(
 async fn run_stats() -> Result<()> {
     use std::collections::HashMap;
 
-    log::info!("=== MTG Forge Rust - Card Database Statistics ===\n");
+    println!("=== MTG Forge Rust - Card Database Statistics ===\n");
 
     // Find and load cardsfolder
     let cardsfolder = find_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
-    log::info!("Loading full card database...");
+    println!("Loading full card database...");
     let (loaded, duration) = card_db.eager_load().await?;
-    log::info!("Successfully loaded {} cards in {:?}\n", loaded, duration);
+    println!("Successfully loaded {} cards in {:?}\n", loaded, duration);
 
     // Generate comprehensive statistics
-    log::info!("=== Card Database Statistics ===");
+    println!("=== Card Database Statistics ===");
 
     let all_cards = card_db.all_cards().await;
 
@@ -2666,11 +2666,11 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    log::info!("\n--- Card Types ---");
+    println!("\n--- Card Types ---");
     let mut type_vec: Vec<_> = type_counts.iter().collect();
     type_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (card_type, count) in type_vec {
-        log::info!("  {:12} {:6}", card_type, count);
+        println!("  {:12} {:6}", card_type, count);
     }
 
     // Color distribution
@@ -2681,11 +2681,11 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    log::info!("\n--- Colors ---");
+    println!("\n--- Colors ---");
     let mut color_vec: Vec<_> = color_counts.iter().collect();
     color_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (color, count) in color_vec {
-        log::info!("  {:12} {:6}", color, count);
+        println!("  {:12} {:6}", color, count);
     }
 
     // Top subtypes
@@ -2696,12 +2696,12 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    log::info!("\n--- Top 30 Subtypes ---");
-    log::info!("  Total distinct subtypes: {}", subtype_counts.len());
+    println!("\n--- Top 30 Subtypes ---");
+    println!("  Total distinct subtypes: {}", subtype_counts.len());
     let mut subtype_vec: Vec<_> = subtype_counts.iter().collect();
     subtype_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (subtype, count) in subtype_vec.iter().take(30) {
-        log::info!("  {:20} {:6}", subtype, count);
+        println!("  {:20} {:6}", subtype, count);
     }
 
     // Keyword distribution
@@ -2853,21 +2853,21 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    log::info!("\n--- Top 30 Keywords ---");
-    log::info!("  Total distinct keywords: {}", keyword_counts.len());
+    println!("\n--- Top 30 Keywords ---");
+    println!("  Total distinct keywords: {}", keyword_counts.len());
     let mut keyword_vec: Vec<_> = keyword_counts.iter().collect();
     keyword_vec.sort_by(|a, b| b.1.cmp(a.1));
     for (keyword, count) in keyword_vec.iter().take(30) {
-        log::info!("  {:25} {:6}", keyword, count);
+        println!("  {:25} {:6}", keyword, count);
     }
 
     // Ability statistics
     let cards_with_effects = all_cards.iter().filter(|c| !c.raw_abilities.is_empty()).count();
     let cards_with_keywords = all_cards.iter().filter(|c| !c.raw_keywords.is_empty()).count();
 
-    log::info!("\n--- Ability Statistics ---");
-    log::info!("  Cards with raw abilities:  {:6}", cards_with_effects);
-    log::info!("  Cards with keywords:       {:6}", cards_with_keywords);
+    println!("\n--- Ability Statistics ---");
+    println!("  Cards with raw abilities:  {:6}", cards_with_effects);
+    println!("  Cards with keywords:       {:6}", cards_with_keywords);
 
     // Trigger and activated ability counts
     let mut cards_with_triggers = 0;
@@ -2882,8 +2882,8 @@ async fn run_stats() -> Result<()> {
         }
     }
 
-    log::info!("  Cards with triggers:       {:6}", cards_with_triggers);
-    log::info!("  Cards with activated abs:  {:6}", cards_with_activated);
+    println!("  Cards with triggers:       {:6}", cards_with_triggers);
+    println!("  Cards with activated abs:  {:6}", cards_with_activated);
 
     // Mana cost distribution
     let mut cmc_counts = [0; 9]; // 0-7, and 8+ in index 8
@@ -2894,12 +2894,12 @@ async fn run_stats() -> Result<()> {
         cmc_counts[index] += 1;
     }
 
-    log::info!("\n--- Mana Cost Distribution ---");
+    println!("\n--- Mana Cost Distribution ---");
     for (cmc, count) in cmc_counts.iter().enumerate() {
         if cmc < 8 {
-            log::info!("  CMC {}:                     {:6}", cmc, count);
+            println!("  CMC {}:                     {:6}", cmc, count);
         } else {
-            log::info!("  CMC 8+:                    {:6}", count);
+            println!("  CMC 8+:                    {:6}", count);
         }
     }
 
