@@ -374,6 +374,43 @@
             background: #8a2020;
         }
 
+        /* Modal overlay */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            width: 500px;
+            max-width: 90vw;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-content h3 {
+            margin-top: 0;
+            color: #4CAF50;
+        }
+        .modal-content textarea {
+            background: #0a0a1a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            padding: 10px;
+        }
+        .modal-content button {
+            cursor: pointer;
+        }
+
         /* Launch button area */
         .launch-area {
             display: flex;
@@ -608,7 +645,8 @@ cast dark ritual</textarea>
                     <label>Deck</label>
                     <select id="p1-deck"></select>
                     <div class="deck-buttons" id="p1-deck-buttons" style="display: none;">
-                        <button id="p1-add-deck">+ New Deck</button>
+                        <button id="p1-upload-deck" title="Import .dck file">↑ Upload</button>
+                        <button id="p1-add-deck" title="Create new deck in builder">+ Build</button>
                         <button id="p1-edit-deck">Edit</button>
                         <button id="p1-delete-deck" class="delete-btn">Delete</button>
                     </div>
@@ -641,7 +679,8 @@ cast dark ritual</textarea>
                     <label>Deck</label>
                     <select id="p2-deck"></select>
                     <div class="deck-buttons" id="p2-deck-buttons" style="display: none;">
-                        <button id="p2-add-deck">+ New Deck</button>
+                        <button id="p2-upload-deck" title="Import .dck file">↑ Upload</button>
+                        <button id="p2-add-deck" title="Create new deck in builder">+ Build</button>
                         <button id="p2-edit-deck">Edit</button>
                         <button id="p2-delete-deck" class="delete-btn">Delete</button>
                     </div>
@@ -656,6 +695,38 @@ cast dark ritual</textarea>
 
         <div class="launcher-help">
             Human: Up/Down=select, Enter=confirm, 1-9=quick | AI: Space=turn, A=auto | Q=exit, Tab=cycle, ?=help
+        </div>
+    </div>
+
+    <!-- Deck Upload Modal -->
+    <div id="deck-upload-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Upload Deck (.dck)</h3>
+            <p>Paste deck content or select a .dck file:</p>
+
+            <div style="margin-bottom: 15px;">
+                <input type="file" id="deck-file-input" accept=".dck,.txt" style="display: none;">
+                <button id="btn-select-file" style="padding: 8px 16px; cursor: pointer;">Select File...</button>
+                <span id="selected-file-name" style="margin-left: 10px; color: #888;"></span>
+            </div>
+
+            <textarea id="deck-content-input" placeholder="Or paste .dck content here...
+
+Example format:
+[metadata]
+Name=My Deck
+[Main]
+4 Lightning Bolt
+4 Grizzly Bears
+24 Forest"
+                style="width: 100%; height: 200px; font-family: monospace; resize: vertical;"></textarea>
+
+            <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="btn-upload-cancel" style="padding: 8px 16px;">Cancel</button>
+                <button id="btn-upload-submit" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; cursor: pointer;">Import Deck</button>
+            </div>
+
+            <div id="upload-error" style="color: #ff6b6b; margin-top: 10px; display: none;"></div>
         </div>
     </div>
 
@@ -726,6 +797,16 @@ cast dark ritual</textarea>
             window.onunhandledrejection = function(event) {
                 const error = event.reason;
                 const message = error?.message || String(error);
+
+                // Filter out browser extension errors (not from our code)
+                if (message.includes('Could not establish connection') ||
+                    message.includes('Receiving end does not exist') ||
+                    message.includes('Extension context invalidated')) {
+                    // Silently ignore extension-related errors
+                    console.debug('[Ignored extension error]', message);
+                    return;
+                }
+
                 showError(`Unhandled Promise Rejection: ${message}`, null, null, null, error);
             };
 
@@ -889,6 +970,9 @@ cast dark ritual</textarea>
                 setupDeckBuilderButtons('p1');
                 setupDeckBuilderButtons('p2');
 
+                // Set up deck upload modal
+                initUploadModal();
+
                 // Set up controller change handlers
                 setupControllerHandlers();
 
@@ -912,18 +996,45 @@ cast dark ritual</textarea>
          * Load cards needed for selected decks (called at game launch time)
          *
          * Strategy:
-         * 1. Try to load per-deck card packs (fast path, ~20KB each)
-         * 2. Fall back to full cards.bin if deck packs not available (~24MB)
+         * 1. Register any custom decks (from localStorage) with the card database
+         * 2. Try to load per-deck card packs (fast path, ~20KB each)
+         * 3. Fall back to full cards.bin if deck packs not available (~24MB)
+         *
+         * Custom decks always trigger the fallback since they don't have pre-built .bin packs.
          */
         async function loadCardsForDecks(p1Deck, p2Deck) {
             const status = document.getElementById('status');
             const uniqueDecks = [...new Set([p1Deck, p2Deck])];  // Dedupe if same deck
+            const customDecks = getCustomDecks();
 
             let loadedFromPacks = 0;
             let needFallback = false;
+            let hasCustomDeck = false;
 
-            // Try per-deck card packs first (fast path)
+            // First, register any custom decks with the WASM card database
             for (const deckName of uniqueDecks) {
+                if (customDecks[deckName]) {
+                    hasCustomDeck = true;
+                    status.textContent = `Registering custom deck: ${deckName}...`;
+                    const deckJson = JSON.stringify(customDecks[deckName]);
+                    cardDb.register_custom_deck(deckName, deckJson);
+                    console.log(`Registered custom deck: ${deckName}`);
+                }
+            }
+
+            // For custom decks, always use the full card database
+            // (we already loaded it for the deck builder, and there's no pre-built pack)
+            if (hasCustomDeck) {
+                needFallback = true;
+            }
+
+            // Try per-deck card packs for built-in decks (fast path)
+            for (const deckName of uniqueDecks) {
+                // Skip custom decks - they don't have .bin packs
+                if (customDecks[deckName]) {
+                    continue;
+                }
+
                 try {
                     status.textContent = `Loading cards for ${deckName}...`;
                     const packResp = await fetch(`./data/deck_cards/${encodeURIComponent(deckName)}.bin`);
@@ -942,18 +1053,23 @@ cast dark ritual</textarea>
                 }
             }
 
-            // Fall back to full cards.bin if any deck pack failed
+            // Fall back to full cards.bin if any deck pack failed or we have custom decks
             if (needFallback) {
-                status.textContent = 'Loading full card database (fallback)...';
-                console.log('Falling back to full cards.bin...');
+                status.textContent = 'Loading full card database...';
+                console.log('Loading full cards.bin...');
 
-                const cardsResp = await fetch('./data/cards.bin');
-                if (!cardsResp.ok) {
-                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                // Check if cards are already loaded (from deck builder session)
+                if (cardDb.card_count() > 1000) {
+                    console.log(`Cards already loaded (${cardDb.card_count()} cards), skipping reload`);
+                } else {
+                    const cardsResp = await fetch('./data/cards.bin');
+                    if (!cardsResp.ok) {
+                        throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                    }
+                    const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
+                    cardDb.load_cards(cardsData);
+                    console.log('Loaded full card database');
                 }
-                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-                cardDb.load_cards(cardsData);
-                console.log('Loaded full card database as fallback');
             }
 
             // Verify all needed cards are loaded
@@ -965,7 +1081,7 @@ cast dark ritual</textarea>
             }
 
             status.textContent = `Cards loaded for ${uniqueDecks.join(' vs ')}`;
-            return loadedFromPacks === uniqueDecks.length;  // true if all from packs
+            return loadedFromPacks === uniqueDecks.length && !hasCustomDeck;  // true if all from packs
         }
 
         function getControllerType(value) {
@@ -2167,13 +2283,21 @@ cast dark ritual</textarea>
                 const loadTime = (performance.now() - startTime).toFixed(0);
                 console.log(`Card loading took ${loadTime}ms`);
 
-                // Hide setup bar and header to give full viewport to TUI
+                // IMPORTANT: Clean up any existing deck builder state before launching game
+                // This prevents the deck builder's render loop from interfering with the game
+                if (cleanup_deck_builder_state) {
+                    cleanup_deck_builder_state();
+                }
+
+                // Hide launcher and header to give full viewport to TUI
                 // RatZilla calculates terminal size from window dimensions, so we need full viewport
-                document.getElementById('setup-bar').style.display = 'none';
+                document.getElementById('launcher').classList.remove('show');
                 document.getElementById('header-bar').style.display = 'none';
 
-                // Show the terminal container (RatZilla will render into body by default)
+                // Clear RatZilla terminal before launching game
+                // This removes any leftover DOM elements from a previous session
                 const terminal = document.getElementById('ratzilla-terminal');
+                terminal.innerHTML = '';
                 terminal.style.display = 'block';
 
                 // Get container dimensions (not used by RatZilla DOM backend, but kept for API compatibility)
@@ -2570,16 +2694,16 @@ cast dark ritual</textarea>
                 }
             }
 
-            // Hide terminal and show setup bar + header
+            // Hide terminal and show launcher + header
             terminal.style.display = 'none';
             document.getElementById('game-controls').style.display = 'none';
             document.getElementById('header-bar').style.display = 'flex';
-            document.getElementById('setup-bar').style.display = 'flex';
+            document.getElementById('launcher').classList.add('show');
 
             // Re-enable launch button
             const launchBtn = document.getElementById('btn-launch');
             launchBtn.disabled = false;
-            launchBtn.textContent = 'Launch Fancy TUI';
+            launchBtn.textContent = 'Launch Game';
 
             // Reset network status display
             const networkStatus = document.getElementById('network-status');
@@ -2746,10 +2870,230 @@ cast dark ritual</textarea>
             deleteBtn.disabled = !hasSelection;
         }
 
+        // Track which player is uploading (for modal callbacks)
+        let uploadingForPlayer = null;
+
+        /**
+         * Parse a .dck file format and return deck data
+         * Format:
+         * [metadata]
+         * Name=Deck Name
+         * Description=Optional description
+         * [Main]
+         * 4 Card Name
+         * 4 Another Card|SET|[num]
+         * [Sideboard]
+         * 2 Sideboard Card
+         */
+        function parseDckFormat(content) {
+            const lines = content.split(/\r?\n/);
+            let currentSection = null;
+            let deckName = null;
+            const mainDeck = [];
+            const sideboard = [];
+            const errors = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line || line.startsWith('//') || line.startsWith('#')) continue;
+
+                // Check for section headers
+                if (line.match(/^\[metadata\]/i)) {
+                    currentSection = 'metadata';
+                    continue;
+                }
+                if (line.match(/^\[main\]/i)) {
+                    currentSection = 'main';
+                    continue;
+                }
+                if (line.match(/^\[sideboard\]/i)) {
+                    currentSection = 'sideboard';
+                    continue;
+                }
+
+                // Parse metadata
+                if (currentSection === 'metadata') {
+                    const nameMatch = line.match(/^Name\s*=\s*(.+)$/i);
+                    if (nameMatch) {
+                        deckName = nameMatch[1].trim();
+                    }
+                    continue;
+                }
+
+                // Parse card entries: "count CardName" or "count CardName|SET|[num]"
+                if (currentSection === 'main' || currentSection === 'sideboard') {
+                    // Match: count Card Name (with optional |SET|[num] suffix)
+                    const cardMatch = line.match(/^(\d+)\s+(.+?)(?:\|.*)?$/);
+                    if (cardMatch) {
+                        const count = parseInt(cardMatch[1]);
+                        const cardName = cardMatch[2].trim();
+                        if (count > 0 && cardName) {
+                            const entry = [cardName, count];
+                            if (currentSection === 'main') {
+                                mainDeck.push(entry);
+                            } else {
+                                sideboard.push(entry);
+                            }
+                        }
+                    } else if (line.length > 0) {
+                        errors.push(`Line ${i + 1}: Could not parse "${line}"`);
+                    }
+                }
+            }
+
+            if (!deckName) {
+                // Try to extract name from filename or generate one
+                errors.push('No deck name found in [metadata] section. Please add "Name=..." in the file.');
+            }
+
+            if (mainDeck.length === 0) {
+                errors.push('No cards found in [Main] section.');
+            }
+
+            return {
+                name: deckName,
+                mainDeck,
+                sideboard,
+                errors,
+                totalCards: mainDeck.reduce((sum, [_, count]) => sum + count, 0)
+            };
+        }
+
+        /**
+         * Show the upload modal for a player
+         */
+        function showUploadModal(player) {
+            uploadingForPlayer = player;
+
+            const modal = document.getElementById('deck-upload-modal');
+            const textarea = document.getElementById('deck-content-input');
+            const fileInput = document.getElementById('deck-file-input');
+            const fileNameSpan = document.getElementById('selected-file-name');
+            const errorDiv = document.getElementById('upload-error');
+
+            // Reset state
+            textarea.value = '';
+            fileInput.value = '';
+            fileNameSpan.textContent = '';
+            errorDiv.style.display = 'none';
+
+            modal.style.display = 'flex';
+        }
+
+        /**
+         * Hide the upload modal
+         */
+        function hideUploadModal() {
+            uploadingForPlayer = null;
+            document.getElementById('deck-upload-modal').style.display = 'none';
+        }
+
+        /**
+         * Import deck from the upload modal
+         */
+        function importDeckFromModal() {
+            const textarea = document.getElementById('deck-content-input');
+            const errorDiv = document.getElementById('upload-error');
+            const content = textarea.value.trim();
+
+            if (!content) {
+                errorDiv.textContent = 'Please paste deck content or select a file.';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            // Parse the deck content
+            const result = parseDckFormat(content);
+
+            if (result.errors.length > 0 && !result.name) {
+                errorDiv.innerHTML = result.errors.map(e => `• ${e}`).join('<br>');
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            if (!result.name) {
+                // Prompt for name if not in file
+                const name = prompt('Deck name not found in file. Enter a name:');
+                if (!name || !name.trim()) {
+                    return;
+                }
+                result.name = name.trim();
+            }
+
+            // Check for duplicate name
+            const customDecks = getCustomDecks();
+            if (customDecks[result.name]) {
+                if (!confirm(`A deck named "${result.name}" already exists. Overwrite?`)) {
+                    return;
+                }
+            }
+
+            // Save the deck
+            customDecks[result.name] = {
+                main_deck: result.mainDeck,
+                sideboard: result.sideboard
+            };
+            saveCustomDecks(customDecks);
+
+            console.log(`[Upload] Imported deck "${result.name}" with ${result.totalCards} cards`);
+
+            // Update UI
+            hideUploadModal();
+
+            // Switch to custom collection and select the new deck
+            if (uploadingForPlayer) {
+                document.getElementById(`${uploadingForPlayer}-collection`).value = 'custom';
+                updateDeckDropdown(uploadingForPlayer);
+                document.getElementById(`${uploadingForPlayer}-deck`).value = result.name;
+            }
+        }
+
+        /**
+         * Initialize upload modal event handlers
+         */
+        function initUploadModal() {
+            const fileInput = document.getElementById('deck-file-input');
+            const selectFileBtn = document.getElementById('btn-select-file');
+            const fileNameSpan = document.getElementById('selected-file-name');
+            const textarea = document.getElementById('deck-content-input');
+            const cancelBtn = document.getElementById('btn-upload-cancel');
+            const submitBtn = document.getElementById('btn-upload-submit');
+
+            // Select file button
+            selectFileBtn.addEventListener('click', () => fileInput.click());
+
+            // File selected
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    fileNameSpan.textContent = file.name;
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        textarea.value = event.target.result;
+                    };
+                    reader.readAsText(file);
+                }
+            });
+
+            // Cancel button
+            cancelBtn.addEventListener('click', hideUploadModal);
+
+            // Submit button
+            submitBtn.addEventListener('click', importDeckFromModal);
+
+            // Close on background click
+            document.getElementById('deck-upload-modal').addEventListener('click', (e) => {
+                if (e.target.classList.contains('modal')) {
+                    hideUploadModal();
+                }
+            });
+        }
+
         /**
          * Set up deck builder buttons for a player
          */
         function setupDeckBuilderButtons(player) {
+            const uploadBtn = document.getElementById(`${player}-upload-deck`);
             const addBtn = document.getElementById(`${player}-add-deck`);
             const editBtn = document.getElementById(`${player}-edit-deck`);
             const deleteBtn = document.getElementById(`${player}-delete-deck`);
@@ -2763,7 +3107,12 @@ cast dark ritual</textarea>
                 editBtn.title = 'Deck builder not available in this build';
             }
 
-            // Add deck button
+            // Upload deck button - shows modal for importing .dck files
+            uploadBtn.addEventListener('click', () => {
+                showUploadModal(player);
+            });
+
+            // Add deck button (now labeled "Build")
             addBtn.addEventListener('click', () => {
                 const deckName = prompt('Enter a name for the new deck:');
                 if (deckName && deckName.trim()) {
@@ -2860,22 +3209,39 @@ cast dark ritual</textarea>
             editingDeckName = deckName;
 
             try {
-                // Load all cards for deck builder
-                await loadAllCards();
+                // IMPORTANT: Clean up any existing TUI state before launching deck builder
+                // This prevents the game's render loop from interfering with the deck builder
+                cleanup_tui_state();
 
-                // Hide launcher and header
+                // Show loading indicator immediately (before async operations)
+                const loading = document.getElementById('loading');
+                loading.innerHTML = `
+                    <div>Loading Deck Builder...</div>
+                    <div id="loading-progress">Loading card database for "${deckName}"</div>
+                `;
+                loading.style.display = 'flex';
+
+                // Hide launcher (but keep loading visible)
                 document.getElementById('launcher').classList.remove('show');
                 document.getElementById('header-bar').style.display = 'none';
 
-                // Show RatZilla terminal container
+                // Load all cards for deck builder
+                await loadAllCards();
+
+                // Hide loading indicator
+                loading.style.display = 'none';
+
+                // Clear RatZilla terminal before launching deck builder
+                // This removes any leftover DOM elements from a previous game session
                 const terminal = document.getElementById('ratzilla-terminal');
+                terminal.innerHTML = '';
                 terminal.style.display = 'block';
 
                 // Convert existing deck to JSON format if provided
                 const initialDeckJson = existingDeck ? JSON.stringify(existingDeck) : null;
 
-                // Launch the deck builder
-                launch_deck_builder(cardDb, initialDeckJson);
+                // Launch the deck builder with deck name for display
+                launch_deck_builder(cardDb, initialDeckJson, deckName);
 
                 // Set up save callback - saves deck to localStorage with the specified name
                 deck_builder_set_save_callback((deckJson) => {

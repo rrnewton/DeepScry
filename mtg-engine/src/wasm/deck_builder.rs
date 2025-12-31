@@ -190,12 +190,22 @@ pub fn deck_builder_get_stats() -> String {
 /// # Arguments
 /// * `card_db` - The loaded card database with all cards
 /// * `initial_deck_json` - Optional JSON string with initial deck to load
+/// * `deck_name` - Optional name/title of the deck being edited
 #[wasm_bindgen]
-pub fn launch_deck_builder(card_db: &WasmCardDatabase, initial_deck_json: Option<String>) -> Result<(), JsValue> {
+pub fn launch_deck_builder(
+    card_db: &WasmCardDatabase,
+    initial_deck_json: Option<String>,
+    deck_name: Option<String>,
+) -> Result<(), JsValue> {
     log::info!("Launching WASM deck builder TUI");
 
     // Create state
     let mut wasm_state = WasmDeckBuilderState::new(card_db);
+
+    // Set deck name if provided
+    if deck_name.is_some() {
+        wasm_state.state.deck_name = deck_name;
+    }
 
     // Load initial deck if provided
     if let Some(deck_json) = initial_deck_json {

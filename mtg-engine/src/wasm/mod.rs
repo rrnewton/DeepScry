@@ -284,6 +284,61 @@ impl WasmCardDatabase {
             "[]".to_string()
         }
     }
+
+    /// Register a custom deck from JSON
+    ///
+    /// This allows custom decks (created in the deck builder and stored in localStorage)
+    /// to be registered with the card database so they can be used in games.
+    ///
+    /// JSON format: { "main_deck": [[card_name, count], ...], "sideboard": [[card_name, count], ...] }
+    pub fn register_custom_deck(&mut self, deck_name: &str, deck_json: &str) -> Result<(), JsValue> {
+        // Parse the deck JSON
+        let parsed: serde_json::Value = serde_json::from_str(deck_json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse deck JSON: {}", e)))?;
+
+        let mut main_deck = Vec::new();
+        let mut sideboard = Vec::new();
+
+        // Parse main_deck: [[card_name, count], ...]
+        if let Some(main) = parsed.get("main_deck").and_then(|v| v.as_array()) {
+            for entry in main {
+                if let Some(arr) = entry.as_array() {
+                    if arr.len() >= 2 {
+                        if let (Some(name), Some(count)) = (arr[0].as_str(), arr[1].as_u64()) {
+                            main_deck.push(DeckEntry {
+                                card_name: name.to_string(),
+                                count: count as u8,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Parse sideboard (optional)
+        if let Some(side) = parsed.get("sideboard").and_then(|v| v.as_array()) {
+            for entry in side {
+                if let Some(arr) = entry.as_array() {
+                    if arr.len() >= 2 {
+                        if let (Some(name), Some(count)) = (arr[0].as_str(), arr[1].as_u64()) {
+                            sideboard.push(DeckEntry {
+                                card_name: name.to_string(),
+                                count: count as u8,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        let deck = DeckList { main_deck, sideboard };
+        let card_count = deck.total_cards();
+
+        web_sys::console::log_1(&format!("Registered custom deck '{}' with {} cards", deck_name, card_count).into());
+
+        self.decks.insert(deck_name.to_string(), deck);
+        Ok(())
+    }
 }
 
 impl Default for WasmCardDatabase {

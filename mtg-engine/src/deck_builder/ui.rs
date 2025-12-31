@@ -123,10 +123,13 @@ pub fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
 fn draw_deck_summary(f: &mut Frame, area: Rect, state: &mut DeckBuilderState) {
     let is_focused = state.focused_pane == FocusedPane::DeckSummary;
     let border_color = if is_focused { Color::Yellow } else { Color::Cyan };
-    let title = if is_focused {
-        " Deck Summary [focused] "
-    } else {
-        " Deck Summary "
+
+    // Build title with optional deck name
+    let title = match (&state.deck_name, is_focused) {
+        (Some(name), true) => format!(" Deck Summary: {} [focused] ", name),
+        (Some(name), false) => format!(" Deck Summary: {} ", name),
+        (None, true) => " Deck Summary [focused] ".to_string(),
+        (None, false) => " Deck Summary ".to_string(),
     };
 
     let block = Block::default()

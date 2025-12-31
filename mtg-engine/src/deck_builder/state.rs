@@ -27,6 +27,8 @@ pub enum FocusedPane {
 /// This struct is public to allow sharing between native and WASM implementations.
 /// The core state management is identical; only the event loop differs.
 pub struct DeckBuilderState {
+    /// Optional name/title of the deck being edited
+    pub deck_name: Option<String>,
     /// All available card names (sorted)
     pub all_cards: Vec<String>,
     /// Card definitions cache (loaded on demand for details display)
@@ -72,6 +74,7 @@ impl DeckBuilderState {
         edition_index: Option<CardEditionIndex>,
     ) -> Self {
         Self {
+            deck_name: None,
             all_cards,
             card_definitions,
             search_query: String::new(),
@@ -96,6 +99,7 @@ impl DeckBuilderState {
     #[cfg(not(feature = "native"))]
     pub fn new(all_cards: Vec<String>, card_definitions: HashMap<String, Arc<CardDefinition>>) -> Self {
         Self {
+            deck_name: None,
             all_cards,
             card_definitions,
             search_query: String::new(),
