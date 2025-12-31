@@ -38,8 +38,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Ensure binary is built
+# Build native binary with network feature
 ensure_mtg_binary
+
+# Build WASM with network feature using Makefile target
+echo -e "${YELLOW}Building WASM with network feature...${NC}"
+make wasm-network
 
 echo -e "${CYAN}======================================${NC}"
 echo -e "${CYAN}  MTG Forge Network Game Launcher${NC}"

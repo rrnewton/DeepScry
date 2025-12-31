@@ -57,8 +57,8 @@ impl WasmRemoteController {
 
     /// Try to get the next opponent choice
     ///
-    /// Returns the choice index, or NeedInput if none available.
-    fn try_get_choice(&mut self) -> ChoiceResult<usize> {
+    /// Returns the choice indices, or NeedInput if none available.
+    fn try_get_choice(&mut self) -> ChoiceResult<Vec<usize>> {
         // Check if game has ended
         let client = self.network_client.borrow();
         if client.state() == super::client::NetworkState::GameEnded {

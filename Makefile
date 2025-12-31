@@ -522,6 +522,28 @@ wasm-dev-serve: wasm-dev
 	@echo ""
 	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
 
+# Build WASM with network feature (for browser multiplayer)
+wasm-network: wasm-export
+	@echo "=== Building WebAssembly with network feature ==="
+	@if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "Installing wasm-pack..."; \
+		cargo install wasm-pack; \
+	fi
+	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network
+	@rm -rf web/pkg
+	@cp -r mtg-engine/pkg web/pkg
+	@echo ""
+	@echo "=== WASM network build complete! ==="
+
+# Build WASM with network feature and start web server
+wasm-network-serve: wasm-network
+	@echo ""
+	@echo "=== Starting web server (network build) ==="
+	@echo "Open http://localhost:$(PORT)/fancy.html in your browser"
+	@echo "Press Ctrl+C to stop"
+	@echo ""
+	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
+
 # Test WASM module in headless browser (basic API test)
 wasm-test: wasm
 	@echo "=== Testing WASM in headless browser ==="
