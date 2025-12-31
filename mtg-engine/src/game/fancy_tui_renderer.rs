@@ -1507,16 +1507,13 @@ impl FancyTuiRenderer {
     /// Draw the Log pane (left column top)
     fn draw_log_pane(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let is_focused = self.state.focused_pane == FocusedPane::Log;
+        let border_color = if is_focused { Color::Cyan } else { Color::Reset };
 
         // Draw the block with title
         let block = Block::default()
             .borders(Borders::ALL)
             .title(if is_focused { " Log (L) [FOCUSED] " } else { " Log (L) " })
-            .border_style(if is_focused {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            });
+            .border_style(Style::default().fg(border_color));
         f.render_widget(block, area);
 
         // Content area inside the border
@@ -1536,10 +1533,14 @@ impl FancyTuiRenderer {
             let max_offset = total.saturating_sub(visible_lines);
             (total, self.state.log_scroll_offset.min(max_offset))
         } else {
+            // Must use filtered count to match draw_log_view_unwrapped
             let logs = view.logger().logs();
-            let total = logs.len();
-            let max_offset = total.saturating_sub(visible_lines);
-            (total, self.state.log_scroll_offset.min(max_offset))
+            let filtered_count = logs
+                .iter()
+                .filter(|e| !e.message.starts_with(LOG_FILTER_PREFIX))
+                .count();
+            let max_offset = filtered_count.saturating_sub(visible_lines);
+            (filtered_count, self.state.log_scroll_offset.min(max_offset))
         };
         let end_idx = total_lines.saturating_sub(scroll_offset);
         let start_idx = end_idx.saturating_sub(visible_lines);
@@ -1566,6 +1567,69 @@ impl FancyTuiRenderer {
             };
             let status_span = Span::styled(full_status, Style::default().fg(Color::DarkGray));
             f.render_widget(Paragraph::new(Line::from(status_span)), status_area);
+        }
+
+        // Draw scroll indicator on right border when in scrollback mode
+        if scroll_offset > 0 && total_lines > visible_lines {
+            self.draw_scroll_indicator(f, area, total_lines, visible_lines, start_idx, border_color);
+        }
+    }
+
+    /// Draw scroll indicator on the right border of a pane
+    /// Maps K border characters to N total lines, highlighting the portion representing visible lines
+    fn draw_scroll_indicator(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        total_lines: usize,
+        visible_lines: usize,
+        start_idx: usize,
+        border_color: Color,
+    ) {
+        // Right border characters (excluding corners): from y+1 to y+height-2
+        let scroll_track_height = area.height.saturating_sub(2) as usize; // K characters
+        if scroll_track_height == 0 || total_lines == 0 {
+            return;
+        }
+
+        // Calculate thumb position and size
+        // Thumb size (J) is proportional to visible_lines / total_lines
+        // Thumb position maps start_idx to the track
+        let thumb_size = ((visible_lines as f32 / total_lines as f32) * scroll_track_height as f32)
+            .ceil()
+            .max(1.0) as usize;
+        let thumb_size = thumb_size.min(scroll_track_height);
+
+        // Position: map start_idx (0..total_lines-visible_lines) to (0..scroll_track_height-thumb_size)
+        let max_start = total_lines.saturating_sub(visible_lines);
+        let max_thumb_pos = scroll_track_height.saturating_sub(thumb_size);
+        let thumb_pos = if max_start > 0 {
+            ((start_idx as f32 / max_start as f32) * max_thumb_pos as f32).round() as usize
+        } else {
+            0
+        };
+
+        // Draw each character on the right border
+        let right_x = area.x + area.width - 1;
+        for i in 0..scroll_track_height {
+            let y = area.y + 1 + i as u16;
+            let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
+
+            let (ch, style) = if is_thumb {
+                // Highlighted: use solid block character with border color
+                ('█', Style::default().fg(border_color))
+            } else {
+                // Unhighlighted: normal border character
+                ('│', Style::default().fg(border_color))
+            };
+
+            let cell_area = Rect {
+                x: right_x,
+                y,
+                width: 1,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(ch.to_string()).style(style), cell_area);
         }
     }
 
