@@ -106,6 +106,10 @@ pub struct GameLogger {
 
     /// Count of controller choices made in the game
     choice_count: RefCell<usize>,
+
+    /// Enable ANSI colored output for CLI mode (default: true)
+    /// Set to false via --no-color-logs CLI flag or NO_COLOR env var
+    color_enabled: bool,
 }
 
 impl GameLogger {
@@ -125,6 +129,7 @@ impl GameLogger {
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
+            color_enabled: true, // Colors enabled by default
         }
     }
 
@@ -144,6 +149,7 @@ impl GameLogger {
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
+            color_enabled: true, // Colors enabled by default
         }
     }
 
@@ -358,6 +364,23 @@ impl GameLogger {
         self.tag_gamelogs
     }
 
+    /// Enable or disable ANSI colored output for CLI mode
+    ///
+    /// When enabled, log messages to stdout will include ANSI color codes
+    /// for improved readability. Colors are applied based on message content
+    /// (e.g., turn headers, damage, mana tapping).
+    ///
+    /// This only affects stdout output; TUI and web modes have their own
+    /// color rendering via ratatui/RatZilla.
+    pub fn set_color_enabled(&mut self, enabled: bool) {
+        self.color_enabled = enabled;
+    }
+
+    /// Check if ANSI colored output is enabled
+    pub fn color_enabled(&self) -> bool {
+        self.color_enabled
+    }
+
     /// Update the current turn number for gamelog tagging
     pub fn set_gamelog_turn(&self, turn: u32) {
         *self.gamelog_turn.borrow_mut() = turn;
@@ -386,13 +409,94 @@ impl GameLogger {
         self.step_header_printed
     }
 
+    /// Colorize a log message based on its content patterns
+    ///
+    /// Returns the message with ANSI escape codes when color_enabled is true.
+    /// When colors are disabled or crossterm is unavailable, returns the message unchanged.
+    #[cfg(feature = "native-tui")]
+    fn colorize_message<'a>(&self, message: &'a str) -> std::borrow::Cow<'a, str> {
+        use crossterm::style::Stylize;
+
+        if !self.color_enabled {
+            return std::borrow::Cow::Borrowed(message);
+        }
+
+        // Turn headers: ">>> Turn N" - Yellow, bold, underlined
+        if message.contains(">>> Turn") || message.contains("<<<< ") {
+            return std::borrow::Cow::Owned(message.yellow().bold().underlined().to_string());
+        }
+
+        // Step headers: "--- ... ---" - Cyan
+        if message.starts_with("--- ") && message.ends_with(" ---") {
+            return std::borrow::Cow::Owned(message.cyan().to_string());
+        }
+
+        // Combat events - Magenta
+        if message.contains("attacks") || message.contains("blocks") {
+            return std::borrow::Cow::Owned(message.magenta().to_string());
+        }
+
+        // Damage/life events - Red (bold for emphasis)
+        if (message.contains("damage") && message.contains("life:"))
+            || message.contains("takes") && message.contains("damage")
+        {
+            return std::borrow::Cow::Owned(message.red().bold().to_string());
+        }
+
+        // Life gain - Green
+        if message.contains("gains") && message.contains("life") {
+            return std::borrow::Cow::Owned(message.green().to_string());
+        }
+
+        // Resolution - Green
+        if message.contains("resolves") {
+            return std::borrow::Cow::Owned(message.green().to_string());
+        }
+
+        // Mana tapping - Dark gray (dim)
+        if message.contains("Tap ") && message.contains("for {") {
+            return std::borrow::Cow::Owned(message.dark_grey().to_string());
+        }
+
+        // Mana production - Dark gray
+        if message.contains("taps") && message.contains("for {") {
+            return std::borrow::Cow::Owned(message.dark_grey().to_string());
+        }
+
+        // Choice markers - Cyan, dim
+        if message.starts_with("<Choice>") {
+            return std::borrow::Cow::Owned(message.cyan().dim().to_string());
+        }
+
+        // Player names coloring for "Player1" and "Player2"
+        // This is a simple approach - color the whole line based on which player is mentioned first
+        if message.starts_with("Player1") || message.contains(" Player1 ") {
+            // Blue tint for Player1
+            return std::borrow::Cow::Owned(message.blue().to_string());
+        }
+        if message.starts_with("Player2") || message.contains(" Player2 ") {
+            // Red tint for Player2
+            return std::borrow::Cow::Owned(message.dark_red().to_string());
+        }
+
+        // Default: return as-is
+        std::borrow::Cow::Borrowed(message)
+    }
+
+    /// Fallback colorize_message when crossterm is not available
+    #[cfg(not(feature = "native-tui"))]
+    fn colorize_message<'a>(&self, message: &'a str) -> std::borrow::Cow<'a, str> {
+        std::borrow::Cow::Borrowed(message)
+    }
+
     /// Fast path for stdout logging
     #[inline]
     fn log_to_stdout(&self, level: VerbosityLevel, message: &str) {
+        let colored = self.colorize_message(message);
         if level == VerbosityLevel::Minimal {
-            println!("{}", message);
+            println!("{}", colored);
         } else {
-            println!("  {}", message);
+            println!("  {}", colored);
         }
     }
 
@@ -636,6 +740,7 @@ impl Clone for GameLogger {
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
+            color_enabled: self.color_enabled,
         }
     }
 }
@@ -646,12 +751,13 @@ impl Serialize for GameLogger {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("GameLogger", 5)?;
+        let mut state = serializer.serialize_struct("GameLogger", 6)?;
         state.serialize_field("verbosity", &self.verbosity)?;
         state.serialize_field("numeric_choices", &self.numeric_choices)?;
         state.serialize_field("output_format", &self.output_format)?;
         state.serialize_field("output_mode", &self.output_mode)?;
         state.serialize_field("show_choice_menu", &self.show_choice_menu)?;
+        state.serialize_field("color_enabled", &self.color_enabled)?;
         state.end()
     }
 }
@@ -669,6 +775,12 @@ impl<'de> Deserialize<'de> for GameLogger {
             output_mode: OutputMode,
             #[serde(default)]
             show_choice_menu: bool,
+            #[serde(default = "default_color_enabled")]
+            color_enabled: bool,
+        }
+
+        fn default_color_enabled() -> bool {
+            true
         }
 
         let data = GameLoggerData::deserialize(deserializer)?;
@@ -686,6 +798,7 @@ impl<'de> Deserialize<'de> for GameLogger {
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
+            color_enabled: data.color_enabled,
         })
     }
 }
@@ -779,5 +892,62 @@ mod tests {
 
         logger.disable_capture();
         assert!(!logger.is_capturing());
+    }
+
+    #[test]
+    fn test_color_enabled_default() {
+        let logger = GameLogger::new();
+        // Colors are enabled by default
+        assert!(logger.color_enabled());
+    }
+
+    #[test]
+    fn test_color_enabled_setter() {
+        let mut logger = GameLogger::new();
+        assert!(logger.color_enabled());
+
+        logger.set_color_enabled(false);
+        assert!(!logger.color_enabled());
+
+        logger.set_color_enabled(true);
+        assert!(logger.color_enabled());
+    }
+
+    #[cfg(feature = "native-tui")]
+    #[test]
+    fn test_colorize_message_turn_headers() {
+        let logger = GameLogger::new();
+
+        // Turn header should get colorized
+        let result = logger.colorize_message(">>> Turn 1 - Player1 20 (Player2 20) <<<<");
+        assert!(result.contains("\x1b[")); // Contains ANSI escape codes
+
+        // When disabled, should return unchanged
+        let mut logger2 = GameLogger::new();
+        logger2.set_color_enabled(false);
+        let result2 = logger2.colorize_message(">>> Turn 1 - Player1 20 (Player2 20) <<<<");
+        assert!(!result2.contains("\x1b[")); // No ANSI escape codes
+    }
+
+    #[cfg(feature = "native-tui")]
+    #[test]
+    fn test_colorize_message_patterns() {
+        let logger = GameLogger::new();
+
+        // Step headers - cyan
+        let result = logger.colorize_message("--- Main Phase 1 ---");
+        assert!(result.contains("\x1b["));
+
+        // Mana tapping - dark gray
+        let result = logger.colorize_message("Tap Mountain for {R}");
+        assert!(result.contains("\x1b["));
+
+        // Combat - magenta
+        let result = logger.colorize_message("Grizzly Bears attacks");
+        assert!(result.contains("\x1b["));
+
+        // Default text - no color change when there's no pattern match
+        let result = logger.colorize_message("Some random message");
+        assert_eq!(result, "Some random message");
     }
 }

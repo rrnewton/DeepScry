@@ -208,6 +208,10 @@ enum Commands {
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
 
+        /// Disable ANSI colored log output (respects NO_COLOR env var by default)
+        #[arg(long)]
+        no_color_logs: bool,
+
         /// Use numeric-only choice format (for comparison with Java Forge)
         #[arg(long)]
         numeric_choices: bool,
@@ -359,6 +363,10 @@ enum Commands {
         /// Verbosity level for game output (0=silent, 1=minimal, 2=normal, 3=verbose)
         #[arg(long, default_value = "normal", short = 'v')]
         verbosity: VerbosityArg,
+
+        /// Disable ANSI colored log output (respects NO_COLOR env var by default)
+        #[arg(long)]
+        no_color_logs: bool,
 
         /// Use numeric-only choice format (for comparison with Java Forge)
         #[arg(long)]
@@ -643,6 +651,7 @@ async fn main() -> Result<()> {
             deck_seed,
             load_all_cards,
             verbosity,
+            no_color_logs,
             numeric_choices,
             visual_stacks,
             debug_state_hash,
@@ -682,6 +691,7 @@ async fn main() -> Result<()> {
                 deck_seed,
                 load_all_cards,
                 verbosity,
+                no_color_logs,
                 numeric_choices,
                 visual_stacks,
                 debug_state_hash,
@@ -756,6 +766,7 @@ async fn main() -> Result<()> {
             override_seed_p1,
             override_seed_p2,
             verbosity,
+            no_color_logs,
             numeric_choices,
             visual_stacks,
             debug_state_hash,
@@ -784,6 +795,7 @@ async fn main() -> Result<()> {
                 override_seed_p1,
                 override_seed_p2,
                 verbosity,
+                no_color_logs,
                 numeric_choices,
                 visual_stacks,
                 debug_state_hash,
@@ -1017,6 +1029,7 @@ async fn run_tui(
     deck_seed: Option<SeedArg>,
     load_all_cards: bool,
     verbosity: VerbosityArg,
+    no_color_logs: bool,
     numeric_choices: bool,
     visual_stacks: bool,
     debug_state_hash: bool,
@@ -1255,6 +1268,16 @@ async fn run_tui(
         if !suppress_output {
             log::info!("Gamelog tagging: enabled");
         }
+    }
+
+    // Configure colored log output
+    // Colors are enabled by default, but disabled if:
+    // 1. --no-color-logs flag is passed, OR
+    // 2. NO_COLOR environment variable is set (https://no-color.org/)
+    let color_enabled = !no_color_logs && std::env::var("NO_COLOR").is_err();
+    game.logger.set_color_enabled(color_enabled);
+    if !suppress_output && !color_enabled {
+        log::info!("Colored logs: disabled");
     }
 
     if !suppress_output {
@@ -1899,6 +1922,7 @@ async fn run_resume(
     override_seed_p1: Option<SeedArg>,
     override_seed_p2: Option<SeedArg>,
     verbosity: VerbosityArg,
+    no_color_logs: bool,
     numeric_choices: bool,
     visual_stacks: bool,
     debug_state_hash: bool,
@@ -2035,6 +2059,16 @@ async fn run_resume(
         if !suppress_output {
             log::info!("Gamelog tagging: enabled");
         }
+    }
+
+    // Configure colored log output
+    // Colors are enabled by default, but disabled if:
+    // 1. --no-color-logs flag is passed, OR
+    // 2. NO_COLOR environment variable is set (https://no-color.org/)
+    let color_enabled = !no_color_logs && std::env::var("NO_COLOR").is_err();
+    game.logger.set_color_enabled(color_enabled);
+    if !suppress_output && !color_enabled {
+        log::info!("Colored logs: disabled");
     }
 
     // Get player IDs
