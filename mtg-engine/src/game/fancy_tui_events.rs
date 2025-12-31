@@ -362,8 +362,8 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
         FocusedPane::Info => {
             // Scroll to previous turn header
             let logs = view.logger().logs();
-            // Estimate visible lines (will be clamped by renderer)
-            state.log_scroll_prev_turn(&logs, 20);
+            let visible_lines = state.log_visible_lines;
+            state.log_scroll_prev_turn(&logs, visible_lines);
             EventResult::Handled
         }
         _ => EventResult::Handled,
@@ -396,8 +396,8 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
         FocusedPane::Info => {
             // Scroll to next turn header
             let logs = view.logger().logs();
-            // Estimate visible lines (will be clamped by renderer)
-            state.log_scroll_next_turn(&logs, 20);
+            let visible_lines = state.log_visible_lines;
+            state.log_scroll_next_turn(&logs, visible_lines);
             EventResult::Handled
         }
         _ => EventResult::Handled,

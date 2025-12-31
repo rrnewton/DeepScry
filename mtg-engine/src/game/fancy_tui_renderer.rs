@@ -394,6 +394,8 @@ pub struct FancyTuiState {
     pub log_scroll_offset: usize,
     /// Whether to wrap lines in the log pane
     pub log_wrap_lines: bool,
+    /// Actual visible lines in log pane (updated during render)
+    pub log_visible_lines: usize,
 }
 
 impl Default for FancyTuiState {
@@ -423,6 +425,7 @@ impl FancyTuiState {
             rewind_message: None,
             log_scroll_offset: 0,  // 0 = follow mode (show latest)
             log_wrap_lines: false, // Default: no line wrapping (truncate)
+            log_visible_lines: 20, // Default estimate, updated during render
         }
     }
 
@@ -1378,6 +1381,9 @@ impl FancyTuiRenderer {
         let logs = view.logger().logs();
         let total_lines = logs.len();
         let visible_lines = area.height as usize;
+
+        // Store actual visible lines for turn navigation calculations
+        self.state.log_visible_lines = visible_lines;
 
         if visible_lines == 0 || area.width < 10 {
             return;
