@@ -42,7 +42,7 @@ use crate::undo::GameAction;
 
 // Network controller imports (conditional on wasm-network feature)
 #[cfg(feature = "wasm-network")]
-use super::network::{ensure_client, WasmNetworkLocalController, WasmRemoteController};
+use super::network::{ensure_client, SharedNetworkClient, WasmNetworkLocalController, WasmRemoteController};
 
 // Thread-local storage for the global TUI state (for button callbacks)
 thread_local! {
@@ -878,10 +878,11 @@ impl WasmFancyTuiState {
 
     /// Run the game in network mode
     ///
-    /// Network mode is similar to Human mode but coordinates with the server:
-    /// - P1 (local) uses WasmNetworkLocalController wrapping WasmHumanController
+    /// Network mode coordinates with the server:
+    /// - P1 (local) uses WasmNetworkLocalController wrapping any controller type
     /// - P2 (remote) uses WasmRemoteController receiving choices from server
-    /// - Uses the same rewind/replay pattern for resumable game loops
+    /// - For Human controller: uses rewind/replay pattern for resumable game loops
+    /// - For AI controllers (Random, Heuristic, Zero): runs directly without replay
     #[cfg(feature = "wasm-network")]
     fn run_network_mode(&mut self, p1_id: PlayerId, p2_id: PlayerId) {
         // Get the shared network client
@@ -890,8 +891,50 @@ impl WasmFancyTuiState {
         // Create remote controller for P2 (opponent)
         let mut p2_controller = WasmRemoteController::new(p2_id, network_client.clone());
 
+        // Handle based on controller type
+        match self.p1_controller_type {
+            WasmControllerType::Human => {
+                // Human controller - use rewind/replay pattern (same as local Human mode)
+                self.run_network_mode_human(p1_id, network_client, &mut p2_controller);
+            }
+            WasmControllerType::Random => {
+                // Random controller - runs directly without user input
+                let inner = RandomController::with_seed(p1_id, 42);
+                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
+                self.run_network_mode_ai(p1_id, &mut network_local, &mut p2_controller);
+            }
+            WasmControllerType::Heuristic => {
+                // Heuristic controller
+                let inner = HeuristicController::new(p1_id);
+                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
+                self.run_network_mode_ai(p1_id, &mut network_local, &mut p2_controller);
+            }
+            WasmControllerType::Zero => {
+                // Zero controller (always passes)
+                let inner = ZeroController::new(p1_id);
+                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
+                self.run_network_mode_ai(p1_id, &mut network_local, &mut p2_controller);
+            }
+            _ => {
+                self.error_message = Some(format!(
+                    "Unsupported controller type {:?} for network mode",
+                    self.p1_controller_type
+                ));
+                self.needs_redraw = true;
+            }
+        }
+    }
+
+    /// Run network mode with Human controller (uses rewind/replay pattern)
+    #[cfg(feature = "wasm-network")]
+    fn run_network_mode_human(
+        &mut self,
+        p1_id: PlayerId,
+        network_client: SharedNetworkClient,
+        p2_controller: &mut WasmRemoteController,
+    ) {
         if self.needs_replay {
-            // User just made a choice - rewind and replay (same as Human mode)
+            // User just made a choice - rewind and replay
             self.needs_replay = false;
 
             let turn_before = self.game.turn.turn_number;
@@ -925,14 +968,14 @@ impl WasmFancyTuiState {
 
             // Create a fresh human controller wrapped by network local controller
             let human_controller = WasmHumanController::new(p1_id);
-            let network_local = WasmNetworkLocalController::with_inner(p1_id, human_controller, network_client.clone());
+            let network_local = WasmNetworkLocalController::new(human_controller, network_client.clone());
 
             // Create ReplayController that will replay choices then delegate to network local
             let mut replay_controller = ReplayController::new(p1_id, Box::new(network_local), replay_choices);
 
             // Run the game with replay controller
             let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-            let result = game_loop.run_until_input(&mut replay_controller, &mut p2_controller);
+            let result = game_loop.run_until_input(&mut replay_controller, p2_controller);
 
             log::debug!(
                 target: "wasm_tui",
@@ -954,11 +997,10 @@ impl WasmFancyTuiState {
                 // Create network local controller wrapping the human controller
                 // Note: We need to take ownership for the game loop, but we clone the inner state
                 let inner_clone = human.clone();
-                let mut network_local =
-                    WasmNetworkLocalController::with_inner(p1_id, inner_clone, network_client.clone());
+                let mut network_local = WasmNetworkLocalController::new(inner_clone, network_client.clone());
 
                 let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                let result = game_loop.run_until_input(&mut network_local, &mut p2_controller);
+                let result = game_loop.run_until_input(&mut network_local, p2_controller);
 
                 log::debug!(
                     target: "wasm_tui",
@@ -973,6 +1015,33 @@ impl WasmFancyTuiState {
                 self.needs_redraw = true;
             }
         }
+    }
+
+    /// Run network mode with an AI controller (no replay needed)
+    #[cfg(feature = "wasm-network")]
+    fn run_network_mode_ai<C: PlayerController>(
+        &mut self,
+        _p1_id: PlayerId,
+        p1_controller: &mut WasmNetworkLocalController<C>,
+        p2_controller: &mut WasmRemoteController,
+    ) {
+        log::debug!(
+            target: "wasm_tui",
+            "NETWORK AI: Running game loop, turn {}",
+            self.game.turn.turn_number
+        );
+
+        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+        let result = game_loop.run_until_input(p1_controller, p2_controller);
+
+        log::debug!(
+            target: "wasm_tui",
+            "NETWORK AI: Game loop returned on turn {}",
+            self.game.turn.turn_number
+        );
+
+        self.handle_game_result(result);
+        self.needs_redraw = true;
     }
 
     /// Handle game result after running (for human player games)

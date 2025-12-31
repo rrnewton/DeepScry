@@ -65,12 +65,15 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 
 ### Phase 6: Full Network Game Loop - IN PROGRESS
 - [x] Wire WasmRemoteController in create_ai_controller
-- [ ] **Determinism verification**: WASM + native client vs native server must match single-process
-  - Requires: Run WASM with Fixed controller (not Human)
-  - Requires: Compare game results/gamelogs between network and single-process
-  - Currently blocked: run_network_mode() assumes Human controller for local player
-- [ ] Handle both player positions (we may be P0 or P1)
-  - Currently run_network_mode uses p1_human_controller regardless of player assignment
+- [x] Make WasmNetworkLocalController generic over PlayerController (like native version)
+- [x] Update run_network_mode to support any controller type (Random, Heuristic, Zero, Human)
+- [x] Verified native network protocol works correctly with Random controllers
+- [ ] **WASM determinism verification**: WASM + native client vs native server
+  - Requires WASM test harness infrastructure
+  - Native Random controller divergence is expected (independent RNG state)
+- [ ] Handle both player positions correctly (we may be P0 or P1)
+  - Controller types are set correctly based on player assignment
+  - Need to verify view perspective matches
 - [ ] Process CardRevealed for opponent card instantiation
 - [ ] Verify state hashes match server expectations
 
@@ -108,6 +111,10 @@ Browser (WASM)                          Native Server
 
 ## Progress Log
 
+- 2025-12-31_#1389: Phase 6 partial - WasmNetworkLocalController now generic over any PlayerController
+  - Made controller generic like native NetworkLocalController<C>
+  - Updated run_network_mode to support Random, Heuristic, Zero, Human controllers
+  - Verified native network protocol works correctly
 - 2025-12-30_#1383: Phase 6 partial - WasmRemoteController wired in create_ai_controller
 - 2025-12-30_#1382: Phase 5 complete - Game initialization from GameStarted data
 - 2025-12-30_#1376: Phase 4 complete - E2E test with Playwright (web/test_network_e2e.js)

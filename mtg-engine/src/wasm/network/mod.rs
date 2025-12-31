@@ -27,7 +27,7 @@ mod exports;
 mod local_controller;
 mod remote_controller;
 
-pub use client::{NetworkState, WasmNetworkClient};
+pub use client::{NetworkState, SharedNetworkClient, WasmNetworkClient};
 pub use exports::*;
 pub use local_controller::WasmNetworkLocalController;
 pub use remote_controller::WasmRemoteController;

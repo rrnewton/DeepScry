@@ -3,6 +3,11 @@
 //! Wraps the local player's controller and coordinates with the server.
 //! Returns `NeedInput` when waiting for server synchronization.
 //!
+//! This is generic over any `PlayerController`, mirroring the native
+//! `NetworkLocalController<C>`. For AI controllers like Random, the inner
+//! controller makes choices immediately. For Human controllers, the inner
+//! controller may return NeedInput waiting for user input.
+//!
 //! ## Flow
 //!
 //! 1. Wait for ChoiceRequest from server (or NeedInput)
@@ -15,7 +20,6 @@ use super::client::SharedNetworkClient;
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{sort_spell_abilities, ChoiceContext, ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
-use crate::wasm::human_controller::{PendingChoice, WasmHumanController};
 use smallvec::SmallVec;
 
 /// Extended choice context variants for network waiting
@@ -40,43 +44,28 @@ fn waiting_for_ack_context() -> ChoiceContext {
 
 /// WASM Network Local Controller
 ///
-/// Wraps the local player's controller (typically WasmHumanController) and
-/// ensures synchronization with the server before and after each choice.
-pub struct WasmNetworkLocalController {
-    player_id: PlayerId,
+/// Wraps any `PlayerController` and ensures synchronization with the server
+/// before and after each choice. This mirrors the native `NetworkLocalController<C>`.
+///
+/// For AI controllers (Random, Heuristic, Zero), the inner controller makes
+/// choices immediately. For Human controllers, the inner controller may return
+/// NeedInput waiting for user input.
+pub struct WasmNetworkLocalController<C: PlayerController> {
     /// The inner controller that makes actual decisions
-    inner: WasmHumanController,
+    inner: C,
     /// Shared reference to the network client
     network_client: SharedNetworkClient,
 }
 
-impl WasmNetworkLocalController {
-    /// Create a new network local controller
-    pub fn new(player_id: PlayerId, network_client: SharedNetworkClient) -> Self {
-        Self {
-            player_id,
-            inner: WasmHumanController::new(player_id),
-            network_client,
-        }
-    }
-
-    /// Create with an existing inner controller
-    pub fn with_inner(player_id: PlayerId, inner: WasmHumanController, network_client: SharedNetworkClient) -> Self {
-        Self {
-            player_id,
-            inner,
-            network_client,
-        }
+impl<C: PlayerController> WasmNetworkLocalController<C> {
+    /// Create a new network local controller wrapping an existing controller
+    pub fn new(inner: C, network_client: SharedNetworkClient) -> Self {
+        Self { inner, network_client }
     }
 
     /// Get a mutable reference to the inner controller
-    pub fn inner_mut(&mut self) -> &mut WasmHumanController {
+    pub fn inner_mut(&mut self) -> &mut C {
         &mut self.inner
-    }
-
-    /// Set a pending choice on the inner controller
-    pub fn set_pending_choice(&mut self, choice: PendingChoice) {
-        self.inner.set_pending_choice(choice);
     }
 
     /// Check if waiting for server
@@ -103,9 +92,9 @@ impl WasmNetworkLocalController {
     }
 }
 
-impl PlayerController for WasmNetworkLocalController {
+impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
     fn player_id(&self) -> PlayerId {
-        self.player_id
+        self.inner.player_id()
     }
 
     fn choose_spell_ability_to_play(
