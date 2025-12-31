@@ -12,7 +12,6 @@
 #![feature(allocator_api)]
 
 pub mod core;
-#[cfg(feature = "native")]
 pub mod deck_builder;
 #[cfg(feature = "native")]
 pub mod download;

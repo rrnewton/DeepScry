@@ -365,7 +365,8 @@ cast dark ritual</textarea>
             </label>
             <span style="color: #888; font-size: 11px;">Enable TRACE logging</span>
         </div>
-        <button id="btn-launch">Launch Fancy TUI</button>
+        <button id="btn-launch">Launch Game</button>
+        <button id="btn-deck-builder" style="background: #2a9d8f;">Deck Builder</button>
         <span class="help-text">Human: Up/Down=select, Enter=confirm, 1-9=quick select | AI: Space=turn, A=auto | Q=exit, Tab=cycle, ?=help</span>
     </div>
 
@@ -458,6 +459,34 @@ cast dark ritual</textarea>
             cleanup_tui_state,
             set_log_level
         } from './pkg/mtg_forge_rs.js';
+
+        // Deck builder imports - optional (only available when built with wasm-tui feature)
+        let deckBuilderEnabled = false;
+        let launch_deck_builder = null;
+        let cleanup_deck_builder_state = null;
+        let deck_builder_set_save_callback = null;
+        let deck_builder_set_exit_callback = null;
+        let deck_builder_load_deck = null;
+        let deck_builder_export_deck = null;
+        let deck_builder_get_stats = null;
+
+        // Try to import deck builder functions
+        try {
+            const deckBuilderModule = await import('./pkg/mtg_forge_rs.js');
+            if (deckBuilderModule.launch_deck_builder) {
+                launch_deck_builder = deckBuilderModule.launch_deck_builder;
+                cleanup_deck_builder_state = deckBuilderModule.cleanup_deck_builder_state;
+                deck_builder_set_save_callback = deckBuilderModule.deck_builder_set_save_callback;
+                deck_builder_set_exit_callback = deckBuilderModule.deck_builder_set_exit_callback;
+                deck_builder_load_deck = deckBuilderModule.deck_builder_load_deck;
+                deck_builder_export_deck = deckBuilderModule.deck_builder_export_deck;
+                deck_builder_get_stats = deckBuilderModule.deck_builder_get_stats;
+                deckBuilderEnabled = true;
+                console.log('[DeckBuilder] Deck builder features available');
+            }
+        } catch (e) {
+            console.log('[DeckBuilder] Deck builder features not available:', e.message);
+        }
 
         // Network exports are optional (only available when built with wasm-network feature)
         let networkEnabled = false;
@@ -579,6 +608,16 @@ cast dark ritual</textarea>
 
                 // Set up launch button
                 document.getElementById('btn-launch').addEventListener('click', launchTui);
+
+                // Set up deck builder button (disabled if not available)
+                const deckBuilderBtn = document.getElementById('btn-deck-builder');
+                if (deckBuilderEnabled) {
+                    deckBuilderBtn.addEventListener('click', launchDeckBuilder);
+                } else {
+                    deckBuilderBtn.disabled = true;
+                    deckBuilderBtn.textContent = 'Deck Builder (N/A)';
+                    deckBuilderBtn.style.background = '#555';
+                }
 
                 console.log(`MTG Forge WASM initialized: ${deckCount} decks ready (deferred card loading)`);
             } catch (error) {
@@ -2234,6 +2273,152 @@ cast dark ritual</textarea>
             }
 
             console.log('[EXIT] TUI exited cleanly. Ready to launch new game.');
+        };
+
+        // ==================== DECK BUILDER ====================
+
+        // Custom decks storage key in localStorage
+        const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
+
+        /**
+         * Load all cards for deck builder (needs full card database)
+         */
+        async function loadAllCards() {
+            const status = document.getElementById('status');
+            status.textContent = 'Loading full card database for deck builder...';
+
+            // Check if cards are already loaded (enough for deck builder)
+            if (cardDb.card_count() > 1000) {
+                console.log('[DeckBuilder] Card database already loaded');
+                return;
+            }
+
+            // Load full cards.bin for deck builder (it needs all cards for search)
+            const cardsResp = await fetch('./data/cards.bin');
+            if (!cardsResp.ok) {
+                throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+            }
+            const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
+            cardDb.load_cards(cardsData);
+            console.log('[DeckBuilder] Loaded full card database');
+        }
+
+        /**
+         * Get custom decks from localStorage
+         */
+        function getCustomDecks() {
+            try {
+                const saved = localStorage.getItem(CUSTOM_DECKS_KEY);
+                return saved ? JSON.parse(saved) : {};
+            } catch (e) {
+                console.warn('Failed to load custom decks:', e);
+                return {};
+            }
+        }
+
+        /**
+         * Save custom decks to localStorage
+         */
+        function saveCustomDecks(decks) {
+            try {
+                localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(decks));
+                console.log('[DeckBuilder] Saved custom decks to localStorage');
+            } catch (e) {
+                console.error('Failed to save custom decks:', e);
+                alert('Failed to save deck: ' + e.message);
+            }
+        }
+
+        /**
+         * Launch the deck builder TUI
+         */
+        async function launchDeckBuilder() {
+            if (!deckBuilderEnabled) {
+                alert('Deck builder is not available in this build.');
+                return;
+            }
+
+            const deckBuilderBtn = document.getElementById('btn-deck-builder');
+            deckBuilderBtn.disabled = true;
+            deckBuilderBtn.textContent = 'Loading...';
+
+            try {
+                // Load all cards for deck builder
+                await loadAllCards();
+
+                // Hide setup bar and header
+                document.getElementById('setup-bar').style.display = 'none';
+                document.getElementById('header-bar').style.display = 'none';
+
+                // Show RatZilla terminal container
+                const terminal = document.getElementById('ratzilla-terminal');
+                terminal.style.display = 'block';
+
+                // Launch the deck builder
+                launch_deck_builder(cardDb, null);
+
+                // Set up save callback - saves deck to localStorage
+                deck_builder_set_save_callback((deckJson) => {
+                    console.log('[DeckBuilder] Save callback received:', deckJson);
+                    const deckName = prompt('Enter a name for this deck:');
+                    if (deckName && deckName.trim()) {
+                        const customDecks = getCustomDecks();
+                        customDecks[deckName.trim()] = JSON.parse(deckJson);
+                        saveCustomDecks(customDecks);
+                        alert(`Deck "${deckName}" saved!`);
+                    }
+                    exitDeckBuilder();
+                });
+
+                // Set up exit callback - just exit without saving
+                deck_builder_set_exit_callback(() => {
+                    console.log('[DeckBuilder] Exit callback received');
+                    exitDeckBuilder();
+                });
+
+                // Update status
+                const status = document.getElementById('status');
+                status.textContent = 'Deck Builder active | ESC to exit';
+
+                console.log('[DeckBuilder] Deck builder launched');
+            } catch (error) {
+                console.error('[DeckBuilder] Failed to launch:', error);
+                alert('Failed to launch deck builder: ' + error.message);
+                deckBuilderBtn.disabled = false;
+                deckBuilderBtn.textContent = 'Deck Builder';
+            }
+        }
+
+        /**
+         * Exit the deck builder and return to setup
+         */
+        function exitDeckBuilder() {
+            // Clean up deck builder state
+            if (cleanup_deck_builder_state) {
+                cleanup_deck_builder_state();
+            }
+
+            // Hide terminal
+            const terminal = document.getElementById('ratzilla-terminal');
+            terminal.style.display = 'none';
+            terminal.innerHTML = ''; // Clear RatZilla content
+
+            // Show setup bar and header
+            document.getElementById('setup-bar').style.display = 'flex';
+            document.getElementById('header-bar').style.display = 'flex';
+
+            // Re-enable deck builder button
+            const deckBuilderBtn = document.getElementById('btn-deck-builder');
+            deckBuilderBtn.disabled = false;
+            deckBuilderBtn.textContent = 'Deck Builder';
+
+            console.log('[DeckBuilder] Exited deck builder');
+        }
+
+        // Expose deck builder update callback for WASM
+        window.onDeckBuilderUpdate = function(stats) {
+            // Optional: update UI with deck stats
+            console.log('[DeckBuilder] Stats:', stats);
         };
 
         main();

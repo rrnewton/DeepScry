@@ -42,6 +42,9 @@
 #[cfg(all(feature = "wasm-tui", target_arch = "wasm32"))]
 pub mod fancy_tui;
 
+#[cfg(all(feature = "wasm-tui", target_arch = "wasm32"))]
+pub mod deck_builder;
+
 pub mod human_controller;
 pub mod rich_input_controller;
 
