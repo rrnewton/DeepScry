@@ -39,7 +39,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Build native binary with network feature (always rebuild to ensure network features)
+# Build WASM with network feature using Makefile target
+# NOTE: Do this FIRST because wasm-export rebuilds mtg binary without network features
+echo -e "${YELLOW}Building WASM with network feature...${NC}"
+make wasm-network
+
+# Build native binary with network feature AFTER wasm (wasm-export clobbers it)
 echo -e "${YELLOW}Building native binary with network features...${NC}"
 cargo build --release --bin mtg --features network
 export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
@@ -51,10 +56,6 @@ if ! "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
     exit 1
 fi
 echo -e "${GREEN}Binary has network features ✓${NC}"
-
-# Build WASM with network feature using Makefile target
-echo -e "${YELLOW}Building WASM with network feature...${NC}"
-make wasm-network
 
 echo -e "${CYAN}======================================${NC}"
 echo -e "${CYAN}  MTG Forge Network Game Launcher${NC}"
