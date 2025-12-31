@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: epic
 created_at: 2025-12-30T19:23:47.819632157+00:00
-updated_at: 2025-12-30T23:52:04.248058040+00:00
+updated_at: 2025-12-31T00:00:35.937719269+00:00
 ---
 
 # Description
@@ -46,7 +46,7 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 - [x] Connection UI (server URL, password, player name)
 - [x] Settings persistence for network fields
 - [x] Conditional network imports (graceful fallback when not built)
-- [x] launch_network_game() WASM export (placeholder)
+- [x] launch_network_game() WASM export
 - [x] network_init(), network_is_game_ready() exports
 - [x] WasmCardDatabase.get_deck_json() for deck submission
 
@@ -56,19 +56,23 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 - [x] Test verifies: server start, native client connect, browser launch, network mode selection, connection, game UI
 - [ ] Secondary: Web vs Web (both Playwright browsers) - future work
 
-### Phase 5: Complete Game Initialization ✅ COMPLETE
+### Phase 5: Complete Game Initialization ✅ COMPLETE (3070031)
 - [x] Store GameStarted data in WasmNetworkClient (starting_life, player IDs, etc)
 - [x] Add getter methods and WASM exports for GameStarted data
 - [x] Update launch_network_game to use server-provided parameters
 - [x] Add WasmControllerType::Remote for opponent controller
 - [x] Set controller types based on assigned player ID
 
-### Phase 6: Full Network Game Loop - TODO
-- [ ] Wire WasmRemoteController to poll opponent choices from network client
-- [ ] Integrate reveal draining before game loop resume
-- [ ] Handle ChoiceRequest/ChoiceAccepted synchronization properly
-- [ ] Process OpponentChoice messages through WasmRemoteController
-- [ ] **Verify determinism**: WASM + native client vs native server should match single-process simulation
+### Phase 6: Full Network Game Loop - IN PROGRESS
+- [x] Wire WasmRemoteController in create_ai_controller
+- [ ] **Determinism verification**: WASM + native client vs native server must match single-process
+  - Requires: Run WASM with Fixed controller (not Human)
+  - Requires: Compare game results/gamelogs between network and single-process
+  - Currently blocked: run_network_mode() assumes Human controller for local player
+- [ ] Handle both player positions (we may be P0 or P1)
+  - Currently run_network_mode uses p1_human_controller regardless of player assignment
+- [ ] Process CardRevealed for opponent card instantiation
+- [ ] Verify state hashes match server expectations
 
 ### Phase 7: Error Handling & Robustness - TODO
 - [ ] Network reconnection after disconnect
@@ -104,6 +108,7 @@ Browser (WASM)                          Native Server
 
 ## Progress Log
 
+- 2025-12-30_#1383: Phase 6 partial - WasmRemoteController wired in create_ai_controller
 - 2025-12-30_#1382: Phase 5 complete - Game initialization from GameStarted data
 - 2025-12-30_#1376: Phase 4 complete - E2E test with Playwright (web/test_network_e2e.js)
 - 2025-12-30_#1364: Phase 3 complete - JavaScript/HTML integration (8983a9f)
