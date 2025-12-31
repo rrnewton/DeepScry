@@ -20,6 +20,7 @@ DECK="decks/old_school/01_rogue_rogerbrand.dck"
 CONTROLLER="random"
 
 # Colors
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
@@ -38,14 +39,18 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Build native binary with network feature
-ensure_mtg_binary
+# Build native binary with network feature (always rebuild to ensure network features)
+echo -e "${YELLOW}Building native binary with network features...${NC}"
+cargo build --release --bin mtg --features network
+export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
 
-# Verify binary has network features (connect subcommand)
+# Verify binary has network features
 if ! "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
-    echo -e "${YELLOW}Binary missing network features, rebuilding...${NC}"
-    cargo build --release --bin mtg --features network
+    echo -e "${RED}ERROR: Binary still missing network features after rebuild${NC}"
+    echo "Check that Cargo.toml has the 'network' feature defined"
+    exit 1
 fi
+echo -e "${GREEN}Binary has network features ✓${NC}"
 
 # Build WASM with network feature using Makefile target
 echo -e "${YELLOW}Building WASM with network feature...${NC}"
