@@ -227,7 +227,8 @@ pub fn handle_key_event(
         // Toggle line wrapping in log (W key)
         KeyInput::ToggleWrap => {
             if state.focused_pane == FocusedPane::Info {
-                state.log_toggle_wrap();
+                let logs = view.logger().logs();
+                state.log_toggle_wrap(logs.len());
                 EventResult::Handled
             } else {
                 EventResult::NotHandled

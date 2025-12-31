@@ -40,6 +40,8 @@ enum InputAction {
     Undo,
     /// Make a random choice (R key pressed)
     RandomChoice,
+    /// Show help/keyboard shortcuts (? or / key pressed)
+    ShowHelp,
 }
 
 /// Result from prompting for a choice
@@ -208,6 +210,34 @@ impl FancyTuiController {
                                         && y < info_area.y + info_area.height
                                     {
                                         self.renderer.state.log_scroll_down();
+                                        return Ok(InputAction::Continue);
+                                    }
+                                }
+                            }
+                            MouseEventKind::ScrollLeft => {
+                                // Horizontal scroll left in Info pane (when not wrapping)
+                                if let Some(info_area) = self.renderer.state.info_pane_area {
+                                    if x >= info_area.x
+                                        && x < info_area.x + info_area.width
+                                        && y >= info_area.y
+                                        && y < info_area.y + info_area.height
+                                        && !self.renderer.state.log_wrap_lines
+                                    {
+                                        self.renderer.state.log_scroll_left();
+                                        return Ok(InputAction::Continue);
+                                    }
+                                }
+                            }
+                            MouseEventKind::ScrollRight => {
+                                // Horizontal scroll right in Info pane (when not wrapping)
+                                if let Some(info_area) = self.renderer.state.info_pane_area {
+                                    if x >= info_area.x
+                                        && x < info_area.x + info_area.width
+                                        && y >= info_area.y
+                                        && y < info_area.y + info_area.height
+                                        && !self.renderer.state.log_wrap_lines
+                                    {
+                                        self.renderer.state.log_scroll_right();
                                         return Ok(InputAction::Continue);
                                     }
                                 }
@@ -695,7 +725,8 @@ impl FancyTuiController {
                             KeyCode::Char('w') | KeyCode::Char('W') => {
                                 // W: Toggle line wrapping in log (only when Info pane is focused)
                                 if self.renderer.state.focused_pane == FocusedPane::Info {
-                                    self.renderer.state.log_toggle_wrap();
+                                    let logs = view.logger().logs();
+                                    self.renderer.state.log_toggle_wrap(logs.len());
                                     return Ok(InputAction::Continue);
                                 }
                             }
@@ -726,6 +757,10 @@ impl FancyTuiController {
                                     self.renderer.state.log_scroll_end();
                                     return Ok(InputAction::Continue);
                                 }
+                            }
+                            KeyCode::Char('?') | KeyCode::Char('/') => {
+                                // Show help/keyboard shortcuts
+                                return Ok(InputAction::ShowHelp);
                             }
                             _ => {}
                         }
@@ -795,6 +830,11 @@ impl FancyTuiController {
                     };
                     Self::restore_terminal(&mut terminal)?;
                     return Ok(PromptResult::Choice(choice));
+                }
+                InputAction::ShowHelp => {
+                    // Show help - for now, log the help info
+                    // TODO: Could show a modal help overlay in the future
+                    continue;
                 }
             }
         }

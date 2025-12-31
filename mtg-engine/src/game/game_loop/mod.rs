@@ -828,7 +828,7 @@ impl<'a> GameLoop<'a> {
                 .unwrap_or(0);
 
             let turn_msg = format!(
-                "         >>> Turn 1 - {} {} ({} {}) <<<<",
+                "  >>> Turn 1 - {} {} ({} {}) <<<<",
                 active_player_name, active_player_life, other_player_name, other_player_life
             );
             self.game.logger.normal(&turn_msg);

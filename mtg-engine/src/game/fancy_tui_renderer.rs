@@ -96,6 +96,203 @@ pub enum Entity {
     },
 }
 
+/// A single wrapped line from a log entry
+#[derive(Debug, Clone)]
+pub struct WrappedLogLine {
+    /// Index of the original log entry this came from
+    pub original_idx: usize,
+    /// Style for this line
+    pub style: Style,
+    /// The text content of this wrapped line
+    pub text: String,
+}
+
+/// Cache for wrapped log lines - enables efficient scrolling with word wrap
+#[derive(Debug, Clone, Default)]
+pub struct LogWrapCache {
+    /// All wrapped lines (flattened from original log entries)
+    pub lines: Vec<WrappedLogLine>,
+    /// For each original log entry, the index of its first wrapped line in `lines`
+    /// line_starts[i] = first index in `lines` for original log entry i
+    pub line_starts: Vec<usize>,
+    /// Width used to compute this cache (0 = invalid/needs rebuild)
+    pub width: u16,
+    /// Number of original log entries processed into this cache
+    pub processed_count: usize,
+}
+
+impl LogWrapCache {
+    /// Check if cache needs full rebuild (width changed or empty)
+    pub fn needs_rebuild(&self, current_width: u16) -> bool {
+        self.width == 0 || self.width != current_width
+    }
+
+    /// Check if cache needs incremental update (new log entries)
+    pub fn needs_update(&self, total_log_entries: usize) -> bool {
+        self.processed_count < total_log_entries
+    }
+
+    /// Clear the cache (forces rebuild on next render)
+    pub fn invalidate(&mut self) {
+        self.lines.clear();
+        self.line_starts.clear();
+        self.width = 0;
+        self.processed_count = 0;
+    }
+
+    /// Wrap a single log message into multiple lines
+    fn wrap_message(message: &str, width: usize) -> Vec<String> {
+        if width == 0 {
+            return vec![message.to_string()];
+        }
+
+        let mut result = Vec::new();
+        let mut remaining = message;
+
+        while !remaining.is_empty() {
+            if remaining.len() <= width {
+                result.push(remaining.to_string());
+                break;
+            }
+
+            // Find a good break point (prefer word boundaries)
+            let break_at = remaining[..width]
+                .rfind(' ')
+                .filter(|&pos| pos > width / 2) // Don't break too early
+                .unwrap_or(width);
+
+            result.push(remaining[..break_at].to_string());
+            remaining = remaining[break_at..].trim_start();
+        }
+
+        if result.is_empty() {
+            result.push(String::new());
+        }
+
+        result
+    }
+
+    /// Rebuild entire cache from scratch
+    pub fn rebuild(&mut self, logs: &[crate::game::logger::LogEntry], width: u16) {
+        self.lines.clear();
+        self.line_starts.clear();
+        self.width = width;
+        self.processed_count = 0;
+
+        let wrap_width = width.saturating_sub(1) as usize;
+
+        for (idx, entry) in logs.iter().enumerate() {
+            self.line_starts.push(self.lines.len());
+
+            let style = match entry.level {
+                VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
+                VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
+                VerbosityLevel::Normal => Style::default().fg(Color::White),
+                VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
+            };
+
+            let wrapped = Self::wrap_message(&entry.message, wrap_width);
+            for text in wrapped {
+                self.lines.push(WrappedLogLine {
+                    original_idx: idx,
+                    style,
+                    text,
+                });
+            }
+        }
+
+        self.processed_count = logs.len();
+    }
+
+    /// Incrementally add new log entries to cache
+    pub fn update(&mut self, logs: &[crate::game::logger::LogEntry], width: u16) {
+        // If width changed, need full rebuild
+        if self.width != width {
+            self.rebuild(logs, width);
+            return;
+        }
+
+        let wrap_width = width.saturating_sub(1) as usize;
+
+        for (idx, entry) in logs.iter().enumerate().skip(self.processed_count) {
+            self.line_starts.push(self.lines.len());
+
+            let style = match entry.level {
+                VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
+                VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
+                VerbosityLevel::Normal => Style::default().fg(Color::White),
+                VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
+            };
+
+            let wrapped = Self::wrap_message(&entry.message, wrap_width);
+            for text in wrapped {
+                self.lines.push(WrappedLogLine {
+                    original_idx: idx,
+                    style,
+                    text,
+                });
+            }
+        }
+
+        self.processed_count = logs.len();
+    }
+
+    /// Map an unwrapped log index + offset to a wrapped line offset
+    /// Returns the offset from the end in wrapped lines
+    pub fn unwrapped_to_wrapped_offset(
+        &self,
+        unwrapped_offset: usize,
+        total_unwrapped: usize,
+        visible_lines: usize,
+    ) -> usize {
+        if unwrapped_offset == 0 {
+            return 0; // Follow mode stays at bottom
+        }
+
+        // Find which original log entry is at the top of the visible area
+        let end_idx = total_unwrapped.saturating_sub(unwrapped_offset);
+        let first_visible_idx = end_idx.saturating_sub(visible_lines);
+
+        if first_visible_idx >= self.line_starts.len() {
+            return 0;
+        }
+
+        // Get the wrapped line index for that original entry
+        let wrapped_line_idx = self.line_starts[first_visible_idx];
+        let total_wrapped = self.lines.len();
+
+        // Calculate offset from end in wrapped lines
+        total_wrapped.saturating_sub(wrapped_line_idx + visible_lines)
+    }
+
+    /// Map a wrapped line offset to an unwrapped log offset
+    /// Returns the offset from the end in original log entries
+    pub fn wrapped_to_unwrapped_offset(
+        &self,
+        wrapped_offset: usize,
+        total_unwrapped: usize,
+        visible_lines: usize,
+    ) -> usize {
+        if wrapped_offset == 0 {
+            return 0; // Follow mode stays at bottom
+        }
+
+        let total_wrapped = self.lines.len();
+        let end_idx = total_wrapped.saturating_sub(wrapped_offset);
+        let first_visible_wrapped = end_idx.saturating_sub(visible_lines);
+
+        if first_visible_wrapped >= self.lines.len() {
+            return 0;
+        }
+
+        // Get the original log entry for this wrapped line
+        let original_idx = self.lines[first_visible_wrapped].original_idx;
+
+        // Calculate offset from end in original entries
+        total_unwrapped.saturating_sub(original_idx + visible_lines)
+    }
+}
+
 /// Item in battlefield word-wrap layout - either a section label or a card entity
 #[derive(Debug, Clone)]
 enum BattlefieldItem {
@@ -391,11 +588,17 @@ pub struct FancyTuiState {
     /// Rewind message to display after undo operation
     pub rewind_message: Option<String>,
     /// Log scroll offset (0 = follow mode, showing latest; >0 = scrolled up by N lines)
+    /// In unwrapped mode: counts original log entries from end
+    /// In wrapped mode: counts wrapped lines from end
     pub log_scroll_offset: usize,
+    /// Horizontal scroll offset for log pane (characters from left)
+    pub log_horizontal_offset: usize,
     /// Whether to wrap lines in the log pane
     pub log_wrap_lines: bool,
     /// Actual visible lines in log pane (updated during render)
     pub log_visible_lines: usize,
+    /// Cache of wrapped log lines for efficient scrolling
+    pub log_wrap_cache: LogWrapCache,
 }
 
 impl Default for FancyTuiState {
@@ -423,9 +626,11 @@ impl FancyTuiState {
             card_details_pane_area: None,
             info_pane_area: None,
             rewind_message: None,
-            log_scroll_offset: 0,  // 0 = follow mode (show latest)
-            log_wrap_lines: false, // Default: no line wrapping (truncate)
-            log_visible_lines: 20, // Default estimate, updated during render
+            log_scroll_offset: 0,     // 0 = follow mode (show latest)
+            log_horizontal_offset: 0, // 0 = no horizontal scroll
+            log_wrap_lines: false,    // Default: no line wrapping (truncate)
+            log_visible_lines: 20,    // Default estimate, updated during render
+            log_wrap_cache: LogWrapCache::default(),
         }
     }
 
@@ -468,14 +673,68 @@ impl FancyTuiState {
         self.log_scroll_offset = 0;
     }
 
-    /// Toggle line wrapping in log
-    pub fn log_toggle_wrap(&mut self) {
+    /// Scroll log left (toward beginning of lines)
+    pub fn log_scroll_left(&mut self) {
+        // Scroll 4 characters at a time for usability
+        self.log_horizontal_offset = self.log_horizontal_offset.saturating_sub(4);
+    }
+
+    /// Scroll log right (toward end of lines)
+    pub fn log_scroll_right(&mut self) {
+        // Scroll 4 characters at a time, capped at reasonable max
+        // (lines rarely exceed 200 chars)
+        if self.log_horizontal_offset < 200 {
+            self.log_horizontal_offset += 4;
+        }
+    }
+
+    /// Reset horizontal scroll to leftmost position
+    pub fn log_scroll_reset_horizontal(&mut self) {
+        self.log_horizontal_offset = 0;
+    }
+
+    /// Toggle line wrapping in log, preserving scroll position
+    /// - In follow mode (offset=0): stay at bottom
+    /// - In scrollback mode: keep the same first visible line
+    pub fn log_toggle_wrap(&mut self, total_unwrapped: usize) {
+        let visible_lines = self.log_visible_lines;
+
+        if self.log_wrap_lines {
+            // Switching FROM wrapped TO unwrapped
+            // Map the current wrapped offset to an unwrapped offset
+            if self.log_scroll_offset > 0 {
+                self.log_scroll_offset = self.log_wrap_cache.wrapped_to_unwrapped_offset(
+                    self.log_scroll_offset,
+                    total_unwrapped,
+                    visible_lines,
+                );
+            }
+        } else {
+            // Switching FROM unwrapped TO wrapped
+            // Map the current unwrapped offset to a wrapped offset
+            if self.log_scroll_offset > 0 {
+                self.log_scroll_offset = self.log_wrap_cache.unwrapped_to_wrapped_offset(
+                    self.log_scroll_offset,
+                    total_unwrapped,
+                    visible_lines,
+                );
+            }
+        }
+
         self.log_wrap_lines = !self.log_wrap_lines;
     }
 
     /// Scroll log to previous turn (Left arrow)
     /// Scrolls up until a new ">>> Turn" header appears at the top of the visible area
     pub fn log_scroll_prev_turn(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
+        if self.log_wrap_lines {
+            self.log_scroll_prev_turn_wrapped(visible_lines);
+        } else {
+            self.log_scroll_prev_turn_unwrapped(logs, visible_lines);
+        }
+    }
+
+    fn log_scroll_prev_turn_unwrapped(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
         let total_lines = logs.len();
         let max_offset = total_lines.saturating_sub(visible_lines);
 
@@ -502,9 +761,40 @@ impl FancyTuiState {
         self.log_scroll_offset = max_offset;
     }
 
+    fn log_scroll_prev_turn_wrapped(&mut self, visible_lines: usize) {
+        let total_lines = self.log_wrap_cache.lines.len();
+        let max_offset = total_lines.saturating_sub(visible_lines);
+
+        // Calculate current first visible line index
+        let current_end = total_lines.saturating_sub(self.log_scroll_offset);
+        let current_start = current_end.saturating_sub(visible_lines);
+
+        // Find the next turn header above current_start in wrapped lines
+        for idx in (0..current_start).rev() {
+            if self.log_wrap_cache.lines[idx].text.contains(">>> Turn") {
+                // Found a turn header - calculate offset to put it at top
+                let new_end = (idx + visible_lines).min(total_lines);
+                self.log_scroll_offset = total_lines.saturating_sub(new_end);
+                self.log_scroll_offset = self.log_scroll_offset.min(max_offset);
+                return;
+            }
+        }
+
+        // No turn header found above - scroll to beginning
+        self.log_scroll_offset = max_offset;
+    }
+
     /// Scroll log to next turn (Right arrow)
     /// Scrolls down until the next ">>> Turn" header appears at the top of the visible area
     pub fn log_scroll_next_turn(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
+        if self.log_wrap_lines {
+            self.log_scroll_next_turn_wrapped(visible_lines);
+        } else {
+            self.log_scroll_next_turn_unwrapped(logs, visible_lines);
+        }
+    }
+
+    fn log_scroll_next_turn_unwrapped(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
         let total_lines = logs.len();
 
         // Calculate current first visible line index
@@ -517,6 +807,27 @@ impl FancyTuiState {
             if entry.message.contains(">>> Turn") {
                 // Found a turn header - calculate offset to put it at top
                 let idx = current_start + 1 + offset;
+                let new_end = (idx + visible_lines).min(total_lines);
+                self.log_scroll_offset = total_lines.saturating_sub(new_end);
+                return;
+            }
+        }
+
+        // No turn header found below - scroll to end (follow mode)
+        self.log_scroll_offset = 0;
+    }
+
+    fn log_scroll_next_turn_wrapped(&mut self, visible_lines: usize) {
+        let total_lines = self.log_wrap_cache.lines.len();
+
+        // Calculate current first visible line index
+        let current_end = total_lines.saturating_sub(self.log_scroll_offset);
+        let current_start = current_end.saturating_sub(visible_lines);
+
+        // Find the next turn header after current_start in wrapped lines
+        for idx in (current_start + 1)..total_lines {
+            if self.log_wrap_cache.lines[idx].text.contains(">>> Turn") {
+                // Found a turn header - calculate offset to put it at top
                 let new_end = (idx + visible_lines).min(total_lines);
                 self.log_scroll_offset = total_lines.saturating_sub(new_end);
                 return;
@@ -1209,11 +1520,18 @@ impl FancyTuiRenderer {
                 self.draw_log_view(f, content_area, view);
 
                 // Render log status on the tab header line (right side)
-                let logs = view.logger().logs();
-                let total_lines = logs.len();
+                // Use wrapped line count when in wrap mode
                 let visible_lines = content_area.height as usize;
-                let max_offset = total_lines.saturating_sub(visible_lines);
-                let scroll_offset = self.state.log_scroll_offset.min(max_offset);
+                let (total_lines, scroll_offset) = if self.state.log_wrap_lines {
+                    let total = self.state.log_wrap_cache.lines.len();
+                    let max_offset = total.saturating_sub(visible_lines);
+                    (total, self.state.log_scroll_offset.min(max_offset))
+                } else {
+                    let logs = view.logger().logs();
+                    let total = logs.len();
+                    let max_offset = total.saturating_sub(visible_lines);
+                    (total, self.state.log_scroll_offset.min(max_offset))
+                };
                 let end_idx = total_lines.saturating_sub(scroll_offset);
                 let start_idx = end_idx.saturating_sub(visible_lines);
 
@@ -1379,7 +1697,6 @@ impl FancyTuiRenderer {
     /// Status indicator is now rendered in draw_left_tabs on the tab header line
     fn draw_log_view(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
         let logs = view.logger().logs();
-        let total_lines = logs.len();
         let visible_lines = area.height as usize;
 
         // Store actual visible lines for turn navigation calculations
@@ -1389,47 +1706,101 @@ impl FancyTuiRenderer {
             return;
         }
 
+        if self.state.log_wrap_lines {
+            // WRAPPED MODE: Use the wrap cache
+            self.draw_log_view_wrapped(f, area, &logs);
+        } else {
+            // UNWRAPPED MODE: Original truncation logic
+            self.draw_log_view_unwrapped(f, area, &logs);
+        }
+    }
+
+    /// Draw log view in unwrapped mode (truncate long lines with ellipsis)
+    fn draw_log_view_unwrapped(&mut self, f: &mut Frame, area: Rect, logs: &[crate::game::logger::LogEntry]) {
+        let total_lines = logs.len();
+        let visible_lines = area.height as usize;
+
         // Clamp scroll offset FIRST - must happen before calculating indices
-        // This handles cases where offset was set with placeholder values (usize::MAX)
         let max_offset = total_lines.saturating_sub(visible_lines);
         if self.state.log_scroll_offset > max_offset {
             self.state.log_scroll_offset = max_offset;
         }
 
         // Calculate which lines to show based on scroll offset
-        // scroll_offset=0 means show the latest lines (follow mode)
-        // scroll_offset>0 means scrolled up by that many lines
         let end_idx = total_lines.saturating_sub(self.state.log_scroll_offset);
         let start_idx = end_idx.saturating_sub(visible_lines);
 
-        // Build log lines with proper styling
+        // Build log lines with horizontal offset and truncation
+        let h_offset = self.state.log_horizontal_offset;
         let log_lines: Vec<ListItem> = logs[start_idx..end_idx]
             .iter()
             .map(|entry| {
-                // Color based on verbosity level
                 let style = match entry.level {
                     VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
                     VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
                     VerbosityLevel::Normal => Style::default().fg(Color::White),
                     VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
                 };
-                // Truncate or wrap based on setting
-                let message = if self.state.log_wrap_lines {
-                    entry.message.clone()
+                let max_width = area.width.saturating_sub(1) as usize;
+
+                // Apply horizontal offset first, then truncate
+                let msg = &entry.message;
+                let message = if h_offset >= msg.len() {
+                    // Scrolled past end of line
+                    String::new()
                 } else {
-                    // Truncate to fit width
-                    let max_width = area.width.saturating_sub(1) as usize;
-                    if entry.message.len() > max_width {
-                        format!("{}…", &entry.message[..max_width.saturating_sub(1)])
+                    let shifted = &msg[h_offset..];
+                    if shifted.len() > max_width {
+                        // Need left indicator if scrolled, right ellipsis if truncated
+                        if h_offset > 0 {
+                            format!("…{}…", &shifted[..max_width.saturating_sub(2)])
+                        } else {
+                            format!("{}…", &shifted[..max_width.saturating_sub(1)])
+                        }
+                    } else if h_offset > 0 {
+                        // Show left indicator when scrolled
+                        format!("…{}", shifted)
                     } else {
-                        entry.message.clone()
+                        shifted.to_string()
                     }
                 };
                 ListItem::new(Line::from(Span::styled(message, style)))
             })
             .collect();
 
-        // Render log content using full area
+        let log_list = List::new(log_lines);
+        f.render_widget(log_list, area);
+    }
+
+    /// Draw log view in wrapped mode (multi-line display for long messages)
+    fn draw_log_view_wrapped(&mut self, f: &mut Frame, area: Rect, logs: &[crate::game::logger::LogEntry]) {
+        let visible_lines = area.height as usize;
+
+        // Update or rebuild cache as needed
+        if self.state.log_wrap_cache.needs_rebuild(area.width) {
+            self.state.log_wrap_cache.rebuild(logs, area.width);
+        } else if self.state.log_wrap_cache.needs_update(logs.len()) {
+            self.state.log_wrap_cache.update(logs, area.width);
+        }
+
+        let total_wrapped = self.state.log_wrap_cache.lines.len();
+
+        // Clamp scroll offset for wrapped lines
+        let max_offset = total_wrapped.saturating_sub(visible_lines);
+        if self.state.log_scroll_offset > max_offset {
+            self.state.log_scroll_offset = max_offset;
+        }
+
+        // Calculate which wrapped lines to show
+        let end_idx = total_wrapped.saturating_sub(self.state.log_scroll_offset);
+        let start_idx = end_idx.saturating_sub(visible_lines);
+
+        // Build list items from wrapped cache
+        let log_lines: Vec<ListItem> = self.state.log_wrap_cache.lines[start_idx..end_idx]
+            .iter()
+            .map(|wrapped| ListItem::new(Line::from(Span::styled(&wrapped.text, wrapped.style))))
+            .collect();
+
         let log_list = List::new(log_lines);
         f.render_widget(log_list, area);
     }
