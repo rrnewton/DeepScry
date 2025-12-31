@@ -41,6 +41,12 @@ trap cleanup EXIT INT TERM
 # Build native binary with network feature
 ensure_mtg_binary
 
+# Verify binary has network features (connect subcommand)
+if ! "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
+    echo -e "${YELLOW}Binary missing network features, rebuilding...${NC}"
+    cargo build --release --bin mtg --features network
+fi
+
 # Build WASM with network feature using Makefile target
 echo -e "${YELLOW}Building WASM with network feature...${NC}"
 make wasm-network
