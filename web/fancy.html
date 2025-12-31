@@ -2976,6 +2976,8 @@ Name=My Deck
             fileInput.value = '';
             fileNameSpan.textContent = '';
             errorDiv.style.display = 'none';
+            uploadedFileContent = null;
+            uploadedFileName = null;
 
             modal.style.display = 'flex';
         }
@@ -2994,7 +2996,18 @@ Name=My Deck
         function importDeckFromModal() {
             const textarea = document.getElementById('deck-content-input');
             const errorDiv = document.getElementById('upload-error');
-            const content = textarea.value.trim();
+            const pastedContent = textarea.value.trim();
+
+            // Check for both file and pasted content
+            if (uploadedFileContent && pastedContent) {
+                errorDiv.textContent = 'Please use either file upload OR paste content, not both. Clear the text area or select a different file.';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            // Use file content if available, otherwise use pasted content
+            const content = uploadedFileContent || pastedContent;
+            const sourceFileName = uploadedFileName;
 
             if (!content) {
                 errorDiv.textContent = 'Please paste deck content or select a file.';
@@ -3011,9 +3024,16 @@ Name=My Deck
                 return;
             }
 
+            // If no name in file, try to extract from filename or prompt
             if (!result.name) {
-                // Prompt for name if not in file
-                const name = prompt('Deck name not found in file. Enter a name:');
+                let name = null;
+                if (sourceFileName) {
+                    // Extract name from filename (remove .dck extension)
+                    name = sourceFileName.replace(/\.(dck|txt)$/i, '').trim();
+                }
+                if (!name) {
+                    name = prompt('Deck name not found in file. Enter a name:');
+                }
                 if (!name || !name.trim()) {
                     return;
                 }
@@ -3040,7 +3060,15 @@ Name=My Deck
             // Update UI
             hideUploadModal();
 
-            // Switch to custom collection and select the new deck
+            // Refresh custom deck dropdowns for BOTH players (in case they're viewing custom)
+            for (const player of ['p1', 'p2']) {
+                const collectionSelect = document.getElementById(`${player}-collection`);
+                if (collectionSelect.value === 'custom') {
+                    updateDeckDropdown(player);
+                }
+            }
+
+            // Switch uploading player to custom collection and select the new deck
             if (uploadingForPlayer) {
                 document.getElementById(`${uploadingForPlayer}-collection`).value = 'custom';
                 updateDeckDropdown(uploadingForPlayer);
@@ -3051,6 +3079,10 @@ Name=My Deck
         /**
          * Initialize upload modal event handlers
          */
+        // Track file content separately (loaded async via FileReader)
+        let uploadedFileContent = null;
+        let uploadedFileName = null;
+
         function initUploadModal() {
             const fileInput = document.getElementById('deck-file-input');
             const selectFileBtn = document.getElementById('btn-select-file');
@@ -3062,16 +3094,35 @@ Name=My Deck
             // Select file button
             selectFileBtn.addEventListener('click', () => fileInput.click());
 
-            // File selected
+            // File selected - load content asynchronously
             fileInput.addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) {
                     fileNameSpan.textContent = file.name;
+                    uploadedFileName = file.name;
                     const reader = new FileReader();
                     reader.onload = (event) => {
-                        textarea.value = event.target.result;
+                        uploadedFileContent = event.target.result;
+                        console.log(`[Upload] File loaded: ${file.name} (${uploadedFileContent.length} chars)`);
+                    };
+                    reader.onerror = () => {
+                        console.error('[Upload] Failed to read file');
+                        uploadedFileContent = null;
+                        uploadedFileName = null;
+                        fileNameSpan.textContent = 'Error reading file';
                     };
                     reader.readAsText(file);
+                }
+            });
+
+            // Clear file selection when user starts typing in textarea
+            textarea.addEventListener('input', () => {
+                if (textarea.value.trim() && uploadedFileContent) {
+                    // User is typing - clear the file selection
+                    fileInput.value = '';
+                    fileNameSpan.textContent = '';
+                    uploadedFileContent = null;
+                    uploadedFileName = null;
                 }
             });
 
