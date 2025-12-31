@@ -107,6 +107,10 @@ pub struct WrappedLogLine {
     pub text: String,
 }
 
+/// Prefix for log lines that should be filtered from TUI display
+/// These lines are useful for debugging/accounting but clutter the game history
+const LOG_FILTER_PREFIX: &str = "<Choice>";
+
 /// Cache for wrapped log lines - enables efficient scrolling with word wrap
 #[derive(Debug, Clone, Default)]
 pub struct LogWrapCache {
@@ -182,6 +186,12 @@ impl LogWrapCache {
         let wrap_width = width.saturating_sub(1) as usize;
 
         for (idx, entry) in logs.iter().enumerate() {
+            // Filter out <Choice> lines - they clutter the game history
+            if entry.message.starts_with(LOG_FILTER_PREFIX) {
+                self.line_starts.push(self.lines.len()); // Still track for index mapping
+                continue;
+            }
+
             self.line_starts.push(self.lines.len());
 
             let style = match entry.level {
@@ -215,6 +225,12 @@ impl LogWrapCache {
         let wrap_width = width.saturating_sub(1) as usize;
 
         for (idx, entry) in logs.iter().enumerate().skip(self.processed_count) {
+            // Filter out <Choice> lines - they clutter the game history
+            if entry.message.starts_with(LOG_FILTER_PREFIX) {
+                self.line_starts.push(self.lines.len()); // Still track for index mapping
+                continue;
+            }
+
             self.line_starts.push(self.lines.len());
 
             let style = match entry.level {
@@ -735,7 +751,13 @@ impl FancyTuiState {
     }
 
     fn log_scroll_prev_turn_unwrapped(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
-        let total_lines = logs.len();
+        // Filter out <Choice> lines to match the display
+        let filtered_logs: Vec<_> = logs
+            .iter()
+            .filter(|e| !e.message.starts_with(LOG_FILTER_PREFIX))
+            .collect();
+
+        let total_lines = filtered_logs.len();
         let max_offset = total_lines.saturating_sub(visible_lines);
 
         // Calculate current first visible line index
@@ -744,7 +766,7 @@ impl FancyTuiState {
 
         // Find the next turn header above current_start
         // We need to find a turn header that would be at line 0 of the visible area
-        for (idx, entry) in logs[..current_start].iter().enumerate().rev() {
+        for (idx, entry) in filtered_logs[..current_start].iter().enumerate().rev() {
             if entry.message.contains(">>> Turn") {
                 // Found a turn header - calculate offset to put it at top
                 // If this line is at index `idx`, we want:
@@ -795,18 +817,24 @@ impl FancyTuiState {
     }
 
     fn log_scroll_next_turn_unwrapped(&mut self, logs: &[crate::game::logger::LogEntry], visible_lines: usize) {
-        let total_lines = logs.len();
+        // Filter out <Choice> lines to match the display
+        let filtered_logs: Vec<_> = logs
+            .iter()
+            .filter(|e| !e.message.starts_with(LOG_FILTER_PREFIX))
+            .collect();
+
+        let total_lines = filtered_logs.len();
 
         // Calculate current first visible line index
         let current_end = total_lines.saturating_sub(self.log_scroll_offset);
         let current_start = current_end.saturating_sub(visible_lines);
 
         // Find the next turn header after current_start
-        let search_slice = &logs[(current_start + 1).min(total_lines)..];
-        for (offset, entry) in search_slice.iter().enumerate() {
+        let search_start = (current_start + 1).min(total_lines);
+        for (offset, entry) in filtered_logs[search_start..].iter().enumerate() {
             if entry.message.contains(">>> Turn") {
                 // Found a turn header - calculate offset to put it at top
-                let idx = current_start + 1 + offset;
+                let idx = search_start + offset;
                 let new_end = (idx + visible_lines).min(total_lines);
                 self.log_scroll_offset = total_lines.saturating_sub(new_end);
                 return;
@@ -1421,18 +1449,36 @@ impl FancyTuiRenderer {
             .split(main_chunks[0]);
 
         // Middle column: Player info bars + battlefields
-        // Layout: Opponent info bar, Opponent battlefield, Your battlefield, Your info bar
+        // Layout: Top half (opp info + opp battlefield), Bottom half (your battlefield + your info)
+        // Split 50/50 to align with left/right column midpoint
+        let middle_halves = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_chunks[1]);
+
         // Calculate info bar height based on whether status fits on one line
         let info_bar_height = Self::calculate_info_bar_height(main_chunks[1].width);
-        let middle_chunks = Layout::default()
+
+        // Top half: Opponent info bar at top, battlefield fills rest
+        let top_half = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(info_bar_height), // Opponent info header
-                Constraint::Percentage(45),          // Opponent battlefield
-                Constraint::Percentage(45),          // Your battlefield
-                Constraint::Length(info_bar_height), // Your info footer
+                Constraint::Length(info_bar_height), // Opponent info header (at top)
+                Constraint::Min(0),                  // Opponent battlefield (fills remaining)
             ])
-            .split(main_chunks[1]);
+            .split(middle_halves[0]);
+
+        // Bottom half: Battlefield fills most, your info bar at bottom
+        let bottom_half = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),                  // Your battlefield (fills remaining)
+                Constraint::Length(info_bar_height), // Your info footer (at bottom)
+            ])
+            .split(middle_halves[1]);
+
+        // Combine into middle_chunks for compatibility with existing code
+        let middle_chunks = [top_half[0], top_half[1], bottom_half[0], bottom_half[1]];
 
         // Right column: Card Details (top 50%), Hand+Stack (bottom 50%)
         // Matches left column layout: Info tabs (top 50%), Actions (bottom 50%)
@@ -1717,7 +1763,13 @@ impl FancyTuiRenderer {
 
     /// Draw log view in unwrapped mode (truncate long lines with ellipsis)
     fn draw_log_view_unwrapped(&mut self, f: &mut Frame, area: Rect, logs: &[crate::game::logger::LogEntry]) {
-        let total_lines = logs.len();
+        // Filter out <Choice> lines for cleaner game history display
+        let filtered_logs: Vec<_> = logs
+            .iter()
+            .filter(|e| !e.message.starts_with(LOG_FILTER_PREFIX))
+            .collect();
+
+        let total_lines = filtered_logs.len();
         let visible_lines = area.height as usize;
 
         // Clamp scroll offset FIRST - must happen before calculating indices
@@ -1732,7 +1784,7 @@ impl FancyTuiRenderer {
 
         // Build log lines with horizontal offset and truncation
         let h_offset = self.state.log_horizontal_offset;
-        let log_lines: Vec<ListItem> = logs[start_idx..end_idx]
+        let log_lines: Vec<ListItem> = filtered_logs[start_idx..end_idx]
             .iter()
             .map(|entry| {
                 let style = match entry.level {
@@ -2461,9 +2513,12 @@ impl FancyTuiRenderer {
             grid_height = grid_height.max(y + h);
         }
 
-        // Horizontal redistribution: spread cards to use available width
-        // Only applies if we have extra space (more than 2 chars of padding)
+        // Horizontal redistribution: spread cards with padding on edges and between cards
+        // Gap weights: 1.0 for left edge, right edge, and same-section gaps
+        //              SECTION_GAP_MULTIPLIER for gaps between different sections
+        const SECTION_GAP_MULTIPLIER: f32 = 1.5; // Easily adjustable section separator weight
         const MIN_EDGE_PADDING: u16 = 1;
+
         let extra_space = area
             .width
             .saturating_sub(grid_width)
@@ -2486,26 +2541,25 @@ impl FancyTuiRenderer {
 
             // For each row, calculate and apply extra spacing
             for row_indices in &rows {
-                if row_indices.len() < 2 {
-                    continue; // Single card, no gaps to expand
+                if row_indices.is_empty() {
+                    continue;
                 }
 
-                // Calculate weighted gap count:
-                // - 1 unit for gaps between cards in same section
-                // - 2 units for gaps between sections
-                let mut total_gap_weight = 0u16;
+                // Calculate weighted gap count including edges:
+                // - 1.0 for left edge padding
+                // - 1.0 for right edge padding
+                // - 1.0 for gaps between cards in same section
+                // - SECTION_GAP_MULTIPLIER for gaps between sections
+                let mut total_gap_weight: f32 = 2.0; // Left edge (1.0) + right edge (1.0)
+
                 for i in 1..row_indices.len() {
                     let prev_section = card_section_idx[row_indices[i - 1]];
                     let curr_section = card_section_idx[row_indices[i]];
                     if curr_section != prev_section {
-                        total_gap_weight += 2; // Section boundary: 2X spacing
+                        total_gap_weight += SECTION_GAP_MULTIPLIER;
                     } else {
-                        total_gap_weight += 1; // Same section: 1X spacing
+                        total_gap_weight += 1.0;
                     }
-                }
-
-                if total_gap_weight == 0 {
-                    continue;
                 }
 
                 // Calculate row width and extra space for this row
@@ -2523,20 +2577,39 @@ impl FancyTuiRenderer {
                     continue; // Not enough extra space for this row
                 }
 
-                // Calculate extra spacing per weight unit (integer division)
-                let extra_per_unit = row_extra / total_gap_weight;
-                if extra_per_unit == 0 {
-                    continue;
+                // Calculate extra spacing per weight unit
+                let extra_per_unit = row_extra as f32 / total_gap_weight;
+                if extra_per_unit < 0.5 {
+                    continue; // Not enough to make a difference
                 }
 
-                // Apply cumulative offset to cards in this row
-                // Also update their associated labels and stack counts
-                let mut cumulative_extra = 0u16;
+                // Start with left edge padding (1.0 weight)
+                let left_edge_extra = extra_per_unit.round() as u16;
+
+                // Apply cumulative offset to ALL cards in this row (including first)
+                // First card gets left edge padding, subsequent cards get cumulative
+                let mut cumulative_extra = left_edge_extra;
+
+                // Update first card position with left edge padding
+                let first_card_idx = row_indices[0];
+                card_positions[first_card_idx].0 += cumulative_extra;
+                if let Some(label_idx) = card_label_idx[first_card_idx] {
+                    label_positions[label_idx].0 += cumulative_extra;
+                }
+                if let Some(stack_idx) = card_stack_idx[first_card_idx] {
+                    stack_count_positions[stack_idx].0 += cumulative_extra;
+                }
+
+                // Apply spacing to remaining cards
                 for i in 1..row_indices.len() {
                     let prev_section = card_section_idx[row_indices[i - 1]];
                     let curr_section = card_section_idx[row_indices[i]];
-                    let gap_weight = if curr_section != prev_section { 2 } else { 1 };
-                    cumulative_extra += extra_per_unit * gap_weight;
+                    let gap_weight = if curr_section != prev_section {
+                        SECTION_GAP_MULTIPLIER
+                    } else {
+                        1.0
+                    };
+                    cumulative_extra += (extra_per_unit * gap_weight).round() as u16;
 
                     // Update card position
                     let card_idx = row_indices[i];
