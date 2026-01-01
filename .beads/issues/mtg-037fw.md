@@ -9,6 +9,27 @@ updated_at: 2025-12-30T16:59:04.166495803+00:00
 
 # Description
 
+## Update (2026-01-01) - Browser/WASM Network Game Launcher
+
+Added `scripts/launch_network_game.sh` to easily test browser-based multiplayer:
+- Builds WASM with `wasm-network` feature via `make wasm-network`
+- Builds native binary with network features
+- Starts web server, game server, and native AI client
+- User connects from browser at http://localhost:8000/fancy.html
+
+**Bugs Fixed:**
+1. ✅ `SystemTime::now()` panic in WASM - Used `js_sys::Date::now()` with conditional compilation
+2. ✅ Build order clobbering - WASM first (because wasm-export runs cargo), then native binary
+3. ✅ Duplicate `onGameReady` callbacks - Added `gameReadyFired` flag in `web/network.js`
+
+**Files Changed:**
+- scripts/launch_network_game.sh - NEW: Convenient launcher for browser network testing
+- Makefile - Added `wasm-network` and `wasm-network-serve` targets
+- mtg-engine/src/network/protocol.rs - Conditional `now_ms()` for WASM vs native
+- web/network.js - Fixed duplicate onGameReady callback issue
+
+---
+
 ## Update (2025-12-30) - spell_ability and CardRevealed Integration Complete
 
 **All Remaining Work from 2025-12-29 is now DONE:**
