@@ -62,17 +62,19 @@ trap cleanup EXIT INT TERM
 NEED_WASM_BUILD=true
 NEED_NATIVE_BUILD=true
 
+# Always define MTG_BIN path
+export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
+
 if [ "$FORCE_REBUILD" = true ]; then
     echo -e "${YELLOW}--rebuild flag set, forcing full rebuild${NC}"
 else
-    # Check if WASM is already built
-    if [ -f "$WORKSPACE_ROOT/web/pkg/mtg_forge_rs.js" ]; then
-        echo -e "${GREEN}WASM already built ✓${NC}"
+    # Check if WASM is already built with network features
+    if [ -f "$WORKSPACE_ROOT/web/pkg/mtg_forge_rs.js" ] && grep -q "network_init" "$WORKSPACE_ROOT/web/pkg/mtg_forge_rs.js"; then
+        echo -e "${GREEN}WASM already built with network features ✓${NC}"
         NEED_WASM_BUILD=false
     fi
 
     # Check if native binary already has network features
-    export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
     if [ -f "$MTG_BIN" ] && "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
         echo -e "${GREEN}Native binary has network features ✓${NC}"
         NEED_NATIVE_BUILD=false

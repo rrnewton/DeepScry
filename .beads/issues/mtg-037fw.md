@@ -9,6 +9,37 @@ updated_at: 2025-12-30T16:59:04.166495803+00:00
 
 # Description
 
+## Update (2026-01-01) - Browser Network E2E Test with Random AI
+
+Added Playwright-based e2e test for browser network games:
+
+**New Test: `web/test_network_random_e2e.js`**
+- Uses `launch_network_game.sh` to start server + native AI client
+- Opens browser with Playwright, selects network mode + Random controller
+- Connects to server via WebSocket
+- Random AI auto-plays choices, game progresses automatically
+- Test validates game reaches significant progression (Turn 50 in testing)
+
+**Bugs Fixed:**
+1. ✅ MTG_BIN undefined with --rebuild flag - Moved export outside if/else block
+2. ✅ WASM network feature check - Launch script now verifies `network_init` export exists
+3. ✅ Network settings hidden when changing controller - Removed conflicting `setupControllerHandlers` code
+4. ✅ Network AI not auto-playing - Set `auto_run=true` for non-Human network controllers
+5. ✅ Render loop blocked by `pending_context` - Removed check for network AI mode
+
+**Variable Renaming for Clarity:**
+- `p1Deck` → `ourDeck`, `p1Controller` → `ourController`
+- `p2Deck` → `opponentDeck`, `p2Controller` → `opponentController`
+- Clarifies that in network mode we're "us" not necessarily "P1"
+
+**Files Changed (commit db2ce39):**
+- web/test_network_random_e2e.js - NEW: Playwright e2e test
+- scripts/launch_network_game.sh - Fixed MTG_BIN, added WASM network check
+- mtg-engine/src/wasm/fancy_tui.rs - Auto-run for network AI controllers
+- web/fancy.html - Variable renaming, removed conflicting handler code
+
+---
+
 ## Update (2026-01-01) - Browser/WASM Network Game Launcher
 
 Added `scripts/launch_network_game.sh` to easily test browser-based multiplayer:

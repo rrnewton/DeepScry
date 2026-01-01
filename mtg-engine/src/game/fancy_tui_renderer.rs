@@ -56,9 +56,7 @@ fn style_for_log_content(message: &str, level: VerbosityLevel) -> Style {
     if (message.contains("damage") && message.contains("life:"))
         || (message.contains("takes") && message.contains("damage"))
     {
-        return Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD);
+        return Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
     }
 
     // Life gain: green
@@ -80,9 +78,7 @@ fn style_for_log_content(message: &str, level: VerbosityLevel) -> Style {
 
     // Choice markers: cyan dim
     if message.starts_with("<Choice>") {
-        return Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::DIM);
+        return Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM);
     }
 
     // Player-based coloring

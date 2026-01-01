@@ -1392,30 +1392,31 @@ Name=My Deck
             const isNetworkMode = gameMode === 'network';
 
             const p1Title = document.getElementById('p1-title');
-            const p1ControllerRow = document.getElementById('p1-controller-row');
             const networkGroup = document.getElementById('network-settings-group');
             const p2Pane = document.getElementById('p2-pane');
             const seedRow = document.getElementById('game-seed').closest('.pane-row');
+            const p1Controller = document.getElementById('p1-controller');
 
             // Update P1 pane title
             p1Title.textContent = isNetworkMode ? 'Our Player' : 'Player 1';
-
-            // Show/hide P1 controller row (in network mode, controller is implied)
-            if (p1ControllerRow) {
-                p1ControllerRow.style.display = isNetworkMode ? 'none' : 'flex';
-            }
 
             // Show/hide network settings
             if (networkGroup) {
                 networkGroup.style.display = isNetworkMode ? 'flex' : 'none';
             }
 
-            // Set controller value for network mode (needed for game launch)
-            if (isNetworkMode) {
-                document.getElementById('p1-controller').value = 'network';
+            // In network mode, hide the "network" option from controller (it's now a game mode)
+            // and ensure a valid controller is selected
+            const networkOption = p1Controller.querySelector('option[value="network"]');
+            if (networkOption) {
+                networkOption.style.display = isNetworkMode ? 'none' : 'block';
+                // If currently on 'network', switch to 'human'
+                if (isNetworkMode && p1Controller.value === 'network') {
+                    p1Controller.value = 'human';
+                }
             }
 
-            // Hide P2 pane in network mode
+            // Hide P2 pane in network mode (opponent is remote)
             if (p2Pane) {
                 p2Pane.style.display = isNetworkMode ? 'none' : 'block';
             }
@@ -2328,20 +2329,26 @@ Name=My Deck
         let networkClient = null;
 
         async function launchTui() {
-            const p1Deck = document.getElementById('p1-deck').value;
-            const p2Deck = document.getElementById('p2-deck').value;
-            const p1ControllerValue = document.getElementById('p1-controller').value;
-            const p1Controller = getControllerType(p1ControllerValue);
-            const p2Controller = getControllerType(document.getElementById('p2-controller').value);
-            const showImages = document.getElementById('show-card-images').checked;
-            const isNetworkMode = p1ControllerValue === 'network';
+            const gameMode = document.getElementById('game-mode').value;
+            const isNetworkMode = gameMode === 'network';
 
-            // Validate deck selection (only P1 deck needed for network mode)
-            if (!p1Deck) {
-                alert('Please select a deck for Player 1');
+            // In network mode, "P1" UI controls represent "our" settings
+            // The server will assign us as P1 or P2 based on join order
+            const ourDeck = document.getElementById('p1-deck').value;
+            const ourControllerValue = document.getElementById('p1-controller').value;
+            const ourController = getControllerType(ourControllerValue);
+
+            // P2 settings only used in local mode
+            const opponentDeck = document.getElementById('p2-deck').value;
+            const opponentController = getControllerType(document.getElementById('p2-controller').value);
+            const showImages = document.getElementById('show-card-images').checked;
+
+            // Validate deck selection
+            if (!ourDeck) {
+                alert(isNetworkMode ? 'Please select a deck' : 'Please select a deck for Player 1');
                 return;
             }
-            if (!isNetworkMode && !p2Deck) {
+            if (!isNetworkMode && !opponentDeck) {
                 alert('Please select a deck for Player 2');
                 return;
             }
@@ -2372,7 +2379,7 @@ Name=My Deck
             }
 
             // If using Fixed controller, set the script first
-            if (p1ControllerValue === 'fixed') {
+            if (ourControllerValue === 'fixed') {
                 const script = document.getElementById('fixed-script').value;
                 if (!script.trim()) {
                     alert('Please enter a script for the Fixed controller');
@@ -2411,11 +2418,11 @@ Name=My Deck
                 // Load cards for the selected deck(s)
                 const startTime = performance.now();
                 if (isNetworkMode) {
-                    // Network mode: only load P1's deck (opponent brings their own)
-                    await loadCardsForDecks(p1Deck, p1Deck);  // Same deck twice to reuse function
+                    // Network mode: only load our deck (opponent brings their own)
+                    await loadCardsForDecks(ourDeck, ourDeck);  // Same deck twice to reuse function
                 } else {
                     // Local mode: load both decks
-                    await loadCardsForDecks(p1Deck, p2Deck);
+                    await loadCardsForDecks(ourDeck, opponentDeck);
                 }
                 const loadTime = (performance.now() - startTime).toFixed(0);
                 console.log(`Card loading took ${loadTime}ms`);
@@ -2449,7 +2456,7 @@ Name=My Deck
                     const playerName = document.getElementById('player-name').value.trim();
 
                     // Get deck as JSON for server submission
-                    const deckJson = cardDb.get_deck_json(p1Deck);
+                    const deckJson = cardDb.get_deck_json(ourDeck);
                     console.log(`[Network] Connecting to ${serverUrl} as ${playerName}...`);
 
                     // Create network client with WASM exports
@@ -2487,10 +2494,11 @@ Name=My Deck
 
                     networkClient.onGameReady = () => {
                         console.log('[Network] Game is ready!');
-                        // Launch network TUI mode
+                        // Launch network TUI mode with selected controller
                         launch_network_game(
                             cardDb,
-                            p1Deck,
+                            ourDeck,
+                            ourControllerValue,  // Pass controller type (human, random, etc.)
                             canvasWidth,
                             canvasHeight
                         );
@@ -2513,17 +2521,18 @@ Name=My Deck
 
                 } else {
                     // Local mode: Launch the fancy TUI immediately
+                    // In local mode, "our" player is P1, opponent is P2
                     const seedInput = document.getElementById('game-seed').value;
                     const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
                     console.log(`[GAME] Using seed: ${seed}`);
                     launch_fancy_tui(
                         cardDb,
-                        p1Deck,
-                        p2Deck,
+                        ourDeck,        // P1 deck
+                        opponentDeck,   // P2 deck
                         20,  // starting life
                         seed,
-                        p1Controller,
-                        p2Controller,
+                        ourController,      // P1 controller
+                        opponentController, // P2 controller
                         canvasWidth,
                         canvasHeight
                     );
@@ -2542,7 +2551,7 @@ Name=My Deck
                         }, 1000);
                     }
 
-                    console.log(`Launched fancy TUI: ${p1Deck} vs ${p2Deck}`);
+                    console.log(`Launched fancy TUI: ${ourDeck} vs ${opponentDeck}`);
                 }
 
                 // Sync toggle button state with CardImageOverlay.enabled
@@ -3340,21 +3349,14 @@ Name=My Deck
          */
         function setupControllerHandlers() {
             const p1Controller = document.getElementById('p1-controller');
-            const networkSettings = document.getElementById('network-settings-group');
             const fixedScript = document.getElementById('fixed-script-group');
-            const p2ControllerGroup = document.getElementById('p2-controller-group');
 
             p1Controller.addEventListener('change', () => {
                 const value = p1Controller.value;
 
-                // Show/hide network settings
-                networkSettings.style.display = value === 'network' ? 'block' : 'none';
-
-                // Show/hide fixed script
+                // Show/hide fixed script based on controller
+                // Note: Network settings are now controlled by game-mode selector, not controller
                 fixedScript.style.display = value === 'fixed' ? 'block' : 'none';
-
-                // Hide P2 controller when network mode (opponent brings their own)
-                p2ControllerGroup.style.display = value === 'network' ? 'none' : 'block';
             });
         }
 
