@@ -22,6 +22,7 @@ export class MTGNetworkClient {
         this.onStateChange = null;  // Callback for UI updates
         this.onError = null;  // Callback for error display
         this.onGameReady = null;  // Callback when game starts
+        this.gameReadyFired = false;  // Track if onGameReady was already called
     }
 
     /**
@@ -73,8 +74,9 @@ export class MTGNetworkClient {
             this.wasm.network_on_message(data);
             this._notifyStateChange();
 
-            // Check if game is now ready
-            if (this.wasm.network_is_game_ready() && this.onGameReady) {
+            // Check if game is now ready (only fire once)
+            if (!this.gameReadyFired && this.wasm.network_is_game_ready() && this.onGameReady) {
+                this.gameReadyFired = true;
                 this.onGameReady();
             }
         };
