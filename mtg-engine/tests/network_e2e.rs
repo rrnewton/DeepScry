@@ -819,7 +819,10 @@ mod websocket_integration {
 
             match msg {
                 ServerMessage::ChoiceRequest {
-                    choice_seq, options, ..
+                    choice_seq,
+                    options,
+                    action_count,
+                    ..
                 } => {
                     choice_count += 1;
                     if choice_count > max_choices {
@@ -829,12 +832,13 @@ mod websocket_integration {
                     // Always choose 0 (pass priority or first option)
                     let choice_index = 0.min(options.len().saturating_sub(1));
 
+                    // CRITICAL: Echo back the server's action_count, not our own
                     if let Err(e) = send_message(
                         &mut ws,
                         &ClientMessage::SubmitChoice {
                             choice_seq,
                             choice_indices: vec![choice_index],
-                            action_count: 0,
+                            action_count,
                             timestamp_ms: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)

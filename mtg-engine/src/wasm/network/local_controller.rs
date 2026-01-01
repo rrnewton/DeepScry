@@ -79,13 +79,32 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
     }
 
     /// Submit a choice to the server
+    ///
+    /// CRITICAL: Uses the server's action_count from ChoiceRequest, NOT the local view's count.
+    /// The local WASM game state doesn't actually execute server actions, so view.action_count()
+    /// would be wrong. The server's action_count is authoritative.
     fn submit_choice(&self, choice_indices: Vec<usize>, view: &GameStateView) {
-        let action_count = view.action_count() as u64;
-        let state_hash = if self.network_client.borrow().is_network_debug() {
+        let client = self.network_client.borrow();
+
+        // Get server's action_count from the current ChoiceRequest
+        let action_count = client
+            .peek_choice_request()
+            .map(|req| req.action_count)
+            .unwrap_or_else(|| {
+                log::warn!(
+                    "WasmNetworkLocalController: No ChoiceRequest available, using local action_count {} (may cause sync error)",
+                    view.action_count()
+                );
+                view.action_count() as u64
+            });
+
+        let state_hash = if client.is_network_debug() {
             Some(crate::game::compute_view_hash(view))
         } else {
             None
         };
+        drop(client);
+
         self.network_client
             .borrow_mut()
             .submit_choice(choice_indices, action_count, state_hash);

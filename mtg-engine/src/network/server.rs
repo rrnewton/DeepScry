@@ -971,12 +971,20 @@ async fn handle_player_websocket(
                                 conn.player_id, pending.choice_seq
                             );
 
-                            // Validate action_count
+                            // Validate action_count - FATAL if mismatch
                             if pending.action_count != choice_request.action_count {
-                                log::warn!(
-                                    "SYNC WARNING: Player {:?} pending choice action_count mismatch! pending={} expected={}",
+                                log::error!(
+                                    "FATAL SYNC ERROR: Player {:?} pending choice action_count mismatch! pending={} expected={}",
                                     conn.player_id, pending.action_count, choice_request.action_count
                                 );
+                                conn.send(&ServerMessage::Error {
+                                    message: format!(
+                                        "FATAL: action_count mismatch! client={} expected={}",
+                                        pending.action_count, choice_request.action_count
+                                    ),
+                                    fatal: true,
+                                }).await?;
+                                break;
                             }
 
                             // Send response to NetworkController
@@ -1083,12 +1091,20 @@ async fn handle_player_websocket(
                                         conn.player_id, choice_seq, client_action_count, expected
                                     );
 
-                                    // Validate action_count
+                                    // Validate action_count - FATAL if mismatch
                                     if client_action_count != expected {
-                                        log::warn!(
-                                            "SYNC WARNING: Player {:?} action_count mismatch! client={} expected={}",
+                                        log::error!(
+                                            "FATAL SYNC ERROR: Player {:?} action_count mismatch! client={} expected={}",
                                             conn.player_id, client_action_count, expected
                                         );
+                                        conn.send(&ServerMessage::Error {
+                                            message: format!(
+                                                "FATAL: action_count mismatch! client={} expected={}",
+                                                client_action_count, expected
+                                            ),
+                                            fatal: true,
+                                        }).await?;
+                                        break;
                                     }
 
                                     // Validate state hash in network debug mode
