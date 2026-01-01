@@ -467,11 +467,16 @@ full_deck_list.txt:
 
 # Export card database and decks for WASM
 # Set MTG_SKIP_WASM_EXPORT=1 to skip this step (useful when data already exists)
+# Uses existing release binary if available to avoid clobbering network-enabled binary
 wasm-export:
 	@if [ "$$MTG_SKIP_WASM_EXPORT" = "1" ]; then \
 		echo "=== Skipping WASM export (MTG_SKIP_WASM_EXPORT=1) ==="; \
+	elif [ -f "target/release/mtg" ]; then \
+		echo "=== Exporting card database using existing binary ==="; \
+		./target/release/mtg export-wasm; \
+		echo "=== Export complete! ==="; \
 	else \
-		echo "=== Exporting card database and decks for WASM ==="; \
+		echo "=== Exporting card database (building binary) ==="; \
 		cargo run --release --bin mtg -- export-wasm; \
 		echo "=== Export complete! ==="; \
 	fi

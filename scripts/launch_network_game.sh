@@ -1,12 +1,31 @@
 #!/bin/bash
 # Launch a network game with one native player + web server for browser client
 #
-# Usage: ./scripts/launch_network_game.sh
+# Usage: ./scripts/launch_network_game.sh [--rebuild]
+#
+# Options:
+#   --rebuild    Force rebuild of WASM and native binary (ignores cached builds)
 #
 # After running, open browser to: http://localhost:8000/fancy.html
-# Then select "Network" mode, enter password "play", and connect.
+# Then select "Remote Network Game" mode, enter password "play", and connect.
 
 set -e
+
+# Parse arguments
+FORCE_REBUILD=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --rebuild)
+            FORCE_REBUILD=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--rebuild]"
+            exit 1
+            ;;
+    esac
+done
 
 # Source test helpers for ensure_mtg_binary and run_mtg_prebuilt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,23 +62,28 @@ trap cleanup EXIT INT TERM
 NEED_WASM_BUILD=true
 NEED_NATIVE_BUILD=true
 
-# Check if WASM is already built
-if [ -f "$WORKSPACE_ROOT/web/pkg/mtg_forge_rs.js" ]; then
-    echo -e "${GREEN}WASM already built ✓${NC}"
-    NEED_WASM_BUILD=false
-fi
+if [ "$FORCE_REBUILD" = true ]; then
+    echo -e "${YELLOW}--rebuild flag set, forcing full rebuild${NC}"
+else
+    # Check if WASM is already built
+    if [ -f "$WORKSPACE_ROOT/web/pkg/mtg_forge_rs.js" ]; then
+        echo -e "${GREEN}WASM already built ✓${NC}"
+        NEED_WASM_BUILD=false
+    fi
 
-# Check if native binary already has network features
-export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
-if [ -f "$MTG_BIN" ] && "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
-    echo -e "${GREEN}Native binary has network features ✓${NC}"
-    NEED_NATIVE_BUILD=false
+    # Check if native binary already has network features
+    export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
+    if [ -f "$MTG_BIN" ] && "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
+        echo -e "${GREEN}Native binary has network features ✓${NC}"
+        NEED_NATIVE_BUILD=false
+    fi
 fi
 
 # Build WASM if needed (skip export if data exists to avoid clobbering native binary)
 if [ "$NEED_WASM_BUILD" = true ]; then
     echo -e "${YELLOW}Building WASM with network feature...${NC}"
-    if [ -f "$WORKSPACE_ROOT/web/data/cards.bin" ]; then
+    # Skip export if data exists (uses existing binary, avoids clobbering)
+    if [ -f "$WORKSPACE_ROOT/web/data/cards.bin" ] && [ "$FORCE_REBUILD" != true ]; then
         echo -e "${GREEN}WASM export data exists, skipping export${NC}"
         export MTG_SKIP_WASM_EXPORT=1
     fi
