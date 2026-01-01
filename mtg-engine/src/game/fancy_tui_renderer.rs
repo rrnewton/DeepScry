@@ -30,6 +30,78 @@ use ratatui::{
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
+/// Get style for log message based on content patterns
+///
+/// This provides content-aware coloring for the log pane, making it easier
+/// to scan for important events like combat, damage, and turn transitions.
+fn style_for_log_content(message: &str, level: VerbosityLevel) -> Style {
+    // Turn headers: yellow, bold, underlined
+    if message.contains(">>> Turn") || message.contains("<<<< ") {
+        return Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    }
+
+    // Step headers: cyan
+    if message.starts_with("--- ") && message.ends_with(" ---") {
+        return Style::default().fg(Color::Cyan);
+    }
+
+    // Combat events: magenta
+    if message.contains("attacks") || message.contains("blocks") {
+        return Style::default().fg(Color::Magenta);
+    }
+
+    // Damage/life loss: red bold
+    if (message.contains("damage") && message.contains("life:"))
+        || (message.contains("takes") && message.contains("damage"))
+    {
+        return Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD);
+    }
+
+    // Life gain: green
+    if message.contains("gains") && message.contains("life") {
+        return Style::default().fg(Color::Green);
+    }
+
+    // Resolution: green
+    if message.contains("resolves") {
+        return Style::default().fg(Color::Green);
+    }
+
+    // Mana tapping: dark gray
+    if (message.contains("Tap ") && message.contains("for {"))
+        || (message.contains("taps") && message.contains("for {"))
+    {
+        return Style::default().fg(Color::DarkGray);
+    }
+
+    // Choice markers: cyan dim
+    if message.starts_with("<Choice>") {
+        return Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::DIM);
+    }
+
+    // Player-based coloring
+    if message.starts_with("Player1") || message.contains(" Player1 ") {
+        return Style::default().fg(Color::Blue);
+    }
+    if message.starts_with("Player2") || message.contains(" Player2 ") {
+        return Style::default().fg(Color::Red);
+    }
+
+    // Default: use verbosity-based coloring
+    match level {
+        VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
+        VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
+        VerbosityLevel::Normal => Style::default().fg(Color::White),
+        VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
+    }
+}
+
 /// Currently focused pane for keyboard navigation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPane {
@@ -187,12 +259,8 @@ impl LogWrapCache {
 
             self.line_starts.push(self.lines.len());
 
-            let style = match entry.level {
-                VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
-                VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
-                VerbosityLevel::Normal => Style::default().fg(Color::White),
-                VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
-            };
+            // Use content-aware coloring
+            let style = style_for_log_content(&entry.message, entry.level);
 
             let wrapped = Self::wrap_message(&entry.message, wrap_width);
             for text in wrapped {
@@ -226,12 +294,8 @@ impl LogWrapCache {
 
             self.line_starts.push(self.lines.len());
 
-            let style = match entry.level {
-                VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
-                VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
-                VerbosityLevel::Normal => Style::default().fg(Color::White),
-                VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
-            };
+            // Use content-aware coloring
+            let style = style_for_log_content(&entry.message, entry.level);
 
             let wrapped = Self::wrap_message(&entry.message, wrap_width);
             for text in wrapped {
@@ -1681,12 +1745,8 @@ impl FancyTuiRenderer {
         let log_lines: Vec<ListItem> = filtered_logs[start_idx..end_idx]
             .iter()
             .map(|entry| {
-                let style = match entry.level {
-                    VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
-                    VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
-                    VerbosityLevel::Normal => Style::default().fg(Color::White),
-                    VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
-                };
+                // Use content-aware coloring
+                let style = style_for_log_content(&entry.message, entry.level);
                 let max_width = area.width.saturating_sub(1) as usize;
 
                 // Apply horizontal offset first, then truncate
