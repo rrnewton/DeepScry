@@ -1987,3 +1987,70 @@ fn create_game_from_database(
 
     Ok(game)
 }
+
+/// Create a game state for network mode with remote libraries
+///
+/// Unlike `create_game_from_database`, this creates an empty game with remote libraries.
+/// The libraries are populated via CardRevealed messages from the server.
+#[cfg(feature = "wasm-network")]
+fn create_network_game_state(
+    our_player_id: PlayerId,
+    opponent_name: &str,
+    starting_life: i32,
+    our_library_size: usize,
+    opponent_library_size: usize,
+) -> GameState {
+    use crate::zones::CardZone;
+
+    // Determine player order (P1 is index 0, P2 is index 1)
+    let (p1_name, p2_name) = if our_player_id.as_u32() == 0 {
+        ("You".to_string(), opponent_name.to_string())
+    } else {
+        (opponent_name.to_string(), "You".to_string())
+    };
+
+    // Create empty game with capacity for cards
+    let mut game = GameState::new_two_player_with_capacity(p1_name, p2_name, starting_life, 100);
+
+    // Configure logger for WASM: capture to memory, enable normal verbosity
+    game.logger.set_output_mode(OutputMode::Memory);
+    game.logger.set_verbosity(VerbosityLevel::Normal);
+
+    let p1_id = game.players[0].id;
+    let p2_id = game.players[1].id;
+
+    // Determine library sizes for each player
+    let (p1_lib_size, p2_lib_size) = if our_player_id.as_u32() == 0 {
+        (our_library_size, opponent_library_size)
+    } else {
+        (opponent_library_size, our_library_size)
+    };
+
+    // Set BOTH libraries as remote - we don't know the order of either
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        zones.library = CardZone::new_remote_library(p1_id, p1_lib_size);
+    }
+    if let Some(zones) = game.get_player_zones_mut(p2_id) {
+        zones.library = CardZone::new_remote_library(p2_id, p2_lib_size);
+    }
+
+    log::info!(
+        "create_network_game_state: Created game with remote libraries (P1: {}, P2: {})",
+        p1_lib_size,
+        p2_lib_size
+    );
+
+    // Mark the start of turn 1
+    let prior_log_size = game.logger.log_count();
+    game.undo_log.log(
+        crate::undo::GameAction::ChangeTurn {
+            from_player: p1_id,
+            to_player: p1_id,
+            turn_number: 1,
+            rng_state: None,
+        },
+        prior_log_size,
+    );
+
+    game
+}

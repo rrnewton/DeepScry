@@ -569,6 +569,14 @@
         <div class="global-pane">
             <h2>Global Options</h2>
             <div class="global-options">
+                <div class="pane-row">
+                    <label>Game Mode</label>
+                    <select id="game-mode" style="min-width: 180px;">
+                        <option value="local">Local Game (vs AI)</option>
+                        <option value="network">Remote Network Game</option>
+                    </select>
+                </div>
+
                 <div class="pane-row" style="margin-bottom: 0;">
                     <label>Seed (determinism)</label>
                     <input type="number" id="game-seed" placeholder="Random" style="width: 120px;">
@@ -596,15 +604,16 @@
 
         <!-- Player Panes (side by side) -->
         <div class="player-panes">
-            <!-- Player 1 Pane -->
-            <div class="player-pane p1">
-                <h2><span class="player-icon">&#9818;</span> Player 1</h2>
+            <!-- Player 1 Pane (becomes "Our Player" in network mode) -->
+            <div class="player-pane p1" id="p1-pane">
+                <h2 id="p1-header"><span class="player-icon">&#9818;</span> <span id="p1-title">Player 1</span></h2>
 
-                <div class="pane-row">
+                <!-- Controller row (hidden in network mode - implied) -->
+                <div class="pane-row" id="p1-controller-row">
                     <label>Controller</label>
                     <select id="p1-controller">
                         <option value="human">Human (You)</option>
-                        <option value="network">Network (Multiplayer)</option>
+                        <option value="network" style="display: none;">Network (Multiplayer)</option>
                         <option value="fixed">Fixed Script</option>
                         <option value="heuristic">Heuristic AI</option>
                         <option value="random">Random</option>
@@ -612,15 +621,15 @@
                     </select>
                 </div>
 
-                <!-- Network settings (shown when network selected) -->
+                <!-- Network settings (shown in network game mode) -->
                 <div id="network-settings-group" class="pane-row" style="display: none;">
-                    <label>Network Settings</label>
+                    <label>Server Connection</label>
                     <div class="network-inputs">
                         <input type="text" id="server-url" placeholder="ws://localhost:17771">
                         <input type="password" id="server-password" placeholder="Password">
                         <input type="text" id="player-name" placeholder="Your name">
                     </div>
-                    <span class="hint">P2 deck ignored - opponent brings their own</span>
+                    <span class="hint">You'll be assigned P1 or P2 when you connect</span>
                     <div id="network-status" class="network-status"></div>
                 </div>
 
@@ -655,9 +664,9 @@ cast dark ritual</textarea>
                 </div>
             </div>
 
-            <!-- Player 2 Pane -->
-            <div class="player-pane p2">
-                <h2><span class="player-icon">&#9820;</span> Player 2</h2>
+            <!-- Player 2 Pane (hidden in network mode) -->
+            <div class="player-pane p2" id="p2-pane">
+                <h2><span class="player-icon">&#9820;</span> Player 2 (Opponent)</h2>
 
                 <div class="pane-row" id="p2-controller-group">
                     <label>Controller</label>
@@ -952,6 +961,12 @@ Name=My Deck
                 // Restore saved settings from localStorage
                 restoreSettings();
 
+                // Update game mode UI based on restored settings
+                // (this must be after restoreSettings so it reflects the saved game mode)
+                if (typeof updateGameModeUI === 'function') {
+                    updateGameModeUI();
+                }
+
                 // Update network UI based on available features
                 updateNetworkUI();
 
@@ -1199,6 +1214,8 @@ Name=My Deck
 
         function saveSettings() {
             const settings = {
+                // Game mode (local vs network)
+                gameMode: document.getElementById('game-mode').value,
                 // Deck collections
                 p1Collection: document.getElementById('p1-collection').value,
                 p2Collection: document.getElementById('p2-collection').value,
@@ -1229,15 +1246,18 @@ Name=My Deck
 
                 const settings = JSON.parse(saved);
 
-                // Restore controller selections first (affects UI visibility)
+                // Restore game mode first (affects UI layout)
+                if (settings.gameMode) {
+                    document.getElementById('game-mode').value = settings.gameMode;
+                    // Note: updateGameModeUI() will be called later in init
+                }
+
+                // Restore controller selections (for local mode)
                 if (settings.p1Controller) {
                     document.getElementById('p1-controller').value = settings.p1Controller;
                     // Show/hide fixed script group based on restored controller
                     document.getElementById('fixed-script-group').style.display =
                         settings.p1Controller === 'fixed' ? 'block' : 'none';
-                    // Show/hide network settings
-                    document.getElementById('network-settings-group').style.display =
-                        settings.p1Controller === 'network' ? 'block' : 'none';
                 }
                 if (settings.p2Controller) {
                     document.getElementById('p2-controller').value = settings.p2Controller;
@@ -1343,6 +1363,7 @@ Name=My Deck
         // Add change listeners to save settings automatically
         function setupSettingsPersistence() {
             const controls = [
+                'game-mode',  // Global game mode (local vs network)
                 'p1-collection', 'p2-collection', 'p1-deck', 'p2-deck',
                 'p1-controller', 'p2-controller',
                 'fixed-script', 'game-seed', 'show-card-images',
@@ -1365,24 +1386,59 @@ Name=My Deck
         // Initialize settings persistence after DOM is ready
         setupSettingsPersistence();
 
-        // Show/hide controller-specific settings
-        document.getElementById('p1-controller').addEventListener('change', function() {
-            const scriptGroup = document.getElementById('fixed-script-group');
+        // Game mode change handler
+        function updateGameModeUI() {
+            const gameMode = document.getElementById('game-mode').value;
+            const isNetworkMode = gameMode === 'network';
+
+            const p1Title = document.getElementById('p1-title');
+            const p1ControllerRow = document.getElementById('p1-controller-row');
             const networkGroup = document.getElementById('network-settings-group');
-            const p2ControllerGroup = document.getElementById('p2-controller-group');
-            const p2DeckGroup = document.getElementById('p2-deck')?.closest('.control-group');
+            const p2Pane = document.getElementById('p2-pane');
+            const seedRow = document.getElementById('game-seed').closest('.pane-row');
+
+            // Update P1 pane title
+            p1Title.textContent = isNetworkMode ? 'Our Player' : 'Player 1';
+
+            // Show/hide P1 controller row (in network mode, controller is implied)
+            if (p1ControllerRow) {
+                p1ControllerRow.style.display = isNetworkMode ? 'none' : 'flex';
+            }
+
+            // Show/hide network settings
+            if (networkGroup) {
+                networkGroup.style.display = isNetworkMode ? 'flex' : 'none';
+            }
+
+            // Set controller value for network mode (needed for game launch)
+            if (isNetworkMode) {
+                document.getElementById('p1-controller').value = 'network';
+            }
+
+            // Hide P2 pane in network mode
+            if (p2Pane) {
+                p2Pane.style.display = isNetworkMode ? 'none' : 'block';
+            }
+
+            // Hide seed in network mode (server controls it)
+            if (seedRow) {
+                seedRow.style.display = isNetworkMode ? 'none' : 'flex';
+            }
+        }
+
+        document.getElementById('game-mode').addEventListener('change', updateGameModeUI);
+        // Initialize UI based on current game mode
+        updateGameModeUI();
+
+        // Show/hide controller-specific settings (for local mode)
+        document.getElementById('p1-controller').addEventListener('change', function() {
+            const gameMode = document.getElementById('game-mode').value;
+            if (gameMode === 'network') return; // Skip in network mode
+
+            const scriptGroup = document.getElementById('fixed-script-group');
 
             // Show appropriate settings group
             scriptGroup.style.display = this.value === 'fixed' ? 'flex' : 'none';
-            networkGroup.style.display = this.value === 'network' ? 'flex' : 'none';
-
-            // Hide P2 controller and deck when in network mode (opponent brings their own)
-            if (p2ControllerGroup) {
-                p2ControllerGroup.style.display = this.value === 'network' ? 'none' : 'flex';
-            }
-            if (p2DeckGroup) {
-                p2DeckGroup.style.display = this.value === 'network' ? 'none' : 'flex';
-            }
         });
 
         let tuiLaunched = false;
