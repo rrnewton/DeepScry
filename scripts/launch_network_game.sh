@@ -39,23 +39,48 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Build WASM with network feature using Makefile target
-# NOTE: Do this FIRST because wasm-export rebuilds mtg binary without network features
-echo -e "${YELLOW}Building WASM with network feature...${NC}"
-make wasm-network
+# Check if we can skip builds
+NEED_WASM_BUILD=true
+NEED_NATIVE_BUILD=true
 
-# Build native binary with network feature AFTER wasm (wasm-export clobbers it)
-echo -e "${YELLOW}Building native binary with network features...${NC}"
-cargo build --release --bin mtg --features network
+# Check if WASM is already built
+if [ -f "$WORKSPACE_ROOT/web/pkg/mtg_forge_rs.js" ]; then
+    echo -e "${GREEN}WASM already built ✓${NC}"
+    NEED_WASM_BUILD=false
+fi
+
+# Check if native binary already has network features
 export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
+if [ -f "$MTG_BIN" ] && "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
+    echo -e "${GREEN}Native binary has network features ✓${NC}"
+    NEED_NATIVE_BUILD=false
+fi
+
+# Build WASM if needed (skip export if data exists to avoid clobbering native binary)
+if [ "$NEED_WASM_BUILD" = true ]; then
+    echo -e "${YELLOW}Building WASM with network feature...${NC}"
+    if [ -f "$WORKSPACE_ROOT/web/data/cards.bin" ]; then
+        echo -e "${GREEN}WASM export data exists, skipping export${NC}"
+        export MTG_SKIP_WASM_EXPORT=1
+    fi
+    make wasm-network
+    # WASM build may have clobbered native binary, force rebuild
+    NEED_NATIVE_BUILD=true
+fi
+
+# Build native binary with network feature if needed
+if [ "$NEED_NATIVE_BUILD" = true ]; then
+    echo -e "${YELLOW}Building native binary with network features...${NC}"
+    cargo build --release --bin mtg --features network
+fi
 
 # Verify binary has network features
 if ! "$MTG_BIN" --help 2>&1 | grep -q "connect"; then
-    echo -e "${RED}ERROR: Binary still missing network features after rebuild${NC}"
+    echo -e "${RED}ERROR: Binary missing network features${NC}"
     echo "Check that Cargo.toml has the 'network' feature defined"
     exit 1
 fi
-echo -e "${GREEN}Binary has network features ✓${NC}"
+echo -e "${GREEN}All builds ready ✓${NC}"
 
 echo -e "${CYAN}======================================${NC}"
 echo -e "${CYAN}  MTG Forge Network Game Launcher${NC}"

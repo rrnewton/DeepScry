@@ -466,10 +466,15 @@ full_deck_list.txt:
 # ==============================================================================
 
 # Export card database and decks for WASM
+# Set MTG_SKIP_WASM_EXPORT=1 to skip this step (useful when data already exists)
 wasm-export:
-	@echo "=== Exporting card database and decks for WASM ==="
-	@cargo run --release --bin mtg -- export-wasm
-	@echo "=== Export complete! ==="
+	@if [ "$$MTG_SKIP_WASM_EXPORT" = "1" ]; then \
+		echo "=== Skipping WASM export (MTG_SKIP_WASM_EXPORT=1) ==="; \
+	else \
+		echo "=== Exporting card database and decks for WASM ==="; \
+		cargo run --release --bin mtg -- export-wasm; \
+		echo "=== Export complete! ==="; \
+	fi
 
 # Build WebAssembly module for browser
 wasm: wasm-export
