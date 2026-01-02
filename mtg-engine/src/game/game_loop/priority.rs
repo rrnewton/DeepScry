@@ -788,6 +788,31 @@ impl<'a> GameLoop<'a> {
                                                     amount: *amount,
                                                 }
                                             }
+                                            // Self-targeting SetBasePowerToughness (Animate): "This creature has base P/T X/Y"
+                                            // When Defined$ Self is used, no targets are chosen - use source card
+                                            crate::core::Effect::SetBasePowerToughness {
+                                                target,
+                                                power,
+                                                toughness,
+                                            } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
+                                                crate::core::Effect::SetBasePowerToughness {
+                                                    target: card_id, // Target self (the source of the ability)
+                                                    power: *power,
+                                                    toughness: *toughness,
+                                                }
+                                            }
+                                            // Targeted SetBasePowerToughness: "Target creature has base P/T X/Y"
+                                            crate::core::Effect::SetBasePowerToughness {
+                                                target,
+                                                power,
+                                                toughness,
+                                            } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                                crate::core::Effect::SetBasePowerToughness {
+                                                    target: chosen_targets_vec[0],
+                                                    power: *power,
+                                                    toughness: *toughness,
+                                                }
+                                            }
                                             crate::core::Effect::AttachEquipment {
                                                 source_equipment,
                                                 target_creature,

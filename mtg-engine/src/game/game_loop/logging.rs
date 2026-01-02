@@ -341,6 +341,22 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::SetBasePowerToughness {
+                target,
+                power,
+                toughness,
+            } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) sets {target_name} ({target}) base P/T to {power}/{toughness}"
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

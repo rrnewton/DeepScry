@@ -1067,6 +1067,37 @@ impl GameState {
                 let owner = self.cards.get(*target)?.owner;
                 self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
             }
+            Effect::SetBasePowerToughness {
+                target,
+                power,
+                toughness,
+            } => {
+                // Skip if target is still placeholder (0) - no valid targets found
+                if target.as_u32() == 0 {
+                    // Spell fizzles - no valid targets
+                    return Ok(());
+                }
+                // Set temporary base P/T override (until end of turn)
+                // This is used by Animate effects like Flexible Waterbender
+                let card = self.cards.get_mut(*target)?;
+                let card_name = card.name.clone();
+                let old_power = card.current_power();
+                let old_toughness = card.current_toughness();
+
+                card.temp_base_power = Some(*power as i8);
+                card.temp_base_toughness = Some(*toughness as i8);
+
+                let new_power = card.current_power();
+                let new_toughness = card.current_toughness();
+
+                // Log the effect
+                if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
+                    self.logger.gamelog(&format!(
+                        "{} base P/T set to {}/{} (was {}/{})",
+                        card_name, new_power, new_toughness, old_power, old_toughness
+                    ));
+                }
+            }
             Effect::SearchLibrary {
                 player,
                 card_type_filter,
