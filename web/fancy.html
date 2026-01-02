@@ -2506,6 +2506,18 @@ Name=My Deck
                         }
 
                         console.log('[Network] Launched network game TUI');
+
+                        // Initial game loop run
+                        tui_run_turn();
+                    };
+
+                    // For Human controller in network mode, we need to trigger the game loop
+                    // when network messages arrive (choice_request, choice_accepted, etc.)
+                    networkClient.onMessageProcessed = (msgType) => {
+                        if (tuiLaunched) {
+                            console.log(`[Network] Triggering game loop after ${msgType}`);
+                            tui_run_turn();
+                        }
                     };
 
                     // Connect to server

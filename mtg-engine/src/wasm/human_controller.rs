@@ -117,6 +117,12 @@ impl PlayerController for WasmHumanController {
             };
         }
 
+        // Auto-pass when there are no playable options
+        // This is important for network mode to avoid unnecessary waiting
+        if sorted.is_empty() {
+            return ChoiceResult::Ok(None);
+        }
+
         // No pending choice - request input
         ChoiceResult::NeedInput(ChoiceContext::SpellAbility {
             available: sorted.clone(),
