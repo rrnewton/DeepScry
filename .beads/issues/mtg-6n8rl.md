@@ -30,6 +30,47 @@ Track implementation of Avatar set-specific mechanics for full booster draft sup
 - [x] Full Convoke-like payment: tap creatures/artifacts to pay {1} each
 - [ ] AB$ Animate effect (set base P/T until end of turn) - needed for Flexible Waterbender
 
+### AB$ Animate Effect - DEFERRED (2026-01-02_#1433)
+
+**Benchmark Impact Analysis:**
+
+The Animate effect implementation (commit 5ba51ab on avatar branch) was tested during
+cherry-pick bisection and found to dramatically change benchmark metrics:
+
+| Metric           | Before Animate | After Animate | Change  |
+|------------------|----------------|---------------|---------|
+| Actions/game     | 604            | 1,639         | +171%   |
+| Actions/turn     | 28             | 77            | +175%   |
+| P1 win rate      | 87%            | 56%           | -31pts  |
+| Games/sec        | ~7,500         | ~1,700        | -77%    |
+
+**Root Cause: Mishra's Factory**
+
+The robots benchmark deck (`03_robots_jesseisbak.dck`) contains 4x Mishra's Factory,
+a creature-land with `AB$ Animate | Cost$ 1 | ... | Power$ 2 | Toughness$ 2`.
+
+Before the Animate commit: Mishra's Factory was just a colorless mana-only land
+(animate ability silently ignored).
+
+After the Animate commit: Mishra's Factory works correctly as a 2/2 creature-land,
+which dramatically changes gameplay:
+- AI can now animate factories for attacks/blocks
+- Games are more balanced (56%/44% vs 87%/13%)
+- Games take more actions to complete (creature-lands are powerful in MTG)
+
+**Decision: Defer Animate to Avoid Benchmark Churn**
+
+The Animate effect is working correctly - this is NOT a bug. However, to maintain
+benchmark stability and clear historical comparisons, the Animate commit was NOT
+cherry-picked into main. The current main branch has:
+
+- 7 of 16 avatar commits cherry-picked
+- Benchmark metrics match historical baseline (604 actions/game, 87% win rate)
+- Waterbend, PutCounter, mana fixes all working
+
+The Animate commit can be merged later when we're ready to update benchmark baselines.
+It's preserved in the avatar branch at commit 5ba51ab.
+
 Note: Waterbend cost payment now works correctly. Player can tap untapped creatures/artifacts
 to help pay the cost. Each tapped permanent pays for {1}. Any remaining cost must be paid
 with mana from the mana pool. The error message shows available resources:
