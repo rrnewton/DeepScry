@@ -2030,24 +2030,43 @@ impl GameState {
                 colors.push(crate::core::Color::Green);
             }
 
-            // Second, add colors from ManaProductionKind::Choice (for non-basic duals)
-            // This handles lands like Blooming Marsh which don't have basic land subtypes
-            if let crate::core::ManaProductionKind::Choice(mana_colors) = &card.cache.mana_production.kind {
-                use crate::core::ManaColor;
-                if mana_colors.contains(ManaColor::White) && !colors.contains(&crate::core::Color::White) {
-                    colors.push(crate::core::Color::White);
+            // Second, add colors from mana production cache (for non-basic lands)
+            // This handles lands without basic land subtypes
+            use crate::core::ManaColor;
+            match &card.cache.mana_production.kind {
+                crate::core::ManaProductionKind::Fixed(mana_color) => {
+                    // Non-basic land that produces a fixed color (e.g., Ba Sing Se produces {G})
+                    let color = match mana_color {
+                        ManaColor::White => crate::core::Color::White,
+                        ManaColor::Blue => crate::core::Color::Blue,
+                        ManaColor::Black => crate::core::Color::Black,
+                        ManaColor::Red => crate::core::Color::Red,
+                        ManaColor::Green => crate::core::Color::Green,
+                    };
+                    if !colors.contains(&color) {
+                        colors.push(color);
+                    }
                 }
-                if mana_colors.contains(ManaColor::Blue) && !colors.contains(&crate::core::Color::Blue) {
-                    colors.push(crate::core::Color::Blue);
+                crate::core::ManaProductionKind::Choice(mana_colors) => {
+                    // Dual/multi lands (e.g., Blooming Marsh)
+                    if mana_colors.contains(ManaColor::White) && !colors.contains(&crate::core::Color::White) {
+                        colors.push(crate::core::Color::White);
+                    }
+                    if mana_colors.contains(ManaColor::Blue) && !colors.contains(&crate::core::Color::Blue) {
+                        colors.push(crate::core::Color::Blue);
+                    }
+                    if mana_colors.contains(ManaColor::Black) && !colors.contains(&crate::core::Color::Black) {
+                        colors.push(crate::core::Color::Black);
+                    }
+                    if mana_colors.contains(ManaColor::Red) && !colors.contains(&crate::core::Color::Red) {
+                        colors.push(crate::core::Color::Red);
+                    }
+                    if mana_colors.contains(ManaColor::Green) && !colors.contains(&crate::core::Color::Green) {
+                        colors.push(crate::core::Color::Green);
+                    }
                 }
-                if mana_colors.contains(ManaColor::Black) && !colors.contains(&crate::core::Color::Black) {
-                    colors.push(crate::core::Color::Black);
-                }
-                if mana_colors.contains(ManaColor::Red) && !colors.contains(&crate::core::Color::Red) {
-                    colors.push(crate::core::Color::Red);
-                }
-                if mana_colors.contains(ManaColor::Green) && !colors.contains(&crate::core::Color::Green) {
-                    colors.push(crate::core::Color::Green);
+                crate::core::ManaProductionKind::AnyColor | crate::core::ManaProductionKind::Colorless => {
+                    // Handled by is_any_color and is_colorless checks
                 }
             }
 
