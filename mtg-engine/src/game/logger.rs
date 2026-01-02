@@ -110,6 +110,10 @@ pub struct GameLogger {
     /// Enable ANSI colored output for CLI mode (default: true)
     /// Set to false via --no-color-logs CLI flag or NO_COLOR env var
     color_enabled: bool,
+
+    /// Temporarily suppress all output (used during undo/rewind operations)
+    /// When true, logging methods will not output to stdout or capture to buffer
+    suppressed: bool,
 }
 
 impl GameLogger {
@@ -130,6 +134,7 @@ impl GameLogger {
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
             color_enabled: true, // Colors enabled by default
+            suppressed: false,
         }
     }
 
@@ -150,7 +155,21 @@ impl GameLogger {
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
             color_enabled: true, // Colors enabled by default
+            suppressed: false,
         }
+    }
+
+    /// Suppress all logging output temporarily
+    ///
+    /// When suppressed, logging methods will not output to stdout or capture to buffer.
+    /// Used during undo/rewind operations to prevent "action reversed" messages from appearing.
+    pub fn set_suppressed(&mut self, suppressed: bool) {
+        self.suppressed = suppressed;
+    }
+
+    /// Check if logging is currently suppressed
+    pub fn is_suppressed(&self) -> bool {
+        self.suppressed
     }
 
     /// Set output mode (Stdout, Memory, or Both)
@@ -509,6 +528,9 @@ impl GameLogger {
     /// Log at Minimal level
     #[inline]
     pub fn minimal(&self, message: &str) {
+        if self.suppressed {
+            return;
+        }
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
 
@@ -535,6 +557,9 @@ impl GameLogger {
     /// Log at Normal level
     #[inline]
     pub fn normal(&self, message: &str) {
+        if self.suppressed {
+            return;
+        }
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
 
@@ -568,6 +593,9 @@ impl GameLogger {
     /// the separator and the turn header would otherwise appear.
     #[inline]
     pub fn turn_separator(&self, message: &str) {
+        if self.suppressed {
+            return;
+        }
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
 
         // Early exit if message won't be used
@@ -586,6 +614,9 @@ impl GameLogger {
     /// Log at Verbose level
     #[inline]
     pub fn verbose(&self, message: &str) {
+        if self.suppressed {
+            return;
+        }
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
 
@@ -627,6 +658,9 @@ impl GameLogger {
     /// - Debug output
     #[inline]
     pub fn gamelog(&self, message: &str) {
+        if self.suppressed {
+            return;
+        }
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
 
@@ -668,9 +702,12 @@ impl GameLogger {
     /// Increments the global choice counter for display in TUI status.
     #[inline]
     pub fn controller_choice(&self, controller_name: &str, message: &str) {
-        // Increment choice counter (always increment, regardless of logging)
+        // Increment choice counter (always increment, regardless of logging or suppression)
         *self.choice_count.borrow_mut() += 1;
 
+        if self.suppressed {
+            return;
+        }
         let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
         let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
         let should_log = self.numeric_choices || self.verbosity >= VerbosityLevel::Normal;
@@ -766,6 +803,7 @@ impl Clone for GameLogger {
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
             color_enabled: self.color_enabled,
+            suppressed: false, // Never clone the suppressed state
         }
     }
 }
@@ -824,6 +862,7 @@ impl<'de> Deserialize<'de> for GameLogger {
             log_buffer: RefCell::new(Vec::new()),
             choice_count: RefCell::new(0),
             color_enabled: data.color_enabled,
+            suppressed: false,
         })
     }
 }

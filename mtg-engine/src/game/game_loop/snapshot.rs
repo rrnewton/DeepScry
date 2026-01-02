@@ -213,10 +213,16 @@ impl<'a> GameLoop<'a> {
 
         // Rewind to the most recent turn boundary and extract intra-turn choices
         // This actually undoes game state to the turn boundary
+        // Suppress logging during rewind to prevent "card returned to hand" etc. from appearing
+        self.game.logger.set_suppressed(true);
+
         // We need to temporarily take ownership of undo_log to avoid borrowing conflicts
         let mut undo_log = std::mem::take(&mut self.game.undo_log);
         let rewind_result = undo_log.rewind_to_turn_start(self.game);
         self.game.undo_log = undo_log;
+
+        // Restore normal logging
+        self.game.logger.set_suppressed(false);
 
         let (turn_number, intra_turn_choices, actions_rewound, log_size_at_turn_boundary) =
             if let Some(result) = rewind_result {
