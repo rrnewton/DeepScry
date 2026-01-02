@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-04T14:41:30.591668557+00:00
+updated_at: 2026-01-02T04:47:45.609994847+00:00
 ---
 
 # Description
@@ -25,6 +25,17 @@ Track implementation of MTG game features including keywords, abilities, card ef
 **Variable P/T:**
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
 - ⏳ Runtime evaluation still TODO (values default to 0)
+
+## Recent Fixes (2026-01-02)
+
+**Avatar Set Mana Engine Fixes (2026-01-02):**
+- ✅ Ba Sing Se (non-basic land with Fixed mana production) now taps correctly for {G}
+  - Root cause: tap_for_mana_for_cost didn't handle ManaProductionKind::Fixed for non-basic lands
+  - Fix: Added match arm for Fixed mana production in actions/mod.rs
+- ✅ Foggy Swamp Vinebender no longer incorrectly marked as mana source
+  - Root cause: Name-based fallback detected "Swamp" in creature name and set has_swamp_subtype=true
+  - Fix: Guard name-based land subtype detection with `if self.is_land` check
+- Avatar decks now play 200+ seeds without mana errors
 
 ## Completed Work (2025-12-04_#1134)
 
@@ -62,4 +73,4 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - mtg-147: Affected$ selector parsing improvements
 
 ---
-**Checked up-to-date as of 2025-12-04_#1134(28100f8)**
+**Checked up-to-date as of 2026-01-02**
