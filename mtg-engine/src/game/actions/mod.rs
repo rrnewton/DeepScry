@@ -2174,7 +2174,7 @@ impl GameState {
     /// - Handle cost ordering more comprehensively
     /// - Support all cost types (sacrifice, discard, pay life, etc.)
     pub fn pay_ability_cost(&mut self, player_id: PlayerId, card_id: CardId, cost: &crate::core::Cost) -> Result<()> {
-        use crate::core::Cost;
+        use crate::core::{Cost, ManaCost};
 
         match cost {
             Cost::Tap => {
@@ -2324,6 +2324,20 @@ impl GameState {
                 for sub_cost in costs {
                     self.pay_ability_cost(player_id, card_id, sub_cost)?;
                 }
+                Ok(())
+            }
+
+            Cost::Waterbend { amount } => {
+                // Waterbend cost - Avatar set mechanic (like Convoke)
+                // For now, treat as generic mana cost. Full implementation would
+                // allow tapping creatures/artifacts to reduce the cost by {1} each.
+                // TODO(mtg-6n8rl): Implement tapping creatures/artifacts to pay Waterbend
+                let mana_cost = ManaCost::from_string(&amount.to_string());
+                let player = self.get_player_mut(player_id)?;
+                if !player.mana_pool.can_pay(&mana_cost) {
+                    return Err(MtgError::InvalidAction("Cannot pay Waterbend cost".to_string()));
+                }
+                player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
                 Ok(())
             }
         }

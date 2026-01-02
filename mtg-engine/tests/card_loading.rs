@@ -1978,3 +1978,59 @@ fn test_foggy_swamp_vinebender_not_mana_source() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Waterbend abilities are parsed correctly
+///
+/// Cards with `Cost$ Waterbend<N>` should have activated abilities with Waterbend cost.
+/// Note: Only abilities with implemented effects (PutCounter, Draw, Pump, etc.) will be loaded.
+/// Abilities with unimplemented effects (Animate, AnimateAll) will be skipped.
+#[test]
+fn test_waterbend_ability_parsing() -> Result<()> {
+    use mtg_forge_rs::core::Cost;
+
+    // Test Foggy Swamp Vinebender: Cost$ Waterbend<5> with PutCounter effect
+    // (PutCounter is implemented, unlike Animate used by Flexible Waterbender)
+    let path = PathBuf::from("cardsfolder/f/foggy_swamp_vinebender.txt");
+    if !path.exists() {
+        eprintln!("Skipping test - cardsfolder not present");
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Foggy Swamp Vinebender");
+
+    // Instantiate the card to get activated abilities
+    let card_id = CardId::new(100);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Check that it has an activated ability with Waterbend cost
+    assert!(
+        !card.activated_abilities.is_empty(),
+        "Foggy Swamp Vinebender should have activated abilities. \
+        The Waterbend ability (PutCounter) should be parsed. Got: {:?}",
+        card.activated_abilities
+    );
+
+    // Find the Waterbend ability
+    let waterbend_ability = card
+        .activated_abilities
+        .iter()
+        .find(|ab| matches!(ab.cost, Cost::Waterbend { .. }));
+
+    assert!(
+        waterbend_ability.is_some(),
+        "Foggy Swamp Vinebender should have a Waterbend ability. \
+        Abilities: {:?}",
+        card.activated_abilities
+    );
+
+    let ability = waterbend_ability.unwrap();
+    if let Cost::Waterbend { amount } = ability.cost {
+        assert_eq!(amount, 5, "Waterbend cost should be 5");
+    } else {
+        panic!("Expected Waterbend cost, got {:?}", ability.cost);
+    }
+
+    Ok(())
+}
