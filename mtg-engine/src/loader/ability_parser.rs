@@ -520,6 +520,11 @@ impl AbilityParams {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.params.keys().map(|s| s.as_str())
     }
+
+    /// Iterate over all parameters
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
 }
 
 #[cfg(test)]

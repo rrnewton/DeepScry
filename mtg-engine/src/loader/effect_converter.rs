@@ -3,7 +3,9 @@
 //! This module bridges between ability_parser (tokenized parameters) and the Effect enum.
 
 use super::ability_parser::{AbilityParams, ApiType};
+use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
 use crate::core::{CardId, Effect, PlayerId, TargetRef, TargetRestriction};
+use std::collections::HashMap;
 
 /// Convert ability parameters to an Effect
 ///
@@ -283,14 +285,12 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Common patterns we support:
             // - Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered -> CantBeBlocked effect
             //
-            // We need to check the SVar definition at runtime, but for parsing we just
-            // create a generic "GrantCantBeBlocked" effect when StaticAbilities is present.
+            // Without SVars context, we fall back to name-based heuristics.
+            // Use params_to_effect_with_svars() for proper SVar-based detection.
             if params.contains_key("StaticAbilities") {
-                // Check if this is an unblockable effect by looking at the static ability name
-                // The actual SVar parsing happens at card load time
                 let static_ability = params.get("StaticAbilities")?;
 
-                // Common patterns for unblockable:
+                // Fallback: check ability name for common patterns
                 // - "Unblockable", "CantBeBlocked", etc.
                 let static_lower = static_ability.to_lowercase();
                 if static_lower.contains("unblock") || static_lower.contains("cantblock") {
@@ -312,6 +312,63 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         // All other API types not yet implemented
         _ => None,
     }
+}
+
+/// Convert ability parameters to an Effect, with SVar resolution.
+///
+/// This is the preferred method when you have access to the card's SVars.
+/// It properly resolves StaticAbilities$ references to their SVar definitions
+/// and determines the effect type based on Mode$ rather than name heuristics.
+///
+/// # Arguments
+///
+/// * `params` - The parsed ability parameters
+/// * `svars` - The card's SVar definitions (name -> body)
+///
+/// # Example
+///
+/// ```ignore
+/// // Card has: A:AB$ Effect | StaticAbilities$ Unblockable | ...
+/// // And SVar: SVar:Unblockable:Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered
+/// let params = AbilityParams::parse("A:AB$ Effect | StaticAbilities$ Unblockable")?;
+/// let effect = params_to_effect_with_svars(&params, &card.svars);
+/// // Returns Effect::GrantCantBeBlocked because Mode$ CantBlockBy
+/// ```
+pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<String, String>) -> Option<Effect> {
+    // For ApiType::Effect, we can do proper SVar resolution
+    if params.api_type == ApiType::Effect {
+        if let Some(static_ability_name) = params.get("StaticAbilities") {
+            // Look up the SVar definition
+            if let Some(svar_body) = svars.get(static_ability_name) {
+                let parsed = parse_svar(svar_body);
+
+                // Check if this is a CantBlockBy static ability
+                if let ParsedSVar::StaticAbility(def) = parsed {
+                    match def.mode {
+                        StaticAbilityMode::CantBlockBy => {
+                            // Mode$ CantBlockBy creates a GrantCantBeBlocked effect
+                            return Some(Effect::GrantCantBeBlocked {
+                                target: CardId::new(0), // Placeholder - filled in at cast time
+                            });
+                        }
+                        // TODO(mtg-o7dqu): Support other static ability modes
+                        _ => {
+                            log::debug!(
+                                target: "effect_converter",
+                                "AB$ Effect with unsupported Mode$ {:?} (SVar: {})",
+                                def.mode, static_ability_name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // Fall back to name-based detection if SVar lookup fails
+        return params_to_effect(params);
+    }
+
+    // For all other types, delegate to the base function
+    params_to_effect(params)
 }
 
 #[cfg(test)]
@@ -447,6 +504,48 @@ mod tests {
                 // Effect parsed correctly - target is placeholder CardId(0)
             }
             _ => panic!("Expected Airbend effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_effect_with_svar_cantblockby() {
+        // Deserter's Disciple pattern:
+        // A:AB$ Effect | StaticAbilities$ Unblockable | RememberObjects$ Targeted
+        // SVar:Unblockable:Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered
+        let params =
+            AbilityParams::parse("A:AB$ Effect | StaticAbilities$ Unblockable | RememberObjects$ Targeted").unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "Unblockable".to_string(),
+            "Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered".to_string(),
+        );
+
+        let effect = params_to_effect_with_svars(&params, &svars).unwrap();
+
+        match effect {
+            Effect::GrantCantBeBlocked { target: _ } => {
+                // Correctly identified CantBlockBy from SVar Mode$
+            }
+            _ => panic!("Expected GrantCantBeBlocked effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_effect_fallback_no_svar() {
+        // When SVar is missing, falls back to name-based heuristic
+        let params =
+            AbilityParams::parse("A:AB$ Effect | StaticAbilities$ Unblockable | RememberObjects$ Targeted").unwrap();
+
+        let svars = HashMap::new(); // Empty - no SVars
+
+        let effect = params_to_effect_with_svars(&params, &svars).unwrap();
+
+        match effect {
+            Effect::GrantCantBeBlocked { target: _ } => {
+                // Falls back to name-based detection ("Unblockable" contains "unblock")
+            }
+            _ => panic!("Expected GrantCantBeBlocked effect from name fallback"),
         }
     }
 }

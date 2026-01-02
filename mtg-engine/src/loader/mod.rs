@@ -16,6 +16,7 @@ pub mod edition;
 pub mod effect_converter;
 #[cfg(feature = "native")]
 pub mod game_init;
+pub mod svar_parser;
 
 pub use card::{CardDefinition, CardLoader};
 #[cfg(feature = "native")]
@@ -29,6 +30,9 @@ pub use deck_async::prefetch_deck_cards;
 pub use edition::{CardEditionIndex, CardPrinting};
 #[cfg(feature = "native")]
 pub use game_init::GameInitializer;
+pub use svar_parser::{
+    parse_all_svars, parse_svar, ComputedValueExpr, EffectDef, ParsedSVar, StaticAbilityDef, StaticAbilityMode,
+};
 
 // Re-export AsyncCardDatabase as CardDatabase for convenience
 #[cfg(feature = "native")]
