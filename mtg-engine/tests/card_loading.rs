@@ -2,7 +2,7 @@
 //!
 //! Tests that verify cards from cardsfolder can be loaded and parsed correctly
 
-use mtg_forge_rs::core::{CardType, Keyword, KeywordArgs};
+use mtg_forge_rs::core::{CardId, CardType, Keyword, KeywordArgs, PlayerId};
 use mtg_forge_rs::loader::CardLoader;
 use mtg_forge_rs::{MtgError, Result};
 use std::path::PathBuf;
@@ -1932,6 +1932,48 @@ async fn test_ba_sing_se_mana_engine_sources() -> Result<()> {
         capacity.green, 4,
         "Should have 4 green mana from 4 untapped sources. Capacity: {:?}",
         capacity
+    );
+
+    Ok(())
+}
+
+/// Test that Foggy Swamp Vinebender is NOT marked as a mana source
+///
+/// Foggy Swamp Vinebender has a Waterbend ability (tapping creatures/artifacts to pay costs)
+/// but does NOT produce mana itself. It should NOT be in the mana source cache.
+#[test]
+fn test_foggy_swamp_vinebender_not_mana_source() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/f/foggy_swamp_vinebender.txt");
+    if !path.exists() {
+        eprintln!("Skipping test - cardsfolder not present");
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+
+    // Verify card loaded
+    assert_eq!(def.name.as_str(), "Foggy Swamp Vinebender");
+
+    // Create a card from the definition
+    let card_id = CardId::new(100);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Check that is_mana_source is FALSE
+    // The waterbend ability does NOT produce mana
+    assert!(
+        !card.cache.is_mana_source,
+        "Foggy Swamp Vinebender should NOT be marked as a mana source. \
+        It has Waterbend (helps pay costs by tapping creatures/artifacts) \
+        but does NOT produce mana. mana_production: {:?}",
+        card.cache.mana_production
+    );
+
+    // Also check that mana_production.produces_mana() is false
+    assert!(
+        !card.cache.mana_production.produces_mana(),
+        "Foggy Swamp Vinebender should NOT produce mana. Got: {:?}",
+        card.cache.mana_production
     );
 
     Ok(())
