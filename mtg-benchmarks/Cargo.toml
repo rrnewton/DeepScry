@@ -47,6 +47,10 @@ harness = false
 name = "dhat_profile"
 harness = false
 
+[[bench]]
+name = "java_benchmark"
+harness = false
+
 [features]
 # Benchmark allocator selection (mutually exclusive)
 # Default: stats_alloc with allocation tracking enabled
