@@ -124,11 +124,24 @@ Continuous effects (Ally buffs) work correctly.
 
 Remaining gaps: Airbend, auto-attach, tokens. Games are playable without these.
 
+### ETB Damage Triggers (ValidTgts$ Any) - FIXED (2026-01-02_#1437)
+
+Fixed issue where ETB triggers with `ValidTgts$ Any` (like Mongoose Lizard's "deals 1 damage
+to any target") would crash with "DealDamage effect requires a target" when no opponent
+creatures were on the battlefield.
+
+Now the trigger correctly targets the opponent player as a fallback when no valid creature
+targets exist. This matches MTG rules for "any target" effects.
+
+**Cards affected:**
+- Mongoose Lizard: ETB deals 1 damage to any target ✓ WORKING
+
 ## Tested Seeds
 
 Verified working: 1, 5, 10, 42, 77, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 6000,
 7777, 8888, 9999, 11111, 12345, 22222, 33333, 44444, 55555, 66666, 77777, 88888, 99999,
-100000, 111111, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 1000000
+100000, 111111, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 1000000,
+111222, 222333, 333444, 123456, 234567, 345678, 456789, 567890, 678901, 789012, 890123
 
 ## Priority
 
