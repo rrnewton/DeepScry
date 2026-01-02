@@ -66,6 +66,9 @@ You can use either numeric indices OR descriptive commands:
 ./agentplay/continue_game.sh "pass"
 ```
 
+For full syntax documentation including card name matching, wildcards, and special
+cases, see [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md).
+
 ### Building a Reproducer
 
 The agentplay workflow automatically builds reproducers:
@@ -229,6 +232,7 @@ cargo run --bin mtg -- resume --help
 ```
 
 For implementation details, read:
+- [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md) - Complete input command syntax reference
 - `agentplay/start_game.sh` - Initialization workflow
 - `agentplay/continue_game.sh` - Incremental choice workflow
 - `src/main.rs` - Full CLI argument parsing

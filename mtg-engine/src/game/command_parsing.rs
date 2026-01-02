@@ -21,19 +21,27 @@ use crate::game::controller::{sort_spell_abilities, GameStateView};
 /// Normalize a string for comparison
 ///
 /// - Converts to lowercase
-/// - Removes spaces and underscores
+/// - Removes spaces, underscores, and trailing punctuation
 /// - Allows prefix matching for card names
 ///
 /// # Examples
 /// ```ignore
 /// assert_eq!(normalize("Black Knight"), "blackknight");
 /// assert_eq!(normalize("Serra_Angel"), "serraangel");
+/// assert_eq!(normalize("mountain."), "mountain");
 /// ```
 pub fn normalize(s: &str) -> String {
-    s.chars()
+    // First, remove whitespace and underscores, then lowercase
+    let normalized: String = s
+        .chars()
         .filter(|c| !c.is_whitespace() && *c != '_')
         .collect::<String>()
-        .to_lowercase()
+        .to_lowercase();
+
+    // Strip trailing punctuation (periods, commas, etc.)
+    normalized
+        .trim_end_matches(|c: char| c.is_ascii_punctuation())
+        .to_string()
 }
 
 /// Check if a card name matches a pattern (prefix matching)
@@ -195,6 +203,10 @@ mod tests {
         assert_eq!(normalize("Serra_Angel"), "serraangel");
         assert_eq!(normalize("Royal  Assassin"), "royalassassin");
         assert_eq!(normalize("  Lightning Bolt  "), "lightningbolt");
+        // Trailing punctuation should be stripped
+        assert_eq!(normalize("mountain."), "mountain");
+        assert_eq!(normalize("Mountain,"), "mountain");
+        assert_eq!(normalize("lightning bolt!"), "lightningbolt");
     }
 
     #[test]

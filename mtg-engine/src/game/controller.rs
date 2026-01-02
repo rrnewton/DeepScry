@@ -23,10 +23,16 @@ use std::collections::HashMap;
 /// Format available spell/ability choices as a menu
 ///
 /// This creates a standardized menu showing all available actions for a player.
-/// The format is: "<PLAYERNAME> available actions: [0] Play land: Swamp..."
+/// The format matches the rich input syntax for easy copy-paste:
+/// - `[0] pass` - Pass priority
+/// - `[1] play Mountain` - Play a land
+/// - `[2] cast Lightning Bolt` - Cast a spell
+/// - `[3] activate Forest` - Activate an ability
 ///
 /// All controllers should use this function when showing choices to maintain
 /// a consistent format across the codebase.
+///
+/// See docs/FIXED_INPUT_SYNTAX.md for full input syntax documentation.
 pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> String {
     let mut output = String::new();
     let player_name = view.player_name();
@@ -34,7 +40,7 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
     output.push_str(&format!("\n{} available actions:\n", player_name));
 
     // Pass is ALWAYS option 0
-    output.push_str("  [0] Pass priority\n");
+    output.push_str("  [0] pass\n");
 
     // Sort abilities in canonical order: PlayLand, CastSpell, ActivateAbility
     let sorted = sort_spell_abilities(available);
@@ -45,15 +51,15 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
         match ability {
             SpellAbility::PlayLand { card_id } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] Play land: {}\n", display_idx, name));
+                output.push_str(&format!("  [{}] play {}\n", display_idx, name));
             }
             SpellAbility::CastSpell { card_id } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] Cast spell: {}\n", display_idx, name));
+                output.push_str(&format!("  [{}] cast {}\n", display_idx, name));
             }
             SpellAbility::ActivateAbility { card_id, .. } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] Activate ability: {}\n", display_idx, name));
+                output.push_str(&format!("  [{}] activate {}\n", display_idx, name));
             }
         }
     }
@@ -243,30 +249,39 @@ pub fn sort_spell_abilities(abilities: &[SpellAbility]) -> Vec<SpellAbility> {
 
 /// Format a single spell ability choice for display
 ///
-/// Returns a string like "Play land: Forest" or "Cast spell: Lightning Bolt"
+/// Returns a string matching the rich input syntax:
+/// - "play Forest" for lands
+/// - "cast Lightning Bolt" for spells
+/// - "activate Forest" for abilities
+///
+/// See docs/FIXED_INPUT_SYNTAX.md for full input syntax documentation.
 pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility) -> String {
     match ability {
         SpellAbility::PlayLand { card_id } => {
             let name = view.card_name(*card_id).unwrap_or_default();
-            format!("Play land: {}", name)
+            format!("play {}", name)
         }
         SpellAbility::CastSpell { card_id } => {
             let name = view.card_name(*card_id).unwrap_or_default();
-            format!("Cast spell: {}", name)
+            format!("cast {}", name)
         }
         SpellAbility::ActivateAbility { card_id, .. } => {
             let name = view.card_name(*card_id).unwrap_or_default();
-            format!("Activate: {}", name)
+            format!("activate {}", name)
         }
     }
 }
 
 /// Format all spell ability choices as a Vec of strings
 ///
-/// Index 0 is always "Pass", subsequent indices are formatted abilities.
+/// Index 0 is always "pass", subsequent indices are formatted abilities
+/// using the rich input syntax (e.g., "play Mountain", "cast Lightning Bolt").
+///
 /// This is used by both TUI and WASM to generate menu choices.
+///
+/// See docs/FIXED_INPUT_SYNTAX.md for full input syntax documentation.
 pub fn format_spell_ability_choices(view: &GameStateView, available: &[SpellAbility]) -> Vec<String> {
-    std::iter::once("Pass".to_string())
+    std::iter::once("pass".to_string())
         .chain(
             available
                 .iter()

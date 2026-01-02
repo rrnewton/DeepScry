@@ -172,6 +172,11 @@ impl<'a> GameLoop<'a> {
             if message.contains("Game Over") || message.contains("wins!") {
                 return; // Valid: stopped at game end
             }
+
+            // 3. Turn start (valid for --stop-on-choice at game start before any choices)
+            if message.contains(">>> Turn") && message.contains("<<<<") {
+                return; // Valid: stopped at turn start before any choices
+            }
         }
 
         // If we get here, we didn't find a valid stopping point
