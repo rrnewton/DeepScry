@@ -71,7 +71,7 @@ pub fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
         .constraints([
             Constraint::Length(deck_summary_height), // Deck summary (dynamic)
             Constraint::Length(3),                   // Search input
-            Constraint::Min(10),                     // Search results + card details
+            Constraint::Min(10),                     // Search results + card details + problems
             Constraint::Length(2),                   // Status/help bar
         ])
         .split(f.area());
@@ -82,7 +82,8 @@ pub fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
     // Deck summary
     draw_deck_summary(f, chunks[0], state);
 
-    // Search input
+    // Search input - store area for click detection
+    state.search_input_area = Some(chunks[1]);
     draw_search_input(f, chunks[1], state);
 
     // Update max_results based on available height (accounting for borders)
@@ -92,15 +93,28 @@ pub fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
         state.update_search(); // Re-run search with new limit
     }
 
-    // Split the results area horizontally: results on left, card details on right
+    // Split the results area horizontally
+    // If we have problems, show 3 panes: results | details | problems
+    // Otherwise, show 2 panes: results | details
     let results_area = chunks[2];
-    let horizontal_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50), // Search results
-            Constraint::Percentage(50), // Card details
-        ])
-        .split(results_area);
+    let horizontal_chunks = if state.has_problems() {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(35), // Search results
+                Constraint::Percentage(35), // Card details
+                Constraint::Percentage(30), // Problems
+            ])
+            .split(results_area)
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50), // Search results
+                Constraint::Percentage(50), // Card details
+            ])
+            .split(results_area)
+    };
 
     // Store search results area for click detection
     state.search_results_area = Some(horizontal_chunks[0]);
@@ -108,8 +122,16 @@ pub fn draw_ui(f: &mut Frame, state: &mut DeckBuilderState) {
     // Search results (left side)
     draw_search_results(f, horizontal_chunks[0], state);
 
-    // Card details (right side)
+    // Card details (middle or right side)
     draw_card_details(f, horizontal_chunks[1], state);
+
+    // Problems pane (right side, only if there are problems)
+    if state.has_problems() {
+        state.problems_area = Some(horizontal_chunks[2]);
+        draw_problems_pane(f, horizontal_chunks[2], state);
+    } else {
+        state.problems_area = None;
+    }
 
     // Status bar
     draw_status_bar(f, chunks[3], state);
@@ -363,17 +385,15 @@ fn draw_search_results(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
             let card_name = &state.all_cards[card_idx];
             let in_deck = state.deck.get(card_name).copied().unwrap_or(0);
 
-            let style = if actual_i == state.selected_index {
+            let is_selected = actual_i == state.selected_index;
+            let style = if is_selected {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
 
-            let prefix = if actual_i == state.selected_index {
-                "\u{25B6} "
-            } else {
-                "  "
-            };
+            // Only show cursor arrow when this pane is focused
+            let prefix = if is_selected && is_focused { "\u{25B6} " } else { "  " };
 
             let text = if in_deck > 0 {
                 format!("{}{} ({}x)", prefix, card_name, in_deck)
@@ -513,24 +533,96 @@ fn draw_card_details(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     }
 }
 
+/// Draw the import problems pane (repair mode)
+fn draw_problems_pane(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
+    let is_focused = state.focused_pane == FocusedPane::Problems;
+    let border_color = if is_focused { Color::Yellow } else { Color::Red };
+
+    let title = if is_focused {
+        format!(" REMAINING PROBLEMS [focused] ({}) ", state.import_problems.len())
+    } else {
+        format!(" REMAINING PROBLEMS ({}) ", state.import_problems.len())
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if state.import_problems.is_empty() {
+        let hint = Paragraph::new("No problems remaining!").style(Style::default().fg(Color::Green));
+        f.render_widget(hint, inner);
+        return;
+    }
+
+    // Calculate visible range
+    let visible_height = inner.height as usize;
+    let visible_end = (state.problems_scroll_offset + visible_height).min(state.import_problems.len());
+
+    let items: Vec<ListItem> = state.import_problems[state.problems_scroll_offset..visible_end]
+        .iter()
+        .enumerate()
+        .map(|(visible_i, problem)| {
+            let actual_i = state.problems_scroll_offset + visible_i;
+            let is_selected = actual_i == state.problems_selected_index;
+
+            let style = if is_selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let prefix = if is_selected { "\u{25B6} " } else { "  " };
+            let label = problem.label();
+
+            // Truncate label if too long for the pane
+            let max_len = inner.width.saturating_sub(3) as usize;
+            let display_text = if label.len() > max_len && max_len > 3 {
+                format!("{}{}...", prefix, &label[..max_len - 3])
+            } else {
+                format!("{}{}", prefix, label)
+            };
+
+            ListItem::new(display_text).style(style)
+        })
+        .collect();
+
+    let list = List::new(items);
+    f.render_widget(list, inner);
+}
+
 fn draw_status_bar(f: &mut Frame, area: Rect, state: &DeckBuilderState) {
     let status = if let Some(ref msg) = state.status_message {
         Line::from(vec![
             Span::styled("\u{2713} ", Style::default().fg(Color::Green)),
             Span::styled(msg.as_str(), Style::default().fg(Color::Green)),
         ])
+    } else if state.focused_pane == FocusedPane::Problems {
+        // Context-sensitive hints for Problems pane
+        Line::from(vec![
+            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::raw(" focus  "),
+            Span::styled("Del/Bksp", Style::default().fg(Color::Yellow)),
+            Span::raw(" dismiss problem  "),
+            Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Yellow)),
+            Span::raw(" navigate"),
+        ])
     } else {
+        // Default hints for Search/DeckSummary
         Line::from(vec![
             Span::styled("Tab", Style::default().fg(Color::Yellow)),
             Span::raw(" focus  "),
             Span::styled("ESC", Style::default().fg(Color::Yellow)),
             Span::raw(" clear/exit  "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw(" add  "),
+            Span::raw(" +1  "),
             Span::styled("1-9", Style::default().fg(Color::Yellow)),
-            Span::raw(" add N  "),
-            Span::styled("Del", Style::default().fg(Color::Yellow)),
-            Span::raw(" remove"),
+            Span::raw(" set N  "),
+            Span::styled("Del/Bksp", Style::default().fg(Color::Yellow)),
+            Span::raw(" -1"),
         ])
     };
 

@@ -416,7 +416,14 @@ enum Commands {
     },
 
     /// Print statistics about the card database
-    Stats {},
+    ///
+    /// By default, loads all cards from cardsfolder/. If paths are provided,
+    /// loads only those files (if .txt file) or directories (scans for .txt files).
+    Stats {
+        /// Paths to card files or directories to load (default: cardsfolder/)
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
+    },
 
     /// Fast deck entry mode - Interactive TUI for rapid deck building
     ///
@@ -809,7 +816,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
-        Commands::Stats {} => run_stats().await?,
+        Commands::Stats { paths } => run_stats(paths).await?,
         Commands::DeckBuild {
             deck_file,
             output_file,
@@ -2674,23 +2681,81 @@ async fn run_deck_build(
 }
 
 /// Print statistics about the card database
-async fn run_stats() -> Result<()> {
+async fn run_stats(paths: Vec<String>) -> Result<()> {
+    use mtg_forge_rs::loader::{CardDefinition, CardLoader};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     println!("=== MTG Forge Rust - Card Database Statistics ===\n");
 
-    // Find and load cardsfolder
-    let cardsfolder = find_cardsfolder();
-    let card_db = CardDatabase::new(cardsfolder);
+    // Load cards based on provided paths or default to cardsfolder
+    let all_cards: Vec<Arc<CardDefinition>> = if paths.is_empty() {
+        // Default: load all cards from cardsfolder
+        let cardsfolder = find_cardsfolder();
+        let card_db = CardDatabase::new(cardsfolder);
 
-    println!("Loading full card database...");
-    let (loaded, duration) = card_db.eager_load().await?;
-    println!("Successfully loaded {} cards in {:?}\n", loaded, duration);
+        println!("Loading full card database...");
+        let (loaded, duration) = card_db.eager_load().await?;
+        println!("Successfully loaded {} cards in {:?}\n", loaded, duration);
+
+        card_db.all_cards().await
+    } else {
+        // Load only specified files/directories
+        let mut cards = Vec::new();
+        let mut loaded_count = 0;
+        let mut error_count = 0;
+
+        for path_str in &paths {
+            let path = std::path::Path::new(path_str);
+            if path.is_file() {
+                // Load single file
+                match CardLoader::load_from_file(path) {
+                    Ok(card) => {
+                        println!("Loaded: {} ({})", card.name.as_str(), path_str);
+                        cards.push(Arc::new(card));
+                        loaded_count += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading {}: {}", path_str, e);
+                        error_count += 1;
+                    }
+                }
+            } else if path.is_dir() {
+                // Scan directory for .txt files
+                println!("Scanning directory: {}", path_str);
+                for entry in jwalk::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+                    let entry_path = entry.path();
+                    if entry_path.extension().is_some_and(|ext| ext == "txt") {
+                        match CardLoader::load_from_file(&entry_path) {
+                            Ok(card) => {
+                                cards.push(Arc::new(card));
+                                loaded_count += 1;
+                            }
+                            Err(e) => {
+                                eprintln!("Error loading {}: {}", entry_path.display(), e);
+                                error_count += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                eprintln!("Path not found: {}", path_str);
+                error_count += 1;
+            }
+        }
+
+        println!("\nLoaded {} cards ({} errors)\n", loaded_count, error_count);
+        cards
+    };
+
+    let loaded = all_cards.len();
+    if loaded == 0 {
+        println!("No cards loaded.");
+        return Ok(());
+    }
 
     // Generate comprehensive statistics
     println!("=== Card Database Statistics ===");
-
-    let all_cards = card_db.all_cards().await;
 
     // Card type distribution
     let mut type_counts: HashMap<String, usize> = HashMap::new();

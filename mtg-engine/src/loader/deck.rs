@@ -6,6 +6,63 @@ use std::fs;
 #[cfg(feature = "native")]
 use std::path::Path;
 
+/// Import problem type for deck loading issues
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportProblemKind {
+    /// Line could not be parsed (invalid format)
+    ParseFail,
+    /// Card name not found in database
+    CardMissing,
+}
+
+/// Represents a problem encountered during deck import
+#[derive(Debug, Clone)]
+pub struct ImportProblem {
+    /// The kind of problem
+    pub kind: ImportProblemKind,
+    /// The original line text
+    pub line_text: String,
+    /// The card name if it was extracted (for CardMissing problems)
+    pub card_name: Option<String>,
+}
+
+impl ImportProblem {
+    /// Create a parse failure problem
+    pub fn parse_fail(line_text: &str) -> Self {
+        Self {
+            kind: ImportProblemKind::ParseFail,
+            line_text: line_text.to_string(),
+            card_name: None,
+        }
+    }
+
+    /// Create a card missing problem
+    pub fn card_missing(card_name: &str, line_text: &str) -> Self {
+        Self {
+            kind: ImportProblemKind::CardMissing,
+            line_text: line_text.to_string(),
+            card_name: Some(card_name.to_string()),
+        }
+    }
+
+    /// Get a display label for the problem
+    pub fn label(&self) -> String {
+        match self.kind {
+            ImportProblemKind::ParseFail => format!("[PARSE_FAIL] {}", self.line_text),
+            ImportProblemKind::CardMissing => format!("[CARD_MISSING] {}", self.line_text),
+        }
+    }
+}
+
+/// Result of parsing a deck with tracked problems
+#[derive(Debug)]
+pub struct DeckParseResult {
+    /// Successfully parsed deck entries
+    pub deck_list: DeckList,
+    /// Problems encountered during parsing
+    pub problems: Vec<ImportProblem>,
+}
+
 /// Deck loader for .dck files
 pub struct DeckLoader;
 
@@ -17,24 +74,57 @@ impl DeckLoader {
         Self::parse(&content)
     }
 
+    /// Load a deck from file with problem tracking
+    #[cfg(feature = "native")]
+    pub fn load_from_file_with_problems(path: &Path) -> Result<DeckParseResult> {
+        let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
+        Ok(Self::parse_with_problems(&content))
+    }
+
     /// Parse a deck from its text content
     pub fn parse(content: &str) -> Result<DeckList> {
+        let result = Self::parse_with_problems(content);
+        if result.deck_list.main_deck.is_empty() && result.problems.is_empty() {
+            return Err(MtgError::InvalidDeckFormat("Empty deck".to_string()));
+        }
+        Ok(result.deck_list)
+    }
+
+    /// Parse a deck from text content with problem tracking
+    ///
+    /// Unlike `parse()`, this method tracks lines that fail to parse instead
+    /// of silently ignoring them. Missing cards are NOT detected at this stage;
+    /// call `validate_cards()` after loading the card database to detect those.
+    pub fn parse_with_problems(content: &str) -> DeckParseResult {
         let mut main_deck = Vec::new();
         let mut sideboard = Vec::new();
+        let mut problems = Vec::new();
         let mut in_sideboard = false;
 
         for line in content.lines() {
+            let original_line = line;
             let line = line.trim();
 
-            if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            // Skip empty lines, comments, and metadata
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Check for section markers
+            if line.starts_with('[') {
                 if line.contains("Sideboard") {
                     in_sideboard = true;
                 }
                 continue;
             }
 
-            // Format: "1 Card Name" or "1 Card Name|SET" or "1 Card Name+|SET" (+ indicates foil)
-            if let Some((count_str, rest)) = line.split_once(' ') {
+            // Skip metadata lines (e.g., "Name=Deck Name")
+            if line.contains('=') && !line.starts_with(|c: char| c.is_ascii_digit()) {
+                continue;
+            }
+
+            // Format: "1 Card Name" or "1 Card Name|SET" or "1 Card Name+|SET"
+            let parsed = if let Some((count_str, rest)) = line.split_once(' ') {
                 if let Ok(count) = count_str.parse::<u8>() {
                     // Extract card name (before pipe if present)
                     let mut card_name = if let Some((name, _set)) = rest.split_once('|') {
@@ -49,22 +139,60 @@ impl DeckLoader {
                         card_name = card_name.trim().to_string();
                     }
 
-                    let entry = DeckEntry { card_name, count };
+                    if !card_name.is_empty() {
+                        Some(DeckEntry { card_name, count })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
+            match parsed {
+                Some(entry) => {
                     if in_sideboard {
                         sideboard.push(entry);
                     } else {
                         main_deck.push(entry);
                     }
                 }
+                None => {
+                    // Line failed to parse - track it as a problem
+                    problems.push(ImportProblem::parse_fail(original_line));
+                }
             }
         }
 
-        if main_deck.is_empty() {
-            return Err(MtgError::InvalidDeckFormat("Empty deck".to_string()));
+        DeckParseResult {
+            deck_list: DeckList { main_deck, sideboard },
+            problems,
+        }
+    }
+
+    /// Validate parsed deck entries against known card names
+    ///
+    /// Returns additional CardMissing problems for cards not in the database.
+    pub fn validate_cards(deck_list: &DeckList, known_cards: &std::collections::HashSet<&str>) -> Vec<ImportProblem> {
+        let mut problems = Vec::new();
+
+        for entry in &deck_list.main_deck {
+            if !known_cards.contains(entry.card_name.as_str()) {
+                let line_text = format!("{} {}", entry.count, entry.card_name);
+                problems.push(ImportProblem::card_missing(&entry.card_name, &line_text));
+            }
         }
 
-        Ok(DeckList { main_deck, sideboard })
+        for entry in &deck_list.sideboard {
+            if !known_cards.contains(entry.card_name.as_str()) {
+                let line_text = format!("{} {}", entry.count, entry.card_name);
+                problems.push(ImportProblem::card_missing(&entry.card_name, &line_text));
+            }
+        }
+
+        problems
     }
 }
 
@@ -232,5 +360,80 @@ Name=Foil Test
         assert_eq!(parsed.sideboard.len(), 1);
         assert_eq!(parsed.sideboard[0].card_name, "Shock");
         assert_eq!(parsed.sideboard[0].count, 2);
+    }
+
+    #[test]
+    fn test_parse_with_problems() {
+        let content = r#"
+[metadata]
+Name=Problem Deck
+
+[Main]
+4 Lightning Bolt
+invalid line
+3 Mountain
+abc def ghi
+"#;
+
+        let result = DeckLoader::parse_with_problems(content);
+
+        // Should parse 2 valid entries
+        assert_eq!(result.deck_list.main_deck.len(), 2);
+        assert_eq!(result.deck_list.main_deck[0].card_name, "Lightning Bolt");
+        assert_eq!(result.deck_list.main_deck[1].card_name, "Mountain");
+
+        // Should have 2 parse problems
+        assert_eq!(result.problems.len(), 2);
+        assert_eq!(result.problems[0].kind, ImportProblemKind::ParseFail);
+        assert!(result.problems[0].line_text.contains("invalid line"));
+        assert_eq!(result.problems[1].kind, ImportProblemKind::ParseFail);
+        assert!(result.problems[1].line_text.contains("abc def ghi"));
+    }
+
+    #[test]
+    fn test_validate_cards() {
+        use std::collections::HashSet;
+
+        let deck = DeckList {
+            main_deck: vec![
+                DeckEntry {
+                    card_name: "Lightning Bolt".to_string(),
+                    count: 4,
+                },
+                DeckEntry {
+                    card_name: "Fake Card".to_string(),
+                    count: 2,
+                },
+                DeckEntry {
+                    card_name: "Mountain".to_string(),
+                    count: 20,
+                },
+            ],
+            sideboard: vec![DeckEntry {
+                card_name: "Another Fake".to_string(),
+                count: 3,
+            }],
+        };
+
+        let known_cards: HashSet<&str> = ["Lightning Bolt", "Mountain", "Forest"].iter().cloned().collect();
+        let problems = DeckLoader::validate_cards(&deck, &known_cards);
+
+        // Should find 2 missing cards
+        assert_eq!(problems.len(), 2);
+        assert_eq!(problems[0].kind, ImportProblemKind::CardMissing);
+        assert_eq!(problems[0].card_name, Some("Fake Card".to_string()));
+        assert_eq!(problems[1].kind, ImportProblemKind::CardMissing);
+        assert_eq!(problems[1].card_name, Some("Another Fake".to_string()));
+    }
+
+    #[test]
+    fn test_import_problem_label() {
+        let parse_fail = ImportProblem::parse_fail("bad line");
+        assert!(parse_fail.label().contains("[PARSE_FAIL]"));
+        assert!(parse_fail.label().contains("bad line"));
+
+        let card_missing = ImportProblem::card_missing("Fake Card", "4 Fake Card");
+        assert!(card_missing.label().contains("[CARD_MISSING]"));
+        assert!(card_missing.label().contains("4 Fake Card"));
     }
 }

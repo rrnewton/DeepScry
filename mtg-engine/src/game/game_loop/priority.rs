@@ -739,6 +739,19 @@ impl<'a> GameLoop<'a> {
                                                     toughness_bonus: *toughness_bonus,
                                                 }
                                             }
+                                            // Self-targeting pump: "This creature gets +X/+Y"
+                                            // When no targets were chosen (ability doesn't target), use source card
+                                            crate::core::Effect::PumpCreature {
+                                                target,
+                                                power_bonus,
+                                                toughness_bonus,
+                                            } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
+                                                crate::core::Effect::PumpCreature {
+                                                    target: card_id, // Target self (the source of the ability)
+                                                    power_bonus: *power_bonus,
+                                                    toughness_bonus: *toughness_bonus,
+                                                }
+                                            }
                                             crate::core::Effect::PutCounter {
                                                 target,
                                                 counter_type,

@@ -276,6 +276,7 @@ pub fn launch_deck_builder(
                         deck_state.deck_select_previous(num_cols);
                         deck_state.needs_redraw = true;
                     }
+                    FocusedPane::Problems => {} // Not supported in WASM
                 },
                 KeyCode::Down => match deck_state.focused_pane {
                     FocusedPane::Search => {
@@ -286,6 +287,7 @@ pub fn launch_deck_builder(
                         deck_state.deck_select_next(num_cols);
                         deck_state.needs_redraw = true;
                     }
+                    FocusedPane::Problems => {} // Not supported in WASM
                 },
                 KeyCode::Left => {
                     if deck_state.focused_pane == FocusedPane::DeckSummary {
@@ -311,6 +313,7 @@ pub fn launch_deck_builder(
                         FocusedPane::DeckSummary => {
                             deck_state.deck_selected_index = deck_state.deck_selected_index.saturating_sub(10);
                         }
+                        FocusedPane::Problems => {} // Not supported in WASM
                     }
                     deck_state.needs_redraw = true;
                 }
@@ -328,6 +331,7 @@ pub fn launch_deck_builder(
                             let max_idx = deck_state.deck.len().saturating_sub(1);
                             deck_state.deck_selected_index = (deck_state.deck_selected_index + 10).min(max_idx);
                         }
+                        FocusedPane::Problems => {} // Not supported in WASM
                     }
                     deck_state.needs_redraw = true;
                 }
@@ -340,6 +344,7 @@ pub fn launch_deck_builder(
                         FocusedPane::DeckSummary => {
                             deck_state.deck_selected_index = 0;
                         }
+                        FocusedPane::Problems => {} // Not supported in WASM
                     }
                     deck_state.needs_redraw = true;
                 }
@@ -353,27 +358,38 @@ pub fn launch_deck_builder(
                         FocusedPane::DeckSummary => {
                             deck_state.deck_selected_index = deck_state.deck.len().saturating_sub(1);
                         }
+                        FocusedPane::Problems => {} // Not supported in WASM
                     }
                     deck_state.needs_redraw = true;
                 }
-                KeyCode::Enter => {
-                    deck_state.add_selected(1);
-                }
+                KeyCode::Enter => match deck_state.focused_pane {
+                    FocusedPane::Search => deck_state.add_selected(1),
+                    FocusedPane::DeckSummary => deck_state.increment_deck_selected(),
+                    FocusedPane::Problems => {}
+                },
                 KeyCode::Delete => {
                     deck_state.remove_selected();
                 }
-                KeyCode::Backspace => {
-                    if deck_state.focused_pane == FocusedPane::Search {
+                KeyCode::Backspace => match deck_state.focused_pane {
+                    FocusedPane::Search => {
                         deck_state.search_query.pop();
                         deck_state.update_search();
                         deck_state.needs_redraw = true;
                     }
-                }
+                    FocusedPane::DeckSummary => {
+                        deck_state.remove_selected();
+                    }
+                    FocusedPane::Problems => {}
+                },
                 KeyCode::Char(c) => {
                     if c.is_ascii_digit() && c != '0' {
-                        // Number keys 1-9 add that many copies
+                        // Number keys 1-9 SET count (not add)
                         let count = c.to_digit(10).unwrap() as u8;
-                        deck_state.add_selected(count);
+                        match deck_state.focused_pane {
+                            FocusedPane::Search => deck_state.set_selected(count),
+                            FocusedPane::DeckSummary => deck_state.set_deck_selected(count),
+                            FocusedPane::Problems => {}
+                        }
                     } else if deck_state.focused_pane == FocusedPane::Search {
                         // Type character into search
                         deck_state.search_query.push(c);
@@ -407,6 +423,16 @@ pub fn launch_deck_builder(
                 if cell_x >= area.x && cell_x < area.x + area.width && cell_y >= area.y && cell_y < area.y + area.height
                 {
                     deck_state.focused_pane = FocusedPane::DeckSummary;
+                    deck_state.status_message = None;
+                    deck_state.needs_redraw = true;
+                }
+            }
+
+            // Check if click is within search input area (same effect as results)
+            if let Some(area) = deck_state.search_input_area {
+                if cell_x >= area.x && cell_x < area.x + area.width && cell_y >= area.y && cell_y < area.y + area.height
+                {
+                    deck_state.focused_pane = FocusedPane::Search;
                     deck_state.status_message = None;
                     deck_state.needs_redraw = true;
                 }

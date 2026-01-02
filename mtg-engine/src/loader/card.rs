@@ -8,10 +8,34 @@ use crate::core::{
 };
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
+use std::cell::RefCell;
 #[cfg(feature = "native")]
 use std::fs;
 #[cfg(feature = "native")]
 use std::path::Path;
+
+// Thread-local storage for the current file being parsed (for warning context)
+thread_local! {
+    static PARSING_FILE_CONTEXT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Set the parsing file context for warnings
+fn set_parsing_context(path: Option<&str>) {
+    PARSING_FILE_CONTEXT.with(|ctx| {
+        *ctx.borrow_mut() = path.map(|s| s.to_string());
+    });
+}
+
+/// Emit a warning with file context if available
+fn warn_with_context(message: &str) {
+    PARSING_FILE_CONTEXT.with(|ctx| {
+        if let Some(ref path) = *ctx.borrow() {
+            eprintln!("Warning [{}]: {}", path, message);
+        } else {
+            eprintln!("Warning: {}", message);
+        }
+    });
+}
 
 /// Card loader for .txt files
 pub struct CardLoader;
@@ -21,10 +45,24 @@ impl CardLoader {
     #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<CardDefinition> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
-        Self::parse(&content).map_err(|e| {
+        // Set context for warnings during parsing
+        let path_str = path.display().to_string();
+        set_parsing_context(Some(&path_str));
+        let result = Self::parse(&content).map_err(|e| {
             // Enhance error message with file path for easier debugging
             MtgError::InvalidCardFormat(format!("Failed to parse card file '{}': {}", path.display(), e))
-        })
+        });
+        // Clear context after parsing
+        set_parsing_context(None);
+        result
+    }
+
+    /// Parse a card with explicit file context for warnings
+    pub fn parse_with_context(content: &str, file_context: Option<&str>) -> Result<CardDefinition> {
+        set_parsing_context(file_context);
+        let result = Self::parse(content);
+        set_parsing_context(None);
+        result
     }
 
     /// Parse a card from its text content
@@ -45,6 +83,12 @@ impl CardLoader {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
+            }
+
+            // Stop parsing at ALTERNATE section (double-faced card back)
+            // We only parse the front face of double-faced cards
+            if line == "ALTERNATE" {
+                break;
             }
 
             if let Some((key, value)) = line.split_once(':') {
@@ -980,7 +1024,7 @@ impl CardDefinition {
                     }
                     _ => {
                         // Unknown parameterized keyword - log warning
-                        eprintln!("Warning: Unknown parameterized keyword '{}' in '{}'", kw, keyword_str);
+                        warn_with_context(&format!("Unknown parameterized keyword '{}' in '{}'", kw, keyword_str));
                     }
                 }
             } else {
@@ -1101,7 +1145,7 @@ impl CardDefinition {
                     "MayFlashSac" => keyword_set.insert(Keyword::MayFlashSac),
                     _ => {
                         // Unknown simple keyword - log warning
-                        eprintln!("Warning: Unknown simple keyword '{}'", keyword_str);
+                        warn_with_context(&format!("Unknown simple keyword '{}'", keyword_str));
                     }
                 }
             }
@@ -1135,7 +1179,7 @@ impl CardDefinition {
                 Ok(p) => p,
                 Err(e) => {
                     // Log parse error but continue processing other abilities
-                    eprintln!("Warning: Failed to parse ability '{}': {}", ability, e);
+                    warn_with_context(&format!("Failed to parse ability '{}': {}", ability, e));
                     continue;
                 }
             };
@@ -1594,11 +1638,11 @@ impl CardDefinition {
             let params = match AbilityParams::parse(ability) {
                 Ok(p) if p.record_type == AbilityRecordType::Ability => p,
                 Ok(_) => {
-                    eprintln!("Warning: Expected AB$ record type in '{}'", ability);
+                    warn_with_context(&format!("Expected AB$ record type in '{}'", ability));
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to parse activated ability '{}': {}", ability, e);
+                    warn_with_context(&format!("Failed to parse activated ability '{}': {}", ability, e));
                     continue;
                 }
             };
@@ -1731,7 +1775,7 @@ impl CardDefinition {
             }
 
             // Unknown pattern - warn and return 0
-            eprintln!("Warning: Failed to parse {}$ '{}' in '{}'", param, original, ability);
+            warn_with_context(&format!("Failed to parse {}$ '{}' in '{}'", param, original, ability));
             0
         }
 
@@ -2190,10 +2234,10 @@ impl CardDefinition {
                                         affected = AffectedSelector::Any(selectors);
                                     } else {
                                         // No selectors could be parsed - emit warning
-                                        eprintln!(
-                                            "Warning: Failed to parse comma-separated Affected$ selector '{}' in '{}'",
+                                        warn_with_context(&format!(
+                                            "Failed to parse comma-separated Affected$ selector '{}' in '{}'",
                                             value, ability
-                                        );
+                                        ));
                                         affected = AffectedSelector::Self_;
                                     }
                                 }
@@ -2202,7 +2246,10 @@ impl CardDefinition {
                                 affected = if let Some(parsed) = parse_single_affected_selector(value) {
                                     parsed
                                 } else {
-                                    eprintln!("Warning: Unknown Affected$ selector '{}' in '{}'", value, ability);
+                                    warn_with_context(&format!(
+                                        "Unknown Affected$ selector '{}' in '{}'",
+                                        value, ability
+                                    ));
                                     AffectedSelector::Self_
                                 };
                             }

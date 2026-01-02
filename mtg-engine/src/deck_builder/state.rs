@@ -7,7 +7,7 @@
 use crate::core::{CardType, Color as MtgColor};
 #[cfg(feature = "native")]
 use crate::loader::CardEditionIndex;
-use crate::loader::{CardDefinition, DeckEntry, DeckList};
+use crate::loader::{CardDefinition, DeckEntry, DeckList, ImportProblem};
 use ratatui::layout::Rect;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,6 +20,8 @@ pub type CardEntryGroup<'a> = Vec<(&'a String, &'a u8, Option<&'a CardDefinition
 pub enum FocusedPane {
     Search,
     DeckSummary,
+    /// Problems pane (only shown when there are import problems)
+    Problems,
 }
 
 /// State for the deck builder TUI
@@ -53,6 +55,7 @@ pub struct DeckBuilderState {
     pub focused_pane: FocusedPane,
     /// Rect areas for click detection (set during draw)
     pub deck_summary_area: Option<Rect>,
+    pub search_input_area: Option<Rect>,
     pub search_results_area: Option<Rect>,
     /// Selected card index in deck summary (flattened across all categories)
     pub deck_selected_index: usize,
@@ -63,6 +66,16 @@ pub struct DeckBuilderState {
     pub deck_num_columns: usize,
     /// Dirty flag for WASM: set to true when state changes, cleared after draw
     pub needs_redraw: bool,
+
+    // --- Import problems (repair mode) ---
+    /// List of import problems (parse failures, missing cards)
+    pub import_problems: Vec<ImportProblem>,
+    /// Selected problem index in the problems pane
+    pub problems_selected_index: usize,
+    /// Scroll offset for problems pane
+    pub problems_scroll_offset: usize,
+    /// Rect area for problems pane (for click detection)
+    pub problems_area: Option<Rect>,
 }
 
 impl DeckBuilderState {
@@ -87,11 +100,16 @@ impl DeckBuilderState {
             max_results: 10, // Will be updated based on pane height
             focused_pane: FocusedPane::Search,
             deck_summary_area: None,
+            search_input_area: None,
             search_results_area: None,
             deck_selected_index: 0,
             edition_index,
             deck_num_columns: 1, // Will be updated during draw
             needs_redraw: true,  // Start dirty so first frame draws
+            import_problems: Vec::new(),
+            problems_selected_index: 0,
+            problems_scroll_offset: 0,
+            problems_area: None,
         }
     }
 
@@ -112,19 +130,92 @@ impl DeckBuilderState {
             max_results: 10, // Will be updated based on pane height
             focused_pane: FocusedPane::Search,
             deck_summary_area: None,
+            search_input_area: None,
             search_results_area: None,
             deck_selected_index: 0,
             deck_num_columns: 1, // Will be updated during draw
             needs_redraw: true,  // Start dirty so first frame draws
+            import_problems: Vec::new(),
+            problems_selected_index: 0,
+            problems_scroll_offset: 0,
+            problems_area: None,
         }
     }
 
-    /// Toggle focus between panes
+    /// Toggle focus between panes (cycles through available panes)
     pub fn toggle_focus(&mut self) {
         self.focused_pane = match self.focused_pane {
-            FocusedPane::Search => FocusedPane::DeckSummary,
+            FocusedPane::Search => {
+                if !self.import_problems.is_empty() {
+                    FocusedPane::Problems
+                } else {
+                    FocusedPane::DeckSummary
+                }
+            }
+            FocusedPane::Problems => FocusedPane::DeckSummary,
             FocusedPane::DeckSummary => FocusedPane::Search,
         };
+        self.needs_redraw = true;
+    }
+
+    /// Check if we have import problems (repair mode active)
+    pub fn has_problems(&self) -> bool {
+        !self.import_problems.is_empty()
+    }
+
+    /// Remove the currently selected problem from the list
+    pub fn remove_selected_problem(&mut self) {
+        if !self.import_problems.is_empty() && self.problems_selected_index < self.import_problems.len() {
+            let removed = self.import_problems.remove(self.problems_selected_index);
+            self.status_message = Some(format!("Dismissed: {}", removed.label()));
+
+            // Adjust selection if needed
+            if self.problems_selected_index >= self.import_problems.len() && !self.import_problems.is_empty() {
+                self.problems_selected_index = self.import_problems.len() - 1;
+            }
+
+            // If no more problems, switch focus away from Problems pane
+            if self.import_problems.is_empty() && self.focused_pane == FocusedPane::Problems {
+                self.focused_pane = FocusedPane::Search;
+            }
+
+            self.needs_redraw = true;
+        }
+    }
+
+    /// Move problems selection up
+    pub fn problems_select_previous(&mut self) {
+        if !self.import_problems.is_empty() && self.problems_selected_index > 0 {
+            self.problems_selected_index -= 1;
+            // Keep selected item visible
+            if self.problems_selected_index < self.problems_scroll_offset {
+                self.problems_scroll_offset = self.problems_selected_index;
+            }
+            self.needs_redraw = true;
+        }
+    }
+
+    /// Move problems selection down
+    pub fn problems_select_next(&mut self) {
+        if !self.import_problems.is_empty() && self.problems_selected_index < self.import_problems.len() - 1 {
+            self.problems_selected_index += 1;
+            // Keep selected item visible (assuming max_results height for problems too)
+            if self.problems_selected_index >= self.problems_scroll_offset + self.max_results {
+                self.problems_scroll_offset = self.problems_selected_index.saturating_sub(self.max_results - 1);
+            }
+            self.needs_redraw = true;
+        }
+    }
+
+    /// Add import problems to the state
+    pub fn set_import_problems(&mut self, problems: Vec<ImportProblem>) {
+        self.import_problems = problems;
+        self.problems_selected_index = 0;
+        self.problems_scroll_offset = 0;
+        // If there are problems, start with focus on the problems pane
+        if !self.import_problems.is_empty() {
+            self.focused_pane = FocusedPane::Problems;
+        }
         self.needs_redraw = true;
     }
 
@@ -197,7 +288,7 @@ impl DeckBuilderState {
         Some(&self.all_cards[*idx])
     }
 
-    /// Add copies of the selected card to the deck
+    /// Add copies of the selected card to the deck (for Enter key - adds 1)
     pub fn add_selected(&mut self, count: u8) {
         if let Some(card_name) = self.selected_card() {
             let card_name = card_name.to_string();
@@ -208,10 +299,51 @@ impl DeckBuilderState {
         }
     }
 
-    /// Remove one copy of the selected card from the deck
-    pub fn remove_selected(&mut self) {
+    /// Set the count of the selected card to a specific value (for number keys)
+    pub fn set_selected(&mut self, count: u8) {
         if let Some(card_name) = self.selected_card() {
             let card_name = card_name.to_string();
+            self.deck.insert(card_name.clone(), count);
+            self.status_message = Some(format!("Set {}x {}", count, card_name));
+            self.needs_redraw = true;
+        }
+    }
+
+    /// Set the count of the selected deck card (when DeckSummary is focused)
+    pub fn set_deck_selected(&mut self, count: u8) {
+        let ordered = self.get_deck_cards_ordered();
+        if let Some(card_name) = ordered.get(self.deck_selected_index).cloned() {
+            if count == 0 {
+                self.deck.remove(&card_name);
+                self.status_message = Some(format!("Removed {} from deck", card_name));
+                // Adjust selection if needed
+                let new_ordered = self.get_deck_cards_ordered();
+                if self.deck_selected_index >= new_ordered.len() && !new_ordered.is_empty() {
+                    self.deck_selected_index = new_ordered.len() - 1;
+                }
+            } else {
+                self.deck.insert(card_name.clone(), count);
+                self.status_message = Some(format!("Set {}x {}", count, card_name));
+            }
+            self.needs_redraw = true;
+        }
+    }
+
+    /// Increment the count of the selected deck card by 1 (Enter key in DeckSummary)
+    pub fn increment_deck_selected(&mut self) {
+        let ordered = self.get_deck_cards_ordered();
+        if let Some(card_name) = ordered.get(self.deck_selected_index).cloned() {
+            let entry = self.deck.entry(card_name.clone()).or_insert(0);
+            *entry = entry.saturating_add(1);
+            self.status_message = Some(format!("Added 1x {} (now {}x)", card_name, *entry));
+            self.needs_redraw = true;
+        }
+    }
+
+    /// Remove one copy of the selected card from the deck
+    /// Uses the focused pane's selection (Search or DeckSummary)
+    pub fn remove_selected(&mut self) {
+        if let Some(card_name) = self.get_active_selected_card() {
             if let Some(count) = self.deck.get_mut(&card_name) {
                 if *count > 1 {
                     *count -= 1;
@@ -219,6 +351,11 @@ impl DeckBuilderState {
                 } else {
                     self.deck.remove(&card_name);
                     self.status_message = Some(format!("Removed {} from deck", card_name));
+                    // Adjust deck_selected_index if needed after removal
+                    let ordered = self.get_deck_cards_ordered();
+                    if self.deck_selected_index >= ordered.len() && !ordered.is_empty() {
+                        self.deck_selected_index = ordered.len() - 1;
+                    }
                 }
                 self.needs_redraw = true;
             }
@@ -327,6 +464,12 @@ impl DeckBuilderState {
             FocusedPane::DeckSummary => {
                 let ordered = self.get_deck_cards_ordered();
                 ordered.get(self.deck_selected_index).cloned()
+            }
+            FocusedPane::Problems => {
+                // For Problems pane, return the card name if it's a CardMissing problem
+                self.import_problems
+                    .get(self.problems_selected_index)
+                    .and_then(|p| p.card_name.clone())
             }
         }
     }
