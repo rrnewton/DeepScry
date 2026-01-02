@@ -13,7 +13,7 @@ Track implementation of Avatar set-specific mechanics for full booster draft sup
 
 ## Mechanics Needed
 
-### Waterbend (Convoke-like cost) - FULLY IMPLEMENTED (2026-01-02_#1434)
+### Waterbend (Convoke-like cost) - FULLY IMPLEMENTED (2026-01-02_#1435)
 - Format: `Cost$ Waterbend<X>` where X is a number
 - Effect: While paying a waterbend cost, you can tap your artifacts and creatures to help pay. Each one pays for {1}.
 - Similar to Convoke keyword
@@ -75,8 +75,14 @@ It's preserved in the avatar branch at commit 5ba51ab.
 
 Note: Waterbend cost payment now works correctly. Player can tap untapped creatures/artifacts
 to help pay the cost. Each tapped permanent pays for {1}. Any remaining cost must be paid
-with mana from the mana pool. The error message shows available resources:
-  "Cannot pay Waterbend 5: only X available (mana: Y, tappable: Z)"
+with mana from the mana pool.
+
+### Continuous Effects - WORKING
+
+Verified working: `S:Mode$ Continuous | Affected$ Ally.Other+YouCtrl | AddPower$ 1 | AddToughness$ 1`
+- White Lotus Reinforcements correctly buffs other Allies +1/+1
+- Glider Kids shows 3/4 (instead of base 2/3) when WLR is on battlefield
+- Foggy Swamp Vinebender shows 5/4 (instead of base 4/3) when WLR is on battlefield
 
 ### Airbend (Exile-recast effect) - NOT IMPLEMENTED
 - Format: `DB$ Airbend | ValidTgts$ Creature`
@@ -103,10 +109,18 @@ with mana from the mana pool. The error message shows available resources:
 
 ## Current Status
 
-Games run successfully with avatar decks. All Waterbend abilities now work:
+Games run successfully with all avatar decks:
+- avatar_5c_allies.dck
+- booster_draft/avatar/ryan_avatar_draft.dck
+- booster_draft/avatar/gabriel_avatar_draft.dck
+- booster_draft/avatar/eric_avatar_draft.dck
+
+All Waterbend abilities work:
 - Waterbend cost payment with Convoke-like tapping
 - PutCounter abilities (Foggy Swamp Vinebender)
 - Animate/SetBasePowerToughness abilities (Flexible Waterbender)
+
+Continuous effects (Ally buffs) work correctly.
 
 Remaining gaps: Airbend, auto-attach, tokens. Games are playable without these.
 
@@ -114,7 +128,7 @@ Remaining gaps: Airbend, auto-attach, tokens. Games are playable without these.
 
 Verified working: 1, 5, 10, 42, 77, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 6000,
 7777, 8888, 9999, 11111, 12345, 22222, 33333, 44444, 55555, 66666, 77777, 88888, 99999,
-100000, 111111, 200000, 300000, 400000
+100000, 111111, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 1000000
 
 ## Priority
 
