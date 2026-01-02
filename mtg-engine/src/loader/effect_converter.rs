@@ -269,6 +269,46 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Effect => {
+            // Effect ability: AB$ Effect | StaticAbilities$ X | RememberObjects$ Targeted
+            // Creates a persistent effect that applies to remembered objects.
+            //
+            // This is a complex ability type in Java Forge - it creates a pseudo-card in the
+            // command zone with the specified static abilities, triggers, etc.
+            //
+            // For now, we support a subset: StaticAbilities$ that grant "can't be blocked"
+            // Examples: Deserter's Disciple - makes a creature unblockable this turn
+            //
+            // StaticAbilities$ is a reference to an SVar with the actual static ability definition.
+            // Common patterns we support:
+            // - Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered -> CantBeBlocked effect
+            //
+            // We need to check the SVar definition at runtime, but for parsing we just
+            // create a generic "GrantCantBeBlocked" effect when StaticAbilities is present.
+            if params.contains_key("StaticAbilities") {
+                // Check if this is an unblockable effect by looking at the static ability name
+                // The actual SVar parsing happens at card load time
+                let static_ability = params.get("StaticAbilities")?;
+
+                // Common patterns for unblockable:
+                // - "Unblockable", "CantBeBlocked", etc.
+                let static_lower = static_ability.to_lowercase();
+                if static_lower.contains("unblock") || static_lower.contains("cantblock") {
+                    Some(Effect::GrantCantBeBlocked {
+                        target: CardId::new(0), // Placeholder - filled in at cast time
+                    })
+                } else {
+                    // Other static abilities not yet supported
+                    log::debug!(target: "effect_converter", "AB$ Effect with unsupported StaticAbility: {}", static_ability);
+                    None
+                }
+            } else {
+                // Effect without StaticAbilities (maybe has Triggers, ReplacementEffects, etc.)
+                log::debug!(target: "effect_converter", "AB$ Effect without StaticAbilities not yet supported");
+                None
+            }
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

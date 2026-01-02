@@ -276,6 +276,24 @@ pub enum Effect {
         /// The permanent to airbend (will be exiled)
         target: CardId,
     },
+
+    /// Grant "can't be blocked" until end of turn.
+    ///
+    /// Effect: Target creature can't be blocked this turn.
+    ///
+    /// Corresponds to: `AB$ Effect | StaticAbilities$ Unblockable | RememberObjects$ Targeted`
+    /// (with SVar: `Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered`)
+    ///
+    /// Implementation:
+    /// 1. Create a PersistentEffect (CantBeBlocked) for the target creature
+    /// 2. The effect is cleaned up at end of turn
+    ///
+    /// Cards using this:
+    /// - Deserter's Disciple: "Another target creature you control with power 2 or less can't be blocked this turn."
+    GrantCantBeBlocked {
+        /// The creature that can't be blocked
+        target: CardId,
+    },
 }
 
 /// Events that can trigger abilities

@@ -120,6 +120,17 @@ pub enum PersistentEffectKind {
         /// Current number of time counters
         time_counters: u8,
     },
+
+    /// CantBeBlocked: Creature can't be blocked this turn.
+    ///
+    /// Created by: AB$ Effect with StaticAbilities$ that grant unblockable
+    /// Examples: Deserter's Disciple, various evasion effects
+    ///
+    /// Typically cleaned up at end of turn.
+    CantBeBlocked {
+        /// The creature that can't be blocked
+        creature: CardId,
+    },
     // Future: Add more persistent effect types as needed
     // - Delay (cast spell at next upkeep)
     // - Cascade (exile until you hit a cheaper spell)
@@ -224,6 +235,20 @@ impl PersistentEffectStore {
                 &e.kind,
                 PersistentEffectKind::MayPlayFromExile { tracked_card, .. }
                 if *tracked_card == card_id
+            )
+        })
+    }
+
+    /// Check if a creature has a CantBeBlocked effect.
+    ///
+    /// Used during combat when determining if blockers can be declared.
+    /// Returns true if ANY active effect makes this creature unblockable.
+    pub fn is_creature_unblockable(&self, creature_id: CardId) -> bool {
+        self.effects.iter().any(|e| {
+            matches!(
+                &e.kind,
+                PersistentEffectKind::CantBeBlocked { creature }
+                if *creature == creature_id
             )
         })
     }

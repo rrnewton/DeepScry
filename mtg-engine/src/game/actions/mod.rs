@@ -1295,6 +1295,42 @@ impl GameState {
                     card_name
                 ));
             }
+
+            Effect::GrantCantBeBlocked { target } => {
+                // GrantCantBeBlocked effect: Target creature can't be blocked this turn
+                // Created by AB$ Effect abilities with StaticAbilities$ containing "unblock"
+                //
+                // Implementation:
+                // 1. Skip if target is still placeholder (0)
+                // 2. Create a PersistentEffect (CantBeBlocked) for the target
+                // 3. The effect is cleaned up at end of turn
+
+                // Skip if target is still placeholder (0) - no valid targets found
+                if target.as_u32() == 0 {
+                    // Ability fizzles - no valid targets
+                    return Ok(());
+                }
+
+                // Get card name for logging
+                let card_name = self.cards.get(*target).map(|c| c.name.as_str()).unwrap_or("Unknown");
+
+                // Get the effect controller (the player who activated the ability)
+                let controller = self.turn.active_player;
+
+                // Create a PersistentEffect granting "can't be blocked"
+                use crate::core::{CleanupCondition, PersistentEffectKind};
+
+                self.persistent_effects.add(
+                    PersistentEffectKind::CantBeBlocked { creature: *target },
+                    *target,    // source_card - the targeted creature
+                    controller, // controller - the active player
+                    CleanupCondition::EndOfTurn,
+                );
+
+                // Log the effect
+                self.logger
+                    .gamelog(&format!("{} can't be blocked this turn", card_name));
+            }
         }
         Ok(())
     }

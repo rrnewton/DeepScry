@@ -1,0 +1,42 @@
+---
+title: Implement AB$ Effect activated ability
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-01-02T18:12:49.073869836+00:00
+updated_at: 2026-01-02T18:12:49.073869836+00:00
+---
+
+# Description
+
+## Description
+
+Implement the `AB$ Effect` activated ability type, which creates temporary game effects with static abilities, triggers, or replacement effects.
+
+## Example: Deserter's Disciple
+
+```
+A:AB$ Effect | Cost$ T | ValidTgts$ Creature.Other+YouCtrl+powerLE2 | RememberObjects$ Targeted | ExileOnMoved$ Battlefield | StaticAbilities$ Unblockable
+SVar:Unblockable:Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered
+```
+
+## How It Works (Java)
+
+1. Creates a pseudo-card ("Effect") in the command zone
+2. The Effect card has static abilities, triggers, etc. defined in SVars
+3. The Effect "remembers" objects (like targeted creatures)
+4. Static abilities on the Effect check `ValidAttacker$ Card.IsRemembered`
+5. Effect is removed based on `ExileOnMoved$` or duration
+
+## Priority
+
+High for Avatar deck support - multiple cards use this pattern.
+
+## Cards Affected
+
+- Deserter's Disciple (can't be blocked)
+- Many other Avatar cards likely use AB$ Effect
+
+## Related
+
+- PersistentEffect system (mtg-cga7i) could potentially be extended

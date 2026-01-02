@@ -369,6 +369,17 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::GrantCantBeBlocked { target } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message =
+                    format!("{source_name} ({source_id}) makes {target_name} ({target}) unblockable this turn");
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

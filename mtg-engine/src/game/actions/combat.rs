@@ -157,6 +157,14 @@ impl GameState {
         let blocker_has_reach = self.has_keyword_with_effects(blocker_id, Keyword::Reach);
 
         for &attacker_id in &attackers {
+            // Check for "can't be blocked" effects (from Deserter's Disciple, etc.)
+            // These are tracked in PersistentEffectStore
+            if self.persistent_effects.is_creature_unblockable(attacker_id) {
+                return Err(MtgError::InvalidAction(
+                    "Creature can't be blocked this turn".to_string(),
+                ));
+            }
+
             let attacker_has_flying = self.has_keyword_with_effects(attacker_id, Keyword::Flying);
 
             if attacker_has_flying && !blocker_has_flying && !blocker_has_reach {

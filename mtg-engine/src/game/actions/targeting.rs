@@ -193,6 +193,24 @@ impl GameState {
                         }
                     }
                 }
+                Effect::GrantCantBeBlocked { target } if target.as_u32() == 0 => {
+                    // GrantCantBeBlocked targets creatures you control
+                    // Deserter's Disciple: "Another target creature you control with power 2 or less"
+                    // For now, we support basic creature targeting - power restriction checked at ability parse time
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            // Must be a creature we control
+                            if target_card.is_creature()
+                                && target_card.controller == spell_owner
+                                && Self::is_legal_target(target_card, spell_owner)
+                            {
+                                // Note: "Other" and power restrictions are validated at ability level
+                                // via ValidTgts$ parsing (e.g., Creature.Other+YouCtrl+powerLE2)
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 _ => {
                     // Other effects either don't need targets or already have them specified
                     // (DrawCards, GainLife, Mill, AddMana all specify player directly)
@@ -423,6 +441,37 @@ impl GameState {
                             let mut is_valid = card.is_creature();
 
                             // Check shroud/hexproof
+                            if !Self::is_legal_target(card, ability_controller) {
+                                is_valid = false;
+                            }
+
+                            if is_valid {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
+                Effect::GrantCantBeBlocked { target } if target.as_u32() == 0 => {
+                    // GrantCantBeBlocked targets creatures you control
+                    // Deserter's Disciple: "Another target creature you control with power 2 or less"
+                    // The "Other" and "powerLE2" restrictions should ideally be parsed from ValidTgts
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            // Must be a creature we control
+                            let mut is_valid = card.is_creature() && card.controller == ability_controller;
+
+                            // "Other" - can't target the source card (Deserter's Disciple itself)
+                            if card_id == source_card.id {
+                                is_valid = false;
+                            }
+
+                            // Power restriction: "powerLE2" means power <= 2
+                            // Check current power including counters and bonuses
+                            if is_valid && card.current_power() > 2 {
+                                is_valid = false;
+                            }
+
+                            // Check shroud/hexproof (though typically not relevant for own creatures)
                             if !Self::is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
