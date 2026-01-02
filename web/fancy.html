@@ -613,7 +613,6 @@
                     <label>Controller</label>
                     <select id="p1-controller">
                         <option value="human">Human (You)</option>
-                        <option value="network" style="display: none;">Network (Multiplayer)</option>
                         <option value="fixed">Fixed Script</option>
                         <option value="heuristic">Heuristic AI</option>
                         <option value="random">Random</option>
@@ -1192,15 +1191,20 @@ Name=My Deck
             }
         }
 
-        // Hide Network option if network features aren't available
+        // Disable network game mode if network features aren't available
         function updateNetworkUI() {
-            const networkOption = document.querySelector('#p1-controller option[value="network"]');
+            const gameModeSelect = document.getElementById('game-mode');
+            const networkOption = gameModeSelect?.querySelector('option[value="network"]');
             const networkSettingsGroup = document.getElementById('network-settings-group');
 
             if (!networkEnabled) {
                 if (networkOption) {
                     networkOption.disabled = true;
-                    networkOption.textContent = 'Network (Not Available)';
+                    networkOption.textContent = 'Remote Network Game (Not Available)';
+                }
+                // Ensure local mode is selected if network was selected
+                if (gameModeSelect && gameModeSelect.value === 'network') {
+                    gameModeSelect.value = 'local';
                 }
                 // Hide network settings if shown
                 if (networkSettingsGroup) {
@@ -1403,17 +1407,6 @@ Name=My Deck
             // Show/hide network settings
             if (networkGroup) {
                 networkGroup.style.display = isNetworkMode ? 'flex' : 'none';
-            }
-
-            // In network mode, hide the "network" option from controller (it's now a game mode)
-            // and ensure a valid controller is selected
-            const networkOption = p1Controller.querySelector('option[value="network"]');
-            if (networkOption) {
-                networkOption.style.display = isNetworkMode ? 'none' : 'block';
-                // If currently on 'network', switch to 'human'
-                if (isNetworkMode && p1Controller.value === 'network') {
-                    p1Controller.value = 'human';
-                }
             }
 
             // Hide P2 pane in network mode (opponent is remote)
