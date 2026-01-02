@@ -116,6 +116,9 @@ fn card_def_from_reveal(reveal: &CardReveal) -> CardDefinition {
         raw_abilities: Vec::new(),
         raw_keywords: Vec::new(),
         svars: HashMap::new(),
+        enters_tapped: false,
+        etb_choose_color: false,
+        etb_exclude_colors: Vec::new(),
     }
 }
 
