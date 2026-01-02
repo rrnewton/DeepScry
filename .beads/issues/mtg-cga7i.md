@@ -24,16 +24,16 @@ Reference: MTG Comprehensive Rules 701.65b
 ## Cards Requiring Airbend
 
 - Aang, the Last Airbender: ETB trigger airbends nonland permanent
-- Monk Gyatso: Triggered on targeting other creatures  
+- Monk Gyatso: Triggered on targeting other creatures
 - Glider Staff: ETB airbend creature
 - Airbender Ascension: ETB airbend creature
 
-## Implementation Status (2026-01-02_#1439)
+## Implementation Status (2026-01-02_#1442)
 
 ### 1. PersistentEffect Infrastructure - COMPLETED
 
-Unlike Java Forge which stores persistent effects as virtual cards in the command zone, 
-we use dedicated typed storage. This is cleaner and avoids conflating game zones with 
+Unlike Java Forge which stores persistent effects as virtual cards in the command zone,
+we use dedicated typed storage. This is cleaner and avoids conflating game zones with
 implementation details.
 
 Implemented:
@@ -52,20 +52,31 @@ Implemented:
 - [x] Execute in actions/mod.rs: exile target + create MayPlayFromExile effect
 - [x] Logging in game_loop/logging.rs
 
-### 3. MayPlay Alternative Cost from Exile - TODO
+### 3. MayPlay Alternative Cost from Exile - COMPLETED
 
-Still needed:
-- [ ] When determining legal actions, check persistent_effects for MayPlayFromExile
-- [ ] Allow player to select exiled cards with MayPlay permission
-- [ ] When casting, use alternative cost instead of mana cost
-- [ ] Skip targeting/mode selection for the cast (already resolved)
+- [x] SpellAbility::CastFromExile variant in spell_ability.rs
+- [x] push_castable_from_exile() in game_loop/actions.rs to find eligible exiled cards
+- [x] is_card_in_exile() helper in state.rs
+- [x] CastFromExile handling in priority.rs (move from exile, pay alternative cost)
+- [x] format_spell_ability_choice() shared helper in controller.rs
+- [x] All 10+ controllers updated to handle CastFromExile variant
 
-### 4. Cleanup Triggers - TODO
+### 4. Cleanup Triggers - COMPLETED
 
-Still needed:
-- [ ] Hook into zone change events to cleanup effects
-- [ ] Hook into spell resolution to cleanup effects when card is cast
-- [ ] Call find_effects_to_cleanup_on_zone_change and remove_many appropriately
+- [x] Zone change cleanup in state.rs move_card() - removes effects when tracked card leaves zone
+- [x] End of turn cleanup in steps.rs cleanup_step() - removes EndOfTurn effects
+- [x] Explicit removal when card is cast from exile in priority.rs
+
+## Testing Status
+
+All 718 tests pass. However, full end-to-end testing with Avatar decks using
+actual Airbend cards is still needed.
+
+## Remaining Work
+
+- [ ] Manual testing with Avatar deck games that use Airbend
+- [ ] Add unit tests specifically for the Airbend effect flow
+- [ ] Verify AI controllers can properly evaluate CastFromExile choices
 
 ## Java Reference
 
