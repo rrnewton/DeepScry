@@ -13,26 +13,27 @@ Track implementation of Avatar set-specific mechanics for full booster draft sup
 
 ## Mechanics Needed
 
-### Waterbend (Convoke-like cost) - PARTIALLY IMPLEMENTED
+### Waterbend (Convoke-like cost) - FULLY IMPLEMENTED (2026-01-02_#1433)
 - Format: `Cost$ Waterbend<X>` where X is a number
 - Effect: While paying a waterbend cost, you can tap your artifacts and creatures to help pay. Each one pays for {1}.
 - Similar to Convoke keyword
 
 **Cards affected in avatar decks:**
 - Foggy Swamp Vinebender: `Cost$ Waterbend<5>` - put +1/+1 counter ✓ WORKING
-- Flexible Waterbender: `Cost$ Waterbend<3>` - uses AB$ Animate (not implemented)
-- Thriving Grove (indirectly)
+- Flexible Waterbender: `Cost$ Waterbend<3>` - uses AB$ Animate (Animate not implemented)
 
-**Implementation Status (2026-01-02_#1431):**
+**Implementation Status (2026-01-02_#1433):**
 - [x] Parse `Waterbend<X>` as a cost type in Cost::parse()
 - [x] Add Cost::Waterbend { amount: u8 } variant
 - [x] Add PutCounter effect conversion in effect_converter.rs
-- [x] Basic payment handling (as generic mana cost)
 - [x] Self-targeting for PutCounter abilities (Defined$ Self)
+- [x] Full Convoke-like payment: tap creatures/artifacts to pay {1} each
 - [ ] AB$ Animate effect (set base P/T until end of turn) - needed for Flexible Waterbender
-- [ ] During ability activation, allow tapping creatures/artifacts to reduce cost
 
-Note: PutCounter abilities now work correctly (Fire Sages, Foggy Swamp Vinebender). Animate abilities still need implementation.
+Note: Waterbend cost payment now works correctly. Player can tap untapped creatures/artifacts
+to help pay the cost. Each tapped permanent pays for {1}. Any remaining cost must be paid
+with mana from the mana pool. The error message shows available resources:
+  "Cannot pay Waterbend 5: only X available (mana: Y, tappable: Z)"
 
 ### Airbend (Exile-recast effect) - NOT IMPLEMENTED
 - Format: `DB$ Airbend | ValidTgts$ Creature`
@@ -59,12 +60,15 @@ Note: PutCounter abilities now work correctly (Fire Sages, Foggy Swamp Vinebende
 
 ## Current Status
 
-Games run successfully with avatar decks. Waterbend PutCounter abilities work. Several advanced
-mechanics (Animate, Airbend, auto-attach, tokens) are not implemented but games are playable.
+Games run successfully with avatar decks. Waterbend cost payment is now fully implemented
+with Convoke-like mechanics (tap creatures/artifacts to help pay). PutCounter abilities work.
+Several advanced mechanics (Animate, Airbend, auto-attach, tokens) are not implemented but
+games are playable.
 
 ## Tested Seeds
 
-Verified working: 1, 5, 10, 42, 77, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7777, 8888, 9999, 12345
+Verified working: 1, 5, 10, 42, 77, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 6000,
+7777, 8888, 9999, 11111, 12345, 22222, 33333, 44444, 55555, 66666, 77777, 88888
 
 ## Priority
 

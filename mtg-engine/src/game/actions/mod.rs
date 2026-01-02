@@ -2329,15 +2329,63 @@ impl GameState {
 
             Cost::Waterbend { amount } => {
                 // Waterbend cost - Avatar set mechanic (like Convoke)
-                // For now, treat as generic mana cost. Full implementation would
-                // allow tapping creatures/artifacts to reduce the cost by {1} each.
-                // TODO(mtg-6n8rl): Implement tapping creatures/artifacts to pay Waterbend
-                let mana_cost = ManaCost::from_string(&amount.to_string());
-                let player = self.get_player_mut(player_id)?;
-                if !player.mana_pool.can_pay(&mana_cost) {
-                    return Err(MtgError::InvalidAction("Cannot pay Waterbend cost".to_string()));
+                // Player can tap untapped creatures/artifacts to pay for {1} each.
+                // Any remaining cost must be paid with mana from the mana pool.
+
+                // First, count available mana and tappable creatures/artifacts
+                let available_mana = {
+                    let player = self.get_player(player_id)?;
+                    player.mana_pool.total()
+                };
+
+                // Find untapped creatures and artifacts controlled by this player
+                // (excluding the source card - can't tap itself to pay its own cost)
+                let battlefield_cards = self.battlefield.cards.to_vec();
+                let tappable_permanents: Vec<CardId> = battlefield_cards
+                    .into_iter()
+                    .filter(|&cid| {
+                        if cid == card_id {
+                            return false; // Can't tap the source to pay its own cost
+                        }
+                        if let Ok(card) = self.cards.get(cid) {
+                            // Must be untapped, controlled by player, and be creature or artifact
+                            !card.tapped && card.controller == player_id && (card.is_creature() || card.is_artifact())
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+
+                let total_available = available_mana + tappable_permanents.len() as u8;
+
+                if total_available < *amount {
+                    return Err(MtgError::InvalidAction(format!(
+                        "Cannot pay Waterbend {}: only {} available (mana: {}, tappable: {})",
+                        amount,
+                        total_available,
+                        available_mana,
+                        tappable_permanents.len()
+                    )));
                 }
-                player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
+
+                // Greedily tap permanents first, then use mana pool for remainder
+                let permanents_to_tap = (*amount as usize).min(tappable_permanents.len());
+                let mana_needed = *amount - permanents_to_tap as u8;
+
+                // Tap the permanents
+                for &perm_id in tappable_permanents.iter().take(permanents_to_tap) {
+                    if let Ok(card) = self.cards.get_mut(perm_id) {
+                        card.tapped = true;
+                    }
+                }
+
+                // Pay the remaining cost from mana pool
+                if mana_needed > 0 {
+                    let mana_cost = ManaCost::from_string(&mana_needed.to_string());
+                    let player = self.get_player_mut(player_id)?;
+                    player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
+                }
+
                 Ok(())
             }
         }
