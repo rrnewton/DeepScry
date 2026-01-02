@@ -1130,6 +1130,239 @@ impl NetworkClient {
             }
         }
     }
+
+    /// Run the game with a non-Send controller on the main thread
+    ///
+    /// This is an alternative to `run_game` for controllers that aren't `Send`
+    /// (like FancyTuiController which has terminal handles that can't cross threads).
+    ///
+    /// # Architecture
+    ///
+    /// Unlike `run_game`, this method:
+    /// 1. Spawns a background std::thread for WebSocket I/O (runs its own tokio runtime)
+    /// 2. Runs the game loop on the current thread
+    /// 3. Uses channels to communicate between them
+    ///
+    /// This allows non-Send controllers (like fancy TUI) to work with networking.
+    pub fn run_game_sync<C: PlayerController>(&mut self, controller: C) -> Result<Option<PlayerId>> {
+        use crate::game::GameLoop;
+        use crate::network::{
+            LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteController, RemoteMessage,
+        };
+        use std::sync::mpsc;
+        use std::thread;
+
+        // We need to extract the WebSocket from the async context
+        // This method should be called from a blocking context, not from async
+        let ws = self.ws.take().ok_or_else(|| anyhow!("Not connected"))?;
+        let client_state = self.state.take().ok_or_else(|| anyhow!("Game not started"))?;
+        let our_player_id = client_state.our_player_id;
+        let opponent_id = client_state.opponent_id;
+
+        let we_are_p1 = our_player_id.as_u32() == 0;
+
+        // Create channels for communication (all std::sync::mpsc for blocking ops)
+        let (local_choice_tx, local_choice_rx) = mpsc::channel::<LocalChoice>();
+        let (local_msg_tx, local_msg_rx) = mpsc::channel::<LocalControllerMessage>();
+        let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteMessage>();
+        let (reveal_tx, reveal_rx) = mpsc::channel::<RevealMsg>();
+        let (game_end_tx, game_end_rx) = mpsc::channel::<(Option<PlayerId>, u64)>();
+
+        let network_debug = self.network_debug;
+
+        // Clone card_db for the reveal processing
+        let card_db_clone = self.card_db.clone().expect("Card DB not loaded");
+
+        // Spawn background thread for WebSocket I/O
+        // This thread runs its own tokio runtime for async WebSocket operations
+        let ws_thread = thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime for WebSocket thread");
+
+            rt.block_on(async move {
+                let (mut ws_sink, mut ws_stream) = ws.split();
+
+                // Track server state for synchronization
+                let mut server_action_count: Option<u64> = None;
+                let mut server_choice_seq: Option<u32> = None;
+
+                loop {
+                    tokio::select! {
+                        // Receive messages from server
+                        msg = ws_stream.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    match serde_json::from_str::<ServerMessage>(&text) {
+                                        Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
+                                            log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
+                                            if let Err(e) = reveal_tx.send((owner, card, reason)) {
+                                                log::error!("Failed to send reveal: {:?}", e);
+                                            }
+                                        }
+                                        Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
+                                            log::debug!("Opponent chose: {} (indices={:?})", description, choice_indices);
+                                            let _ = remote_choice_tx.send(RemoteMessage::Choice {
+                                                choice_indices,
+                                                description,
+                                                spell_ability,
+                                            });
+                                        }
+                                        Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
+                                            server_action_count = Some(action_count);
+                                            server_choice_seq = Some(choice_seq);
+                                            log::debug!("ChoiceRequest #{} (action_count={})", choice_seq, action_count);
+                                            let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
+                                                action_count,
+                                                choice_seq,
+                                            });
+                                        }
+                                        Ok(ServerMessage::ChoiceAccepted { choice_seq, .. }) => {
+                                            log::trace!("Choice {} accepted", choice_seq);
+                                            let _ = local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
+                                        }
+                                        Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
+                                            log::info!("Game ended: winner={:?}, action_count={}", winner, action_count);
+                                            let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
+                                            let _ = game_end_tx.send((winner, action_count));
+                                            return;
+                                        }
+                                        Ok(ServerMessage::Error { message, fatal }) => {
+                                            if fatal {
+                                                log::error!("Fatal error: {}", message);
+                                                let _ = local_msg_tx.send(LocalControllerMessage::Error(message));
+                                                return;
+                                            }
+                                            log::warn!("Server warning: {}", message);
+                                        }
+                                        Ok(_) => {}
+                                        Err(e) => log::error!("Parse error: {}", e),
+                                    }
+                                }
+                                Some(Ok(Message::Close(_))) | None => {
+                                    log::debug!("WebSocket closed");
+                                    let _ = local_msg_tx.send(LocalControllerMessage::GameEnded);
+                                    return;
+                                }
+                                Some(Ok(_)) => {}
+                                Some(Err(e)) => {
+                                    log::error!("WebSocket error: {}", e);
+                                    let _ = local_msg_tx.send(LocalControllerMessage::Error(e.to_string()));
+                                    return;
+                                }
+                            }
+                        }
+
+                        // Send choices to server
+                        choice = async {
+                            // Non-blocking check for choices from game thread
+                            match local_choice_rx.recv_timeout(Duration::from_millis(10)) {
+                                Ok(choice) => Some(choice),
+                                Err(_) => None,
+                            }
+                        } => {
+                            if let Some(choice) = choice {
+                                let action_count_to_send = server_action_count.unwrap_or(choice.action_count);
+                                let choice_seq_to_send = server_choice_seq.unwrap_or(0);
+
+                                server_action_count = None;
+                                server_choice_seq = None;
+
+                                let msg = ClientMessage::SubmitChoice {
+                                    choice_seq: choice_seq_to_send,
+                                    choice_indices: choice.choice_indices,
+                                    action_count: action_count_to_send,
+                                    timestamp_ms: crate::network::protocol::now_ms(),
+                                    client_state_hash: choice.client_state_hash,
+                                    debug_info: choice.debug_info,
+                                };
+                                let text = serde_json::to_string(&msg).unwrap();
+                                if ws_sink.send(Message::Text(text.into())).await.is_err() {
+                                    log::error!("Failed to send choice");
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+
+        // Create controllers
+        let local_controller =
+            NetworkLocalController::new(controller, local_choice_tx, local_msg_rx).with_network_debug(network_debug);
+        let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
+
+        // Get game state
+        let mut game = client_state.game;
+
+        // Configure logger
+        if self.tag_gamelogs {
+            game.logger.set_tag_gamelogs(true);
+        }
+
+        // Create drain function for reveals
+        let drain_reveals = move |game: &mut crate::game::GameState| {
+            while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
+                let card_id = card_reveal.card_id;
+                match reason {
+                    RevealReason::Draw => {
+                        if let Some(zones) = game.get_player_zones_mut(owner) {
+                            zones.library.queue_reveal(card_id);
+                        }
+                    }
+                    RevealReason::Played => {
+                        if game.cards.get(card_id).is_err() {
+                            if let Ok(Some(card_def)) =
+                                futures_executor::block_on(card_db_clone.get_card(&card_reveal.name))
+                            {
+                                let card_instance = card_def.instantiate(card_id, owner);
+                                game.cards.insert(card_id, card_instance);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        };
+
+        // Run game loop on main thread
+        let mut local_controller = local_controller;
+        let mut remote_controller = remote_controller;
+
+        let mut game_loop = GameLoop::new(&mut game)
+            .with_reveal_drainer(drain_reveals)
+            .skip_opening_hands();
+
+        let result = if we_are_p1 {
+            game_loop.run_game(&mut local_controller, &mut remote_controller)
+        } else {
+            game_loop.run_game(&mut remote_controller, &mut local_controller)
+        };
+
+        // Wait for WebSocket thread to finish
+        let _ = ws_thread.join();
+
+        // Check for game end signal
+        if let Ok((winner, _)) = game_end_rx.try_recv() {
+            return Ok(winner);
+        }
+
+        match result {
+            Ok(game_result) => Ok(game_result.winner),
+            Err(e) => {
+                // Check if it was a normal exit
+                if e.to_string().contains("Game exit requested") {
+                    if let Ok((winner, _)) = game_end_rx.recv_timeout(Duration::from_millis(100)) {
+                        return Ok(winner);
+                    }
+                    return Ok(None);
+                }
+                Err(anyhow!("Game error: {}", e))
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -501,27 +501,27 @@ impl ManaPaymentResolver for GreedyManaResolver {
         sources: &[ManaSource],
         tap_order_out: Option<&mut Vec<CardId>>,
     ) -> PaymentResult {
-        // Use shared bounds checking to prove "Yes", "No", or "Maybe"
+        // Use shared bounds checking for quick rejection
         match bounds_check_payment(cost, sources) {
             PaymentResult::No => return PaymentResult::No,
-            PaymentResult::Yes => {
-                // Lower bounds prove payment is possible
-                // Still need to compute tap order if requested
-                if tap_order_out.is_some() {
-                    // Fall through to greedy algorithm to compute tap order
-                } else {
-                    return PaymentResult::Yes;
-                }
+            PaymentResult::Yes | PaymentResult::Maybe => {
+                // Bounds check passed - but we must ALWAYS verify with greedy algorithm
+                // to ensure consistency between can_pay() and compute_tap_order().
+                //
+                // BUG FIX: Previously, when tap_order_out was None, we would return Yes
+                // immediately based on bounds check alone. But try_greedy_payment() can
+                // fail even when bounds check passes (e.g., color allocation conflicts).
+                // This caused can_pay() to return true but compute_tap_order() to fail,
+                // allowing spells to be offered that couldn't actually be cast.
             }
-            PaymentResult::Maybe => {} // Continue to greedy algorithm
         }
 
-        // Bounds check passed (or proved Yes but needs tap order), now try greedy algorithm
+        // Always verify with greedy algorithm for consistency
         if self.try_greedy_payment(cost, sources, tap_order_out) {
             PaymentResult::Yes
         } else {
-            // Greedy failed but bounds check says it might be possible
-            // A backtracking search might find a solution
+            // Greedy failed - bounds check says maybe possible with backtracking
+            // but for now we conservatively return Maybe
             PaymentResult::Maybe
         }
     }

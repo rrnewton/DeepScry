@@ -261,17 +261,36 @@ impl NetworkController {
             });
         }
 
-        // Verify all choice indices are valid
-        for &idx in &response.choice_indices {
-            if idx >= options.len() {
-                return Err(NetworkError::InvalidChoice {
-                    max: options.len(),
-                    got: idx,
-                });
+        // Validate choice indices and clamp invalid ones to safe values
+        // This makes the network protocol robust to desync - we log a warning but don't crash
+        let mut corrected_indices = response.choice_indices.clone();
+        let mut had_invalid = false;
+
+        for idx in &mut corrected_indices {
+            if *idx >= options.len() {
+                log::warn!(
+                    "NetworkController {:?}: Invalid choice index {} (max {}), clamping to 0. \
+                     This may indicate client/server desync.",
+                    self.player_id,
+                    *idx,
+                    options.len()
+                );
+                // Clamp to index 0 which is typically "Pass" or the safest default
+                *idx = 0;
+                had_invalid = true;
             }
         }
 
-        Ok(response.choice_indices)
+        if had_invalid {
+            log::warn!(
+                "NetworkController {:?}: Corrected choice from {:?} to {:?}",
+                self.player_id,
+                response.choice_indices,
+                corrected_indices
+            );
+        }
+
+        Ok(corrected_indices)
     }
 
     /// Increment choice sequence after a successful choice
@@ -936,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_choice_error() {
+    fn test_invalid_choice_clamped() {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
 
@@ -951,7 +970,7 @@ mod tests {
             response_tx
                 .send(ChoiceResponse {
                     choice_seq: 1,
-                    choice_indices: vec![10], // Invalid - only 2 options
+                    choice_indices: vec![10], // Invalid - only 2 options, should clamp to 0
                 })
                 .unwrap();
         });
@@ -963,10 +982,8 @@ mod tests {
             0,
         );
 
-        match result {
-            Err(NetworkError::InvalidChoice { max: 2, got: 10 }) => {}
-            _ => panic!("Expected InvalidChoice error"),
-        }
+        // Invalid index 10 should be clamped to 0, not return an error
+        assert_eq!(result.unwrap(), vec![0]);
     }
 
     #[test]

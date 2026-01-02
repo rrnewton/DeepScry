@@ -886,16 +886,8 @@ async fn main() -> Result<()> {
             gamelog_output,
         } => {
             use mtg_forge_rs::core::PlayerId;
-            use mtg_forge_rs::game::{HeuristicController, RichInputController, VerbosityLevel};
+            use mtg_forge_rs::game::{FancyTuiController, HeuristicController, RichInputController, VerbosityLevel};
             use mtg_forge_rs::network::{ClientConfig, NetworkClient};
-
-            // Validate controller type - Fancy/FancyFixed not supported for network
-            // (Fancy TUI requires local terminal and doesn't work with synchronized GameLoop)
-            if matches!(controller_type, ControllerType::FancyFixed | ControllerType::Fancy) {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
-                    "--controller=fancy and --controller=fancy-fixed are not supported for network games".to_string(),
-                ));
-            }
 
             // Validate fixed controller has inputs
             if matches!(controller_type, ControllerType::Fixed) && fixed_inputs.is_none() {
@@ -973,7 +965,16 @@ async fn main() -> Result<()> {
                     let ctrl = RichInputController::new(our_player_id, script);
                     client.run_game(ctrl).await
                 }
-                ControllerType::Fancy | ControllerType::FancyFixed => unreachable!(), // Already validated above
+                ControllerType::Fancy | ControllerType::FancyFixed => {
+                    // Fancy TUI controller is not Send (terminal handles are thread-local)
+                    // Use run_game_sync which runs the game loop on the main thread
+                    let ctrl = FancyTuiController::new(our_player_id, visual_stacks).map_err(|e| {
+                        mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e))
+                    })?;
+                    // Note: FancyFixed would need additional setup for scripted inputs
+                    // For now, both use the same controller - FancyFixed support TODO
+                    client.run_game_sync(ctrl)
+                }
             }
             .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
 
