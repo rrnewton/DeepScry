@@ -752,6 +752,20 @@ impl<'a> GameLoop<'a> {
                                                     toughness_bonus: *toughness_bonus,
                                                 }
                                             }
+                                            // Self-targeting PutCounter: "Put counter on this creature"
+                                            // When Defined$ Self is used, no targets are chosen - use source card
+                                            crate::core::Effect::PutCounter {
+                                                target,
+                                                counter_type,
+                                                amount,
+                                            } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
+                                                crate::core::Effect::PutCounter {
+                                                    target: card_id, // Target self (the source of the ability)
+                                                    counter_type: *counter_type,
+                                                    amount: *amount,
+                                                }
+                                            }
+                                            // Targeted PutCounter: "Put counter on target creature"
                                             crate::core::Effect::PutCounter {
                                                 target,
                                                 counter_type,
