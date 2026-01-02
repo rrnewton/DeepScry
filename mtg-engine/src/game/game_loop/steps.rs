@@ -341,6 +341,13 @@ impl<'a> GameLoop<'a> {
             }
         }
 
+        // Clean up persistent effects that expire at end of turn
+        let effects_to_remove = self.game.persistent_effects.find_effects_to_cleanup_at_eot();
+        if !effects_to_remove.is_empty() {
+            log::debug!(target: "persistent_effects", "Cleaning up {} effects at end of turn", effects_to_remove.len());
+            self.game.persistent_effects.remove_many(&effects_to_remove);
+        }
+
         // TODO: Remove damage from creatures
 
         Ok(None)

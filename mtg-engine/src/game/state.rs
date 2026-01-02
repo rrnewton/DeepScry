@@ -595,6 +595,16 @@ impl GameState {
             self.mana_state_version = self.mana_state_version.wrapping_add(1);
         }
 
+        // Clean up persistent effects when a tracked card leaves a zone
+        // This handles effects like Airbend that track cards in exile
+        let effects_to_remove = self
+            .persistent_effects
+            .find_effects_to_cleanup_on_zone_change(card_id, from);
+        if !effects_to_remove.is_empty() {
+            log::debug!(target: "persistent_effects", "Cleaning up {} effects on zone change for card {}", effects_to_remove.len(), card_id.as_u32());
+            self.persistent_effects.remove_many(&effects_to_remove);
+        }
+
         Ok(())
     }
 
