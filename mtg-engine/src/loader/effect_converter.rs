@@ -238,6 +238,22 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Animate => {
+            // Animate effect: AB$ Animate | Defined$ Self | Power$ 5 | Toughness$ 2
+            // Example: Flexible Waterbender - "This creature has base power and toughness 5/2 until end of turn"
+            // Sets base P/T (counters and other bonuses are added on top)
+
+            // Parse power and toughness
+            let power = params.get_i32("Power").ok()?;
+            let toughness = params.get_i32("Toughness").ok()?;
+
+            Some(Effect::SetBasePowerToughness {
+                target: CardId::new(0), // Placeholder - filled in at activation time
+                power,
+                toughness,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

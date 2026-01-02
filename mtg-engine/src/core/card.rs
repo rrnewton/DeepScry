@@ -483,6 +483,16 @@ pub struct Card {
     /// Temporary toughness bonus (until end of turn)
     pub toughness_bonus: i32,
 
+    /// Temporary base power override (until end of turn)
+    /// When Some(x), the creature's base power is x instead of its printed power
+    /// Used by Animate effects like Flexible Waterbender
+    pub temp_base_power: Option<i8>,
+
+    /// Temporary base toughness override (until end of turn)
+    /// When Some(x), the creature's base toughness is x instead of its printed toughness
+    /// Used by Animate effects like Flexible Waterbender
+    pub temp_base_toughness: Option<i8>,
+
     /// Damage marked on this permanent (cleared at end of turn per CR 704.5g)
     /// Only meaningful for creatures on the battlefield
     pub damage: i32,
@@ -571,6 +581,8 @@ impl Card {
             toughness: None,
             power_bonus: 0,
             toughness_bonus: 0,
+            temp_base_power: None,
+            temp_base_toughness: None,
             damage: 0,
             text,
             owner,
@@ -914,7 +926,8 @@ impl Card {
     /// Get current power (including counters and temporary bonuses)
     /// This is the canonical method for reading creature power
     pub fn current_power(&self) -> i8 {
-        let base = self.power.unwrap_or(0);
+        // Use temp_base_power if set (from Animate effects), otherwise use printed power
+        let base = self.temp_base_power.or(self.power).unwrap_or(0);
         let plus_counters = self.get_counter(CounterType::P1P1) as i8;
         let minus_counters = self.get_counter(CounterType::M1M1) as i8;
         let bonus = self.power_bonus as i8;
@@ -924,11 +937,19 @@ impl Card {
     /// Get current toughness (including counters and temporary bonuses)
     /// This is the canonical method for reading creature toughness
     pub fn current_toughness(&self) -> i8 {
-        let base = self.toughness.unwrap_or(0);
+        // Use temp_base_toughness if set (from Animate effects), otherwise use printed toughness
+        let base = self.temp_base_toughness.or(self.toughness).unwrap_or(0);
         let plus_counters = self.get_counter(CounterType::P1P1) as i8;
         let minus_counters = self.get_counter(CounterType::M1M1) as i8;
         let bonus = self.toughness_bonus as i8;
         base + plus_counters - minus_counters + bonus
+    }
+
+    /// Clear temporary effects (called at end of turn cleanup)
+    /// Resets temp base P/T overrides from Animate effects
+    pub fn clear_temp_base_stats(&mut self) {
+        self.temp_base_power = None;
+        self.temp_base_toughness = None;
     }
 }
 

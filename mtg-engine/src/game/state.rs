@@ -817,6 +817,9 @@ impl GameState {
                 // Reset temporary bonuses (pump effects last until end of turn)
                 card.power_bonus = 0;
                 card.toughness_bonus = 0;
+                // Reset temporary base P/T overrides (from Animate effects)
+                card.temp_base_power = None;
+                card.temp_base_toughness = None;
                 // Clear damage marked on permanents (MTG CR 514.2, CR 704.5f)
                 card.damage = 0;
             }

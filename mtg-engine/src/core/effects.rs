@@ -246,6 +246,14 @@ pub enum Effect {
         /// Optional SubAbility$ reference (SVar name to execute after this effect)
         sub_ability: Option<String>,
     },
+
+    /// Set base power and toughness until end of turn
+    /// Example: Flexible Waterbender - "This creature has base power and toughness 5/2 until end of turn"
+    /// Corresponds to: AB$ Animate | Defined$ Self | Power$ 5 | Toughness$ 2
+    ///
+    /// This effect sets the creature's base P/T (not a modifier), which then has +1/+1 counters added on top.
+    /// The effect lasts until end of turn.
+    SetBasePowerToughness { target: CardId, power: i32, toughness: i32 },
 }
 
 /// Events that can trigger abilities
