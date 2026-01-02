@@ -898,13 +898,13 @@ impl GameState {
                 .unwrap_or(0);
 
             // Add a newline before the turn separator for visual separation
-            self.logger.normal("");
+            self.logger.turn_separator("");
 
             let turn_msg = format!(
                 "  >>> Turn {} - {} {} ({} {}) <<<<",
                 new_turn_num, active_player_name, active_player_life, other_player_name, other_player_life
             );
-            self.logger.normal(&turn_msg);
+            self.logger.turn_separator(&turn_msg);
 
             // Reset per-turn state
             if let Ok(player) = self.get_player_mut(next_player) {

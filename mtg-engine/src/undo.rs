@@ -510,13 +510,14 @@ impl UndoLog {
     ///
     /// This method actually UNDOES the game state by applying the inverse of each action.
     ///
-    /// Returns (turn_number, intra_turn_choices, actions_rewound) where:
+    /// Returns (turn_number, intra_turn_choices, actions_rewound, log_size_at_turn_boundary) where:
     /// - turn_number: The turn number from the most recent ChangeTurn action
     /// - intra_turn_choices: All ChoicePoint actions that occurred after that turn change
     /// - actions_rewound: Total number of actions popped from the log
+    /// - log_size_at_turn_boundary: The log buffer size at the turn boundary (for truncation)
     ///
-    /// Returns None if no ChangeTurn action is found in the log.
-    pub fn rewind_to_turn_start(&mut self, game: &mut GameState) -> Option<(u32, Vec<GameAction>, usize)> {
+    /// Returns None if undo log is disabled.
+    pub fn rewind_to_turn_start(&mut self, game: &mut GameState) -> Option<(u32, Vec<GameAction>, usize, usize)> {
         if !self.enabled {
             return None;
         }
@@ -524,6 +525,7 @@ impl UndoLog {
         let mut choices_reversed = Vec::new();
         let mut turn_number = None;
         let mut actions_rewound = 0;
+        let mut log_size_at_turn_boundary = 0;
 
         // Pop actions in reverse until we find ChangeTurn
         while let Some((action, log_size)) = self.pop() {
@@ -537,6 +539,7 @@ impl UndoLog {
                     self.log_sizes.push(log_size);
                     actions_rewound -= 1; // Don't count this as rewound since we kept it
                     turn_number = Some(tn);
+                    log_size_at_turn_boundary = log_size;
                     break;
                 }
                 GameAction::ChoicePoint { .. } => {
@@ -559,7 +562,12 @@ impl UndoLog {
 
         // Reverse the choices to get forward chronological order
         choices_reversed.reverse();
-        Some((effective_turn, choices_reversed, actions_rewound))
+        Some((
+            effective_turn,
+            choices_reversed,
+            actions_rewound,
+            log_size_at_turn_boundary,
+        ))
     }
 
     /// Get the most recent turn number from the log, if any ChangeTurn exists
@@ -744,7 +752,7 @@ mod tests {
         let result = log.rewind_to_turn_start(&mut game);
         assert!(result.is_some());
 
-        let (turn_number, choices, actions_rewound) = result.unwrap();
+        let (turn_number, choices, actions_rewound, _log_size) = result.unwrap();
         assert_eq!(turn_number, 1);
         assert_eq!(choices.len(), 2);
         assert_eq!(actions_rewound, 4); // All 4 actions after ChangeTurn (ChangeTurn is kept)
@@ -800,7 +808,7 @@ mod tests {
         let result = log.rewind_to_turn_start(&mut game);
         assert!(result.is_some(), "rewind_to_turn_start should return Some for turn 1");
 
-        let (turn_number, choice_actions, actions_rewound) = result.unwrap();
+        let (turn_number, choice_actions, actions_rewound, _log_size) = result.unwrap();
         assert_eq!(turn_number, 1, "Turn number should be 1 when no ChangeTurn found");
         assert_eq!(choice_actions.len(), 1, "Should have 1 ChoicePoint action");
         assert_eq!(actions_rewound, 2, "Should have rewound 2 actions");

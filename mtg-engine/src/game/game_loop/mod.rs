@@ -831,7 +831,7 @@ impl<'a> GameLoop<'a> {
                 "  >>> Turn 1 - {} {} ({} {}) <<<<",
                 active_player_name, active_player_life, other_player_name, other_player_life
             );
-            self.game.logger.normal(&turn_msg);
+            self.game.logger.turn_separator(&turn_msg);
         }
 
         Ok((player1_id, player2_id))

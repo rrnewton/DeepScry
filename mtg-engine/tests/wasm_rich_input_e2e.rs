@@ -303,7 +303,7 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
     game.undo_log = undo_log;
 
     // Verify rewind worked
-    if let Some((turn_num, _rewound_choices, actions_rewound)) = rewind_result {
+    if let Some((turn_num, _rewound_choices, actions_rewound, _log_size)) = rewind_result {
         eprintln!("Rewound to turn {}, {} actions rewound", turn_num, actions_rewound);
     }
 
@@ -691,7 +691,7 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
     let rewind_result = undo_log.rewind_to_turn_start(&mut game);
     game.undo_log = undo_log;
 
-    if let Some((turn, _, rewound)) = rewind_result {
+    if let Some((turn, _, rewound, _)) = rewind_result {
         eprintln!("Rewound to turn {}, {} actions", turn, rewound);
     }
 

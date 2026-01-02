@@ -558,6 +558,31 @@ impl GameLogger {
         }
     }
 
+    /// Log a turn separator line (e.g., ">>> Turn N - Player X (Player Y) <<<<")
+    ///
+    /// This is used for TUI navigation markers. The separator is:
+    /// - Always captured to buffer (for TUI display and navigation)
+    /// - Never output to stdout (since the turn header is printed directly in CLI mode)
+    ///
+    /// This prevents duplicate turn info in basic CLI mode where both
+    /// the separator and the turn header would otherwise appear.
+    #[inline]
+    pub fn turn_separator(&self, message: &str) {
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+
+        // Early exit if message won't be used
+        if VerbosityLevel::Normal > self.verbosity && !should_capture {
+            return;
+        }
+
+        // Always capture to buffer for TUI navigation (never output to stdout)
+        self.log_buffer.borrow_mut().push(LogEntry {
+            level: VerbosityLevel::Normal,
+            message: message.to_string(),
+            category: None,
+        });
+    }
+
     /// Log at Verbose level
     #[inline]
     pub fn verbose(&self, message: &str) {

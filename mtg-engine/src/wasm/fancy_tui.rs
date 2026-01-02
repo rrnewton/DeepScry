@@ -501,7 +501,7 @@ impl WasmFancyTuiState {
 
         // rewind_to_turn_start returns None only if undo log is disabled
         // (which shouldn't happen for WASM TUI, but handle gracefully)
-        let (turn_number, choice_actions, actions_rewound) = match result {
+        let (turn_number, choice_actions, actions_rewound, _log_size) = match result {
             Some(r) => r,
             None => {
                 log::warn!(target: "wasm_tui", "REWIND: Undo log disabled!");

@@ -181,10 +181,10 @@ impl<'a> GameLoop<'a> {
 
         // If we get here, we didn't find a valid stopping point
         // Print the last few log entries for debugging
-        eprintln!("\n⚠️  WARNING: Stopping at potentially invalid point!");
-        eprintln!("Last {} log entries:", check_count);
+        log::warn!("\n⚠️  WARNING: Stopping at potentially invalid point!");
+        log::warn!("Last {} log entries:", check_count);
         for (i, log_entry) in recent_logs.iter().enumerate() {
-            eprintln!("  [{}] {}", logs.len() - check_count + i, log_entry.message);
+            log::warn!("  [{}] {}", logs.len() - check_count + i, log_entry.message);
         }
 
         // For now, we just warn - we can make this a panic later if needed
@@ -218,28 +218,33 @@ impl<'a> GameLoop<'a> {
         let rewind_result = undo_log.rewind_to_turn_start(self.game);
         self.game.undo_log = undo_log;
 
-        let (turn_number, intra_turn_choices, actions_rewound) = if let Some(result) = rewind_result {
-            result
-        } else {
-            // No ChangeTurn action found - we're still in turn 1!
-            // Extract all ChoicePoint actions from the undo log as intra-turn choices
-            let mut intra_turn_choices = Vec::new();
-            for action in self.game.undo_log.actions() {
-                if let crate::undo::GameAction::ChoicePoint { .. } = action {
-                    intra_turn_choices.push(action.clone());
+        let (turn_number, intra_turn_choices, actions_rewound, log_size_at_turn_boundary) =
+            if let Some(result) = rewind_result {
+                result
+            } else {
+                // No ChangeTurn action found - we're still in turn 1!
+                // Extract all ChoicePoint actions from the undo log as intra-turn choices
+                let mut intra_turn_choices = Vec::new();
+                for action in self.game.undo_log.actions() {
+                    if let crate::undo::GameAction::ChoicePoint { .. } = action {
+                        intra_turn_choices.push(action.clone());
+                    }
                 }
-            }
 
-            if self.verbosity >= VerbosityLevel::Verbose {
-                eprintln!(
-                    "  (Snapshot during turn 1 - no rewind needed, {} choice points captured)",
-                    intra_turn_choices.len()
-                );
-            }
+                if self.verbosity >= VerbosityLevel::Verbose {
+                    log::debug!(
+                        "  (Snapshot during turn 1 - no rewind needed, {} choice points captured)",
+                        intra_turn_choices.len()
+                    );
+                }
 
-            // Turn 1, all choices are intra-turn, no actions were rewound
-            (1, intra_turn_choices, 0)
-        };
+                // Turn 1, all choices are intra-turn, no actions were rewound, use current log size
+                (1, intra_turn_choices, 0, self.game.logger.log_count())
+            };
+
+        // Truncate the logger buffer to remove log entries created after the turn boundary.
+        // This prevents duplicate output when --log-tail flushes the buffer after the game ends.
+        self.game.logger.truncate_to(log_size_at_turn_boundary);
 
         // Clone the game state at the turn boundary (or game start if turn 1)
         let game_state_snapshot = self.game.clone();
@@ -273,14 +278,15 @@ impl<'a> GameLoop<'a> {
             .save_to_file(&snapshot_path, format)
             .map_err(|e| MtgError::InvalidAction(format!("Failed to save snapshot: {}", e)))?;
 
-        // Log snapshot info to stderr (meta-information, not game output)
+        // Log snapshot info (meta-information, not game output)
+        // Uses info! logging so it can be filtered/controlled by RUST_LOG
         if self.verbosity >= VerbosityLevel::Minimal {
-            eprintln!("\n=== Snapshot Saved ===");
-            eprintln!("  Choice limit reached: {} choices", choice_limit);
-            eprintln!("  Snapshot saved to: {}", snapshot_path.as_ref().display());
-            eprintln!("  Turn number: {}", turn_number);
-            eprintln!("  Intra-turn choices: {}", snapshot.choice_count());
-            eprintln!("  Actions rewound: {}", actions_rewound);
+            log::info!("\n=== Snapshot Saved ===");
+            log::info!("  Choice limit reached: {} choices", choice_limit);
+            log::info!("  Snapshot saved to: {}", snapshot_path.as_ref().display());
+            log::info!("  Turn number: {}", turn_number);
+            log::info!("  Intra-turn choices: {}", snapshot.choice_count());
+            log::info!("  Actions rewound: {}", actions_rewound);
         }
 
         // Return early with Snapshot end reason

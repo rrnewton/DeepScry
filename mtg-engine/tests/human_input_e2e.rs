@@ -451,7 +451,7 @@ async fn test_rewind_to_turn_start() -> Result<()> {
         turn_before
     );
 
-    let (rewound_turn, _choices, actions_rewound) = result.unwrap();
+    let (rewound_turn, _choices, actions_rewound, _log_size) = result.unwrap();
 
     // Debug output
     eprintln!("Rewound from turn {} to turn {}", turn_before, rewound_turn);
