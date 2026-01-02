@@ -1693,3 +1693,246 @@ async fn test_thriving_grove_mana_cache_population() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Ba Sing Se (Avatar set) is properly detected as a mana source
+/// Ba Sing Se has: A:AB$ Mana | Cost$ T | Produced$ G | SpellDescription$ Add {G}.
+/// This is a non-basic land that should produce green mana
+#[tokio::test]
+async fn test_ba_sing_se_mana_detection() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, ManaColor, ManaProductionKind, PlayerId};
+    use mtg_forge_rs::loader::CardDatabase;
+
+    // Load card database
+    let path = PathBuf::from("cardsfolder");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let card_db = CardDatabase::new(path);
+    card_db
+        .load_cards(&["Ba Sing Se".to_string()])
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to load Ba Sing Se: {}", e)))?;
+
+    let def = card_db
+        .get_card("Ba Sing Se")
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to get Ba Sing Se: {}", e)))?
+        .expect("Ba Sing Se exists");
+
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Verify the cache detects it as a mana source
+    assert!(
+        card.cache.is_mana_source,
+        "Ba Sing Se should be detected as a mana source (is_mana_source flag). Card text: {}",
+        card.text
+    );
+    assert!(
+        card.cache.mana_production.produces_mana(),
+        "Ba Sing Se should be detected as producing mana. Card text: {}",
+        card.text
+    );
+
+    // Check the production kind - should be Fixed(Green)
+    match &card.cache.mana_production.kind {
+        ManaProductionKind::Fixed(color) => {
+            assert_eq!(color, &ManaColor::Green, "Ba Sing Se should produce Green mana");
+        }
+        other => {
+            panic!(
+                "Ba Sing Se should produce Fixed(Green). Got: {:?}. Card text: {}",
+                other, card.text
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Test that Ba Sing Se is properly added to mana source cache when entering battlefield
+/// Regression test for bug where Ba Sing Se wasn't being tapped for mana
+#[tokio::test]
+async fn test_ba_sing_se_mana_cache_population() -> Result<()> {
+    use mtg_forge_rs::game::GameState;
+    use mtg_forge_rs::loader::CardDatabase;
+    use mtg_forge_rs::zones::Zone;
+
+    // Load card database
+    let path = PathBuf::from("cardsfolder");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let card_db = CardDatabase::new(path);
+    card_db
+        .load_cards(&["Ba Sing Se".to_string()])
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to load card: {}", e)))?;
+
+    // Get the card definition
+    let ba_sing_se_def = card_db
+        .get_card("Ba Sing Se")
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to get card: {}", e)))?
+        .expect("Card exists");
+
+    // Create a game
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Instantiate Ba Sing Se
+    let ba_sing_se_id = game.next_card_id();
+    let ba_sing_se = ba_sing_se_def.instantiate(ba_sing_se_id, p1_id);
+
+    // Verify card cache BEFORE adding to game
+    assert!(
+        ba_sing_se.cache.is_mana_source,
+        "Ba Sing Se should have is_mana_source=true BEFORE entering battlefield"
+    );
+
+    // Add card to game and to player's library
+    game.cards.insert(ba_sing_se_id, ba_sing_se);
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        zones.library.cards.push(ba_sing_se_id);
+    }
+
+    // Move Ba Sing Se from library to battlefield
+    // (This should trigger on_card_entered for the mana source cache)
+    game.move_card(ba_sing_se_id, Zone::Library, Zone::Battlefield, p1_id)?;
+
+    // Verify Ba Sing Se is on the battlefield
+    assert!(
+        game.battlefield.cards.contains(&ba_sing_se_id),
+        "Ba Sing Se should be on battlefield"
+    );
+
+    // Check if the mana source cache has Ba Sing Se
+    let cache = game.get_mana_cache(p1_id).expect("Cache exists");
+    let in_green_sources = cache.green_sources().contains(&ba_sing_se_id);
+    let in_complex_sources = cache.complex_sources().contains(&ba_sing_se_id);
+
+    assert!(
+        in_green_sources || in_complex_sources,
+        "Ba Sing Se (id: {:?}) should be in green_sources or complex_sources. green_sources={:?}, complex_sources={:?}",
+        ba_sing_se_id,
+        cache.green_sources(),
+        cache.complex_sources()
+    );
+
+    // Specifically check green sources (Ba Sing Se produces Fixed(Green))
+    assert!(
+        in_green_sources,
+        "Ba Sing Se should be in green_sources (produces Fixed(Green) mana). Got complex_sources={:?}",
+        in_complex_sources
+    );
+
+    Ok(())
+}
+
+/// Regression test: Verify that ManaEngine.all_sources() includes Ba Sing Se
+/// This tests the FULL path: card cache -> ManaSourceCache -> ManaEngine
+#[tokio::test]
+async fn test_ba_sing_se_mana_engine_sources() -> Result<()> {
+    use mtg_forge_rs::game::{GameState, ManaEngine};
+    use mtg_forge_rs::loader::CardDatabase;
+    use mtg_forge_rs::zones::Zone;
+
+    // Load card database
+    let path = PathBuf::from("cardsfolder");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let card_db = CardDatabase::new(path);
+    card_db
+        .load_cards(&["Ba Sing Se".to_string(), "Forest".to_string()])
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to load card: {}", e)))?;
+
+    let ba_sing_se_def = card_db
+        .get_card("Ba Sing Se")
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to get card: {}", e)))?
+        .expect("Card exists");
+
+    let forest_def = card_db
+        .get_card("Forest")
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to get card: {}", e)))?
+        .expect("Card exists");
+
+    // Create a game
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Instantiate and add cards
+    let ba_sing_se_id = game.next_card_id();
+    let ba_sing_se = ba_sing_se_def.instantiate(ba_sing_se_id, p1_id);
+    game.cards.insert(ba_sing_se_id, ba_sing_se);
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        zones.library.cards.push(ba_sing_se_id);
+    }
+    game.move_card(ba_sing_se_id, Zone::Library, Zone::Battlefield, p1_id)?;
+
+    let forest1_id = game.next_card_id();
+    let forest1 = forest_def.instantiate(forest1_id, p1_id);
+    game.cards.insert(forest1_id, forest1);
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        zones.library.cards.push(forest1_id);
+    }
+    game.move_card(forest1_id, Zone::Library, Zone::Battlefield, p1_id)?;
+
+    let forest2_id = game.next_card_id();
+    let forest2 = forest_def.instantiate(forest2_id, p1_id);
+    game.cards.insert(forest2_id, forest2);
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        zones.library.cards.push(forest2_id);
+    }
+    game.move_card(forest2_id, Zone::Library, Zone::Battlefield, p1_id)?;
+
+    let forest3_id = game.next_card_id();
+    let forest3 = forest_def.instantiate(forest3_id, p1_id);
+    game.cards.insert(forest3_id, forest3);
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        zones.library.cards.push(forest3_id);
+    }
+    game.move_card(forest3_id, Zone::Library, Zone::Battlefield, p1_id)?;
+
+    // Verify all 4 cards are on the battlefield
+    assert_eq!(game.battlefield.cards.len(), 4, "Should have 4 lands on battlefield");
+
+    // Create ManaEngine and update it
+    let mut mana_engine = ManaEngine::new();
+    mana_engine.update(&game, p1_id);
+
+    // Check that ManaEngine sees all 4 sources
+    let sources = mana_engine.all_sources();
+    assert_eq!(
+        sources.len(),
+        4,
+        "ManaEngine should see 4 mana sources. Got: {:?}",
+        sources.iter().map(|s| s.card_id).collect::<Vec<_>>()
+    );
+
+    // Check that Ba Sing Se is in the sources
+    let ba_sing_se_in_sources = sources.iter().any(|s| s.card_id == ba_sing_se_id);
+    assert!(
+        ba_sing_se_in_sources,
+        "Ba Sing Se (id: {:?}) should be in mana_engine.all_sources(). Sources: {:?}",
+        ba_sing_se_id,
+        sources.iter().map(|s| s.card_id).collect::<Vec<_>>()
+    );
+
+    // Now verify mana capacity - should be 4 green
+    let capacity = mana_engine.max_mana_capacity();
+    assert_eq!(
+        capacity.green, 4,
+        "Should have 4 green mana from 4 untapped sources. Capacity: {:?}",
+        capacity
+    );
+
+    Ok(())
+}
