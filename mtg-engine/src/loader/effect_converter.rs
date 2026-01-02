@@ -342,21 +342,83 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
             if let Some(svar_body) = svars.get(static_ability_name) {
                 let parsed = parse_svar(svar_body);
 
-                // Check if this is a CantBlockBy static ability
+                // Check if this is a static ability and convert to appropriate effect
                 if let ParsedSVar::StaticAbility(def) = parsed {
                     match def.mode {
                         StaticAbilityMode::CantBlockBy => {
                             // Mode$ CantBlockBy creates a GrantCantBeBlocked effect
+                            // Example: SVar:Unblockable:Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered
                             return Some(Effect::GrantCantBeBlocked {
                                 target: CardId::new(0), // Placeholder - filled in at cast time
                             });
                         }
-                        // TODO(mtg-o7dqu): Support other static ability modes
-                        _ => {
+                        StaticAbilityMode::CantAttack => {
+                            // Mode$ CantAttack creates a "can't attack" restriction
+                            // Example: Pacifism-style effects
+                            // TODO(mtg-20): Add Effect::GrantCantAttack variant
                             log::debug!(
                                 target: "effect_converter",
-                                "AB$ Effect with unsupported Mode$ {:?} (SVar: {})",
+                                "Mode$ CantAttack not yet implemented (SVar: {})",
+                                static_ability_name
+                            );
+                        }
+                        StaticAbilityMode::CantBlock => {
+                            // Mode$ CantBlock creates a "can't block" restriction
+                            // Example: Fear/Intimidate-style effects
+                            // TODO(mtg-20): Add Effect::GrantCantBlock variant
+                            log::debug!(
+                                target: "effect_converter",
+                                "Mode$ CantBlock not yet implemented (SVar: {})",
+                                static_ability_name
+                            );
+                        }
+                        StaticAbilityMode::Continuous => {
+                            // Mode$ Continuous creates persistent continuous effects
+                            // Common params:
+                            // - MayPlay$ True: Permission to play from non-standard zone
+                            // - AddPower$/AddToughness$: P/T modifications
+                            // - AddKeyword$: Grant keywords
+                            //
+                            // These are usually created as StaticAbility objects during parsing,
+                            // not through AB$ Effect. When they appear in AB$ Effect context,
+                            // it's typically for temporary/until-end-of-turn effects.
+                            if def.params.get("MayPlay") == Some(&"True".to_string()) {
+                                // MayPlay effects grant permission to play cards from a zone
+                                // This is commonly used by Yawgmoth's Will, Future Sight effects
+                                // TODO(mtg-20): Add Effect::GrantMayPlay variant
+                                log::debug!(
+                                    target: "effect_converter",
+                                    "Mode$ Continuous with MayPlay$ True not yet implemented (SVar: {})",
+                                    static_ability_name
+                                );
+                            } else {
+                                log::debug!(
+                                    target: "effect_converter",
+                                    "Mode$ Continuous with unsupported params (SVar: {})",
+                                    static_ability_name
+                                );
+                            }
+                        }
+                        // Trigger modes are handled by parse_triggers(), not effect conversion
+                        StaticAbilityMode::Attacks
+                        | StaticAbilityMode::ChangesZone
+                        | StaticAbilityMode::Phase
+                        | StaticAbilityMode::SpellCast
+                        | StaticAbilityMode::LandPlayed
+                        | StaticAbilityMode::Sacrificed => {
+                            // These are trigger modes, not static ability modes
+                            // They should be processed by the trigger parser instead
+                            log::debug!(
+                                target: "effect_converter",
+                                "Mode$ {:?} is a trigger mode, not handled by effect conversion (SVar: {})",
                                 def.mode, static_ability_name
+                            );
+                        }
+                        StaticAbilityMode::Unknown(ref mode_name) => {
+                            log::debug!(
+                                target: "effect_converter",
+                                "Unknown Mode$ '{}' in SVar: {}",
+                                mode_name, static_ability_name
                             );
                         }
                     }
@@ -546,6 +608,88 @@ mod tests {
                 // Falls back to name-based detection ("Unblockable" contains "unblock")
             }
             _ => panic!("Expected GrantCantBeBlocked effect from name fallback"),
+        }
+    }
+
+    #[test]
+    fn test_convert_effect_continuous_mayplay_returns_none() {
+        // Mode$ Continuous with MayPlay$ True is not yet implemented
+        // It should return None (falling through to name-based check)
+        let params =
+            AbilityParams::parse("A:AB$ Effect | StaticAbilities$ MayPlayGraveyard | RememberObjects$ Targeted")
+                .unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "MayPlayGraveyard".to_string(),
+            "Mode$ Continuous | Affected$ Card.YouCtrl | AffectedZone$ Graveyard | MayPlay$ True".to_string(),
+        );
+
+        // Should return None because:
+        // 1. Mode$ Continuous with MayPlay$ True is not implemented yet
+        // 2. Name "MayPlayGraveyard" doesn't match fallback pattern
+        let effect = params_to_effect_with_svars(&params, &svars);
+        assert!(effect.is_none(), "Mode$ Continuous MayPlay not yet implemented");
+    }
+
+    #[test]
+    fn test_convert_effect_trigger_modes_return_none() {
+        // Trigger modes (Attacks, ChangesZone, etc.) should not be handled by effect conversion
+        // They are handled by parse_triggers() instead
+        let params =
+            AbilityParams::parse("A:AB$ Effect | StaticAbilities$ AttackTrigger | RememberObjects$ Targeted").unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "AttackTrigger".to_string(),
+            "Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigPump".to_string(),
+        );
+
+        // Should return None (not handled as an effect)
+        let effect = params_to_effect_with_svars(&params, &svars);
+        assert!(effect.is_none(), "Trigger modes should not produce effects");
+    }
+
+    #[test]
+    fn test_parse_svar_all_modes() {
+        // Verify all StaticAbilityMode variants can be parsed correctly
+        use crate::loader::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
+
+        let test_cases = vec![
+            (
+                "Mode$ CantBlockBy | ValidAttacker$ Card.Self",
+                StaticAbilityMode::CantBlockBy,
+            ),
+            (
+                "Mode$ CantAttack | Affected$ Creature.EnchantedBy",
+                StaticAbilityMode::CantAttack,
+            ),
+            (
+                "Mode$ CantBlock | Affected$ Creature.Self",
+                StaticAbilityMode::CantBlock,
+            ),
+            ("Mode$ Continuous | MayPlay$ True", StaticAbilityMode::Continuous),
+            ("Mode$ Attacks | ValidCard$ Card.Self", StaticAbilityMode::Attacks),
+            (
+                "Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield",
+                StaticAbilityMode::ChangesZone,
+            ),
+            ("Mode$ Phase | Phase$ Upkeep", StaticAbilityMode::Phase),
+            (
+                "Mode$ SpellCast | ValidCard$ Instant,Sorcery",
+                StaticAbilityMode::SpellCast,
+            ),
+            ("Mode$ LandPlayed | ValidCard$ Land", StaticAbilityMode::LandPlayed),
+            ("Mode$ Sacrificed | ValidCard$ Creature", StaticAbilityMode::Sacrificed),
+        ];
+
+        for (svar_body, expected_mode) in test_cases {
+            match parse_svar(svar_body) {
+                ParsedSVar::StaticAbility(def) => {
+                    assert_eq!(def.mode, expected_mode, "Failed to parse mode from: {}", svar_body);
+                }
+                other => panic!("Expected StaticAbility, got {:?} for: {}", other, svar_body),
+            }
         }
     }
 }
