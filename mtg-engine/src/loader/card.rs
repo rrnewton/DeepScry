@@ -261,8 +261,8 @@ impl CardDefinition {
         card.types = SmallVec::from_slice(&self.types);
         card.subtypes = self.subtypes.iter().cloned().collect();
         card.colors = SmallVec::from_slice(&self.colors);
-        card.set_power(self.power);
-        card.set_toughness(self.toughness);
+        card.set_base_power(self.power);
+        card.set_base_toughness(self.toughness);
         card.text = self.oracle.clone();
 
         // Initialize cache with type flags (for O(1) is_land/is_creature/is_artifact checks)

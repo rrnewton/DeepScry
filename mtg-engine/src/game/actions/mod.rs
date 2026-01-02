@@ -1084,8 +1084,8 @@ impl GameState {
                 let old_power = card.current_power();
                 let old_toughness = card.current_toughness();
 
-                card.temp_base_power = Some(*power as i8);
-                card.temp_base_toughness = Some(*toughness as i8);
+                card.set_temp_base_power(*power as i8);
+                card.set_temp_base_toughness(*toughness as i8);
 
                 let new_power = card.current_power();
                 let new_toughness = card.current_toughness();

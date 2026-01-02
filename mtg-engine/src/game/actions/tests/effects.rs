@@ -41,8 +41,8 @@ mod tests {
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         creature.controller = p1_id;
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
@@ -108,8 +108,8 @@ mod tests {
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         creature.controller = p1_id;
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
@@ -156,8 +156,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Hill Giant".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
@@ -167,8 +167,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "First Strike Knight".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(2));
-        blocker.set_toughness(Some(2));
+        blocker.set_base_power(Some(2));
+        blocker.set_base_toughness(Some(2));
         blocker.controller = p2_id;
         blocker.keywords.insert(Keyword::FirstStrike);
         game.cards.insert(blocker_id, blocker);
@@ -225,8 +225,8 @@ mod tests {
         let creature_id = game.next_card_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p2_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         creature.controller = p2_id;
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
@@ -453,8 +453,8 @@ mod tests {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Elvish Visionary".to_string(), p1_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(1));
-        creature.set_toughness(Some(1));
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("1G");
 
         // Add ETB trigger: "When this enters the battlefield, draw a card"
@@ -497,8 +497,8 @@ mod tests {
         let target_creature_id = game.next_entity_id();
         let mut target = Card::new(target_creature_id, "Grizzly Bears".to_string(), p2_id);
         target.add_type(CardType::Creature);
-        target.set_power(Some(2));
-        target.set_toughness(Some(2));
+        target.set_base_power(Some(2));
+        target.set_base_toughness(Some(2));
         game.cards.insert(target_creature_id, target);
         game.battlefield.add(target_creature_id);
 
@@ -506,8 +506,8 @@ mod tests {
         let kavu_id = game.next_entity_id();
         let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), p1_id);
         kavu.add_type(CardType::Creature);
-        kavu.set_power(Some(4));
-        kavu.set_toughness(Some(2));
+        kavu.set_base_power(Some(4));
+        kavu.set_base_toughness(Some(2));
         kavu.mana_cost = ManaCost::from_string("3R");
 
         // Add ETB trigger: "When this enters the battlefield, deal 4 damage to target creature"
@@ -691,8 +691,8 @@ mod tests {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Soul Warden".to_string(), p1_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(1));
-        creature.set_toughness(Some(1));
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("W");
 
         // Add ETB trigger: "When this enters the battlefield, you gain 3 life"
@@ -737,8 +737,8 @@ mod tests {
         let target_id = game.next_entity_id();
         let mut target = Card::new(target_id, "Grizzly Bears".to_string(), p1_id);
         target.add_type(CardType::Creature);
-        target.set_power(Some(2));
-        target.set_toughness(Some(2));
+        target.set_base_power(Some(2));
+        target.set_base_toughness(Some(2));
         game.cards.insert(target_id, target);
         game.battlefield.add(target_id);
 
@@ -746,8 +746,8 @@ mod tests {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Glorious Anthem".to_string(), p1_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(1));
-        creature.set_toughness(Some(1));
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
 
         // Add ETB trigger: "When this enters, target creature gets +2/+2"
         creature.triggers.push(Trigger::new(
@@ -790,8 +790,8 @@ mod tests {
         let djinn_id = game.next_entity_id();
         let mut djinn = Card::new(djinn_id, "Juzám Djinn".to_string(), p1_id);
         djinn.types.push(CardType::Creature);
-        djinn.set_power(Some(5));
-        djinn.set_toughness(Some(5));
+        djinn.set_base_power(Some(5));
+        djinn.set_base_toughness(Some(5));
         djinn.controller = p1_id;
 
         // Add upkeep trigger: "At the beginning of your upkeep, deal 1 damage to you"
@@ -835,8 +835,8 @@ mod tests {
         let djinn_id = game.next_entity_id();
         let mut djinn = Card::new(djinn_id, "Juzám Djinn".to_string(), p1_id);
         djinn.types.push(CardType::Creature);
-        djinn.set_power(Some(5));
-        djinn.set_toughness(Some(5));
+        djinn.set_base_power(Some(5));
+        djinn.set_base_toughness(Some(5));
         djinn.controller = p1_id;
 
         // [controller_only] trigger should only fire when controller is active
@@ -970,8 +970,8 @@ mod tests {
         let mut su_chi = crate::core::Card::new(su_chi_id, "Su-Chi".to_string(), p1_id);
         su_chi.types.push(CardType::Artifact);
         su_chi.types.push(CardType::Creature);
-        su_chi.set_power(Some(4));
-        su_chi.set_toughness(Some(4));
+        su_chi.set_base_power(Some(4));
+        su_chi.set_base_toughness(Some(4));
         // Add the death trigger: "When Su-Chi dies, add {C}{C}{C}{C}"
         let mana = ManaCost::from_string("CCCC");
         su_chi.triggers.push(Trigger::new(
@@ -989,8 +989,8 @@ mod tests {
         let killer_id = game.next_entity_id();
         let mut killer = crate::core::Card::new(killer_id, "Big Creature".to_string(), p2_id);
         killer.types.push(CardType::Creature);
-        killer.set_power(Some(10));
-        killer.set_toughness(Some(10));
+        killer.set_base_power(Some(10));
+        killer.set_base_toughness(Some(10));
         game.cards.insert(killer_id, killer);
         game.battlefield.add(killer_id);
 
@@ -1049,8 +1049,8 @@ mod tests {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Trained Armodon".to_string(), p2_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(3));
-        creature.set_toughness(Some(3));
+        creature.set_base_power(Some(3));
+        creature.set_base_toughness(Some(3));
         creature.controller = p2_id;
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
@@ -1173,8 +1173,8 @@ mod tests {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p2_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         creature.controller = p2_id;
         game.cards.insert(creature_id, creature);
         game.battlefield.add(creature_id);
@@ -1287,8 +1287,8 @@ mod tests {
                 let mut creature = Card::new(creature_id, format!("Bear {}", i + 1), p2_id);
                 creature.controller = p2_id;
                 creature.add_type(CardType::Creature);
-                creature.set_power(Some(2));
-                creature.set_toughness(Some(2));
+                creature.set_base_power(Some(2));
+                creature.set_base_toughness(Some(2));
                 game.cards.insert(creature_id, creature);
                 game.battlefield.add(creature_id);
                 creature_id

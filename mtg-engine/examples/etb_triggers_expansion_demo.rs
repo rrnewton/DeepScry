@@ -43,8 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let attendant_id = game.next_entity_id();
     let mut attendant = Card::new(attendant_id, "Soul's Attendant".to_string(), alice_id);
     attendant.add_type(CardType::Creature);
-    attendant.set_power(Some(1));
-    attendant.set_toughness(Some(1));
+    attendant.set_base_power(Some(1));
+    attendant.set_base_toughness(Some(1));
     attendant.mana_cost = ManaCost::from_string("W");
     attendant.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
@@ -70,8 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let visionary_id = game.next_entity_id();
     let mut visionary = Card::new(visionary_id, "Elvish Visionary".to_string(), alice_id);
     visionary.add_type(CardType::Creature);
-    visionary.set_power(Some(1));
-    visionary.set_toughness(Some(1));
+    visionary.set_base_power(Some(1));
+    visionary.set_base_toughness(Some(1));
     visionary.mana_cost = ManaCost::from_string("1G");
     visionary.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bears_id = game.next_entity_id();
     let mut bears = Card::new(bears_id, "Grizzly Bears".to_string(), bob_id);
     bears.add_type(CardType::Creature);
-    bears.set_power(Some(2));
-    bears.set_toughness(Some(2));
+    bears.set_base_power(Some(2));
+    bears.set_base_toughness(Some(2));
     bears.mana_cost = ManaCost::from_string("1G");
 
     game.cards.insert(bears_id, bears);
@@ -114,8 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kavu_id = game.next_entity_id();
     let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), alice_id);
     kavu.add_type(CardType::Creature);
-    kavu.set_power(Some(4));
-    kavu.set_toughness(Some(2));
+    kavu.set_base_power(Some(4));
+    kavu.set_base_toughness(Some(2));
     kavu.mana_cost = ManaCost::from_string("3R");
     kavu.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,

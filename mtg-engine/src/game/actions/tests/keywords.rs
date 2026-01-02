@@ -70,8 +70,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Craw Wurm".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(5));
-        attacker.set_toughness(Some(5));
+        attacker.set_base_power(Some(5));
+        attacker.set_base_toughness(Some(5));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -82,8 +82,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(2));
-        blocker.set_toughness(Some(2));
+        blocker.set_base_power(Some(2));
+        blocker.set_base_toughness(Some(2));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -129,8 +129,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Trained Armodon".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -141,8 +141,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(3));
-        blocker.set_toughness(Some(3));
+        blocker.set_base_power(Some(3));
+        blocker.set_base_toughness(Some(3));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -187,8 +187,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Serra Angel".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(5));
-        attacker.set_toughness(Some(5));
+        attacker.set_base_power(Some(5));
+        attacker.set_base_toughness(Some(5));
         attacker.controller = p1_id;
         // NO Trample keyword
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -199,8 +199,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Llanowar Elves".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(1));
-        blocker.set_toughness(Some(1));
+        blocker.set_base_power(Some(1));
+        blocker.set_base_toughness(Some(1));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -245,8 +245,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Enormous Baloth".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(7));
-        attacker.set_toughness(Some(7));
+        attacker.set_base_power(Some(7));
+        attacker.set_base_toughness(Some(7));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Trample);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -257,8 +257,8 @@ mod tests {
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Grizzly Bears".to_string(), p2_id);
         blocker1.add_type(CardType::Creature);
-        blocker1.set_power(Some(2));
-        blocker1.set_toughness(Some(2));
+        blocker1.set_base_power(Some(2));
+        blocker1.set_base_toughness(Some(2));
         blocker1.controller = p2_id;
         game.cards.insert(blocker1_id, blocker1);
         game.battlefield.add(blocker1_id);
@@ -266,8 +266,8 @@ mod tests {
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Hill Giant".to_string(), p2_id);
         blocker2.add_type(CardType::Creature);
-        blocker2.set_power(Some(3));
-        blocker2.set_toughness(Some(3));
+        blocker2.set_base_power(Some(3));
+        blocker2.set_base_toughness(Some(3));
         blocker2.controller = p2_id;
         game.cards.insert(blocker2_id, blocker2);
         game.battlefield.add(blocker2_id);
@@ -321,8 +321,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Healer's Hawk".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Lifelink);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -333,8 +333,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(2));
-        blocker.set_toughness(Some(2));
+        blocker.set_base_power(Some(2));
+        blocker.set_base_toughness(Some(2));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -380,8 +380,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Ajani's Pridemate".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(4));
-        attacker.set_toughness(Some(4));
+        attacker.set_base_power(Some(4));
+        attacker.set_base_toughness(Some(4));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Lifelink);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -427,8 +427,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Hill Giant".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
@@ -438,8 +438,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Vampire Cutthroat".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(2));
-        blocker.set_toughness(Some(2));
+        blocker.set_base_power(Some(2));
+        blocker.set_base_toughness(Some(2));
         blocker.controller = p2_id;
         blocker.keywords.insert(Keyword::Lifelink);
         game.cards.insert(blocker_id, blocker);
@@ -500,8 +500,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Baneslayer Angel".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(5));
-        attacker.set_toughness(Some(5));
+        attacker.set_base_power(Some(5));
+        attacker.set_base_toughness(Some(5));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Lifelink);
         attacker.keywords.insert(Keyword::Trample);
@@ -513,8 +513,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Grizzly Bears".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(2));
-        blocker.set_toughness(Some(2));
+        blocker.set_base_power(Some(2));
+        blocker.set_base_toughness(Some(2));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -569,8 +569,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Deadly Recluse".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(1));
-        attacker.set_toughness(Some(1));
+        attacker.set_base_power(Some(1));
+        attacker.set_base_toughness(Some(1));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Deathtouch);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -581,8 +581,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Serra Angel".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(5));
-        blocker.set_toughness(Some(5));
+        blocker.set_base_power(Some(5));
+        blocker.set_base_toughness(Some(5));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -627,8 +627,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Serra Angel".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(5));
-        attacker.set_toughness(Some(5));
+        attacker.set_base_power(Some(5));
+        attacker.set_base_toughness(Some(5));
         attacker.controller = p1_id;
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(attacker_id, attacker);
@@ -638,8 +638,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Typhoid Rats".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(1));
-        blocker.set_toughness(Some(1));
+        blocker.set_base_power(Some(1));
+        blocker.set_base_toughness(Some(1));
         blocker.controller = p2_id;
         blocker.keywords.insert(Keyword::Deathtouch);
         game.cards.insert(blocker_id, blocker);
@@ -685,8 +685,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Chevill, Bane of Monsters".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(5));
-        attacker.set_toughness(Some(5));
+        attacker.set_base_power(Some(5));
+        attacker.set_base_toughness(Some(5));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Deathtouch);
         attacker.keywords.insert(Keyword::Trample);
@@ -698,8 +698,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(3));
-        blocker.set_toughness(Some(3));
+        blocker.set_base_power(Some(3));
+        blocker.set_base_toughness(Some(3));
         blocker.controller = p2_id;
         game.cards.insert(blocker_id, blocker);
         game.battlefield.add(blocker_id);
@@ -754,8 +754,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Gifted Aetherborn".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Deathtouch);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -766,8 +766,8 @@ mod tests {
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Serra Angel".to_string(), p2_id);
         blocker1.add_type(CardType::Creature);
-        blocker1.set_power(Some(5));
-        blocker1.set_toughness(Some(5));
+        blocker1.set_base_power(Some(5));
+        blocker1.set_base_toughness(Some(5));
         blocker1.controller = p2_id;
         game.cards.insert(blocker1_id, blocker1);
         game.battlefield.add(blocker1_id);
@@ -775,8 +775,8 @@ mod tests {
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Air Elemental".to_string(), p2_id);
         blocker2.add_type(CardType::Creature);
-        blocker2.set_power(Some(5));
-        blocker2.set_toughness(Some(5));
+        blocker2.set_base_power(Some(5));
+        blocker2.set_base_toughness(Some(5));
         blocker2.controller = p2_id;
         game.cards.insert(blocker2_id, blocker2);
         game.battlefield.add(blocker2_id);
@@ -832,8 +832,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Mardu Skullhunter".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Menace);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -844,8 +844,8 @@ mod tests {
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Grizzly Bears".to_string(), p2_id);
         blocker1.add_type(CardType::Creature);
-        blocker1.set_power(Some(2));
-        blocker1.set_toughness(Some(2));
+        blocker1.set_base_power(Some(2));
+        blocker1.set_base_toughness(Some(2));
         blocker1.controller = p2_id;
         game.cards.insert(blocker1_id, blocker1);
         game.battlefield.add(blocker1_id);
@@ -853,8 +853,8 @@ mod tests {
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Elite Vanguard".to_string(), p2_id);
         blocker2.add_type(CardType::Creature);
-        blocker2.set_power(Some(2));
-        blocker2.set_toughness(Some(1));
+        blocker2.set_base_power(Some(2));
+        blocker2.set_base_toughness(Some(1));
         blocker2.controller = p2_id;
         game.cards.insert(blocker2_id, blocker2);
         game.battlefield.add(blocker2_id);
@@ -899,8 +899,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Goblin Heelcutter".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(3));
-        attacker.set_toughness(Some(3));
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Menace);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -941,8 +941,8 @@ mod tests {
         let attacker_id = game.next_entity_id();
         let mut attacker = Card::new(attacker_id, "Charging Monstrosaur".to_string(), p1_id);
         attacker.add_type(CardType::Creature);
-        attacker.set_power(Some(5));
-        attacker.set_toughness(Some(5));
+        attacker.set_base_power(Some(5));
+        attacker.set_base_toughness(Some(5));
         attacker.controller = p1_id;
         attacker.keywords.insert(Keyword::Menace);
         attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -953,8 +953,8 @@ mod tests {
         let blocker1_id = game.next_entity_id();
         let mut blocker1 = Card::new(blocker1_id, "Soldier Token 1".to_string(), p2_id);
         blocker1.add_type(CardType::Creature);
-        blocker1.set_power(Some(1));
-        blocker1.set_toughness(Some(1));
+        blocker1.set_base_power(Some(1));
+        blocker1.set_base_toughness(Some(1));
         blocker1.controller = p2_id;
         game.cards.insert(blocker1_id, blocker1);
         game.battlefield.add(blocker1_id);
@@ -962,8 +962,8 @@ mod tests {
         let blocker2_id = game.next_entity_id();
         let mut blocker2 = Card::new(blocker2_id, "Soldier Token 2".to_string(), p2_id);
         blocker2.add_type(CardType::Creature);
-        blocker2.set_power(Some(1));
-        blocker2.set_toughness(Some(1));
+        blocker2.set_base_power(Some(1));
+        blocker2.set_base_toughness(Some(1));
         blocker2.controller = p2_id;
         game.cards.insert(blocker2_id, blocker2);
         game.battlefield.add(blocker2_id);
@@ -971,8 +971,8 @@ mod tests {
         let blocker3_id = game.next_entity_id();
         let mut blocker3 = Card::new(blocker3_id, "Soldier Token 3".to_string(), p2_id);
         blocker3.add_type(CardType::Creature);
-        blocker3.set_power(Some(1));
-        blocker3.set_toughness(Some(1));
+        blocker3.set_base_power(Some(1));
+        blocker3.set_base_toughness(Some(1));
         blocker3.controller = p2_id;
         game.cards.insert(blocker3_id, blocker3);
         game.battlefield.add(blocker3_id);
@@ -1020,8 +1020,8 @@ mod tests {
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
         hexproof_creature.add_type(CardType::Creature);
-        hexproof_creature.set_power(Some(1));
-        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.set_base_power(Some(1));
+        hexproof_creature.set_base_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
@@ -1030,8 +1030,8 @@ mod tests {
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
         normal_creature.add_type(CardType::Creature);
-        normal_creature.set_power(Some(2));
-        normal_creature.set_toughness(Some(2));
+        normal_creature.set_base_power(Some(2));
+        normal_creature.set_base_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
         game.battlefield.add(normal_creature_id);
 
@@ -1081,8 +1081,8 @@ mod tests {
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
         hexproof_creature.add_type(CardType::Creature);
-        hexproof_creature.set_power(Some(1));
-        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.set_base_power(Some(1));
+        hexproof_creature.set_base_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
@@ -1091,8 +1091,8 @@ mod tests {
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
         normal_creature.add_type(CardType::Creature);
-        normal_creature.set_power(Some(2));
-        normal_creature.set_toughness(Some(2));
+        normal_creature.set_base_power(Some(2));
+        normal_creature.set_base_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
         game.battlefield.add(normal_creature_id);
 
@@ -1133,8 +1133,8 @@ mod tests {
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p1_id);
         hexproof_creature.add_type(CardType::Creature);
-        hexproof_creature.set_power(Some(1));
-        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.set_base_power(Some(1));
+        hexproof_creature.set_base_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
@@ -1187,8 +1187,8 @@ mod tests {
         let hexproof_creature_id = game.next_entity_id();
         let mut hexproof_creature = Card::new(hexproof_creature_id, "Slippery Bogle".to_string(), p2_id);
         hexproof_creature.add_type(CardType::Creature);
-        hexproof_creature.set_power(Some(1));
-        hexproof_creature.set_toughness(Some(1));
+        hexproof_creature.set_base_power(Some(1));
+        hexproof_creature.set_base_toughness(Some(1));
         hexproof_creature.keywords.insert(Keyword::Hexproof);
         game.cards.insert(hexproof_creature_id, hexproof_creature);
         game.battlefield.add(hexproof_creature_id);
@@ -1232,8 +1232,8 @@ mod tests {
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Darksteel Myr".to_string(), p1_id);
         indestructible.add_type(CardType::Creature);
-        indestructible.set_power(Some(2));
-        indestructible.set_toughness(Some(2));
+        indestructible.set_base_power(Some(2));
+        indestructible.set_base_toughness(Some(2));
         indestructible.keywords.insert(Keyword::Indestructible);
         indestructible.controller = p1_id;
         indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -1244,8 +1244,8 @@ mod tests {
         let blocker_id = game.next_entity_id();
         let mut blocker = Card::new(blocker_id, "Hill Giant".to_string(), p2_id);
         blocker.add_type(CardType::Creature);
-        blocker.set_power(Some(5));
-        blocker.set_toughness(Some(5));
+        blocker.set_base_power(Some(5));
+        blocker.set_base_toughness(Some(5));
         blocker.controller = p2_id;
         blocker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(blocker_id, blocker);
@@ -1288,8 +1288,8 @@ mod tests {
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Darksteel Myr".to_string(), p2_id);
         indestructible.add_type(CardType::Creature);
-        indestructible.set_power(Some(0));
-        indestructible.set_toughness(Some(1));
+        indestructible.set_base_power(Some(0));
+        indestructible.set_base_toughness(Some(1));
         indestructible.keywords.insert(Keyword::Indestructible);
         game.cards.insert(indestructible_id, indestructible);
         game.battlefield.add(indestructible_id);
@@ -1333,8 +1333,8 @@ mod tests {
         let deathtouch_id = game.next_entity_id();
         let mut deathtouch = Card::new(deathtouch_id, "Typhoid Rats".to_string(), p1_id);
         deathtouch.add_type(CardType::Creature);
-        deathtouch.set_power(Some(1));
-        deathtouch.set_toughness(Some(1));
+        deathtouch.set_base_power(Some(1));
+        deathtouch.set_base_toughness(Some(1));
         deathtouch.keywords.insert(Keyword::Deathtouch);
         deathtouch.controller = p1_id;
         deathtouch.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -1345,8 +1345,8 @@ mod tests {
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Darksteel Colossus".to_string(), p2_id);
         indestructible.add_type(CardType::Creature);
-        indestructible.set_power(Some(5));
-        indestructible.set_toughness(Some(5));
+        indestructible.set_base_power(Some(5));
+        indestructible.set_base_toughness(Some(5));
         indestructible.keywords.insert(Keyword::Indestructible);
         indestructible.controller = p2_id;
         indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -1397,8 +1397,8 @@ mod tests {
         let indestructible_id = game.next_entity_id();
         let mut indestructible = Card::new(indestructible_id, "Indomitable".to_string(), p1_id);
         indestructible.add_type(CardType::Creature);
-        indestructible.set_power(Some(3));
-        indestructible.set_toughness(Some(3));
+        indestructible.set_base_power(Some(3));
+        indestructible.set_base_toughness(Some(3));
         indestructible.keywords.insert(Keyword::Indestructible);
         indestructible.controller = p1_id;
         indestructible.turn_entered_battlefield = Some(game.turn.turn_number - 1);
@@ -1409,8 +1409,8 @@ mod tests {
         let normal_id = game.next_entity_id();
         let mut normal = Card::new(normal_id, "Hill Giant".to_string(), p2_id);
         normal.add_type(CardType::Creature);
-        normal.set_power(Some(3));
-        normal.set_toughness(Some(3));
+        normal.set_base_power(Some(3));
+        normal.set_base_toughness(Some(3));
         normal.controller = p2_id;
         normal.turn_entered_battlefield = Some(game.turn.turn_number - 1);
         game.cards.insert(normal_id, normal);
@@ -1458,8 +1458,8 @@ mod tests {
         let shroud_creature_id = game.next_entity_id();
         let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p2_id);
         shroud_creature.add_type(CardType::Creature);
-        shroud_creature.set_power(Some(1));
-        shroud_creature.set_toughness(Some(1));
+        shroud_creature.set_base_power(Some(1));
+        shroud_creature.set_base_toughness(Some(1));
         shroud_creature.keywords.insert(Keyword::Shroud);
         game.cards.insert(shroud_creature_id, shroud_creature);
         game.battlefield.add(shroud_creature_id);
@@ -1468,8 +1468,8 @@ mod tests {
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
         normal_creature.add_type(CardType::Creature);
-        normal_creature.set_power(Some(2));
-        normal_creature.set_toughness(Some(2));
+        normal_creature.set_base_power(Some(2));
+        normal_creature.set_base_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
         game.battlefield.add(normal_creature_id);
 
@@ -1514,8 +1514,8 @@ mod tests {
         let shroud_creature_id = game.next_entity_id();
         let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p1_id);
         shroud_creature.add_type(CardType::Creature);
-        shroud_creature.set_power(Some(1));
-        shroud_creature.set_toughness(Some(1));
+        shroud_creature.set_base_power(Some(1));
+        shroud_creature.set_base_toughness(Some(1));
         shroud_creature.keywords.insert(Keyword::Shroud);
         game.cards.insert(shroud_creature_id, shroud_creature);
         game.battlefield.add(shroud_creature_id);
@@ -1524,8 +1524,8 @@ mod tests {
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p1_id);
         normal_creature.add_type(CardType::Creature);
-        normal_creature.set_power(Some(2));
-        normal_creature.set_toughness(Some(2));
+        normal_creature.set_base_power(Some(2));
+        normal_creature.set_base_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
         game.battlefield.add(normal_creature_id);
 
@@ -1573,8 +1573,8 @@ mod tests {
         let shroud_creature_id = game.next_entity_id();
         let mut shroud_creature = Card::new(shroud_creature_id, "Silhana Ledgewalker".to_string(), p2_id);
         shroud_creature.add_type(CardType::Creature);
-        shroud_creature.set_power(Some(1));
-        shroud_creature.set_toughness(Some(1));
+        shroud_creature.set_base_power(Some(1));
+        shroud_creature.set_base_toughness(Some(1));
         shroud_creature.keywords.insert(Keyword::Shroud);
         game.cards.insert(shroud_creature_id, shroud_creature);
         game.battlefield.add(shroud_creature_id);
@@ -1583,8 +1583,8 @@ mod tests {
         let normal_creature_id = game.next_entity_id();
         let mut normal_creature = Card::new(normal_creature_id, "Grizzly Bears".to_string(), p2_id);
         normal_creature.add_type(CardType::Creature);
-        normal_creature.set_power(Some(2));
-        normal_creature.set_toughness(Some(2));
+        normal_creature.set_base_power(Some(2));
+        normal_creature.set_base_toughness(Some(2));
         game.cards.insert(normal_creature_id, normal_creature);
         game.battlefield.add(normal_creature_id);
 

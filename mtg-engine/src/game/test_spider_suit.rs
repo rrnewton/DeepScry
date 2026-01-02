@@ -368,8 +368,8 @@ K:Equip:3
         let creature_id = game.cards.next_id();
         let mut creature = Card::new(creature_id, CardName::from("Grizzly Bears"), p1_id);
         creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         creature.controller = p1_id;
         game.cards.insert(creature_id, creature);
 

@@ -342,8 +342,8 @@ impl GameAction {
                 // Reverse the pump by applying negative deltas
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     // Handle Option<i8> by mapping to subtract the delta
-                    card.set_power(card.base_power().map(|p| p.saturating_sub(*power_delta as i8)));
-                    card.set_toughness(card.base_toughness().map(|t| t.saturating_sub(*toughness_delta as i8)));
+                    card.set_base_power(card.base_power().map(|p| p.saturating_sub(*power_delta as i8)));
+                    card.set_base_toughness(card.base_toughness().map(|t| t.saturating_sub(*toughness_delta as i8)));
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
                 }

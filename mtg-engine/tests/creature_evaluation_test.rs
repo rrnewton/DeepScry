@@ -23,8 +23,8 @@ fn create_test_setup_with_keywords(
     let card_id = CardId::new(100); // Use a consistent ID for testing
     let mut card = Card::new(card_id, name, player_id);
     card.add_type(CardType::Creature);
-    card.set_power(Some(power));
-    card.set_toughness(Some(toughness));
+    card.set_base_power(Some(power));
+    card.set_base_toughness(Some(toughness));
     // Set mana cost to generic mana for simplicity
     let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
     mana_cost.generic = cmc;
@@ -461,8 +461,8 @@ fn create_test_setup_with_complex_keywords(
     let card_id = CardId::new(100);
     let mut card = Card::new(card_id, name, player_id);
     card.types.push(CardType::Creature);
-    card.set_power(Some(power));
-    card.set_toughness(Some(toughness));
+    card.set_base_power(Some(power));
+    card.set_base_toughness(Some(toughness));
     let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
     mana_cost.generic = cmc;
     card.mana_cost = mana_cost;
@@ -1174,8 +1174,8 @@ fn create_landwalk_test_setup(land_type: &str, opponent_has_matching_land: bool)
     let creature_id = CardId::new(100);
     let mut creature = Card::new(creature_id, "Swampwalk Creature", player_id);
     creature.add_type(CT::Creature);
-    creature.set_power(Some(3));
-    creature.set_toughness(Some(3));
+    creature.set_base_power(Some(3));
+    creature.set_base_toughness(Some(3));
     creature.mana_cost.generic = 4;
     creature.keywords.insert_complex(KeywordArgs::Landwalk {
         land_type: Subtype::new(land_type),

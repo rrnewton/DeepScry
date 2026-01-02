@@ -58,8 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_id = game.next_entity_id();
     let mut target = Card::new(target_id, "Grizzly Bears".to_string(), bob_id);
     target.add_type(CardType::Creature);
-    target.set_power(Some(2));
-    target.set_toughness(Some(2));
+    target.set_base_power(Some(2));
+    target.set_base_toughness(Some(2));
     target.mana_cost = ManaCost::from_string("1G");
     game.cards.insert(target_id, target);
     game.battlefield.add(target_id);
@@ -110,8 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let creature_id = game.next_entity_id();
         let mut creature = Card::new(creature_id, "Elvish Visionary".to_string(), alice_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(1));
-        creature.set_toughness(Some(1));
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
         creature.mana_cost = ManaCost::from_string("1G");
         creature.triggers.push(Trigger::new(
             TriggerEvent::EntersBattlefield,
@@ -163,8 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kavu_id = game.next_entity_id();
     let mut kavu = Card::new(kavu_id, "Flametongue Kavu".to_string(), alice_id);
     kavu.add_type(CardType::Creature);
-    kavu.set_power(Some(4));
-    kavu.set_toughness(Some(2));
+    kavu.set_base_power(Some(4));
+    kavu.set_base_toughness(Some(2));
     kavu.mana_cost = ManaCost::from_string("3R");
     kavu.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,

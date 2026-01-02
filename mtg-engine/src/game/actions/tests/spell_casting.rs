@@ -242,8 +242,8 @@ mod tests {
         let target_creature_id = game.next_card_id();
         let mut target = Card::new(target_creature_id, "Grizzly Bears".to_string(), p2_id);
         target.add_type(CardType::Creature);
-        target.set_power(Some(2));
-        target.set_toughness(Some(2));
+        target.set_base_power(Some(2));
+        target.set_base_toughness(Some(2));
         target.controller = p2_id;
         game.cards.insert(target_creature_id, target);
         game.battlefield.add(target_creature_id);

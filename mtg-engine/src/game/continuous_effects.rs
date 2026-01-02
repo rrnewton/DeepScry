@@ -1546,8 +1546,8 @@ mod tests {
         let creature_id: CardId = game.next_id();
         let mut creature = Card::new(creature_id, "Bird", player_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(1));
-        creature.set_toughness(Some(1));
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
         creature.keywords.insert(Keyword::Flying);
 
         game.cards.insert(creature_id, creature);
@@ -1572,8 +1572,8 @@ mod tests {
         let mut creature = Card::new(creature_id, "Spider", player_id);
         creature.add_type(CardType::Creature);
         creature.subtypes.push("Spider".into());
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         creature.controller = player_id;
         game.cards.insert(creature_id, creature);
 

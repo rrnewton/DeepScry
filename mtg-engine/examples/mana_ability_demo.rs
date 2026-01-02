@@ -29,8 +29,8 @@ fn main() -> Result<()> {
     let elves_id = game.next_card_id();
     let mut elves = Card::new(elves_id, "Llanowar Elves".to_string(), alice_id);
     elves.add_type(CardType::Creature);
-    elves.set_power(Some(1));
-    elves.set_toughness(Some(1));
+    elves.set_base_power(Some(1));
+    elves.set_base_toughness(Some(1));
 
     // Add mana ability: {T}: Add {G}
     let ability = ActivatedAbility::new(

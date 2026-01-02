@@ -506,8 +506,8 @@ fn create_creature(
     let card_id = game.next_card_id();
     let mut card = Card::new(card_id, name.to_string(), owner);
     card.add_type(CardType::Creature);
-    card.set_power(Some(power));
-    card.set_toughness(Some(toughness));
+    card.set_base_power(Some(power));
+    card.set_base_toughness(Some(toughness));
     card.controller = owner;
     game.cards.insert(card_id, card);
     game.battlefield.add(card_id);

@@ -4258,8 +4258,8 @@ mod tests {
 
         // Create a Grizzly Bears (2/2) creature
         let mut bears = Card::new(EntityId::new(10), "Grizzly Bears", player_id);
-        bears.set_power(Some(2));
-        bears.set_toughness(Some(2));
+        bears.set_base_power(Some(2));
+        bears.set_base_toughness(Some(2));
         bears.add_type(CardType::Creature);
 
         // Test Case 1: Pump that doesn't kill the creature (+3/+3)
@@ -4305,14 +4305,14 @@ mod tests {
 
         // Create a 2/2 ground creature (the one we might pump)
         let mut ground_creature = Card::new(EntityId::new(10), "Grizzly Bears", player_id);
-        ground_creature.set_power(Some(2));
-        ground_creature.set_toughness(Some(2));
+        ground_creature.set_base_power(Some(2));
+        ground_creature.set_base_toughness(Some(2));
         ground_creature.add_type(CardType::Creature);
 
         // Create a 1/1 flying creature (opponent's blocker)
         let mut flying_creature = Card::new(EntityId::new(11), "Bird", EntityId::new(2));
-        flying_creature.set_power(Some(1));
-        flying_creature.set_toughness(Some(1));
+        flying_creature.set_base_power(Some(1));
+        flying_creature.set_base_toughness(Some(1));
         flying_creature.add_type(CardType::Creature);
         flying_creature.keywords.insert(Keyword::Flying);
 
@@ -4574,8 +4574,8 @@ mod tests {
         // Note: If summoning sick, only +13 for block potential
         let mut llanowar_elves = Card::new(EntityId::new(11), "Llanowar Elves", player_id);
         llanowar_elves.add_type(CardType::Creature);
-        llanowar_elves.set_power(Some(1));
-        llanowar_elves.set_toughness(Some(1));
+        llanowar_elves.set_base_power(Some(1));
+        llanowar_elves.set_base_toughness(Some(1));
         // Not summoning sick - entered last turn
         llanowar_elves.turn_entered_battlefield = Some(0);
         llanowar_elves.activated_abilities.push(ActivatedAbility::new(
@@ -4675,8 +4675,8 @@ mod tests {
         let creature_id = EntityId::new(100);
         let mut creature = Card::new(creature_id, "Grizzly Bears", opponent_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
         game.cards.insert(creature_id, creature);
 
         // Put creature on the stack
@@ -4748,8 +4748,8 @@ mod tests {
         let make_creature = |id: u32, keywords: Vec<Keyword>| {
             let card_id = EntityId::new(id);
             let mut creature = Card::new(card_id, "Test Creature", player_id);
-            creature.set_power(Some(3));
-            creature.set_toughness(Some(3));
+            creature.set_base_power(Some(3));
+            creature.set_base_toughness(Some(3));
             creature.add_type(CardType::Creature);
             creature.mana_cost = ManaCost::from_string("3");
             for kw in keywords {
@@ -4858,8 +4858,8 @@ mod tests {
         let make_creature = |id: u32, owner: PlayerId, keywords: Vec<Keyword>, colors: Vec<Color>| {
             let card_id = EntityId::new(id);
             let mut creature = Card::new(card_id, "Test Creature", owner);
-            creature.set_power(Some(2));
-            creature.set_toughness(Some(2));
+            creature.set_base_power(Some(2));
+            creature.set_base_toughness(Some(2));
             creature.add_type(CardType::Creature);
             for kw in keywords {
                 creature.keywords.insert(kw);
@@ -4960,13 +4960,13 @@ mod tests {
             // skulk_attacker has power 2
 
             let mut weak_blocker = make_creature(131, player_id, vec![], vec![Color::White]);
-            weak_blocker.set_power(Some(1)); // Power 1
+            weak_blocker.set_base_power(Some(1)); // Power 1
 
             let mut equal_blocker = make_creature(132, player_id, vec![], vec![Color::White]);
-            equal_blocker.set_power(Some(2)); // Power 2
+            equal_blocker.set_base_power(Some(2)); // Power 2
 
             let mut strong_blocker = make_creature(133, player_id, vec![], vec![Color::White]);
-            strong_blocker.set_power(Some(3)); // Power 3
+            strong_blocker.set_base_power(Some(3)); // Power 3
 
             // Weak creature (power 1) can't block skulk creature (power 2)
             assert!(

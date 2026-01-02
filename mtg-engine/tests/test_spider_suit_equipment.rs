@@ -187,8 +187,8 @@ fn test_equipment_attachment() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    spider_punk.set_power(Some(2));
-    spider_punk.set_toughness(Some(1));
+    spider_punk.set_base_power(Some(2));
+    spider_punk.set_base_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -283,8 +283,8 @@ fn test_multiple_equipment() {
     let creature_id = game.cards.next_id();
     let mut creature = Card::new(creature_id, CardName::from("Bear"), p1_id);
     creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    creature.set_power(Some(2));
-    creature.set_toughness(Some(2));
+    creature.set_base_power(Some(2));
+    creature.set_base_toughness(Some(2));
     creature.controller = p1_id;
     game.cards.insert(creature_id, creature);
 
@@ -322,8 +322,8 @@ fn test_spider_suit_buff() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    spider_punk.set_power(Some(2));
-    spider_punk.set_toughness(Some(1));
+    spider_punk.set_base_power(Some(2));
+    spider_punk.set_base_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -401,8 +401,8 @@ fn test_multiple_equipment_buffs() {
     let bear_id = game.cards.next_id();
     let mut bear = Card::new(bear_id, CardName::from("Bear"), p1_id);
     bear.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    bear.set_power(Some(2));
-    bear.set_toughness(Some(2));
+    bear.set_base_power(Some(2));
+    bear.set_base_toughness(Some(2));
     bear.controller = p1_id;
     game.cards.insert(bear_id, bear);
 
@@ -448,8 +448,8 @@ fn test_equipment_combat_damage_calculation() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    spider_punk.set_power(Some(2));
-    spider_punk.set_toughness(Some(1));
+    spider_punk.set_base_power(Some(2));
+    spider_punk.set_base_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -492,8 +492,8 @@ fn test_equipment_detaches_when_creature_dies() {
     let spider_punk_id = game.cards.next_id();
     let mut spider_punk = Card::new(spider_punk_id, CardName::from("Spider-Punk"), p1_id);
     spider_punk.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    spider_punk.set_power(Some(2));
-    spider_punk.set_toughness(Some(1));
+    spider_punk.set_base_power(Some(2));
+    spider_punk.set_base_toughness(Some(1));
     spider_punk.controller = p1_id;
     game.cards.insert(spider_punk_id, spider_punk);
 
@@ -555,8 +555,8 @@ fn test_equipment_detaches_when_creature_dies() {
 fn create_self_when_equipped_creature(id: CardId, owner: PlayerId) -> Card {
     let mut creature = Card::new(id, CardName::from("Leonin Lightbringer"), owner);
     creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    creature.set_power(Some(2));
-    creature.set_toughness(Some(2));
+    creature.set_base_power(Some(2));
+    creature.set_base_toughness(Some(2));
     creature.controller = owner;
 
     // Add static ability: +1/+1 when equipped
@@ -712,8 +712,8 @@ fn create_test_aura(id: CardId, owner: PlayerId, power_buff: i32, toughness_buff
 fn create_self_when_enchanted_creature(id: CardId, owner: PlayerId) -> Card {
     let mut creature = Card::new(id, CardName::from("Thran Golem"), owner);
     creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    creature.set_power(Some(3));
-    creature.set_toughness(Some(3));
+    creature.set_base_power(Some(3));
+    creature.set_base_toughness(Some(3));
     creature.controller = owner;
 
     // Add static ability: +2/+2 when enchanted
@@ -800,8 +800,8 @@ fn create_equipped_creatures_lord(id: CardId, owner: PlayerId) -> Card {
     let mut lord = Card::new(id, CardName::from("Kemba, Kha Enduring"), owner);
     lord.set_types(SmallVec::from_vec(vec![CardType::Creature]));
     lord.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Cat"), Subtype::from("Cleric")]));
-    lord.set_power(Some(2));
-    lord.set_toughness(Some(4));
+    lord.set_base_power(Some(2));
+    lord.set_base_toughness(Some(4));
     lord.controller = owner;
 
     // Add static ability: Equipped creatures you control get +1/+1
@@ -831,16 +831,16 @@ fn test_equipped_creatures_you_control_selector() {
     let creature1_id = game.cards.next_id();
     let mut creature1 = Card::new(creature1_id, CardName::from("Bear"), p1_id);
     creature1.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    creature1.set_power(Some(2));
-    creature1.set_toughness(Some(2));
+    creature1.set_base_power(Some(2));
+    creature1.set_base_toughness(Some(2));
     creature1.controller = p1_id;
     game.cards.insert(creature1_id, creature1);
 
     let creature2_id = game.cards.next_id();
     let mut creature2 = Card::new(creature2_id, CardName::from("Wolf"), p1_id);
     creature2.set_types(SmallVec::from_vec(vec![CardType::Creature]));
-    creature2.set_power(Some(2));
-    creature2.set_toughness(Some(2));
+    creature2.set_base_power(Some(2));
+    creature2.set_base_toughness(Some(2));
     creature2.controller = p1_id;
     game.cards.insert(creature2_id, creature2);
 

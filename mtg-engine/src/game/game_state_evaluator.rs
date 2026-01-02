@@ -702,8 +702,8 @@ mod tests {
         let creature_id = CardId::new(100);
         let mut creature = Card::new(creature_id, "Grizzly Bears", player_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
 
         // Create an aura (Holy Strength: +1/+2)
         let aura_id = CardId::new(101);
@@ -754,8 +754,8 @@ mod tests {
         let creature_id = CardId::new(100);
         let mut creature = Card::new(creature_id, "Grizzly Bears", player_id);
         creature.add_type(CardType::Creature);
-        creature.set_power(Some(2));
-        creature.set_toughness(Some(2));
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
 
         // Create an aura that grants Flying
         let aura_id = CardId::new(101);
