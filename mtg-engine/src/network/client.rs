@@ -1257,10 +1257,7 @@ impl NetworkClient {
                         // Send choices to server
                         choice = async {
                             // Non-blocking check for choices from game thread
-                            match local_choice_rx.recv_timeout(Duration::from_millis(10)) {
-                                Ok(choice) => Some(choice),
-                                Err(_) => None,
-                            }
+                            local_choice_rx.recv_timeout(Duration::from_millis(10)).ok()
                         } => {
                             if let Some(choice) = choice {
                                 let action_count_to_send = server_action_count.unwrap_or(choice.action_count);
