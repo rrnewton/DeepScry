@@ -349,8 +349,7 @@ mod tests {
 
         // Foggy Swamp Vinebender: Waterbend 5 to put a +1/+1 counter on this creature
         let params =
-            AbilityParams::parse("A:AB$ PutCounter | Cost$ Waterbend<5> | CounterType$ P1P1 | CounterNum$ 1")
-                .unwrap();
+            AbilityParams::parse("A:AB$ PutCounter | Cost$ Waterbend<5> | CounterType$ P1P1 | CounterNum$ 1").unwrap();
         let effect = params_to_effect(&params).unwrap();
 
         match effect {
