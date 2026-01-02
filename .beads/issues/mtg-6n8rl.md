@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-01-02T04:51:41.304506805+00:00
-updated_at: 2026-01-02T04:51:41.304506805+00:00
+updated_at: 2026-01-02T05:09:01.353419488+00:00
 ---
 
 # Description
@@ -23,11 +23,15 @@ Track implementation of Avatar set-specific mechanics for full booster draft sup
 - Flexible Waterbender: `Cost$ Waterbend<3>` - become 5/2 until EOT
 - Thriving Grove (indirectly)
 
-**Implementation needed:**
-1. Parse `Waterbend<X>` as a cost type in Cost::parse()
-2. Add Cost::Waterbend { amount: u8 } variant
-3. During ability activation, allow tapping creatures/artifacts to reduce cost
-4. Similar to Convoke implementation (when that's added)
+**Implementation Status (2026-01-02_#167):**
+- [x] Parse `Waterbend<X>` as a cost type in Cost::parse()
+- [x] Add Cost::Waterbend { amount: u8 } variant
+- [x] Add PutCounter effect conversion in effect_converter.rs
+- [x] Basic payment handling (as generic mana cost)
+- [ ] During ability activation, allow tapping creatures/artifacts to reduce cost
+- [ ] Similar to Convoke implementation (when that's added)
+
+Note: Abilities now load and show up in game. Payment currently treats Waterbend<X> as {X} generic mana. The full Convoke-like tapping is TODO.
 
 ### Airbend (Exile-recast effect)
 - Format: `DB$ Airbend | ValidTgts$ Creature`
@@ -46,13 +50,10 @@ Track implementation of Avatar set-specific mechanics for full booster draft sup
 3. Handle exile zone + alternative cost casting
 4. Track "airbended" state on exiled cards
 
-## Current Status (2026-01-02)
+## Current Status
 
-- Waterbend abilities silently skipped (Cost::parse returns None)
-- Airbend abilities unimplemented (no ApiType::Airbend)
-- Games still run - abilities are just not available
+Games run with avatar decks. Waterbend abilities load and can be activated (paying {X} mana). Full tapping-to-reduce-cost mechanic is not yet implemented.
 
 ## Priority
 
-Medium - games function without these mechanics, but avatar deck gameplay
-is incomplete without them.
+Medium - games function, Waterbend works as mana cost. Full implementation is a nice-to-have.

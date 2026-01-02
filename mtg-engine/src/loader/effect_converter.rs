@@ -219,6 +219,25 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::PutCounter => {
+            // PutCounter effect: AB$ PutCounter | Cost$ X | Defined$ Self | CounterType$ P1P1 | CounterNum$ 1
+            // Example: Foggy Swamp Vinebender - Waterbend 5: Put a +1/+1 counter on this creature
+            use crate::core::CounterType;
+
+            // Parse counter type (e.g., "P1P1" -> +1/+1 counter)
+            let counter_type_str = params.get("CounterType")?;
+            let counter_type = CounterType::parse(counter_type_str)?;
+
+            // Parse counter count (default to 1)
+            let amount = params.get_u8("CounterNum").unwrap_or(1);
+
+            Some(Effect::PutCounter {
+                target: CardId::new(0), // Placeholder - filled in at activation time
+                counter_type,
+                amount,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -321,6 +340,29 @@ mod tests {
                 assert_eq!(mana.colorless, 2);
             }
             _ => panic!("Expected AddMana effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_put_counter() {
+        use crate::core::CounterType;
+
+        // Foggy Swamp Vinebender: Waterbend 5 to put a +1/+1 counter on this creature
+        let params =
+            AbilityParams::parse("A:AB$ PutCounter | Cost$ Waterbend<5> | CounterType$ P1P1 | CounterNum$ 1")
+                .unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::PutCounter {
+                target: _,
+                counter_type,
+                amount,
+            } => {
+                assert_eq!(counter_type, CounterType::P1P1);
+                assert_eq!(amount, 1);
+            }
+            _ => panic!("Expected PutCounter effect"),
         }
     }
 }

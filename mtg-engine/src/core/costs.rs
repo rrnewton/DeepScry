@@ -39,6 +39,11 @@ pub enum Cost {
 
     /// Composite cost (multiple costs combined)
     Composite(Vec<Cost>),
+
+    /// Waterbend cost (Avatar set mechanic - like Convoke)
+    /// While paying a waterbend cost, you can tap your artifacts and creatures to help.
+    /// Each one pays for {1}. For now, treated as generic mana cost of `amount`.
+    Waterbend { amount: u8 },
 }
 
 impl Cost {
@@ -171,6 +176,17 @@ impl Cost {
             }
         }
 
+        // Waterbend cost (e.g., "Waterbend<3>") - Avatar set mechanic
+        // While paying a waterbend cost, you can tap your artifacts and creatures to help.
+        // Each one pays for {1}. For now, treat as generic mana.
+        if trimmed.starts_with("Waterbend<") && trimmed.ends_with('>') {
+            if let Some(amount_str) = trimmed.strip_prefix("Waterbend<").and_then(|s| s.strip_suffix('>')) {
+                if let Ok(amount) = amount_str.parse::<u8>() {
+                    return Some(Cost::Waterbend { amount });
+                }
+            }
+        }
+
         // Check for tap + mana combo (e.g., "2 T", "1 R T", "W T")
         if trimmed.contains(" T") || trimmed.contains(" Tap") {
             // Split and parse the mana part
@@ -210,7 +226,7 @@ impl Cost {
     /// Check if this cost includes mana payment
     pub fn includes_mana(&self) -> bool {
         match self {
-            Cost::Mana(_) | Cost::TapAndMana(_) => true,
+            Cost::Mana(_) | Cost::TapAndMana(_) | Cost::Waterbend { .. } => true,
             Cost::Composite(costs) => costs.iter().any(|c| c.includes_mana()),
             _ => false,
         }
@@ -240,6 +256,15 @@ impl Cost {
             Cost::Sacrifice { .. } | Cost::SacrificePattern { .. } => true,
             Cost::Composite(costs) => costs.iter().any(|c| c.requires_sacrifice()),
             _ => false,
+        }
+    }
+
+    /// Get the Waterbend amount if this is a Waterbend cost
+    pub fn get_waterbend_amount(&self) -> Option<u8> {
+        match self {
+            Cost::Waterbend { amount } => Some(*amount),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_waterbend_amount()),
+            _ => None,
         }
     }
 }
@@ -336,5 +361,20 @@ mod tests {
             }
             _ => panic!("Expected Composite cost, got {cost:?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_waterbend() {
+        // Test parsing Waterbend<3> (Flexible Waterbender)
+        let cost = Cost::parse("Waterbend<3>").unwrap();
+        assert_eq!(cost, Cost::Waterbend { amount: 3 });
+        assert!(cost.includes_mana()); // Waterbend requires mana-like payment
+        assert!(!cost.includes_tap());
+        assert_eq!(cost.get_waterbend_amount(), Some(3));
+
+        // Test parsing Waterbend<5> (Foggy Swamp Vinebender)
+        let cost = Cost::parse("Waterbend<5>").unwrap();
+        assert_eq!(cost, Cost::Waterbend { amount: 5 });
+        assert_eq!(cost.get_waterbend_amount(), Some(5));
     }
 }
