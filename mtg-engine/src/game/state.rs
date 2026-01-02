@@ -1,6 +1,6 @@
 //! Main game state structure
 
-use crate::core::{Card, CardId, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId};
+use crate::core::{Card, CardId, Color, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId};
 use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
@@ -527,6 +527,38 @@ impl GameState {
             }
         }
 
+        // Handle cards that enter the battlefield tapped (e.g., Thriving lands)
+        if to == Zone::Battlefield {
+            if let Ok(card) = self.cards.get(card_id) {
+                if card.cache.enters_tapped {
+                    // Must drop the immutable borrow before getting mutable borrow
+                    let card_name = card.name.clone();
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.tapped = true;
+                        self.logger
+                            .verbose(&format!("{} ({}) enters the battlefield tapped", card_name, card_id));
+                    }
+                }
+            }
+
+            // Handle ETB color choice (e.g., Thriving lands)
+            if let Ok(card) = self.cards.get(card_id) {
+                if card.cache.etb_choose_color {
+                    let exclude_colors = card.cache.etb_exclude_colors.clone();
+                    let card_name = card.name.clone();
+
+                    // Pick the most prominent color in the player's deck (excluding excluded colors)
+                    let chosen = self.pick_prominent_color(owner, &exclude_colors);
+
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.chosen_color = Some(chosen);
+                        self.logger
+                            .normal(&format!("{} ({}) - chose {:?}", card_name, card_id, chosen));
+                    }
+                }
+            }
+        }
+
         // Log the action with prior log size for undo synchronization
         let prior_log_size = self.logger.log_count();
         self.undo_log.log(
@@ -606,6 +638,64 @@ impl GameState {
         }
 
         Ok(())
+    }
+
+    /// Pick the most prominent color in a player's deck, excluding specified colors
+    ///
+    /// Used for "choose a color" ETB abilities like Thriving lands.
+    /// Analyzes mana costs in hand, library, and graveyard to find the most needed color.
+    fn pick_prominent_color(&self, player_id: PlayerId, exclude: &[Color]) -> Color {
+        use std::collections::HashMap;
+
+        let mut color_counts: HashMap<Color, u32> = HashMap::new();
+
+        // Count colors from cards in hand, library, and graveyard
+        let zones_to_check = if let Some(zones) = self.get_player_zones(player_id) {
+            vec![&zones.hand, &zones.library, &zones.graveyard]
+        } else {
+            vec![]
+        };
+
+        for zone in zones_to_check {
+            for &card_id in zone.cards.iter() {
+                if let Ok(card) = self.cards.get(card_id) {
+                    // Count mana symbols in the mana cost
+                    if card.mana_cost.white > 0 {
+                        *color_counts.entry(Color::White).or_insert(0) += card.mana_cost.white as u32;
+                    }
+                    if card.mana_cost.blue > 0 {
+                        *color_counts.entry(Color::Blue).or_insert(0) += card.mana_cost.blue as u32;
+                    }
+                    if card.mana_cost.black > 0 {
+                        *color_counts.entry(Color::Black).or_insert(0) += card.mana_cost.black as u32;
+                    }
+                    if card.mana_cost.red > 0 {
+                        *color_counts.entry(Color::Red).or_insert(0) += card.mana_cost.red as u32;
+                    }
+                    if card.mana_cost.green > 0 {
+                        *color_counts.entry(Color::Green).or_insert(0) += card.mana_cost.green as u32;
+                    }
+                }
+            }
+        }
+
+        // Remove excluded colors
+        for color in exclude {
+            color_counts.remove(color);
+        }
+
+        // Return the most prominent color, or a default if none found
+        color_counts
+            .into_iter()
+            .max_by_key(|(_color, count)| *count)
+            .map(|(color, _)| color)
+            .unwrap_or_else(|| {
+                // Default: pick first non-excluded color
+                [Color::White, Color::Blue, Color::Black, Color::Red, Color::Green]
+                    .into_iter()
+                    .find(|c| !exclude.contains(c))
+                    .unwrap_or(Color::White)
+            })
     }
 
     /// Print state hash to normal log output if debug mode is enabled

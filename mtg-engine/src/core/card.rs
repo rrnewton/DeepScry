@@ -119,6 +119,18 @@ pub struct CardCache {
 
     /// Precomputed: Has "Forest" subtype (for mana production)
     pub has_forest_subtype: bool,
+
+    /// Precomputed: Does this card enter the battlefield tapped?
+    /// Derived from R: lines with "ReplaceWith$ ETBTapped" replacement effect
+    pub enters_tapped: bool,
+
+    /// Precomputed: Does this card require choosing a color on ETB?
+    /// Derived from K:ETBReplacement:Other:ChooseColor lines
+    pub etb_choose_color: bool,
+
+    /// Colors to exclude from the choice (e.g., "green" for Thriving Grove)
+    /// Derived from SVar:ChooseColor with Exclude$ parameter
+    pub etb_exclude_colors: SmallVec<[Color; 1]>,
 }
 
 impl CardCache {
@@ -171,6 +183,11 @@ impl CardCache {
             has_swamp_subtype: false,
             has_mountain_subtype: false,
             has_forest_subtype: false,
+
+            // ETB effects (initialized false, set from R:/K: lines in card loader)
+            enters_tapped: false,
+            etb_choose_color: false,
+            etb_exclude_colors: SmallVec::new(),
         }
     }
 
@@ -427,6 +444,17 @@ impl CardCache {
             return ManaProduction::free(ManaProductionKind::AnyColor);
         }
 
+        // Cards that produce chosen color (like Thriving lands) need special handling.
+        // At card loading time, we don't know the chosen color yet.
+        // We DON'T mark as AnyColor because that would allow producing any color.
+        // Instead, we return the static colors (e.g., Green from "Combo G Chosen").
+        // At runtime, tap_for_mana_for_cost adds the card's chosen_color to available_colors.
+        // The card will be classified as a complex source in the mana cache because
+        // chosen_color.is_some() triggers complex source classification.
+        //
+        // Note: produces_chosen flag is tracked here but the actual color handling
+        // happens via the Card.chosen_color field set at ETB time.
+
         match colors.len() {
             0 if produces_colorless => ManaProduction::free(ManaProductionKind::Colorless),
             0 => ManaProduction::default(), // No mana production
@@ -548,6 +576,10 @@ pub struct Card {
     /// - Used to track Equipment→Creature and Aura→Permanent relationships
     pub attached_to: Option<CardId>,
 
+    /// Chosen color for cards with "choose a color" effects (e.g., Thriving lands)
+    /// Set when the card enters the battlefield, affects what mana it can produce
+    pub chosen_color: Option<Color>,
+
     /// Script variables (SVars) for SubAbility chaining
     /// Key: SVar name (e.g., "BalanceHands")
     /// Value: SVar body (e.g., "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures")
@@ -598,6 +630,7 @@ impl Card {
             activated_abilities: Vec::new(),
             static_abilities: Vec::new(),
             attached_to: None,
+            chosen_color: None,
             svars: std::collections::HashMap::new(),
         }
     }

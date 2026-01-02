@@ -1209,6 +1209,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: p1_id,
                 mana: ManaCost::from_string("G"),
+                produces_chosen_color: false,
             }],
             "Add {G}".to_string(),
             true, // is_mana_ability
@@ -1261,6 +1262,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: p1_id,
                 mana: ManaCost::from_string("G"),
+                produces_chosen_color: false,
             }],
             "Add {G}".to_string(),
             true, // is_mana_ability
@@ -1312,6 +1314,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: p1_id,
                 mana: ManaCost::from_string("C"),
+                produces_chosen_color: false,
             }],
             "Add {C}".to_string(),
             true, // is_mana_ability

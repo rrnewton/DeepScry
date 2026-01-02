@@ -107,9 +107,14 @@ impl<'a> GameLoop<'a> {
                         replaced
                     }
                     // Player-targeting effects: resolve placeholder (0) to card owner
-                    Effect::AddMana { player, mana } if player.as_u32() == 0 => Effect::AddMana {
+                    Effect::AddMana {
+                        player,
+                        mana,
+                        produces_chosen_color,
+                    } if player.as_u32() == 0 => Effect::AddMana {
                         player: card_owner,
                         mana: *mana,
+                        produces_chosen_color: *produces_chosen_color,
                     },
                     Effect::DrawCards { player, count } if player.as_u32() == 0 => Effect::DrawCards {
                         player: card_owner,
@@ -680,11 +685,16 @@ impl<'a> GameLoop<'a> {
                                     for effect in &ability.effects {
                                         // Fix placeholder player IDs and targets for effects
                                         let fixed_effect = match effect {
-                                            crate::core::Effect::AddMana { player, mana } if player.as_u32() == 0 => {
+                                            crate::core::Effect::AddMana {
+                                                player,
+                                                mana,
+                                                produces_chosen_color,
+                                            } if player.as_u32() == 0 => {
                                                 // Replace placeholder with current player
                                                 crate::core::Effect::AddMana {
                                                     player: current_priority,
                                                     mana: *mana,
+                                                    produces_chosen_color: *produces_chosen_color,
                                                 }
                                             }
                                             crate::core::Effect::GainLife { player, amount }

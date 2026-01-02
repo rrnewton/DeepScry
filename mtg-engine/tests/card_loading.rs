@@ -1682,14 +1682,39 @@ async fn test_thriving_grove_mana_cache_population() -> Result<()> {
         cache.complex_sources()
     );
 
-    // If it's in green_sources, verify untapped count increased
+    // Thriving Grove enters tapped (due to R: line with "ReplaceWith$ ETBTapped"),
+    // so untapped_green will be 0. Verify the card is tapped as expected.
+    let card = game.cards.get(card_id)?;
+    assert!(card.tapped, "Thriving Grove should enter the battlefield tapped");
+
+    // Even though tapped, it's still tracked as a green mana source for future turns
     if in_green_sources {
-        assert!(
-            cache.untapped_green() >= 1,
-            "Thriving Grove should add to untapped_green count. Current: {}",
-            cache.untapped_green()
+        assert_eq!(
+            cache.untapped_green(),
+            0,
+            "Thriving Grove enters tapped, so untapped_green should be 0"
         );
     }
+
+    // Verify that chosen_color is set (Thriving Grove chooses a color on ETB)
+    // The color should NOT be green (since green is excluded per the card definition)
+    assert!(
+        card.chosen_color.is_some(),
+        "Thriving Grove should have a chosen color after entering battlefield"
+    );
+    let chosen = card.chosen_color.unwrap();
+    assert!(
+        !matches!(chosen, mtg_forge_rs::core::Color::Green),
+        "Thriving Grove's chosen color should not be green (it's excluded). Got: {:?}",
+        chosen
+    );
+
+    // Verify the card is classified as a complex source in the cache
+    // (because it has chosen_color set, allowing it to produce multiple colors)
+    assert!(
+        in_complex_sources,
+        "Thriving Grove should be in complex_sources since it has chosen_color"
+    );
 
     Ok(())
 }

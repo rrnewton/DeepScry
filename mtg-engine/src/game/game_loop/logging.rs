@@ -238,7 +238,7 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) counters {target_name} ({target})");
                 self.game.logger.gamelog(&message);
             }
-            Effect::AddMana { player, mana } => {
+            Effect::AddMana { player, mana, .. } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) adds {mana} to {player_name}'s mana pool");
                 self.game.logger.gamelog(&message);

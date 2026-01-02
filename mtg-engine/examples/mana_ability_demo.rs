@@ -38,6 +38,7 @@ fn main() -> Result<()> {
         vec![Effect::AddMana {
             player: alice_id,
             mana: ManaCost::from_string("G"),
+            produces_chosen_color: false,
         }],
         "Add {G}".to_string(),
         true, // This IS a mana ability
@@ -65,6 +66,7 @@ fn main() -> Result<()> {
         vec![Effect::AddMana {
             player: alice_id,
             mana: ManaCost::from_string("CC"), // 2 colorless mana
+            produces_chosen_color: false,
         }],
         "Add {C}{C}".to_string(),
         true, // This IS a mana ability
@@ -107,6 +109,7 @@ fn main() -> Result<()> {
     let effect = Effect::AddMana {
         player: alice_id,
         mana: ManaCost::from_string("CC"),
+        produces_chosen_color: false,
     };
     game.execute_effect(&effect)?;
     println!("  ✓ Executed effect: Added {{C}}{{C}} to mana pool");
@@ -141,6 +144,7 @@ fn main() -> Result<()> {
     let effect = Effect::AddMana {
         player: alice_id,
         mana: ManaCost::from_string("G"),
+        produces_chosen_color: false,
     };
     game.execute_effect(&effect)?;
     println!("  ✓ Executed effect: Added {{G}} to mana pool");

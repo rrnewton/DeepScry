@@ -186,6 +186,13 @@ impl ManaSourceCache {
             return;
         }
 
+        // Cards with chosen_color (like Thriving lands) are complex sources
+        // since they can produce multiple colors
+        if card.chosen_color.is_some() {
+            self.complex_sources.push(card_id);
+            return;
+        }
+
         // Classify card based on mana production type
         let production = &card.cache.mana_production;
 

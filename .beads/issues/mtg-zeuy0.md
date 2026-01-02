@@ -1,10 +1,11 @@
 ---
 title: Thriving Grove doesn't enter tapped or prompt for color choice
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-01-02T20:35:35.777706122+00:00
-updated_at: 2026-01-02T20:35:35.777706122+00:00
+updated_at: 2026-01-02T22:26:51.799438042+00:00
+closed_at: 2026-01-02T22:26:51.799437982+00:00
 ---
 
 # Description

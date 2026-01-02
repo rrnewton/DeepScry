@@ -884,9 +884,14 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
-            Effect::AddMana { player, mana } if player.as_u32() == 0 => Effect::AddMana {
+            Effect::AddMana {
+                player,
+                mana,
+                produces_chosen_color,
+            } if player.as_u32() == 0 => Effect::AddMana {
                 player: card_owner,
                 mana: *mana,
+                produces_chosen_color: *produces_chosen_color,
             },
             // No resolution needed - return clone of original
             _ => effect.clone(),
@@ -995,11 +1000,24 @@ impl GameState {
                 // Counter a spell on the stack
                 self.counter_spell(*target)?;
             }
-            Effect::AddMana { player, mana } => {
+            Effect::AddMana {
+                player,
+                mana,
+                produces_chosen_color,
+            } => {
                 // Capture log size before mana addition
                 let prior_log_size = self.logger.log_count();
 
                 // Add mana to player's mana pool
+                // Note: For mana abilities, produces_chosen_color is handled in tap_for_mana_for_cost
+                // where we have access to the source card's chosen_color.
+                // This path is mainly for spell effects (Dark Ritual) and triggered abilities (Su-Chi).
+                if *produces_chosen_color {
+                    // This shouldn't happen in practice since mana abilities go through tap_for_mana_for_cost
+                    // but log a warning if it does
+                    self.logger
+                        .normal("Warning: produces_chosen_color in execute_effect - source card unknown");
+                }
                 let p = self.get_player_mut(*player)?;
 
                 // Add each component of the mana cost to the pool
@@ -1795,12 +1813,17 @@ impl GameState {
         for mut effect in effects_to_execute {
             // Fill in placeholder values in trigger effects
             match &mut effect {
-                Effect::AddMana { player, mana } if player.as_u32() == 0 => {
+                Effect::AddMana {
+                    player,
+                    mana,
+                    produces_chosen_color,
+                } if player.as_u32() == 0 => {
                     // Placeholder player ID 0 means the controller of the trigger source
                     // Su-Chi adds mana to its controller's pool when it dies
                     effect = Effect::AddMana {
                         player: controller,
                         mana: *mana,
+                        produces_chosen_color: *produces_chosen_color,
                     };
 
                     // Log the mana addition (official game action)
@@ -2203,6 +2226,14 @@ impl GameState {
                 }
                 crate::core::ManaProductionKind::AnyColor | crate::core::ManaProductionKind::Colorless => {
                     // Handled by is_any_color and is_colorless checks
+                }
+            }
+
+            // Third, add chosen_color for lands like Thriving Grove
+            // (cards with "choose a color" ETB effects that produce mana of that color)
+            if let Some(chosen) = card.chosen_color {
+                if !colors.contains(&chosen) {
+                    colors.push(chosen);
                 }
             }
 

@@ -166,6 +166,9 @@ pub enum Effect {
     AddMana {
         player: PlayerId,
         mana: crate::core::ManaCost,
+        /// If true, this ability also produces mana of the card's chosen color
+        /// (for cards like Thriving lands that have "Produced$ Combo G Chosen")
+        produces_chosen_color: bool,
     },
 
     /// Put counters on a permanent

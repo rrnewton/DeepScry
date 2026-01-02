@@ -78,6 +78,9 @@ impl CardLoader {
         let mut raw_abilities = Vec::new();
         let mut raw_keywords = Vec::new();
         let mut svars = std::collections::HashMap::new();
+        let mut enters_tapped = false;
+        let mut etb_choose_color = false;
+        let mut etb_exclude_colors = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -133,6 +136,11 @@ impl CardLoader {
                     // Keyword lines (K:)
                     "K" => {
                         raw_keywords.push(value.to_string());
+                        // Check for ETB replacement that requires choosing a color
+                        // Format: K:ETBReplacement:Other:ChooseColor
+                        if value.contains("ETBReplacement") && value.contains("ChooseColor") {
+                            etb_choose_color = true;
+                        }
                     }
                     // Ability lines (A:, S:, T: lines)
                     "A" | "S" | "T" => {
@@ -146,6 +154,35 @@ impl CardLoader {
                         // Value format: "NAME:DB$ ApiType | Param$ Value | ..."
                         if let Some((svar_name, svar_body)) = value.split_once(':') {
                             svars.insert(svar_name.trim().to_string(), svar_body.trim().to_string());
+                            // Check for ChooseColor SVar with Exclude$ parameter
+                            // Format: SVar:ChooseColor:DB$ ChooseColor | Exclude$ green | ...
+                            if svar_name.trim() == "ChooseColor" && svar_body.contains("Exclude$") {
+                                for param in svar_body.split('|') {
+                                    let param = param.trim();
+                                    if let Some((key, excluded)) = param.split_once('$') {
+                                        if key.trim() == "Exclude" {
+                                            // Parse excluded colors (comma-separated)
+                                            for color_str in excluded.split(',') {
+                                                match color_str.trim().to_lowercase().as_str() {
+                                                    "white" => etb_exclude_colors.push(Color::White),
+                                                    "blue" => etb_exclude_colors.push(Color::Blue),
+                                                    "black" => etb_exclude_colors.push(Color::Black),
+                                                    "red" => etb_exclude_colors.push(Color::Red),
+                                                    "green" => etb_exclude_colors.push(Color::Green),
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Replacement effects (R: lines)
+                    // Check for ETB tapped replacement: "ReplaceWith$ ETBTapped"
+                    "R" => {
+                        if value.contains("ReplaceWith$ ETBTapped") {
+                            enters_tapped = true;
                         }
                     }
                     _ => {} // Ignore other fields for now
@@ -195,6 +232,9 @@ impl CardLoader {
             raw_abilities,
             raw_keywords,
             svars,
+            enters_tapped,
+            etb_choose_color,
+            etb_exclude_colors,
         })
     }
 }
@@ -218,6 +258,14 @@ pub struct CardDefinition {
     /// Script variables (SVar:NAME:...) for SubAbility chaining and other references
     /// Key: SVar name, Value: SVar body (DB$, AB$, etc.)
     pub svars: std::collections::HashMap<String, String>,
+    /// Does this card enter the battlefield tapped?
+    /// Derived from R: lines containing "ReplaceWith$ ETBTapped"
+    pub enters_tapped: bool,
+    /// Does this card require choosing a color when it enters the battlefield?
+    /// Derived from K:ETBReplacement:Other:ChooseColor
+    pub etb_choose_color: bool,
+    /// Colors to exclude from the choice (from SVar:ChooseColor Exclude$ parameter)
+    pub etb_exclude_colors: Vec<Color>,
 }
 
 impl CardDefinition {
@@ -270,6 +318,9 @@ impl CardDefinition {
         card.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
         card.cache.update_from_types(&card.types);
         card.cache.update_from_subtypes(&card.subtypes, card.name.as_str());
+        card.cache.enters_tapped = self.enters_tapped;
+        card.cache.etb_choose_color = self.etb_choose_color;
+        card.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
 
         // Parse keywords
         card.keywords = self.parse_keywords();
@@ -306,6 +357,7 @@ impl CardDefinition {
                     vec![Effect::AddMana {
                         player: PlayerId::new(0),
                         mana,
+                        produces_chosen_color: false,
                     }],
                     "Add {W}".to_string(),
                     true,
@@ -319,6 +371,7 @@ impl CardDefinition {
                     vec![Effect::AddMana {
                         player: PlayerId::new(0),
                         mana,
+                        produces_chosen_color: false,
                     }],
                     "Add {U}".to_string(),
                     true,
@@ -332,6 +385,7 @@ impl CardDefinition {
                     vec![Effect::AddMana {
                         player: PlayerId::new(0),
                         mana,
+                        produces_chosen_color: false,
                     }],
                     "Add {B}".to_string(),
                     true,
@@ -345,6 +399,7 @@ impl CardDefinition {
                     vec![Effect::AddMana {
                         player: PlayerId::new(0),
                         mana,
+                        produces_chosen_color: false,
                     }],
                     "Add {R}".to_string(),
                     true,
@@ -358,6 +413,7 @@ impl CardDefinition {
                     vec![Effect::AddMana {
                         player: PlayerId::new(0),
                         mana,
+                        produces_chosen_color: false,
                     }],
                     "Add {G}".to_string(),
                     true,
@@ -1472,6 +1528,7 @@ impl CardDefinition {
                                             effects.push(Effect::AddMana {
                                                 player: PlayerId::new(0), // Placeholder, resolved at trigger time
                                                 mana,
+                                                produces_chosen_color: false,
                                             });
                                         }
                                     }

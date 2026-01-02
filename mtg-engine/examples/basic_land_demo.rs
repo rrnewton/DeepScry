@@ -112,12 +112,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for effect in &ability.effects {
             // Fix placeholder player ID
             let fixed_effect = match effect {
-                mtg_forge_rs::core::Effect::AddMana { player, mana } if player.as_u32() == 0 => {
-                    mtg_forge_rs::core::Effect::AddMana {
-                        player: alice_id,
-                        mana: *mana,
-                    }
-                }
+                mtg_forge_rs::core::Effect::AddMana {
+                    player,
+                    mana,
+                    produces_chosen_color,
+                } if player.as_u32() == 0 => mtg_forge_rs::core::Effect::AddMana {
+                    player: alice_id,
+                    mana: *mana,
+                    produces_chosen_color: *produces_chosen_color,
+                },
                 _ => effect.clone(),
             };
 

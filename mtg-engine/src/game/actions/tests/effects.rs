@@ -979,6 +979,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: crate::core::PlayerId::new(0), // Placeholder
                 mana,
+                produces_chosen_color: false,
             }],
             "When CARDNAME dies, add {C}{C}{C}{C}.".to_string(),
         ));

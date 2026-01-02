@@ -4562,6 +4562,7 @@ mod tests {
                     green: 1,
                     ..Default::default()
                 },
+                produces_chosen_color: false,
             }],
             "{T}: Add {G}".to_string(),
             true, // is_mana_ability
@@ -4586,6 +4587,7 @@ mod tests {
                     green: 1,
                     ..Default::default()
                 },
+                produces_chosen_color: false,
             }],
             "{T}: Add {G}".to_string(),
             true, // is_mana_ability
@@ -4605,6 +4607,7 @@ mod tests {
                     colorless: 1,
                     ..Default::default()
                 },
+                produces_chosen_color: false,
             }],
             "{T}: Add {C}".to_string(),
             true, // is_mana_ability

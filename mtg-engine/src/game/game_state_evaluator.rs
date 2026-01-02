@@ -607,6 +607,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: player_id,
                 mana: green_mana,
+                produces_chosen_color: false,
             }],
             "T: Add G".to_string(),
             true, // is_mana_ability
@@ -628,6 +629,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: player_id,
                 mana: white_mana,
+                produces_chosen_color: false,
             }],
             "T: Add W".to_string(),
             true,
@@ -640,6 +642,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: player_id,
                 mana: blue_mana,
+                produces_chosen_color: false,
             }],
             "T: Add U".to_string(),
             true,
@@ -664,6 +667,7 @@ mod tests {
             vec![Effect::AddMana {
                 player: player_id,
                 mana: colorless,
+                produces_chosen_color: false,
             }],
             "T: Add C".to_string(),
             true,

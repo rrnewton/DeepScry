@@ -164,7 +164,11 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Parse the produced mana into a ManaCost
             // Simple cases: G, W, U, B, R, C (single color)
             // Complex cases: "Combo W U" (choice), "Any" (any color), "C C" (multiple colorless)
+            // Special: "Chosen" means the card's chosen_color (for Thriving lands)
             use crate::core::ManaCost;
+
+            // Check if "Chosen" is present in the produced string
+            let produces_chosen_color = produced_str.contains("Chosen");
 
             let mana_cost = if produced_str == "Any" {
                 // Any color - for now, default to colorless
@@ -174,6 +178,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 // Combo means choice between colors (e.g., "Combo B G" = {B} or {G})
                 // Parse all listed colors and return them as a ManaCost with all colors set to 1
                 // The cache will detect this as ManaProductionKind::Choice
+                // "Chosen" is handled separately via produces_chosen_color flag
                 let colors = produced_str.strip_prefix("Combo").unwrap_or("").trim();
                 let mut mana = ManaCost::default();
                 for color in colors.split_whitespace() {
@@ -184,6 +189,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                         "R" => mana.red = 1,
                         "G" => mana.green = 1,
                         "C" => mana.colorless = 1,
+                        "Chosen" => {} // Handled by produces_chosen_color flag
                         _ => {}
                     }
                 }
@@ -202,6 +208,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::AddMana {
                 player: PlayerId::new(0), // Placeholder - filled in when activated
                 mana: final_mana,
+                produces_chosen_color,
             })
         }
 
@@ -510,7 +517,7 @@ mod tests {
         let effect = params_to_effect(&params).unwrap();
 
         match effect {
-            Effect::AddMana { player: _, mana } => {
+            Effect::AddMana { player: _, mana, .. } => {
                 // Verify the mana cost represents {G}
                 assert_eq!(mana.green, 1);
                 assert_eq!(mana.colorless, 0);
@@ -526,7 +533,7 @@ mod tests {
         let effect = params_to_effect(&params).unwrap();
 
         match effect {
-            Effect::AddMana { player: _, mana } => {
+            Effect::AddMana { player: _, mana, .. } => {
                 assert_eq!(mana.colorless, 2);
             }
             _ => panic!("Expected AddMana effect"),
