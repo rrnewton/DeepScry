@@ -1417,7 +1417,8 @@ impl GameState {
                         target: TargetRef::None,
                         amount,
                     } => {
-                        // Find a valid target (opponent's creature)
+                        // Find a valid target: prefer opponent's creature, else opponent player
+                        // This handles "any target" effects like Mongoose Lizard's ETB
                         let controller = self.cards.get(trigger_source)?.controller;
                         if let Some(target_id) = self
                             .battlefield
@@ -1439,6 +1440,19 @@ impl GameState {
                                 target: TargetRef::Permanent(target_id),
                                 amount: *amount,
                             };
+                        } else {
+                            // No valid creature target found - target opponent player instead
+                            // This is correct for "any target" effects (ValidTgts$ Any)
+                            // In a 2-player game, the opponent is the other player
+                            let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
+                            if let Some(opponent_id) = opponent {
+                                effect = Effect::DealDamage {
+                                    target: TargetRef::Player(opponent_id),
+                                    amount: *amount,
+                                };
+                            }
+                            // If somehow no opponent found (shouldn't happen), effect stays TargetRef::None
+                            // and will fizzle when executed
                         }
                     }
                     Effect::GainLife { player, amount } if player.as_u32() == 0 => {
