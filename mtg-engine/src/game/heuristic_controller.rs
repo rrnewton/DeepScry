@@ -3626,18 +3626,8 @@ impl PlayerController for HeuristicController {
             // Find the index of the chosen spell in the available list
             let ability_index = available.iter().position(|a| a == spell).unwrap_or(0);
 
-            // Format the choice description
-            let choice_description = match spell {
-                SpellAbility::PlayLand { card_id } => {
-                    format!("Play land: {}", view.card_name(*card_id).unwrap_or_default())
-                }
-                SpellAbility::CastSpell { card_id } => {
-                    format!("Cast spell: {}", view.card_name(*card_id).unwrap_or_default())
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    format!("Activate ability: {}", view.card_name(*card_id).unwrap_or_default())
-                }
-            };
+            // Format the choice description using shared formatter
+            let choice_description = crate::game::controller::format_spell_ability_choice(view, spell);
 
             view.logger().controller_choice(
                 "HEURISTIC",

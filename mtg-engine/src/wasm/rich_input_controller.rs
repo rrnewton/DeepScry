@@ -223,20 +223,11 @@ impl PlayerController for WasmRichInputController {
                     self.input_requested = true;
                     // Format available actions for display
                     let formatted: Vec<String> = std::iter::once("Pass (do nothing)".to_string())
-                        .chain(available.iter().map(|ability| match ability {
-                            SpellAbility::PlayLand { card_id } => {
-                                let name = view.card_name(*card_id).unwrap_or_else(|| "Unknown".to_string());
-                                format!("Play land: {}", name)
-                            }
-                            SpellAbility::CastSpell { card_id } => {
-                                let name = view.card_name(*card_id).unwrap_or_else(|| "Unknown".to_string());
-                                format!("Cast: {}", name)
-                            }
-                            SpellAbility::ActivateAbility { card_id, .. } => {
-                                let name = view.card_name(*card_id).unwrap_or_else(|| "Unknown".to_string());
-                                format!("Activate: {}", name)
-                            }
-                        }))
+                        .chain(
+                            available
+                                .iter()
+                                .map(|ability| crate::game::controller::format_spell_ability_choice(view, ability)),
+                        )
                         .collect();
 
                     return ChoiceResult::NeedInput(ChoiceContext::SpellAbility {

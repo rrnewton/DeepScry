@@ -8,8 +8,9 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{
-    format_card_choices, format_spell_ability_choices, format_target_choices, prompt_mana_source, prompt_spell_ability,
-    prompt_target, sort_spell_abilities, ChoiceResult, GameStateView, PlayerController, PROMPT_ATTACKERS,
+    format_card_choices, format_spell_ability_choice, format_spell_ability_choices, format_target_choices,
+    prompt_mana_source, prompt_spell_ability, prompt_target, sort_spell_abilities, ChoiceResult, GameStateView,
+    PlayerController, PROMPT_ATTACKERS,
 };
 use crate::game::fancy_tui_renderer::{BattlefieldEntity, ChoiceContext, FancyTuiRenderer, FocusedPane};
 use crossterm::{
@@ -860,14 +861,7 @@ impl PlayerController for FancyTuiController {
 
         // Set choice context and valid choices for highlighting
         self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
-        self.renderer.state.valid_choices = sorted
-            .iter()
-            .map(|ability| match ability {
-                SpellAbility::PlayLand { card_id } => *card_id,
-                SpellAbility::CastSpell { card_id } => *card_id,
-                SpellAbility::ActivateAbility { card_id, .. } => *card_id,
-            })
-            .collect();
+        self.renderer.state.valid_choices = sorted.iter().map(SpellAbility::card_id).collect();
 
         let player_name = view.player_name();
         let prompt = prompt_spell_ability(&player_name);
@@ -891,20 +885,7 @@ impl PlayerController for FancyTuiController {
 
                 // Log the choice
                 if let Some(ability) = &result {
-                    let choice_description = match ability {
-                        SpellAbility::PlayLand { card_id } => {
-                            let name = view.card_name(*card_id).unwrap_or_default();
-                            format!("play land: {}", name)
-                        }
-                        SpellAbility::CastSpell { card_id } => {
-                            let name = view.card_name(*card_id).unwrap_or_default();
-                            format!("cast spell: {}", name)
-                        }
-                        SpellAbility::ActivateAbility { card_id, .. } => {
-                            let name = view.card_name(*card_id).unwrap_or_default();
-                            format!("activate: {}", name)
-                        }
-                    };
+                    let choice_description = format_spell_ability_choice(view, ability);
                     view.logger()
                         .controller_choice("TUI", &format!("{} chose {}", player_name, choice_description));
                 } else {

@@ -61,6 +61,17 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
                 let name = view.card_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] activate {}\n", display_idx, name));
             }
+            SpellAbility::CastFromExile {
+                card_id,
+                alternative_cost,
+                ..
+            } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!(
+                    "  [{}] Cast from exile: {} (for {})\n",
+                    display_idx, name, alternative_cost
+                ));
+            }
         }
     }
 
@@ -228,12 +239,13 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
 /// Get sort key for a SpellAbility
 ///
 /// Returns a number used for canonical ordering:
-/// 0 = PlayLand, 1 = CastSpell, 2 = ActivateAbility
+/// 0 = PlayLand, 1 = CastSpell, 2 = CastFromExile, 3 = ActivateAbility
 fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
     match ability {
         SpellAbility::PlayLand { .. } => 0,
         SpellAbility::CastSpell { .. } => 1,
-        SpellAbility::ActivateAbility { .. } => 2,
+        SpellAbility::CastFromExile { .. } => 2,
+        SpellAbility::ActivateAbility { .. } => 3,
     }
 }
 
@@ -268,6 +280,14 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
         SpellAbility::ActivateAbility { card_id, .. } => {
             let name = view.card_name(*card_id).unwrap_or_default();
             format!("activate {}", name)
+        }
+        SpellAbility::CastFromExile {
+            card_id,
+            alternative_cost,
+            ..
+        } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("Cast from exile: {} (for {})", name, alternative_cost)
         }
     }
 }

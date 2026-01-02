@@ -392,20 +392,8 @@ impl PlayerController for InteractiveController {
             println!("\nAvailable actions:");
             println!("  [0] Pass");
             for (idx, ability) in sorted.iter().enumerate() {
-                match ability {
-                    SpellAbility::PlayLand { card_id } => {
-                        let name = view.card_name(*card_id).unwrap_or_default();
-                        println!("  [{}] Play {}", idx + 1, name);
-                    }
-                    SpellAbility::CastSpell { card_id } => {
-                        let name = view.card_name(*card_id).unwrap_or_default();
-                        println!("  [{}] Cast {}", idx + 1, name);
-                    }
-                    SpellAbility::ActivateAbility { card_id, .. } => {
-                        let name = view.card_name(*card_id).unwrap_or_default();
-                        println!("  [{}] Activate {}", idx + 1, name);
-                    }
-                }
+                let desc = crate::game::controller::format_spell_ability_choice(view, ability);
+                println!("  [{}] {}", idx + 1, desc);
             }
 
             let choice_opt = self.get_user_choice_with_view(
@@ -435,26 +423,10 @@ impl PlayerController for InteractiveController {
 
             // Acknowledge the chosen action
             let ability = &sorted[choice - 1];
-            match ability {
-                SpellAbility::PlayLand { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    println!("Playing land: {}", name);
-                    view.logger()
-                        .controller_choice("TUI", &format!("{} chose play land: {}", player_name, name));
-                }
-                SpellAbility::CastSpell { card_id } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    println!("Casting spell: {}", name);
-                    view.logger()
-                        .controller_choice("TUI", &format!("{} chose cast spell: {}", player_name, name));
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    let name = view.card_name(*card_id).unwrap_or_default();
-                    println!("Activating ability: {}", name);
-                    view.logger()
-                        .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
-                }
-            }
+            let desc = crate::game::controller::format_spell_ability_choice(view, ability);
+            println!("{}", desc);
+            view.logger()
+                .controller_choice("TUI", &format!("{} chose {}", player_name, desc));
 
             ChoiceResult::Ok(Some(sorted[choice - 1].clone()))
         } else {
@@ -509,26 +481,10 @@ impl PlayerController for InteractiveController {
                     // This is a rich command attempt
                     if let Some(ability) = rich_result {
                         // Found matching ability
-                        match &ability {
-                            SpellAbility::PlayLand { card_id } => {
-                                let name = view.card_name(*card_id).unwrap_or_default();
-                                println!("  {} played land: {}", player_name, name);
-                                view.logger()
-                                    .controller_choice("TUI", &format!("{} chose play land: {}", player_name, name));
-                            }
-                            SpellAbility::CastSpell { card_id } => {
-                                let name = view.card_name(*card_id).unwrap_or_default();
-                                println!("  {} cast spell: {}", player_name, name);
-                                view.logger()
-                                    .controller_choice("TUI", &format!("{} chose cast spell: {}", player_name, name));
-                            }
-                            SpellAbility::ActivateAbility { card_id, .. } => {
-                                let name = view.card_name(*card_id).unwrap_or_default();
-                                println!("  {} activated ability: {}", player_name, name);
-                                view.logger()
-                                    .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
-                            }
-                        }
+                        let desc = crate::game::controller::format_spell_ability_choice(view, &ability);
+                        println!("  {} chose {}", player_name, desc);
+                        view.logger()
+                            .controller_choice("TUI", &format!("{} chose {}", player_name, desc));
                         return ChoiceResult::Ok(Some(ability));
                     } else if trimmed == "p" || trimmed == "pass" {
                         // Explicit pass command
@@ -558,26 +514,10 @@ impl PlayerController for InteractiveController {
                         let action_index = choice - 1;
 
                         // Acknowledge the chosen action
-                        match &sorted[action_index] {
-                            SpellAbility::PlayLand { card_id } => {
-                                let name = view.card_name(*card_id).unwrap_or_default();
-                                println!("  {} played land: {}", player_name, name);
-                                view.logger()
-                                    .controller_choice("TUI", &format!("{} chose play land: {}", player_name, name));
-                            }
-                            SpellAbility::CastSpell { card_id } => {
-                                let name = view.card_name(*card_id).unwrap_or_default();
-                                println!("  {} cast spell: {}", player_name, name);
-                                view.logger()
-                                    .controller_choice("TUI", &format!("{} chose cast spell: {}", player_name, name));
-                            }
-                            SpellAbility::ActivateAbility { card_id, .. } => {
-                                let name = view.card_name(*card_id).unwrap_or_default();
-                                println!("  {} activated ability: {}", player_name, name);
-                                view.logger()
-                                    .controller_choice("TUI", &format!("{} chose activate: {}", player_name, name));
-                            }
-                        }
+                        let desc = crate::game::controller::format_spell_ability_choice(view, &sorted[action_index]);
+                        println!("  {} chose {}", player_name, desc);
+                        view.logger()
+                            .controller_choice("TUI", &format!("{} chose {}", player_name, desc));
                         return ChoiceResult::Ok(Some(sorted[action_index].clone()));
                     }
                     _ => {

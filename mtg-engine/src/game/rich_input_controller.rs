@@ -176,17 +176,7 @@ impl PlayerController for RichInputController {
                         command,
                         available
                             .iter()
-                            .filter_map(|a| match a {
-                                SpellAbility::PlayLand { card_id } => {
-                                    view.card_name(*card_id).map(|n| format!("play {}", n))
-                                }
-                                SpellAbility::CastSpell { card_id } => {
-                                    view.card_name(*card_id).map(|n| format!("cast {}", n))
-                                }
-                                SpellAbility::ActivateAbility { card_id, .. } => {
-                                    view.card_name(*card_id).map(|n| format!("activate {}", n))
-                                }
-                            })
+                            .map(|a| crate::game::controller::format_spell_ability_choice(view, a))
                             .collect::<Vec<_>>()
                     ))
                 }

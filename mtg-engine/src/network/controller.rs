@@ -294,6 +294,14 @@ impl NetworkController {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 format!("Activate: {} (ability {})", name, ability_index)
             }
+            SpellAbility::CastFromExile {
+                card_id,
+                alternative_cost,
+                ..
+            } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                format!("Cast from exile: {} (for {})", name, alternative_cost)
+            }
         }
     }
 

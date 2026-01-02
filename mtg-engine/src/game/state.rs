@@ -335,6 +335,16 @@ impl GameState {
             .map(|(_, zones)| zones)
     }
 
+    /// Check if a card is in any player's exile zone
+    ///
+    /// Used by persistent effects like Airbend to verify a card is still exiled
+    /// before allowing it to be cast.
+    pub fn is_card_in_exile(&self, card_id: CardId) -> bool {
+        self.player_zones
+            .iter()
+            .any(|(_, zones)| zones.exile.cards.contains(&card_id))
+    }
+
     /// Get mana source cache for a specific player
     pub fn get_mana_cache(&self, player_id: PlayerId) -> Option<&ManaSourceCache> {
         self.mana_caches

@@ -179,14 +179,7 @@ impl PlayerController for FancyFixedController {
     ) -> ChoiceResult<Option<SpellAbility>> {
         // Set up renderer state for screenshot
         self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
-        self.renderer.state.valid_choices = available
-            .iter()
-            .map(|ability| match ability {
-                SpellAbility::PlayLand { card_id } => *card_id,
-                SpellAbility::CastSpell { card_id } => *card_id,
-                SpellAbility::ActivateAbility { card_id, .. } => *card_id,
-            })
-            .collect();
+        self.renderer.state.valid_choices = available.iter().map(SpellAbility::card_id).collect();
 
         let player_name = view.player_name();
         let prompt = format!("Priority {}: Choose action", player_name);
@@ -204,6 +197,14 @@ impl PlayerController for FancyFixedController {
                 SpellAbility::ActivateAbility { card_id, .. } => {
                     let name = view.card_name(*card_id).unwrap_or_default();
                     format!("Activate: {}", name)
+                }
+                SpellAbility::CastFromExile {
+                    card_id,
+                    alternative_cost,
+                    ..
+                } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("Cast from exile: {} (for {})", name, alternative_cost)
                 }
             }))
             .collect();

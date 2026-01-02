@@ -89,18 +89,8 @@ impl PlayerController for RandomController {
 
         // Only format expensive log strings if logging is actually active
         if view.logger().is_choice_logging_active() {
-            let choice_description = match &available[ability_index] {
-                SpellAbility::PlayLand { card_id } => {
-                    format!("Play land: {}", view.card_name(*card_id).unwrap_or_default())
-                }
-                SpellAbility::CastSpell { card_id } => {
-                    format!("Cast spell: {}", view.card_name(*card_id).unwrap_or_default())
-                }
-                SpellAbility::ActivateAbility { card_id, .. } => {
-                    format!("Activate ability: {}", view.card_name(*card_id).unwrap_or_default())
-                }
-            };
-
+            let choice_description =
+                crate::game::controller::format_spell_ability_choice(view, &available[ability_index]);
             let player_name = view.player_name();
             view.logger().controller_choice(
                 "RANDOM",

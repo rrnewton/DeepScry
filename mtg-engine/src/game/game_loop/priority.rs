@@ -932,6 +932,86 @@ impl<'a> GameLoop<'a> {
                                     eprintln!("  Ability not found");
                                 }
                             }
+                            crate::core::SpellAbility::CastFromExile {
+                                card_id,
+                                alternative_cost,
+                                effect_id,
+                            } => {
+                                // Cast from exile using alternative cost (Airbend, Suspend, etc.)
+                                // Similar to CastSpell but card comes from exile instead of hand
+
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let message = format!(
+                                        "{} casts {} from exile for {} (was airbended)",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                        alternative_cost
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                // Move card from exile to stack
+                                // First, find which player's exile zone has this card
+                                let owner = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.owner)
+                                    .unwrap_or(current_priority);
+
+                                if let Err(e) = self.game.move_card(
+                                    card_id,
+                                    crate::zones::Zone::Exile,
+                                    crate::zones::Zone::Stack,
+                                    owner,
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.normal(&format!("Error moving from exile: {e}"));
+                                    }
+                                    consecutive_passes += 1;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    continue;
+                                }
+
+                                // Pay the alternative cost (not the card's mana cost)
+                                self.mana_engine.update_mut(self.game, current_priority);
+                                use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+                                let mana_sources = self.mana_engine.all_sources();
+                                let resolver = GreedyManaResolver::new();
+                                let mut sources_to_tap = Vec::new();
+                                resolver.compute_tap_order(&alternative_cost, mana_sources, &mut sources_to_tap);
+
+                                let mut remaining_hint = alternative_cost;
+                                for &source_id in &sources_to_tap {
+                                    if let Err(e) =
+                                        self.game
+                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
+                                    {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            self.game.logger.normal(&format!("Failed to tap: {e}"));
+                                        }
+                                    }
+                                    // Deduct from remaining hint (simplified - assume 1 generic each)
+                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                                }
+
+                                // Remove the persistent effect that granted this cast permission
+                                self.game.persistent_effects.remove(effect_id);
+
+                                // Spell is now on the stack - will resolve when both players pass
+                            }
                         }
 
                         // After taking an action, switch priority to other player

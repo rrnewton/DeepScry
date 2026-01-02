@@ -1405,13 +1405,8 @@ async fn handle_player_websocket(
                     // for the opponent's hand
                     if let Some(ref ability) = info.spell_ability {
                         // Extract card_id from the ability
-                        let card_id = match ability {
-                            SpellAbility::PlayLand { card_id } => Some(*card_id),
-                            SpellAbility::CastSpell { card_id } => Some(*card_id),
-                            SpellAbility::ActivateAbility { card_id, .. } => Some(*card_id),
-                        };
-
-                        if let Some(card_id) = card_id {
+                        let card_id = ability.card_id();
+                        {
                             let game_guard = game.lock().await;
                             if let Some(card) = game_guard.cards.try_get(card_id) {
                                 // Build type line from types and subtypes

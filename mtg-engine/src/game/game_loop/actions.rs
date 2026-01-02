@@ -187,6 +187,71 @@ impl<'a> GameLoop<'a> {
         }
     }
 
+    /// Push castable spells from exile (via MayPlayFromExile persistent effects)
+    ///
+    /// Checks persistent effects like Airbend that grant permission to cast
+    /// exiled cards for an alternative cost.
+    fn push_castable_from_exile(&mut self, player_id: PlayerId) {
+        use crate::core::{PersistentEffectKind, SpellAbility};
+
+        // Update the mana engine for this player
+        self.mana_engine.update_mut(self.game, player_id);
+
+        // Get the player's mana pool for checking floating mana
+        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+
+        // Check if this is the active player (only active player can cast sorceries)
+        let is_active_player = self.game.turn.active_player == player_id;
+
+        // Check if it's sorcery speed (Main1 or Main2)
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+
+        // Check if stack is empty (required for sorcery-speed spells)
+        let stack_is_empty = self.game.stack.is_empty();
+
+        // Iterate through all persistent effects looking for MayPlayFromExile
+        for effect in self.game.persistent_effects.all() {
+            if let PersistentEffectKind::MayPlayFromExile {
+                tracked_card,
+                alternative_cost,
+                owner,
+            } = &effect.kind
+            {
+                // Only the card's owner can cast it
+                if *owner != player_id {
+                    continue;
+                }
+
+                // Get the card from exile
+                if let Some(card) = self.game.cards.try_get(*tracked_card) {
+                    // Verify card is actually in exile
+                    // (effect cleanup should handle this, but double-check)
+                    if !self.game.is_card_in_exile(*tracked_card) {
+                        continue;
+                    }
+
+                    // Check timing restrictions
+                    let can_cast_now = if card.is_instant() {
+                        true
+                    } else {
+                        is_sorcery_speed && is_active_player && stack_is_empty
+                    };
+
+                    if can_cast_now {
+                        // Check if we can pay the alternative cost
+                        if self.mana_engine.can_pay_with_pool(alternative_cost, &mana_pool) {
+                            self.abilities_buffer.push(SpellAbility::CastFromExile {
+                                card_id: *tracked_card,
+                                alternative_cost: *alternative_cost,
+                                effect_id: effect.id,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Push activatable abilities directly to abilities_buffer
     ///
     /// Zero allocation - pushes SpellAbility::ActivateAbility directly to the buffer
@@ -341,6 +406,9 @@ impl<'a> GameLoop<'a> {
         // Add castable spells (pushes directly to abilities_buffer)
         self.push_castable_spells(player_id);
 
+        // Add castable spells from exile (Airbend, Suspend, etc.)
+        self.push_castable_from_exile(player_id);
+
         // Add activated abilities (pushes directly to abilities_buffer)
         self.push_activatable_abilities(player_id);
 
@@ -348,11 +416,7 @@ impl<'a> GameLoop<'a> {
         // This is critical for snapshot/resume: if two runs have the same cards available
         // but in different hand order, we need to present them in the same order so that
         // index-based choice replay (FixedScriptController) selects the same logical card
-        self.abilities_buffer.sort_by_key(|ability| match ability {
-            SpellAbility::PlayLand { card_id } => *card_id,
-            SpellAbility::CastSpell { card_id } => *card_id,
-            SpellAbility::ActivateAbility { card_id, .. } => *card_id,
-        });
+        self.abilities_buffer.sort_by_key(SpellAbility::card_id);
 
         // Return a borrowed slice - buffer is reused across calls
         &self.abilities_buffer

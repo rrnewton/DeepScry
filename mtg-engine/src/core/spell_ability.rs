@@ -4,10 +4,11 @@
 //! - Playing a land
 //! - Casting a spell
 //! - Activating an ability
+//! - Casting from exile with an alternative cost (Airbend, Suspend, etc.)
 //!
 //! This matches the Java Forge SpellAbility hierarchy.
 
-use crate::core::CardId;
+use crate::core::{CardId, ManaCost, PersistentEffectId};
 
 /// A playable ability that can be chosen by a controller
 ///
@@ -43,6 +44,24 @@ pub enum SpellAbility {
     ///
     /// The ability_index distinguishes multiple abilities on the same card.
     ActivateAbility { card_id: CardId, ability_index: usize },
+
+    /// Cast a spell from exile with an alternative cost
+    ///
+    /// Used by Airbend, Suspend, and similar effects that allow casting
+    /// from exile with a different mana cost than printed.
+    ///
+    /// When this resolves:
+    /// 1. Pay the alternative_cost instead of the card's mana cost
+    /// 2. The card moves from exile to the stack
+    /// 3. Resolution proceeds normally
+    /// 4. The associated PersistentEffect is cleaned up
+    CastFromExile {
+        card_id: CardId,
+        /// The alternative cost to pay (e.g., {2} for Airbend)
+        alternative_cost: ManaCost,
+        /// The persistent effect that grants this cast permission
+        effect_id: PersistentEffectId,
+    },
 }
 
 impl SpellAbility {
@@ -52,6 +71,7 @@ impl SpellAbility {
             SpellAbility::PlayLand { card_id } => *card_id,
             SpellAbility::CastSpell { card_id } => *card_id,
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
+            SpellAbility::CastFromExile { card_id, .. } => *card_id,
         }
     }
 
@@ -60,9 +80,17 @@ impl SpellAbility {
         matches!(self, SpellAbility::PlayLand { .. })
     }
 
-    /// Check if this is a spell
+    /// Check if this is a spell (includes casting from exile)
     pub fn is_spell(&self) -> bool {
-        matches!(self, SpellAbility::CastSpell { .. })
+        matches!(
+            self,
+            SpellAbility::CastSpell { .. } | SpellAbility::CastFromExile { .. }
+        )
+    }
+
+    /// Check if this is casting from exile with an alternative cost
+    pub fn is_cast_from_exile(&self) -> bool {
+        matches!(self, SpellAbility::CastFromExile { .. })
     }
 
     /// Check if this is an activated ability
