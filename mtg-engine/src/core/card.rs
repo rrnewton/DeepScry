@@ -223,21 +223,26 @@ impl CardCache {
 
         // Fallback: check card name for basic lands without explicit subtypes
         // This handles test cards and basic lands that may lack subtype metadata
-        let name_lower = card_name.to_lowercase();
-        if !self.has_plains_subtype && name_lower.contains("plains") {
-            self.has_plains_subtype = true;
-        }
-        if !self.has_island_subtype && name_lower.contains("island") {
-            self.has_island_subtype = true;
-        }
-        if !self.has_swamp_subtype && name_lower.contains("swamp") {
-            self.has_swamp_subtype = true;
-        }
-        if !self.has_mountain_subtype && name_lower.contains("mountain") {
-            self.has_mountain_subtype = true;
-        }
-        if !self.has_forest_subtype && name_lower.contains("forest") {
-            self.has_forest_subtype = true;
+        //
+        // IMPORTANT: Only apply this for Land cards to avoid false positives like
+        // "Foggy Swamp Vinebender" (Creature with "Swamp" in name but not a land)
+        if self.is_land {
+            let name_lower = card_name.to_lowercase();
+            if !self.has_plains_subtype && name_lower.contains("plains") {
+                self.has_plains_subtype = true;
+            }
+            if !self.has_island_subtype && name_lower.contains("island") {
+                self.has_island_subtype = true;
+            }
+            if !self.has_swamp_subtype && name_lower.contains("swamp") {
+                self.has_swamp_subtype = true;
+            }
+            if !self.has_mountain_subtype && name_lower.contains("mountain") {
+                self.has_mountain_subtype = true;
+            }
+            if !self.has_forest_subtype && name_lower.contains("forest") {
+                self.has_forest_subtype = true;
+            }
         }
     }
 
@@ -277,7 +282,9 @@ impl CardCache {
         }
 
         // Final fallback for test cards (e.g., Card::new(..., "Mountain", ...) without subtypes)
-        if !self.mana_production.produces_mana() {
+        // IMPORTANT: Only apply for Land cards to avoid false positives like
+        // "Foggy Swamp Vinebender" (Creature with "Swamp" in name but not a land)
+        if !self.mana_production.produces_mana() && self.is_land {
             self.mana_production = Self::derive_mana_production_from_name(name);
         }
 
