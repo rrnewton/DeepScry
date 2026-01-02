@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-02T19:37:20.638815407+00:00
+updated_at: 2026-01-02T20:06:08.227468534+00:00
 ---
 
 # Description
@@ -21,6 +21,7 @@ Track user-facing gameplay features and interaction improvements.
 - mtg-28: Better formatting and colors in output
 - mtg-29: Game state visualization improvements
 - mtg-p9svf: Agentplay CLI turn sequence and display bugs (HIGH - blocks usability)
+- mtg-el58f: Combat attack action not available during Declare Attackers phase (CRITICAL - blocks combat testing)
 
 **Advanced gameplay mechanics:**
 - mtg-30: Stack interaction (responding to spells at instant speed)
