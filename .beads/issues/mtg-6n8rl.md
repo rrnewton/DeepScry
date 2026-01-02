@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-01-02T04:51:41.304506805+00:00
-updated_at: 2026-01-02T05:33:16.005738281+00:00
+updated_at: 2026-01-02T13:06:48.751082080+00:00
 ---
 
 # Description
@@ -22,60 +22,18 @@ Track implementation of Avatar set-specific mechanics for full booster draft sup
 - Foggy Swamp Vinebender: `Cost$ Waterbend<5>` - put +1/+1 counter ✓ WORKING
 - Flexible Waterbender: `Cost$ Waterbend<3>` - uses AB$ Animate ✓ WORKING
 
-**Implementation Status (2026-01-02_#1435):**
+**Implementation Status (2026-01-02_#1447):**
 - [x] Parse `Waterbend<X>` as a cost type in Cost::parse()
 - [x] Add Cost::Waterbend { amount: u8 } variant
 - [x] Add PutCounter effect conversion in effect_converter.rs
 - [x] Self-targeting for PutCounter abilities (Defined$ Self)
 - [x] Full Convoke-like payment: tap creatures/artifacts to pay {1} each
-- [x] AB$ Animate effect (set base P/T until end of turn)
+- [x] AB$ Animate effect (set base P/T until end of turn) - MERGED
 - [x] Effect::SetBasePowerToughness - sets temp_base_power/temp_base_toughness
 - [x] Cleanup at end of turn (cleared in cleanup_temporary_effects)
 
-### AB$ Animate Effect - DEFERRED (2026-01-02_#1433)
-
-**Benchmark Impact Analysis:**
-
-The Animate effect implementation (commit 5ba51ab on avatar branch) was tested during
-cherry-pick bisection and found to dramatically change benchmark metrics:
-
-| Metric           | Before Animate | After Animate | Change  |
-|------------------|----------------|---------------|---------|
-| Actions/game     | 604            | 1,639         | +171%   |
-| Actions/turn     | 28             | 77            | +175%   |
-| P1 win rate      | 87%            | 56%           | -31pts  |
-| Games/sec        | ~7,500         | ~1,700        | -77%    |
-
-**Root Cause: Mishra's Factory**
-
-The robots benchmark deck (`03_robots_jesseisbak.dck`) contains 4x Mishra's Factory,
-a creature-land with `AB$ Animate | Cost$ 1 | ... | Power$ 2 | Toughness$ 2`.
-
-Before the Animate commit: Mishra's Factory was just a colorless mana-only land
-(animate ability silently ignored).
-
-After the Animate commit: Mishra's Factory works correctly as a 2/2 creature-land,
-which dramatically changes gameplay:
-- AI can now animate factories for attacks/blocks
-- Games are more balanced (56%/44% vs 87%/13%)
-- Games take more actions to complete (creature-lands are powerful in MTG)
-
-**Decision: Defer Animate to Avoid Benchmark Churn**
-
-The Animate effect is working correctly - this is NOT a bug. However, to maintain
-benchmark stability and clear historical comparisons, the Animate commit was NOT
-cherry-picked into main. The current main branch has:
-
-- 7 of 16 avatar commits cherry-picked
-- Benchmark metrics match historical baseline (604 actions/game, 87% win rate)
-- Waterbend, PutCounter, mana fixes all working
-
-The Animate commit can be merged later when we're ready to update benchmark baselines.
-It's preserved in the avatar branch at commit 5ba51ab.
-
-Note: Waterbend cost payment now works correctly. Player can tap untapped creatures/artifacts
-to help pay the cost. Each tapped permanent pays for {1}. Any remaining cost must be paid
-with mana from the mana pool.
+Note: Waterbend cost payment works correctly. Animate effect merged with documented
+benchmark impact (see commit 0c4c69c for details on Mishra's Factory gameplay changes).
 
 ### Continuous Effects - WORKING
 
@@ -84,11 +42,20 @@ Verified working: `S:Mode$ Continuous | Affected$ Ally.Other+YouCtrl | AddPower$
 - Glider Kids shows 3/4 (instead of base 2/3) when WLR is on battlefield
 - Foggy Swamp Vinebender shows 5/4 (instead of base 4/3) when WLR is on battlefield
 
-### Airbend (Exile-recast effect) - NOT IMPLEMENTED
-- Format: `DB$ Airbend | ValidTgts$ Creature`
-- Effect: Exile target. While exiled, owner may cast it for {2} rather than mana cost.
+### Airbend (Exile-recast effect) - IN PROGRESS (tracked in mtg-cga7i)
 
-**Cards affected (not in current test decks):**
+See mtg-cga7i for detailed implementation status.
+
+Infrastructure completed:
+- [x] PersistentEffectStore - dedicated storage (NOT command zone like Java)
+- [x] Effect::Airbend variant, parser, converter
+- [x] Targeting and execution logic
+
+Still needed (see mtg-cga7i):
+- [ ] MayPlay from exile: allow casting exiled card for {2}
+- [ ] Cleanup triggers: remove effect when card leaves exile or is cast
+
+**Cards affected:**
 - Aang, the Last Airbender: ETB trigger airbends nonland permanent
 - Monk Gyatso: Triggered on targeting other creatures
 - Glider Staff: ETB airbend creature
@@ -107,48 +74,24 @@ Verified working: `S:Mode$ Continuous | Affected$ Ally.Other+YouCtrl | AddPower$
 - CharacteristicDefining power/toughness (mtg-20) - affects Suki's */4 power
 - DB$ Attach in ETB triggers (mtg-17) - affects Twin Blades auto-attach
 
-## Current Status
+## Current Status - NOT PLAYABLE
 
-Games run successfully with all avatar decks:
-- avatar_5c_allies.dck
-- booster_draft/avatar/ryan_avatar_draft.dck
-- booster_draft/avatar/gabriel_avatar_draft.dck
-- booster_draft/avatar/eric_avatar_draft.dck
+**IMPORTANT: Avatar decks are NOT fully playable.**
 
-All Waterbend abilities work:
-- Waterbend cost payment with Convoke-like tapping
-- PutCounter abilities (Foggy Swamp Vinebender)
-- Animate/SetBasePowerToughness abilities (Flexible Waterbender)
+Previous claims of "playable" status were incorrect. These decks are missing core mechanics:
 
-Continuous effects (Ally buffs) work correctly.
+1. **Airbend** (mtg-cga7i) - A fundamental mechanic for Air Nation cards
+2. **Token creation** (mtg-34) - Suki and other cards create Ally tokens
+3. **CharacteristicDefining P/T** (mtg-20) - Suki's power is undefined
 
-Remaining gaps: Airbend, auto-attach, tokens. Games are playable without these.
+Games may run without crashes, but the gameplay is NOT correct without these mechanics.
+A deck is only "playable" when ALL mechanics are implemented correctly.
 
 ### ETB Damage Triggers (ValidTgts$ Any) - FIXED (2026-01-02_#1437)
 
 Fixed issue where ETB triggers with `ValidTgts$ Any` (like Mongoose Lizard's "deals 1 damage
-to any target") would crash with "DealDamage effect requires a target" when no opponent
-creatures were on the battlefield.
-
-Now the trigger correctly targets the opponent player as a fallback when no valid creature
-targets exist. This matches MTG rules for "any target" effects.
-
-**Cards affected:**
-- Mongoose Lizard: ETB deals 1 damage to any target ✓ WORKING
-
-## Tested Seeds
-
-80+ seeds verified working across all deck combinations (2026-01-02_#1439):
-
-Booster draft decks: gabriel, eric, ryan (all combinations)
-Constructed decks: avatar_5c_allies, avatar_5color_allies
-
-Sample verified seeds: 1, 5, 10, 42, 77, 200-1000000 (many), 1234567, 2000000-30000000,
-42424242, 50000000, 60000000, 70000000, 100000001-100000005, 111222333, 13579111,
-765432109, 876543210, 987654321
-
-All games complete without crashes or rule violations.
+to any target") would crash when no opponent creatures were on the battlefield.
 
 ## Priority
 
-Low - games function well without remaining mechanics.
+HIGH - games are NOT balanced without Airbend mechanic.

@@ -254,6 +254,21 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Airbend => {
+            // Airbend effect: DB$ Airbend | ValidTgts$ Creature
+            // Example: Aang, the Last Airbender - "Airbend target creature"
+            // Effect: Exile target. While exiled, its owner may cast it for {2} rather than its mana cost.
+            //
+            // This creates a PersistentEffect (MayPlayFromExile) when resolved.
+            // Target validation uses ValidTgts$ parameter.
+            //
+            // Note: The target is a placeholder (CardId::new(0)) - filled in at cast time
+            // when the player chooses the actual target.
+            Some(Effect::Airbend {
+                target: CardId::new(0), // Placeholder - filled in at cast time
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -378,6 +393,20 @@ mod tests {
                 assert_eq!(amount, 1);
             }
             _ => panic!("Expected PutCounter effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_airbend() {
+        // Aang, the Last Airbender: ETB airbend nonland permanent
+        let params = AbilityParams::parse("A:DB$ Airbend | ValidTgts$ Creature").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::Airbend { target: _ } => {
+                // Effect parsed correctly - target is placeholder CardId(0)
+            }
+            _ => panic!("Expected Airbend effect"),
         }
     }
 }

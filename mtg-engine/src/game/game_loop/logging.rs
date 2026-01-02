@@ -357,6 +357,18 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Airbend { target } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) airbends {target_name} ({target}) (exiled, may cast for {{2}})"
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

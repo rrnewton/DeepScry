@@ -173,6 +173,26 @@ impl GameState {
                         }
                     }
                 }
+                Effect::Airbend { target } if target.as_u32() == 0 => {
+                    // Airbend targets creatures (CR 701.65b)
+                    // Some Airbend cards target "nonland permanent" but creature is default
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            // Use cached targeting flags or default to creatures
+                            let type_matches = if targets_any {
+                                // "airbend target nonland permanent" or similar
+                                !target_card.is_land()
+                            } else {
+                                // Default: creatures only
+                                target_card.is_creature()
+                            };
+
+                            if type_matches && Self::is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 _ => {
                     // Other effects either don't need targets or already have them specified
                     // (DrawCards, GainLife, Mill, AddMana all specify player directly)
@@ -383,6 +403,26 @@ impl GameState {
                             // Check shroud/hexproof (CR 702.18, 702.19)
                             // Note: Hexproof doesn't typically apply when we control both the Equipment
                             // and the target, but we check owner-based targeting for consistency
+                            if !Self::is_legal_target(card, ability_controller) {
+                                is_valid = false;
+                            }
+
+                            if is_valid {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
+                Effect::Airbend { target } if target.as_u32() == 0 => {
+                    // Airbend targets creatures (or other permanents based on ValidTgts)
+                    // CR 701.65b: Airbend exiles a target permanent
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            // By default, Airbend targets creatures
+                            // TODO: Could be extended with ValidTgts parsing for nonland permanents
+                            let mut is_valid = card.is_creature();
+
+                            // Check shroud/hexproof
                             if !Self::is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }

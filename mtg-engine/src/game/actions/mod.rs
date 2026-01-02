@@ -1240,6 +1240,61 @@ impl GameState {
                     ));
                 }
             }
+
+            Effect::Airbend { target } => {
+                // Airbend effect: Exile target, grant owner permission to cast for {2}
+                // CR 701.65b: Avatar set mechanic
+                //
+                // Implementation:
+                // 1. Skip if target is still placeholder (0)
+                // 2. Get the card's owner before exile
+                // 3. Exile the target card
+                // 4. Create a PersistentEffect (MayPlayFromExile) for the owner
+                // 5. The effect is cleaned up when the card leaves exile or is cast
+
+                // Skip if target is still placeholder (0) - no valid targets found
+                if target.as_u32() == 0 {
+                    // Ability fizzles - no valid targets
+                    return Ok(());
+                }
+
+                // Get card info before exile
+                let (owner, card_name) = {
+                    let card = self.cards.get(*target)?;
+                    (card.owner, card.name.clone())
+                };
+
+                // Move card from battlefield to exile
+                self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
+
+                // Create a PersistentEffect granting MayPlay from exile for {2}
+                use crate::core::{CleanupCondition, ManaCost, PersistentEffectKind};
+
+                let cleanup = CleanupCondition::Any(vec![
+                    CleanupCondition::TrackedCardLeavesZone {
+                        card: *target,
+                        zone: Zone::Exile,
+                    },
+                    CleanupCondition::TrackedCardIsCast { card: *target },
+                ]);
+
+                self.persistent_effects.add(
+                    PersistentEffectKind::MayPlayFromExile {
+                        tracked_card: *target,
+                        alternative_cost: ManaCost::from_string("2"), // {2} alternative cost
+                        owner,
+                    },
+                    *target, // source_card - the airbended card itself is the source
+                    owner,   // controller - the owner controls this permission
+                    cleanup,
+                );
+
+                // Log the airbend
+                self.logger.gamelog(&format!(
+                    "{} is airbended (exiled, owner may cast for {{2}})",
+                    card_name
+                ));
+            }
         }
         Ok(())
     }

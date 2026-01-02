@@ -254,6 +254,28 @@ pub enum Effect {
     /// This effect sets the creature's base P/T (not a modifier), which then has +1/+1 counters added on top.
     /// The effect lasts until end of turn.
     SetBasePowerToughness { target: CardId, power: i32, toughness: i32 },
+
+    /// Airbend: Exile a permanent and grant its owner permission to cast it for {2}.
+    ///
+    /// Avatar set mechanic (CR 701.65b). Effect:
+    /// "Exile [target]. While it's exiled, its owner may cast it for {2} rather than its mana cost."
+    ///
+    /// Corresponds to: `DB$ Airbend | ValidTgts$ Creature`
+    ///
+    /// Implementation:
+    /// 1. Exile the target permanent
+    /// 2. Create a PersistentEffect (MayPlayFromExile) that grants cast permission
+    /// 3. The effect is cleaned up when the card leaves exile or is cast
+    ///
+    /// Cards using this:
+    /// - Aang, the Last Airbender: ETB airbends nonland permanent
+    /// - Monk Gyatso: Triggered on targeting other creatures
+    /// - Glider Staff: ETB airbend creature
+    /// - Airbender Ascension: ETB airbend creature
+    Airbend {
+        /// The permanent to airbend (will be exiled)
+        target: CardId,
+    },
 }
 
 /// Events that can trigger abilities

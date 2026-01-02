@@ -1,6 +1,6 @@
 //! Main game state structure
 
-use crate::core::{Card, CardId, EntityId, EntityStore, Player, PlayerId};
+use crate::core::{Card, CardId, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId};
 use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
@@ -92,6 +92,25 @@ pub struct GameState {
     /// global version is simpler and still effective - if nothing
     /// changed for either player, the version stays the same.
     pub mana_state_version: u32,
+
+    /// Persistent effects that last beyond a single spell/ability resolution.
+    ///
+    /// # Design Note: NOT the Command Zone
+    ///
+    /// Unlike Java Forge, which stores persistent effects as "virtual cards"
+    /// in the command zone, we use dedicated typed storage. This is cleaner:
+    /// - Game zones contain only actual game objects (cards, emblems)
+    /// - Effect semantics are explicit in the type system
+    /// - No confusion between "real" command zone cards and bookkeeping
+    ///
+    /// Examples of persistent effects:
+    /// - Airbend: "While exiled, you may cast it for {2}"
+    /// - Imprint: "Exile a card from your hand. This remembers that card."
+    /// - Suspend: Track time counters on suspended cards
+    ///
+    /// Effects are automatically cleaned up when their tracked cards change
+    /// zones or when their source permanents leave the battlefield.
+    pub persistent_effects: PersistentEffectStore,
 }
 
 impl GameState {
@@ -161,6 +180,7 @@ impl GameState {
             token_definitions: std::collections::HashMap::new(),
             bump: Bump::new(),
             mana_state_version: 0,
+            persistent_effects: PersistentEffectStore::new(),
         }
     }
 
@@ -1535,6 +1555,7 @@ impl Clone for GameState {
             // Each clone gets a fresh empty bump allocator
             bump: Bump::new(),
             mana_state_version: self.mana_state_version,
+            persistent_effects: self.persistent_effects.clone(),
         }
     }
 }

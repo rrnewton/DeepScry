@@ -147,6 +147,11 @@ pub enum ApiType {
     // === Balance/Equalize Effects ===
     Balance,
 
+    // === Avatar Set Mechanics ===
+    /// Airbend: Exile target, owner may cast it for {2} from exile.
+    /// CR 701.65b
+    Airbend,
+
     // === Catch-all for unknown types ===
     Unknown(String),
 }
@@ -249,6 +254,9 @@ impl ApiType {
             // Balance/Equalize
             "Balance" => Self::Balance,
 
+            // Avatar Set Mechanics
+            "Airbend" => Self::Airbend,
+
             // Unknown type - preserve original string for debugging
             unknown => Self::Unknown(unknown.to_string()),
         }
@@ -316,6 +324,7 @@ impl ApiType {
             Self::RollDice => "RollDice",
             Self::FlipACoin => "FlipACoin",
             Self::Balance => "Balance",
+            Self::Airbend => "Airbend",
             Self::Unknown(s) => s.as_str(),
         }
     }
