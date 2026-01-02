@@ -4,9 +4,9 @@ status: open
 priority: 1
 issue_type: epic
 labels:
-  - tracking
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+- tracking
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-01-02T19:37:20.638815407+00:00
 ---
 
 # Description
@@ -20,6 +20,7 @@ Track user-facing gameplay features and interaction improvements.
 - mtg-27: Show available actions to player
 - mtg-28: Better formatting and colors in output
 - mtg-29: Game state visualization improvements
+- mtg-p9svf: Agentplay CLI turn sequence and display bugs (HIGH - blocks usability)
 
 **Advanced gameplay mechanics:**
 - mtg-30: Stack interaction (responding to spells at instant speed)
