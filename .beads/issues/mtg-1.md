@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-08T14:57:29.974399272+00:00
+updated_at: 2026-01-02T04:52:22.457701909+00:00
 ---
 
 # Description
@@ -25,29 +25,24 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-147: Affected$ selector parsing improvements
 - mtg-hcahb: Web GUI implementation with shared TUI/GUI architecture
 - mtg-m7v83: Upstream Java Forge card script issues (PRs to upstream)
+- mtg-6n8rl: Avatar set mechanics (Waterbend, Airbend) support
 
-**Current status as of 2025-12-04_#1141(00682bc):**
-- Tests: 597 passing (nextest, all categories)
-- Examples: 14/14 passing
-- Cards: 31,545 loaded from cardsfolder
-- Parser warnings: 1,488 (reduced from 2,672 - 44% improvement)
+**Current status as of 2026-01-02:**
+- Tests: 711 passing (nextest, all categories)
+- Mana engine fixes for non-basic lands and name-based detection
+- Avatar deck games complete without errors (200+ seeds tested)
 
-**Recent accomplishments (2025-12-04):**
-- AffectedSelector::Any for comma-separated OR conditions (dbce929)
-- State-based selectors: SelfWhenUntapped, SelfWhenMonstrous (66cc504)
-- Card.AttachedBy and Land.YouOwn selectors (cb54e35)
-- SmallVec optimization for spell_targets (+1.6% throughput)
-- Parser warning reduction: 2,672 → 1,488 (-1184 warnings, 44%)
+**Recent accomplishments (2026-01-02):**
+- Fixed Ba Sing Se (non-basic land) mana production
+- Fixed Foggy Swamp Vinebender incorrectly marked as mana source
+- Added regression tests for mana payment edge cases
+- Documented missing Avatar mechanics (Waterbend, Airbend)
 
-**Previous accomplishments (2025-11-30 to 2025-12-03):**
-- Card.Self+attacking selector for combat keywords
-- Blocking restriction evasion abilities (Fear, Intimidate, Shadow, Skulk)
-- Combat restriction penalties in AI evaluation
-- Extended keyword evaluation in AI
-- Trigger self-only fix (ETB triggers for Card.Self)
-- Death triggers, upkeep triggers
-- Counterspell AI, intelligent mana tapping
-- Shadow/Horsemanship evasion keywords
+**Previous accomplishments (2025-12-04):**
+- AffectedSelector::Any for comma-separated OR conditions
+- State-based selectors: SelfWhenUntapped, SelfWhenMonstrous
+- Card.AttachedBy and Land.YouOwn selectors
+- Parser warning reduction: 2,672 → 1,488 (-44%)
 
 **Conventions:**
 - Tracking issues (priority 1) reference granular issues
