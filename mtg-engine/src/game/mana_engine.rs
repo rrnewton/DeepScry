@@ -1494,4 +1494,76 @@ mod tests {
         // Equivalent to can_pay without pool
         assert!(engine.can_pay(&bb_cost));
     }
+
+    /// Regression test: 3 sources cannot pay for 3G cost (needs 4 mana)
+    ///
+    /// This tests the exact scenario from the AI bug where can_pay_with_pool
+    /// was incorrectly returning true for costs that couldn't be paid.
+    #[test]
+    fn test_can_pay_with_pool_insufficient_for_generic_plus_color() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Add 3 Forests (green mana sources)
+        for i in 0..3 {
+            let forest_id = game.next_card_id();
+            let mut forest = Card::new(forest_id, format!("Forest{}", i), p1_id);
+            forest.types.push(CardType::Land);
+            forest.controller = p1_id;
+            forest.cache.is_mana_source = true;
+            forest.cache.mana_production = crate::core::ManaProduction::free(crate::core::ManaProductionKind::Fixed(
+                crate::core::ManaColor::Green,
+            ));
+            game.cards.insert(forest_id, forest);
+            game.battlefield.add(forest_id);
+        }
+
+        let mut engine = ManaEngine::new();
+        engine.update_mut(&mut game, p1_id);
+
+        // Empty pool (no floating mana)
+        let pool = crate::core::ManaPool::new();
+
+        // Cost: 3G = 3 generic + 1 green = 4 total mana
+        // With only 3 sources, this MUST NOT be payable
+        let cost_3g = ManaCost::from_string("3G");
+        assert_eq!(cost_3g.generic, 3, "3G should have generic=3");
+        assert_eq!(cost_3g.green, 1, "3G should have green=1");
+        assert_eq!(cost_3g.cmc(), 4, "3G should have cmc=4");
+
+        // Verify engine has exactly 3 sources
+        assert_eq!(
+            engine.all_sources().len(),
+            3,
+            "Engine should see exactly 3 mana sources"
+        );
+
+        // This MUST return false - only 3 mana available for a 4-mana cost
+        assert!(
+            !engine.can_pay_with_pool(&cost_3g, &pool),
+            "3 green sources + empty pool should NOT be able to pay 3G (needs 4, has 3)"
+        );
+
+        // Also verify can_pay (without pool consideration)
+        assert!(
+            !engine.can_pay(&cost_3g),
+            "3 green sources should NOT be able to pay 3G"
+        );
+
+        // But 2G SHOULD be payable (3 mana for 3-mana cost)
+        let cost_2g = ManaCost::from_string("2G");
+        assert_eq!(cost_2g.cmc(), 3, "2G should have cmc=3");
+        assert!(
+            engine.can_pay_with_pool(&cost_2g, &pool),
+            "3 green sources should be able to pay 2G (needs 3, has 3)"
+        );
+
+        // And 3 colorless SHOULD be payable
+        let cost_3 = ManaCost::from_string("3");
+        assert_eq!(cost_3.cmc(), 3, "3 should have cmc=3");
+        assert!(
+            engine.can_pay_with_pool(&cost_3, &pool),
+            "3 green sources should be able to pay 3 generic (needs 3, has 3)"
+        );
+    }
 }

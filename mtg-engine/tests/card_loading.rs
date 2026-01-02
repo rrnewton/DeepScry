@@ -4,7 +4,7 @@
 
 use mtg_forge_rs::core::{CardType, Keyword, KeywordArgs};
 use mtg_forge_rs::loader::CardLoader;
-use mtg_forge_rs::Result;
+use mtg_forge_rs::{MtgError, Result};
 use std::path::PathBuf;
 
 /// Test loading Abbey Gargoyles (simple keywords)
@@ -1524,6 +1524,171 @@ fn test_spirit_link_aura_targeting() -> Result<()> {
         }
     } else {
         panic!("Spirit Link should have Enchant keyword args");
+    }
+
+    Ok(())
+}
+
+/// Test Thriving Grove - a land with "Produced$ Combo G Chosen" mana ability
+/// This tests that cards with "Combo" production are correctly detected as mana sources
+/// Regression test for bug where Thriving Grove wasn't being tapped for mana
+#[test]
+fn test_load_thriving_grove_mana_ability() -> Result<()> {
+    use mtg_forge_rs::core::{CardId, ManaProductionKind, PlayerId};
+
+    let path = PathBuf::from("cardsfolder/t/thriving_grove.txt");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Thriving Grove");
+    assert!(def.types.contains(&CardType::Land));
+
+    // Check that raw_abilities contains the mana ability line
+    let has_mana_ability = def
+        .raw_abilities
+        .iter()
+        .any(|a| a.contains("AB$ Mana") && a.contains("Produced$"));
+    assert!(
+        has_mana_ability,
+        "Thriving Grove should have a mana ability. Raw abilities: {:?}",
+        def.raw_abilities
+    );
+
+    // Instantiate the card
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Check activated abilities - should have at least 1 (the mana ability)
+    assert!(
+        !card.activated_abilities.is_empty(),
+        "Thriving Grove should have activated abilities. Got: {} abilities",
+        card.activated_abilities.len()
+    );
+
+    // Find the mana ability
+    let mana_ability = card.activated_abilities.iter().find(|a| a.is_mana_ability);
+
+    assert!(
+        mana_ability.is_some(),
+        "Thriving Grove should have a mana ability. Abilities: {:?}",
+        card.activated_abilities
+            .iter()
+            .map(|a| format!("cost={:?} is_mana={}", a.cost, a.is_mana_ability))
+            .collect::<Vec<_>>()
+    );
+
+    // Verify the cache detects it as a mana source
+    assert!(
+        card.cache.is_mana_source,
+        "Thriving Grove should be detected as a mana source (is_mana_source flag)"
+    );
+    assert!(
+        card.cache.mana_production.produces_mana(),
+        "Thriving Grove should be detected as producing mana"
+    );
+
+    // Check the production kind - should be Fixed(Green) or Choice containing Green
+    // (Since "Chosen" is not a parseable color, only "G" is recognized)
+    match &card.cache.mana_production.kind {
+        ManaProductionKind::Fixed(color) => {
+            assert_eq!(
+                *color,
+                mtg_forge_rs::core::ManaColor::Green,
+                "Thriving Grove should produce Green"
+            );
+        }
+        ManaProductionKind::Choice(colors) => {
+            assert!(
+                colors.contains(mtg_forge_rs::core::ManaColor::Green),
+                "Thriving Grove should be able to produce Green. Colors: {:?}",
+                colors
+            );
+        }
+        other => {
+            panic!(
+                "Thriving Grove should produce Fixed(Green) or Choice containing Green. Got: {:?}",
+                other
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Test that Thriving Grove is properly added to mana source cache when entering battlefield
+/// Regression test for bug where Thriving Grove wasn't being tapped for mana
+#[tokio::test]
+async fn test_thriving_grove_mana_cache_population() -> Result<()> {
+    use mtg_forge_rs::game::GameState;
+    use mtg_forge_rs::loader::CardDatabase;
+    use mtg_forge_rs::zones::Zone;
+
+    // Load card database
+    let path = PathBuf::from("cardsfolder");
+    if !path.exists() {
+        return Ok(()); // Skip if cardsfolder not present
+    }
+
+    let card_db = CardDatabase::new(path);
+    card_db
+        .load_cards(&["Thriving Grove".to_string()])
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to load card: {}", e)))?;
+
+    // Get the card definition
+    let grove_def = card_db
+        .get_card("Thriving Grove")
+        .await
+        .map_err(|e| MtgError::InvalidCardFormat(format!("Failed to get card: {}", e)))?
+        .expect("Card exists");
+
+    // Create a game
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p2_id = game.players[1].id;
+
+    // Create and instantiate the card
+    let card_id = game.next_card_id();
+    let card = grove_def.instantiate(card_id, p2_id);
+
+    // Verify instantiated card has correct mana source flag
+    assert!(
+        card.cache.is_mana_source,
+        "Instantiated Thriving Grove should have is_mana_source=true"
+    );
+
+    // Add to game and hand
+    game.cards.insert(card_id, card);
+    if let Some(zones) = game.get_player_zones_mut(p2_id) {
+        zones.hand.add(card_id);
+    }
+
+    // Move to battlefield
+    game.move_card(card_id, Zone::Hand, Zone::Battlefield, p2_id)?;
+
+    // Check mana cache - Thriving Grove should be in green_sources or complex_sources
+    let cache = game.get_mana_cache(p2_id).expect("Cache should exist");
+
+    let in_green_sources = cache.green_sources().contains(&card_id);
+    let in_complex_sources = cache.complex_sources().contains(&card_id);
+
+    assert!(
+        in_green_sources || in_complex_sources,
+        "Thriving Grove ({:?}) should be in mana source cache. Green: {:?}, Complex: {:?}",
+        card_id,
+        cache.green_sources(),
+        cache.complex_sources()
+    );
+
+    // If it's in green_sources, verify untapped count increased
+    if in_green_sources {
+        assert!(
+            cache.untapped_green() >= 1,
+            "Thriving Grove should add to untapped_green count. Current: {}",
+            cache.untapped_green()
+        );
     }
 
     Ok(())

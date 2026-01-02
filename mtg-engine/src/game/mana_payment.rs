@@ -1480,4 +1480,98 @@ mod tests {
         assert_eq!(tap_order[0], CardId::new(3)); // Island for Blue (more specific)
         assert_eq!(tap_order[1], CardId::new(1)); // Breeding Pool for Green
     }
+
+    /// Test for mana payment bug: 3 green sources cannot pay 3G cost
+    ///
+    /// Regression test for bug where AI offered uncastable spells.
+    /// A cost of "3G" means 3 generic + 1 green = 4 total mana.
+    /// With only 3 green sources, we can only produce 3 mana, which is insufficient.
+    #[test]
+    fn test_insufficient_sources_for_generic_plus_color_cost() {
+        let resolver = GreedyManaResolver::new();
+
+        // 3 green mana sources (e.g., 3 Thriving Groves or Forests)
+        let sources = vec![
+            ManaSource {
+                card_id: CardId::new(1),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+            ManaSource {
+                card_id: CardId::new(2),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+            ManaSource {
+                card_id: CardId::new(3),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+        ];
+
+        // Cost: 3G = 3 generic + 1 green = 4 total mana
+        // We only have 3 sources, so this should NOT be payable
+        let cost = ManaCost::from_string("3G");
+        assert_eq!(cost.generic, 3, "3G should have generic=3");
+        assert_eq!(cost.green, 1, "3G should have green=1");
+        assert_eq!(cost.cmc(), 4, "3G should have cmc=4");
+
+        // This MUST return false - we only have 3 mana but need 4
+        assert!(
+            !resolver.can_pay(&cost, &sources),
+            "3 green sources should NOT be able to pay 3G (needs 4 mana, has 3)"
+        );
+
+        // Verify with check_payment as well
+        let mut tap_order = Vec::new();
+        let result = resolver.check_payment(&cost, &sources, Some(&mut tap_order));
+        assert_eq!(
+            result,
+            PaymentResult::No,
+            "check_payment should return No for insufficient sources"
+        );
+
+        // Now verify 4 sources CAN pay for 3G
+        let sources_4 = vec![
+            ManaSource {
+                card_id: CardId::new(1),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+            ManaSource {
+                card_id: CardId::new(2),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+            ManaSource {
+                card_id: CardId::new(3),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+            ManaSource {
+                card_id: CardId::new(4),
+                production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                is_tapped: false,
+                has_summoning_sickness: false,
+            },
+        ];
+
+        assert!(
+            resolver.can_pay(&cost, &sources_4),
+            "4 green sources should be able to pay 3G (needs 4 mana, has 4)"
+        );
+
+        let mut tap_order = Vec::new();
+        assert!(
+            resolver.compute_tap_order(&cost, &sources_4, &mut tap_order),
+            "compute_tap_order should succeed with 4 sources"
+        );
+        assert_eq!(tap_order.len(), 4, "All 4 sources should be tapped to pay 3G");
+    }
 }
