@@ -197,6 +197,10 @@ impl<'a> GameLoop<'a> {
 
             // Inner loop: pass priority until both players pass
             while consecutive_passes < 2 {
+                // Drain any pending reveals from network before processing priority
+                // This ensures opponent's played cards are instantiated before we try to act on them
+                self.drain_reveals();
+
                 // Safety check to prevent infinite loops
                 action_count += 1;
                 if action_count > MAX_ACTIONS_PER_PRIORITY {

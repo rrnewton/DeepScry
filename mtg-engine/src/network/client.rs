@@ -1046,28 +1046,24 @@ impl NetworkClient {
             let drain_reveals = move |game: &mut GameState| {
                 // Helper to process a single reveal
                 // Now handles all reveal types by instantiating cards when needed
-                let process_reveal = |game: &mut GameState,
-                                      owner: PlayerId,
-                                      card_reveal: CardReveal,
-                                      reason: RevealReason| {
-                    let card_id = card_reveal.card_id;
+                let process_reveal =
+                    |game: &mut GameState, owner: PlayerId, card_reveal: CardReveal, reason: RevealReason| {
+                        let card_id = card_reveal.card_id;
 
-                    match reason {
-                        RevealReason::Draw => {
-                            // Queue the card_id in the library for the next draw
-                            if let Some(zones) = game.get_player_zones_mut(owner) {
-                                zones.library.queue_reveal(card_id);
-                                log::debug!("Queued draw reveal for {:?}: {:?}", owner, card_id);
+                        match reason {
+                            RevealReason::Draw => {
+                                // Queue the card_id in the library for the next draw
+                                if let Some(zones) = game.get_player_zones_mut(owner) {
+                                    zones.library.queue_reveal(card_id);
+                                    log::debug!("Queued draw reveal for {:?}: {:?}", owner, card_id);
+                                }
                             }
-                        }
-                        RevealReason::Played => {
-                            // Opponent played a card from hand - instantiate it in game.cards
-                            // This is needed before RemoteController can execute the SpellAbility
-                            if game.cards.get(card_id).is_err() {
-                                // Try to get card definition from database
-                                if let Ok(Some(card_def)) =
-                                    futures_executor::block_on(card_db_clone.get_card(&card_reveal.name))
-                                {
+                            RevealReason::Played => {
+                                // Opponent played a card from hand - instantiate it in game.cards
+                                // This is needed before RemoteController can execute the SpellAbility
+                                if game.cards.get(card_id).is_err() {
+                                    // Use fallback that creates minimal definition if DB lookup fails
+                                    let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
                                     let card_instance = card_def.instantiate(card_id, owner);
                                     game.cards.insert(card_id, card_instance);
                                     log::debug!(
@@ -1076,36 +1072,31 @@ impl NetworkClient {
                                         card_reveal.name,
                                         card_id
                                     );
-                                } else {
-                                    log::warn!("Could not find card '{}' in database for reveal", card_reveal.name);
                                 }
                             }
-                        }
-                        RevealReason::TokenCreated => {
-                            // Token created - instantiate and add to battlefield
-                            if game.cards.get(card_id).is_err() {
-                                if let Ok(Some(card_def)) =
-                                    futures_executor::block_on(card_db_clone.get_card(&card_reveal.name))
-                                {
+                            RevealReason::TokenCreated => {
+                                // Token created - instantiate and add to battlefield
+                                if game.cards.get(card_id).is_err() {
+                                    // Use fallback that creates minimal definition if DB lookup fails
+                                    let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
                                     let card_instance = card_def.instantiate(card_id, owner);
                                     game.cards.insert(card_id, card_instance);
                                     game.battlefield.add(card_id);
                                     log::debug!("Created token for {:?}: {} ({:?})", owner, card_reveal.name, card_id);
                                 }
                             }
+                            _ => {
+                                // Other reveal reasons (Effect, Searched, etc.) - just track the card
+                                log::debug!(
+                                    "Received {:?} reveal for {:?}: {} ({:?})",
+                                    reason,
+                                    owner,
+                                    card_reveal.name,
+                                    card_id
+                                );
+                            }
                         }
-                        _ => {
-                            // Other reveal reasons (Effect, Searched, etc.) - just track the card
-                            log::debug!(
-                                "Received {:?} reveal for {:?}: {} ({:?})",
-                                reason,
-                                owner,
-                                card_reveal.name,
-                                card_id
-                            );
-                        }
-                    }
-                };
+                    };
 
                 // Check if the active player's library is remote
                 // If so, we need to wait for a draw reveal before proceeding
