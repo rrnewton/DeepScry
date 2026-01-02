@@ -1726,13 +1726,18 @@ async fn run_tui(
     // Run the game (with mid-turn exits if stop conditions enabled)
     let result = game_loop.run_game(&mut *controller1, &mut *controller2)?;
 
+    use mtg_forge_rs::game::GameEndReason;
+
     // If log_tail was enabled, flush only the last K lines now
+    // Skip for snapshot exits - logs were already printed in real-time with OutputMode::Both,
+    // and the buffer was truncated during rewind so flushing would print stale Turn N-1 content
     if let Some(tail_lines) = log_tail {
-        game.logger.flush_tail(tail_lines);
+        if result.end_reason != GameEndReason::Snapshot {
+            game.logger.flush_tail(tail_lines);
+        }
     }
 
     // If game ended with a snapshot, reload and add controller state
-    use mtg_forge_rs::game::GameEndReason;
     if result.end_reason == GameEndReason::Snapshot && snapshot_output.exists() {
         // Extract controller states by calling get_snapshot_state()
         let p1_state_json = controller1.get_snapshot_state();
@@ -2457,13 +2462,18 @@ async fn run_resume(
     // Run the game (with mid-turn exits if stop conditions enabled)
     let result = game_loop.run_game(&mut *controller1, &mut *controller2)?;
 
+    use mtg_forge_rs::game::GameEndReason;
+
     // If log_tail was enabled, flush only the last K lines now
+    // Skip for snapshot exits - logs were already printed in real-time with OutputMode::Both,
+    // and the buffer was truncated during rewind so flushing would print stale Turn N-1 content
     if let Some(tail_lines) = log_tail {
-        game.logger.flush_tail(tail_lines);
+        if result.end_reason != GameEndReason::Snapshot {
+            game.logger.flush_tail(tail_lines);
+        }
     }
 
     // If game ended with a snapshot, reload and add controller state
-    use mtg_forge_rs::game::GameEndReason;
     if result.end_reason == GameEndReason::Snapshot && snapshot_output.exists() {
         // Extract controller states by calling get_snapshot_state()
         let p1_state_json = controller1.get_snapshot_state();
