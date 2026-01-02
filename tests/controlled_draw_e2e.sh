@@ -87,10 +87,10 @@ fi
 echo "Verifying P1's opening hand contains all requested cards..."
 
 # Extract P1's hand from Turn 1 output
-# Look for the section with "Hand contents:" after "Player1" (P1)
-# Note: Turn format is "  >>> Turn 1 - Player1 20 (Player2 20) <<<<"
-# Use ^Player2: to match only the start of line (opponent section label)
-P1_HAND=$(sed -n '/Turn 1.*Player1/,/^Player2:/p' /tmp/controlled_draw_test.txt | \
+# After mtg-p9svf fix, hand contents is displayed AFTER the Draw Step
+# Look for the section with "Hand contents:" after "Turn 1" header
+# Format: Turn header, then Draw Step, then Player1 (active) with Hand contents
+P1_HAND=$(sed -n '/Turn 1.*Player1/,/Main Phase 1/p' /tmp/controlled_draw_test.txt | \
           sed -n '/Hand contents:/,/Battlefield:/p' | head -10)
 
 # Check for Mountains (need at least 3)
@@ -121,10 +121,10 @@ echo
 echo "Verifying P2's opening hand contains all requested cards..."
 
 # Extract P2's hand from Turn 2 output (Player2's first turn as active player)
-# Note: Player2's first active turn shows his hand
+# Note: Player2's first active turn shows his hand after the Draw Step
 # Note: Turn format is "  >>> Turn 2 - Player2 20 (Player1 19) <<<<"
-P2_HAND=$(grep -A 20 "Turn 2.*Player2" /tmp/controlled_draw_test.txt | \
-          sed -n '/Hand contents:/,/Battlefield:/p')
+P2_HAND=$(sed -n '/Turn 2.*Player2/,/Main Phase 1/p' /tmp/controlled_draw_test.txt | \
+          sed -n '/Hand contents:/,/Battlefield:/p' | head -10)
 
 # Check P2's requested hand (3 Mountains, 2 Lightning Bolts)
 P2_MISSING=""
@@ -149,7 +149,9 @@ else
     EXIT_CODE=1
 fi
 
-# Also verify hands have exactly 7 cards total
+# Also verify hand sizes
+# P1's hand is checked on Turn 1 (no draw on first turn) = 7 cards
+# P2's hand is checked on Turn 2 (after P2's draw step) = 8 cards
 echo
 echo "Verifying hand sizes..."
 
@@ -157,16 +159,16 @@ P1_HAND_SIZE=$(echo "$P1_HAND" | grep "^    -" | wc -l | tr -d ' \n')
 P2_HAND_SIZE=$(echo "$P2_HAND" | grep "^    -" | wc -l | tr -d ' \n')
 
 if [[ $P1_HAND_SIZE -eq 7 ]]; then
-    echo -e "${GREEN}✓ P1 has exactly 7 cards${NC}"
+    echo -e "${GREEN}✓ P1 has exactly 7 cards (opening hand, no draw turn 1)${NC}"
 else
     echo -e "${RED}✗ P1 has $P1_HAND_SIZE cards (expected 7)${NC}"
     EXIT_CODE=1
 fi
 
-if [[ $P2_HAND_SIZE -eq 7 ]]; then
-    echo -e "${GREEN}✓ P2 has exactly 7 cards${NC}"
+if [[ $P2_HAND_SIZE -eq 8 ]]; then
+    echo -e "${GREEN}✓ P2 has exactly 8 cards (7 opening + 1 draw turn 2)${NC}"
 else
-    echo -e "${RED}✗ P2 has $P2_HAND_SIZE cards (expected 7)${NC}"
+    echo -e "${RED}✗ P2 has $P2_HAND_SIZE cards (expected 8: 7 opening + 1 draw)${NC}"
     EXIT_CODE=1
 fi
 
@@ -178,7 +180,7 @@ if [[ ${EXIT_CODE:-0} == 0 ]]; then
     echo "This confirms that --p1-draw and --p2-draw work correctly:"
     echo "  - Specified cards are placed in hand from library"
     echo "  - Remaining cards are drawn randomly to reach 7 total"
-    echo "  - Hand size is correct (7 cards)"
+    echo "  - Hand sizes are correct (P1: 7, P2: 8 after draw)"
     echo
     echo "Full log saved to: /tmp/controlled_draw_test.txt"
     exit 0

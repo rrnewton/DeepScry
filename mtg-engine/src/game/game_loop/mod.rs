@@ -921,6 +921,10 @@ impl<'a> GameLoop<'a> {
         // Skip turn header ONLY if we're in the resumed turn (it was already printed before snapshot)
         // Note: We intentionally do NOT check self.replaying here, because replaying can span
         // multiple turns and we want to print headers for new turns even during replay.
+        //
+        // IMPORTANT: We print ONLY the turn header here, NOT the battlefield state.
+        // The battlefield state (including hand contents) is printed AFTER the draw step
+        // so that newly drawn cards are visible. See draw_step() in steps.rs.
         if self.verbosity >= VerbosityLevel::Normal && !is_resumed_turn {
             let player_name = self.get_player_name(active_player);
 
@@ -932,9 +936,7 @@ impl<'a> GameLoop<'a> {
                 println!("\n========================================");
                 println!("{}", turn_msg);
                 println!("========================================");
-
-                // Print detailed battlefield state for both players
-                self.print_battlefield_state();
+                // NOTE: Battlefield state is printed after draw step - see draw_step()
             }
         }
 
