@@ -968,34 +968,36 @@ impl WasmFancyTuiState {
             let turn_before = self.game.turn.turn_number;
             log::debug!(target: "wasm_tui", "NETWORK REPLAY: Starting replay on turn {}", turn_before);
 
-            // Get the new choice from the human controller
-            let new_choice = if let Some(ref mut human) = self.p1_human_controller {
-                if let Some(pending) = human.pending_choice.take() {
-                    let choice = self.pending_choice_to_replay_choice(&pending);
-                    log::debug!(target: "wasm_tui", "NETWORK REPLAY: New choice = {:?}", choice);
-                    Some(choice)
-                } else {
-                    None
-                }
+            // Take the new pending choice from the stored human controller
+            // IMPORTANT: Don't add this to replay_choices! It needs to go through
+            // WasmNetworkLocalController so it gets submitted to the server.
+            let new_pending_choice = if let Some(ref mut human) = self.p1_human_controller {
+                human.pending_choice.take()
             } else {
                 None
             };
 
+            if let Some(ref choice) = new_pending_choice {
+                log::debug!(target: "wasm_tui", "NETWORK REPLAY: New pending choice = {:?}", choice);
+            }
+
             // Rewind game state and get previous choices from this turn
-            let mut replay_choices = self.rewind_to_turn_start();
+            let replay_choices = self.rewind_to_turn_start();
             log::debug!(
                 target: "wasm_tui",
                 "NETWORK REPLAY: After rewind - turn {}, {} existing choices to replay",
                 self.game.turn.turn_number, replay_choices.len()
             );
 
-            // Add the new choice if we have one
-            if let Some(choice) = new_choice {
-                replay_choices.push(choice);
-            }
+            // NOTE: We do NOT add new_pending_choice to replay_choices!
+            // The new choice must go through WasmNetworkLocalController to be
+            // submitted to the server. If we add it to replay, it bypasses the server.
 
-            // Create a fresh human controller wrapped by network local controller
-            let human_controller = WasmHumanController::new(p1_id);
+            // Create a fresh human controller and set the pending choice on it
+            let mut human_controller = WasmHumanController::new(p1_id);
+            if let Some(pending) = new_pending_choice {
+                human_controller.set_pending_choice(pending);
+            }
             let network_local = WasmNetworkLocalController::new(human_controller, network_client.clone());
 
             // Create ReplayController that will replay choices then delegate to network local
