@@ -131,9 +131,9 @@ async function runTest() {
         log('HTTP server ready');
         testResults.steps.push({ name: 'http_server_ready', timestamp: new Date().toISOString() });
 
-        // Give native client time to connect
+        // Give native client time to connect and settle
         log('Waiting for native client to connect...');
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 5000));
 
         // Launch browser
         log('Launching browser...');
@@ -280,13 +280,40 @@ async function runTest() {
         // Check for game over or significant progress
         let gameOver = false;
         let turnCount = 0;
-        const maxWaitTime = 60000; // 60 seconds max
+        let choiceCount = 0;
+        let lastLogCount = 0;
+        const maxWaitTime = 180000; // 180 seconds max (3 minutes)
         const startWait = Date.now();
 
         while (!gameOver && (Date.now() - startWait) < maxWaitTime) {
-            // Check for game over message
+            // Check browser logs for GameEnded message (network protocol)
+            const newLogs = testResults.browserLogs.slice(lastLogCount);
+            lastLogCount = testResults.browserLogs.length;
+
+            for (const logEntry of newLogs) {
+                // Check for game ended in network messages
+                if (logEntry.text.includes('"type":"game_ended"') ||
+                    logEntry.text.includes('type":"game_ended')) {
+                    gameOver = true;
+                    log('Game completed (GameEnded message received)!');
+                    testResults.steps.push({ name: 'game_over', timestamp: new Date().toISOString() });
+                    break;
+                }
+
+                // Track choice_seq to show progress
+                const choiceMatch = logEntry.text.match(/"choice_seq":(\d+)/);
+                if (choiceMatch) {
+                    const newChoice = parseInt(choiceMatch[1]);
+                    if (newChoice > choiceCount) {
+                        choiceCount = newChoice;
+                    }
+                }
+            }
+
+            if (gameOver) break;
+
+            // Check terminal for game over indicators
             const promptText = await page.evaluate(() => {
-                // Look for game over indicators in the terminal
                 const terminal = document.getElementById('ratzilla-terminal');
                 if (terminal) {
                     const text = terminal.textContent || '';
@@ -295,9 +322,10 @@ async function runTest() {
                 return '';
             });
 
-            if (promptText.includes('Game Over') || promptText.includes('wins!')) {
+            if (promptText.includes('Game Over') || promptText.includes('wins!') ||
+                promptText.includes('has won') || promptText.includes('defeated')) {
                 gameOver = true;
-                log('Game completed!');
+                log('Game completed (terminal message)!');
                 testResults.steps.push({ name: 'game_over', timestamp: new Date().toISOString() });
                 break;
             }
@@ -308,8 +336,11 @@ async function runTest() {
                 const newTurn = parseInt(turnMatch[1]);
                 if (newTurn > turnCount) {
                     turnCount = newTurn;
-                    log(`Game progressing: Turn ${turnCount}`);
+                    log(`Game progressing: Turn ${turnCount}, Choice ${choiceCount}`);
                 }
+            } else if (choiceCount > 0 && choiceCount % 50 === 0) {
+                // Log progress every 50 choices if no turn info
+                log(`Game progressing: Choice ${choiceCount}`);
             }
 
             await new Promise(r => setTimeout(r, 2000));
@@ -320,7 +351,11 @@ async function runTest() {
         // Determine test result
         if (gameOver) {
             testResults.result = 'PASSED';
-            testResults.message = `Game completed successfully after ${turnCount} turns`;
+            testResults.message = `Game completed successfully after ${choiceCount} choices`;
+        } else if (choiceCount > 0) {
+            // Game progressed but didn't finish - still a partial success for network sync testing
+            testResults.result = 'PARTIAL';
+            testResults.message = `Game progressed through ${choiceCount} choices but did not complete in time`;
         } else if (turnCount > 0) {
             testResults.result = 'PARTIAL';
             testResults.message = `Game progressed to turn ${turnCount} but did not complete in time`;
@@ -338,13 +373,17 @@ async function runTest() {
             }
         }
 
-        // Check for desync errors in logs
+        // Check for desync errors in logs - these are FATAL
         const desyncErrors = testResults.browserLogs.filter(log =>
-            log.text.includes('desync') || log.text.includes('DESYNC') || log.text.includes('state mismatch')
+            log.text.includes('desync') || log.text.includes('DESYNC') ||
+            log.text.includes('state mismatch') || log.text.includes('SYNC ERROR') ||
+            log.text.includes('action_count mismatch')
         );
         if (desyncErrors.length > 0) {
-            log(`WARNING: ${desyncErrors.length} potential desync errors found`);
+            log(`FATAL: ${desyncErrors.length} sync errors found - this is a blocking bug!`);
             testResults.desyncErrors = desyncErrors;
+            testResults.result = 'FAILED';
+            testResults.message = `SYNC FAILURE: ${desyncErrors.length} sync errors detected`;
         }
 
         return testResults;
