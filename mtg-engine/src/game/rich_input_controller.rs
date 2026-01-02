@@ -151,6 +151,11 @@ impl PlayerController for RichInputController {
             // Check if this is an explicit pass command
             let explicit_pass = is_explicit_pass(&command);
 
+            // Check if this is a combat command (attack/block) - these should be deferred
+            // to choose_attackers/choose_blockers, so we pass priority here
+            let cmd_lower = command.trim().to_lowercase();
+            let is_combat_command = cmd_lower.starts_with("attack ") || cmd_lower.starts_with("block ");
+
             // In wildcard mode, only advance if we found a match or explicit pass
             if self.wildcard_mode {
                 if result.is_some() || explicit_pass {
@@ -168,6 +173,10 @@ impl PlayerController for RichInputController {
                     // Valid command or explicit pass - consume and execute
                     self.next_command();
                     ChoiceResult::Ok(result)
+                } else if is_combat_command {
+                    // Combat command (attack/block) during priority - don't consume, pass priority
+                    // The command will be handled later by choose_attackers/choose_blockers
+                    ChoiceResult::Ok(None)
                 } else {
                     // Command didn't match any available action - ERROR
                     self.next_command(); // Consume the bad command to avoid infinite loop
