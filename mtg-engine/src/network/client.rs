@@ -581,15 +581,21 @@ impl NetworkClient {
         // Apply server's network_debug setting to client
         self.network_debug = server_network_debug;
 
-        // Store opponent deck if provided
-        if let Some(ref deck_info) = opponent_decklist {
-            self.opponent_deck = Some(deck_info.to_deck_list());
-        }
+        // Store opponent deck - REQUIRED for synchronized GameLoop mode
+        // Without this, card IDs will not match between clients
+        let opponent_deck = match opponent_decklist {
+            Some(ref deck_info) => deck_info.to_deck_list(),
+            None => {
+                return Err(anyhow!(
+                    "Server did not send opponent deck list - cannot synchronize card IDs"
+                ));
+            }
+        };
+        self.opponent_deck = Some(opponent_deck.clone());
 
         // Get decks for initialization
         let our_deck = self.our_deck.as_ref().ok_or_else(|| anyhow!("Our deck not loaded"))?;
-        // For opponent deck: use provided decklist, or fall back to our deck (mirror match)
-        let opponent_deck = self.opponent_deck.as_ref().unwrap_or(our_deck);
+        let opponent_deck = &opponent_deck;
 
         // Determine player order - GameInitializer expects P1's deck first, then P2's
         let we_are_p1 = our_player_id.as_u32() == 0;

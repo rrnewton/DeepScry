@@ -1090,13 +1090,17 @@ mod websocket_integration {
         server_handle.abort();
     }
 
-    /// Test that deck_visibility=false hides opponent decklist
+    /// Test that deck lists are ALWAYS sent for synchronized GameLoop mode.
+    ///
+    /// The deck_visibility config is a UI concern (whether to show opponent's decklist
+    /// to players in the UI), not whether to transmit it. Clients REQUIRE the opponent's
+    /// deck list to create matching card IDs for synchronized GameLoop mode.
     #[tokio::test]
     async fn test_deck_visibility_disabled() {
         let port = allocate_random_port();
         let password = "deckvis_off";
 
-        // Disable deck visibility (default)
+        // Even with deck_visibility=false, deck lists are still sent for synchronization
         let config = ServerConfig {
             port,
             password: password.to_string(),
@@ -1161,12 +1165,13 @@ mod websocket_integration {
             .expect("Timeout")
             .expect("GameStarted 2");
 
-        // With deck_visibility=false, both should have NO opponent_decklist
+        // Deck lists are ALWAYS sent for synchronized GameLoop mode
+        // (deck_visibility is a separate UI concern)
         match game_started_1 {
             ServerMessage::GameStarted { opponent_decklist, .. } => {
                 assert!(
-                    opponent_decklist.is_none(),
-                    "Expected no opponent decklist when deck_visibility is false"
+                    opponent_decklist.is_some(),
+                    "Deck lists must always be sent for synchronized GameLoop mode"
                 );
             }
             other => panic!("Expected GameStarted, got {:?}", other),
@@ -1175,8 +1180,8 @@ mod websocket_integration {
         match game_started_2 {
             ServerMessage::GameStarted { opponent_decklist, .. } => {
                 assert!(
-                    opponent_decklist.is_none(),
-                    "Expected no opponent decklist when deck_visibility is false"
+                    opponent_decklist.is_some(),
+                    "Deck lists must always be sent for synchronized GameLoop mode"
                 );
             }
             other => panic!("Expected GameStarted, got {:?}", other),

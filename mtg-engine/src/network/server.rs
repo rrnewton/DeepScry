@@ -656,17 +656,12 @@ async fn run_game(
     // Compute initial state hash
     let initial_hash = compute_network_hash(&game);
 
-    // Build deck list info if visibility is enabled
-    let p1_deck_info = if config.deck_visibility {
-        Some(DeckListInfo::from_submission(&p1.deck))
-    } else {
-        None
-    };
-    let p2_deck_info = if config.deck_visibility {
-        Some(DeckListInfo::from_submission(&p2.deck))
-    } else {
-        None
-    };
+    // ALWAYS send deck lists for synchronized GameLoop mode.
+    // Clients need the opponent's deck list to create matching card IDs.
+    // The deck_visibility config is a separate UI concern (whether players
+    // can VIEW opponent's decklist), not whether we transmit it for sync.
+    let p1_deck_info = Some(DeckListInfo::from_submission(&p1.deck));
+    let p2_deck_info = Some(DeckListInfo::from_submission(&p2.deck));
 
     // Send GameStarted to both players
     let p1_lib_size = game.player_zones[0].1.library.len();
