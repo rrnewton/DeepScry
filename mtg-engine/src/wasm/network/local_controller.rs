@@ -121,6 +121,12 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
+        // 0. Check if we're waiting for acknowledgment from a previous submission
+        // This happens when we submitted a choice but the ack hasn't arrived yet
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
+
         // 1. Check for ChoiceRequest from server
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
@@ -156,6 +162,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -189,6 +198,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -221,6 +233,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -256,6 +271,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -295,6 +313,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -328,6 +349,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -356,6 +380,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
     }
 
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
@@ -385,6 +412,9 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         count: usize,
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
         if !self.wait_for_choice_request() {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }

@@ -1260,6 +1260,17 @@ impl WasmFancyTuiState {
             return;
         }
 
+        // Check if this is a "waiting" context (network mode waiting for server/ack)
+        // These contexts have empty available options and should not trigger selection
+        if let Some(ChoiceContext::SpellAbility { available, .. }) = &self.pending_context {
+            if available.is_empty() {
+                // This is a "waiting for server" or "waiting for acknowledgment" context
+                // Don't allow selection - just re-run the game loop to check for updates
+                self.run_until_choice();
+                return;
+            }
+        }
+
         // Don't take the context yet - we need it for pending_choice_to_replay_choice
         let idx = self.selected_choice_idx;
 
