@@ -281,13 +281,13 @@ cargo test --test determinism_e2e  # Determinism tests
 
 ## Performance Characteristics
 
-**Benchmarks (as of 2025-10-26):**
-- Fresh mode: ~3,842 games/sec
-- Snapshot mode: ~9,177 games/sec
-- Rewind mode: ~332k rewinds/sec
-- Actions per turn: ~16.56 average
+**Benchmarks (as of 2026-01-03_#1475):**
+- Simple bolt rewind: ~6.3M actions/sec, ~3200 bytes/game
+- White weenie rewind: ~634k actions/sec
+- Jeskai troll-disk rewind: ~683k actions/sec
+- Actions per turn: ~4-12 depending on deck complexity
 
-See `OPTIMIZATION.md` for detailed analysis.
+For latest numbers, see `experiment_results/<CPU>/perf_history.csv` and `OPTIMIZATION.md`.
 
 ## Java Forge Compatibility
 

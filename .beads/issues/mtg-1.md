@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-02T04:52:22.457701909+00:00
+updated_at: 2026-01-03T03:29:42.733706231+00:00
 ---
 
 # Description
@@ -27,21 +27,28 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-m7v83: Upstream Java Forge card script issues (PRs to upstream)
 - mtg-6n8rl: Avatar set mechanics (Waterbend, Airbend) support
 
-**Current status as of 2026-01-02:**
-- Tests: 711 passing (nextest, all categories)
-- Mana engine fixes for non-basic lands and name-based detection
+**Current status as of 2026-01-03_#1475(39d1e07):**
+- Tests: 732 passing (nextest, all categories)
+- Parser warnings: 792 (70% reduction from initial 2,672)
+- Dynamic Affected$ selector parsing expanded
 - Avatar deck games complete without errors (200+ seeds tested)
 
-**Recent accomplishments (2026-01-02):**
+**Recent accomplishments (2026-01-03):**
+- Dynamic subtype.YouOwn parsing (Merfolk.YouOwn, Druid.YouOwn, etc.)
+- CardType.TopLibrary+YouCtrl patterns (Instant, Sorcery top of library)
+- Permanent.Subtype+YouCtrl patterns (Servo, Thopter buffs)
+- Card.EquippedBy+TYPE patterns (Human, Angel equipment bonuses)
+- Parser warning reduction: 854 → 792 in latest iteration
+
+**Previous accomplishments (2026-01-02):**
 - Fixed Ba Sing Se (non-basic land) mana production
 - Fixed Foggy Swamp Vinebender incorrectly marked as mana source
-- Added regression tests for mana payment edge cases
-- Documented missing Avatar mechanics (Waterbend, Airbend)
+- CardTypeYouOwn/SubtypeYouOwn selectors for graveyard casting
+- Don't offer unimplemented instants/sorceries as castable
 
-**Previous accomplishments (2025-12-04):**
+**Earlier milestones (2025-12-04):**
 - AffectedSelector::Any for comma-separated OR conditions
 - State-based selectors: SelfWhenUntapped, SelfWhenMonstrous
-- Card.AttachedBy and Land.YouOwn selectors
 - Parser warning reduction: 2,672 → 1,488 (-44%)
 
 **Conventions:**
@@ -50,3 +57,5 @@ This is the main tracking issue for MTG Forge Rust development.
 - Human-created issues have priority 0
 - Reference issues in code: // TODO(mtg-N): description
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
+
+Checked up-to-date as of 2026-01-03.

@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-02T20:37:01.452045689+00:00
+updated_at: 2026-01-03T03:30:02.918195915+00:00
 ---
 
 # Description
@@ -16,7 +16,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 ## Active Issues
 
 **Card Parsing & Selectors:**
-- mtg-147: Unhandled Affected$ selectors tracking (978 warnings reduced)
+- mtg-147: Unhandled Affected$ selectors tracking (792 warnings remaining, 70% reduction from 2,672)
 
 **ETB & Replacement Effects:**
 - mtg-zeuy0: Thriving Grove doesn't enter tapped or prompt for color choice (affects all Thriving lands)
@@ -29,15 +29,19 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
 - ⏳ Runtime evaluation still TODO (values default to 0)
 
-## Recent Fixes (2026-01-02)
+## Recent Fixes (2026-01-03_#1475)
+
+**Affected$ Selector Expansion (2026-01-03):**
+- ✅ Dynamic Subtype.YouOwn parsing (Merfolk.YouOwn, Druid.YouOwn, etc.)
+- ✅ CardType.TopLibrary+YouCtrl patterns (Instant, Sorcery)
+- ✅ Permanent.Subtype+YouCtrl patterns (Servo, Thopter)
+- ✅ Card.EquippedBy+TYPE patterns (Human, Angel)
+- ✅ Artifact.nonCreature+YouCtrl, Artifact.Creature+YouCtrl+Other
+- Warning count: 854 → 792 (62 fewer warnings)
 
 **Avatar Set Mana Engine Fixes (2026-01-02):**
 - ✅ Ba Sing Se (non-basic land with Fixed mana production) now taps correctly for {G}
-  - Root cause: tap_for_mana_for_cost didn't handle ManaProductionKind::Fixed for non-basic lands
-  - Fix: Added match arm for Fixed mana production in actions/mod.rs
 - ✅ Foggy Swamp Vinebender no longer incorrectly marked as mana source
-  - Root cause: Name-based fallback detected "Swamp" in creature name and set has_swamp_subtype=true
-  - Fix: Guard name-based land subtype detection with `if self.is_land` check
 - Avatar decks now play 200+ seeds without mana errors
 
 ## Completed Work (2025-12-04_#1134)
@@ -46,3 +50,5 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Accept AddPower$/AddToughness$ with X, Y, Z, -X, AffectedX
 - ✅ Accept Count$ expressions and named variables
 - ✅ Parse as 0 placeholder until SVar evaluation implemented
+
+Checked up-to-date as of 2026-01-03.
