@@ -7,7 +7,7 @@ labels:
 - feature
 - deck-support
 created_at: 2025-12-08T01:34:00.476371011+00:00
-updated_at: 2025-12-08T10:20:00.000000000+00:00
+updated_at: 2026-01-03T00:53:33.111534507+00:00
 ---
 
 # Description
@@ -19,7 +19,7 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 **Related Issues**:
 - mtg-147: Affected$ selector parsing (Crusade's Creature.White needs this) - FIXED
 
-## Current State (2025-12-08)
+## Current State (2026-01-03)
 
 ### Fixed Issues
 
@@ -37,6 +37,14 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 - Modified `resolve_spell()` to attach Auras to their targets after entering the battlefield
 - Unit test `test_spirit_link_aura_targeting` verifies Spirit Link is recognized as an Aura with Enchant Creature
 
+#### 5 & 6. Crusade & Spirit Link - AI CASTING FIXED ✓ (2026-01-03_#1466(5e904d3))
+**Issue**: AI never cast enchantments from hand
+- Added `should_cast_global_enchantment()` to evaluate Crusade-like effects
+- Added `should_cast_aura()` to evaluate Spirit Link-like effects  
+- Added `creature_matches_selector()` helper for AffectedSelector patterns
+- AI now casts global enchantments when net benefit is positive
+- AI now casts Auras when it has creatures to enchant
+
 ### Cards Working Correctly
 - Savannah Lions (W, 2/1) - Vanilla creature ✓
 - Tundra Wolves (W, 1/1 First Strike) - First strike keyword works ✓
@@ -48,8 +56,8 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 - Sol Ring (1) - Artifact, mana ability ✓
 - Jalum Tome (3) - Artifact with activated ability ✓
 - Strip Mine (Land) - Land destruction ✓
-- Crusade (WW) - Static +1/+1 to white creatures ✓ (newly fixed)
-- Spirit Link (W) - Aura targeting and attachment ✓ (newly fixed)
+- Crusade (WW) - Static +1/+1 to white creatures ✓ (fixed)
+- Spirit Link (W) - Aura targeting and attachment ✓ (fixed)
 
 ### Cards with Remaining Issues
 
@@ -68,19 +76,6 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 
 **Files**: `mtg-engine/src/loader/ability_parser.rs` (needs new `Balance` API type)
 
-#### 5. Crusade (WW) - AI ISSUE
-**Issue**: While Crusade's static ability WORKS when in play (verified by e2e test), the heuristic AI never casts it from hand.
-- `should_cast_spell()` in `heuristic_controller.rs` only returns `true` for: DrawCards, DestroyPermanent, DealDamage, CounterSpell effects
-- Crusade has a `StaticAbility::ModifyPT` effect, not an `Effect::*` type, so it's not recognized
-- AI discarded Crusade at end of game despite having 7+ mana
-
-**Files**: `mtg-engine/src/game/heuristic_controller.rs` lines 2467-2513
-
-#### 6. Spirit Link (W) - AI ISSUE
-**Issue**: Spirit Link infrastructure is fixed, but AI never casts Auras.
-- Same issue as Crusade: `should_cast_spell()` doesn't recognize Aura effects
-- Spirit Link has a trigger effect for life gain, not a direct castable effect
-
 #### 7. Preacher (1WW) - NOT IMPLEMENTED
 **Issue**: Complex control-changing ability with conditional duration
 - Keyword: "You may choose not to untap CARDNAME during your untap step"
@@ -96,22 +91,8 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 2. **Land Tax tutor effect**: Add `DB$ ChangeZone` parsing to phase trigger effects
 3. **Balance spell effect**: Implement `SP$ Balance` API type
 
-### AI Issues
-4. **Static ability enchantments**: Teach `should_cast_spell()` to recognize and value static buff enchantments like Crusade
-5. **Aura casting**: Teach AI to cast beneficial Auras like Spirit Link
+### Remaining AI Issues
+- None - AI issues resolved in commit 5e904d3
 
-## Test Commands
-
-```bash
-# Quick heuristic game to test deck
-cargo run --release --bin mtg -- tui --p1 heuristic --p2 heuristic --seed 42 decks/old_school2/white_weenie_classic.dck
-
-# Run Crusade parsing test
-cargo test --release -p mtg-forge-rs test_load_crusade -- --nocapture
-
-# Run Crusade buff e2e test
-cargo test --release -p mtg-forge-rs test_crusade_buffs_white -- --nocapture
-
-# Run Spirit Link targeting test
-cargo test --release -p mtg-forge-rs test_spirit_link_aura_targeting -- --nocapture
-```
+---
+**Last updated: 2026-01-03**

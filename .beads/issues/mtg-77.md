@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-08T10:30:00.000000000+00:00
+updated_at: 2026-01-03T00:52:36.113334339+00:00
 ---
 
 # Description
@@ -57,17 +57,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - can_block_with_view() checks landwalk against defender's lands
   - Reference: CR 702.14 - Landwalk grants unblockability
   - Tests: 5 new tests for swampwalk/islandwalk/forestwalk + Bog Wraith e2e
+- ✅ **Enchantment casting from hand (2026-01-03_#1466(5e904d3))**
+  - Global enchantments like Crusade, Bad Moon - evaluate creature benefit
+  - Aura enchantments like Spirit Link, Holy Strength - check for targets
+  - should_cast_global_enchantment() counts benefiting creatures
+  - should_cast_aura() checks for beneficial static/triggered abilities
+  - creature_matches_selector() helper for AffectedSelector patterns
+  - Reference: AttachAi.java, PumpAllAi.java from Java Forge
 
 **What's Missing:**
-
-### High Priority (Found 2025-12-08):
-
-1. **Enchantment CASTING from hand (mtg-glaxo)**
-   - `should_cast_spell()` in `heuristic_controller.rs:2467-2513` only recognizes DrawCards, DestroyPermanent, DealDamage, CounterSpell effects
-   - Static buff enchantments like Crusade (`StaticAbility::ModifyPT`) are NOT recognized
-   - AI literally discards Crusade to hand size instead of casting it with WW available
-   - Similarly, Auras like Spirit Link are never cast
-   - Note: mtg-80 fixed enchantment *evaluation on battlefield* but not *casting from hand*
 
 ### Medium Priority:
 
@@ -88,9 +86,8 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ## Next Steps (Priority Order)
 
-1. **Enchantment casting from hand** - Critical for white weenie decks
-2. More static abilities handling ("can't be blocked except by" types)
-3. Bluffing/deception
+1. More static abilities handling ("can't be blocked except by" types)
+2. Bluffing/deception
 
 ---
-**Checked up-to-date as of 2025-12-08 - 670 tests passing**
+**Checked up-to-date as of 2026-01-03 - 732 tests passing**
