@@ -307,6 +307,35 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
+                    // Check Waterbend cost (Avatar set mechanic - like Convoke)
+                    // Waterbend N requires N total payment via tapping creatures/artifacts OR mana
+                    if can_activate {
+                        if let Some(waterbend_amount) = ability.cost.get_waterbend_amount() {
+                            // Count untapped creatures/artifacts controlled by player (excluding this card)
+                            let tappable_count = self
+                                .game
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&&cid| {
+                                    if cid == card_id {
+                                        return false; // Can't tap the source to pay its own cost
+                                    }
+                                    if let Some(c) = self.game.cards.try_get(cid) {
+                                        !c.tapped && c.controller == player_id && (c.is_creature() || c.is_artifact())
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .count() as u8;
+
+                            let total_available = mana_pool.total() + tappable_count;
+                            if total_available < waterbend_amount {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
                     // Check life cost
                     if let Some(life_cost) = ability.cost.get_life_cost() {
                         if let Ok(player) = self.game.get_player(player_id) {
