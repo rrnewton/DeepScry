@@ -358,13 +358,16 @@ impl<'a> GameLoop<'a> {
                                     .get(card_id)
                                     .map(|c| c.name.as_str())
                                     .unwrap_or("Unknown");
-                                let play_msg = format!(
-                                    "{} plays {} ({})",
-                                    self.get_player_name(current_priority),
-                                    card_name,
-                                    card_id
-                                );
-                                self.game.debug_log_state_hash(&play_msg);
+                                // Only format debug message if debug state hash logging is enabled
+                                if self.game.logger.debug_state_hash_enabled() {
+                                    let play_msg = format!(
+                                        "{} plays {} ({})",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                        card_id
+                                    );
+                                    self.game.debug_log_state_hash(&play_msg);
+                                }
 
                                 // Play land - resolves directly (no stack)
                                 if let Err(e) = self.game.play_land(current_priority, card_id) {
@@ -428,14 +431,16 @@ impl<'a> GameLoop<'a> {
                                     .map(|c| c.name.to_string())
                                     .unwrap_or_else(|_| "Unknown".to_string());
 
-                                // Debug: Log state hash before casting spell
-                                let cast_msg = format!(
-                                    "{} casts {} ({}) (putting on stack)",
-                                    self.get_player_name(current_priority),
-                                    card_name,
-                                    card_id
-                                );
-                                self.game.debug_log_state_hash(&cast_msg);
+                                // Debug: Log state hash before casting spell (only if enabled)
+                                if self.game.logger.debug_state_hash_enabled() {
+                                    let cast_msg = format!(
+                                        "{} casts {} ({}) (putting on stack)",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                        card_id
+                                    );
+                                    self.game.debug_log_state_hash(&cast_msg);
+                                }
 
                                 if self.verbosity >= VerbosityLevel::Normal {
                                     if !self.replaying {
@@ -595,16 +600,21 @@ impl<'a> GameLoop<'a> {
                                         let mana_sources = self.mana_engine.all_sources();
 
                                         // Use GreedyManaResolver to compute proper tap order
+                                        // Reuse sources_to_tap_buffer to avoid allocation
                                         let resolver = GreedyManaResolver::new();
-                                        let mut sources_to_tap = Vec::new();
-                                        resolver.compute_tap_order(mana_cost, mana_sources, &mut sources_to_tap);
+                                        self.sources_to_tap_buffer.clear();
+                                        resolver.compute_tap_order(
+                                            mana_cost,
+                                            mana_sources,
+                                            &mut self.sources_to_tap_buffer,
+                                        );
 
                                         // Track remaining cost as hint for each land tap
                                         // This ensures dual lands produce the right color based on what's still needed
                                         let mut remaining_hint = *mana_cost;
 
                                         // Tap lands to add mana to pool
-                                        for &source_id in &sources_to_tap {
+                                        for &source_id in &self.sources_to_tap_buffer {
                                             if let Err(e) = self.game.tap_for_mana_for_cost(
                                                 current_priority,
                                                 source_id,
@@ -1009,12 +1019,17 @@ impl<'a> GameLoop<'a> {
                                 use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
 
                                 let mana_sources = self.mana_engine.all_sources();
+                                // Reuse sources_to_tap_buffer to avoid allocation
                                 let resolver = GreedyManaResolver::new();
-                                let mut sources_to_tap = Vec::new();
-                                resolver.compute_tap_order(&alternative_cost, mana_sources, &mut sources_to_tap);
+                                self.sources_to_tap_buffer.clear();
+                                resolver.compute_tap_order(
+                                    &alternative_cost,
+                                    mana_sources,
+                                    &mut self.sources_to_tap_buffer,
+                                );
 
                                 let mut remaining_hint = alternative_cost;
-                                for &source_id in &sources_to_tap {
+                                for &source_id in &self.sources_to_tap_buffer {
                                     if let Err(e) =
                                         self.game
                                             .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)

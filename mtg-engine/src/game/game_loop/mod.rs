@@ -162,6 +162,9 @@ pub struct GameLoop<'a> {
     /// Reusable buffer for collecting available spell abilities
     /// Cleared and reused each priority round to avoid allocations
     abilities_buffer: Vec<crate::core::SpellAbility>,
+    /// Reusable buffer for mana source tap order computation
+    /// Cleared and reused for each spell cast to avoid allocations
+    sources_to_tap_buffer: Vec<CardId>,
     /// Stop and snapshot when fixed controller is exhausted
     stop_when_fixed_exhausted: bool,
     /// Snapshot path for fixed-exhausted snapshots
@@ -224,6 +227,7 @@ impl<'a> GameLoop<'a> {
             choice_counter: 0,
             mana_engine: crate::game::mana_engine::ManaEngine::new(),
             abilities_buffer: Vec::with_capacity(16), // Pre-allocate for typical game (lands + spells + abilities)
+            sources_to_tap_buffer: Vec::with_capacity(8), // Pre-allocate for typical mana costs (0-6 sources)
             stop_when_fixed_exhausted: false,
             snapshot_path_for_fixed: None,
             snapshot_format: crate::game::snapshot::SnapshotFormat::default(),

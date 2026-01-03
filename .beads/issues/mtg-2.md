@@ -6,14 +6,23 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-03T01:23:13.670542403+00:00
+updated_at: 2026-01-03T04:25:19.351448151+00:00
 ---
 
 # Description
 
 Track performance optimization work for MTG Forge Rust.
 
-## Latest Optimization (2026-01-03_#1472)
+## Latest Optimization (2026-01-03_#1479)
+
+✅ **Reduce allocations in game loop** - **15.7% allocation reduction, +1.6% throughput**
+- Guard debug_log_state_hash format!() calls with enabled check
+- Reuse sources_to_tap_buffer for mana payment (Vec::new() → buffer reuse)
+- Simple bolt: 3,232 → 2,725 bytes/game (-15.7%)
+- White weenie: 14,150 → 13,168 bytes/game (-6.9%)
+- Actions/sec: +1.6% (simple_bolt), +1.0% (white_weenie)
+
+## Previous Optimization (2026-01-03_#1472)
 
 ✅ **Avoid String/Vec allocations in resolve_top_spell_from_stack when not logging** - **2.6% allocation reduction**
 - Moved card_name, card_effects, card_owner extraction inside `if should_log` branch
@@ -69,3 +78,5 @@ Track performance optimization work for MTG Forge Rust.
 - See OPTIMIZATION.md for methodology and allocation reduction patterns
 - Continue profiling with DHAT to find allocation hotspots
 - Target Vec clones in hot paths (game loop, effect resolution)
+
+Checked up-to-date as of 2026-01-03.
