@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-03T00:52:36.113334339+00:00
+updated_at: 2026-01-03T04:50:07.114089917+00:00
 ---
 
 # Description
@@ -64,6 +64,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - should_cast_aura() checks for beneficial static/triggered abilities
   - creature_matches_selector() helper for AffectedSelector patterns
   - Reference: AttachAi.java, PumpAllAi.java from Java Forge
+- ✅ **Destroy activated ability AI (2026-01-03_#1481)**
+  - ActivatedAbilityType::Destroy for abilities like Royal Assassin
+  - has_valuable_destroy_target() evaluates tapped creatures by value
+  - Prioritizes high-power targets, considers keywords (deathtouch, lifelink)
+  - Respects indestructible creatures
+  - Reference: DestroyAi.java in forge-ai
+  - Tests: test_destroy_ability_classification, test_royal_assassin_from_cardsfolder,
+    test_has_valuable_destroy_target
 
 **What's Missing:**
 
@@ -90,4 +98,4 @@ Track completion of heuristic AI port from Java Forge to Rust.
 2. Bluffing/deception
 
 ---
-**Checked up-to-date as of 2026-01-03 - 732 tests passing**
+**Checked up-to-date as of 2026-01-03 - 735 tests passing**

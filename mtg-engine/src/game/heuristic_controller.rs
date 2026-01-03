@@ -58,6 +58,10 @@ enum ActivatedAbilityType {
     /// Pump ability - boosts creature stats
     /// Example: Shivan Dragon "{R}: +1/+0 until end of turn"
     Pump { power: i32, toughness: i32 },
+    /// Destroy ability - destroys target permanent
+    /// Example: Royal Assassin "{T}: Destroy target tapped creature"
+    /// Reference: DestroyAi.java in forge-ai
+    Destroy,
     /// Other abilities not yet categorized
     Other,
 }
@@ -2148,6 +2152,38 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::Destroy => {
+                    // Destroy abilities (Royal Assassin, etc.)
+                    // Reference: DestroyAi.java in forge-ai
+                    //
+                    // Royal Assassin specifically targets "tapped creatures", so this ability
+                    // is most valuable during/after opponent's combat when attackers are tapped.
+                    //
+                    // Strategy:
+                    // 1. Only use when we have a valid target (handled by game loop)
+                    // 2. Prioritize high-value targets
+                    // 3. Use during opponent's declare attackers or after blockers declared
+
+                    // Check timing - best used after opponent declares attackers
+                    let current_step = view.current_step();
+                    let is_combat = matches!(
+                        current_step,
+                        crate::game::Step::DeclareAttackers
+                            | crate::game::Step::DeclareBlockers
+                            | crate::game::Step::CombatDamage
+                    );
+                    let is_end_phase = current_step == crate::game::Step::End;
+                    let is_main2 = current_step == crate::game::Step::Main2;
+
+                    // During combat or end phase - good time to destroy attackers
+                    // Reference: DestroyAi checks for phase restrictions
+                    if is_combat || is_end_phase || is_main2 {
+                        // Check if there are valuable tapped creatures to destroy
+                        if self.has_valuable_destroy_target(view) {
+                            return true;
+                        }
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -2180,6 +2216,14 @@ impl HeuristicController {
                     power: *power_bonus,
                     toughness: *toughness_bonus,
                 };
+            }
+        }
+
+        // Check for destroy effects (Royal Assassin, Atog, etc.)
+        // Reference: DestroyAi.java in forge-ai
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::DestroyPermanent { .. }) {
+                return ActivatedAbilityType::Destroy;
             }
         }
 
@@ -2222,6 +2266,51 @@ impl HeuristicController {
         // For now, use same logic as has_valuable_ping_target
         // In Java Forge, this checks for "best opponent creature we can kill"
         self.has_valuable_ping_target(view, damage)
+    }
+
+    /// Check if there's a valuable tapped creature we can destroy
+    /// Reference: DestroyAi.java - targets "best creature" from valid targets
+    ///
+    /// For Royal Assassin specifically, targets must be tapped creatures.
+    /// We evaluate based on creature value - prefer destroying high-power/value targets.
+    fn has_valuable_destroy_target(&self, view: &GameStateView) -> bool {
+        // Look for opponent's tapped creatures
+        // Royal Assassin can only target tapped creatures per card text
+        let mut best_value = 0i32;
+
+        for opponent_id in view.opponents() {
+            for &card_id in view.battlefield() {
+                if let Some(card) = view.get_card(card_id) {
+                    if card.controller == opponent_id && card.is_creature() && card.tapped {
+                        // Check if creature has indestructible (can't destroy it)
+                        if card.has_keyword(Keyword::Indestructible) {
+                            continue;
+                        }
+
+                        // Evaluate this creature's value
+                        // Use power + toughness as a simple heuristic
+                        let power = card.current_power() as i32;
+                        let toughness = card.current_toughness() as i32;
+                        let value = power * 10 + toughness * 5;
+
+                        // Add bonus for dangerous keywords
+                        if card.has_keyword(Keyword::Deathtouch) {
+                            best_value = best_value.max(value + 50);
+                        } else if card.has_keyword(Keyword::Lifelink) {
+                            best_value = best_value.max(value + 30);
+                        } else if card.has_keyword(Keyword::FirstStrike) || card.has_keyword(Keyword::DoubleStrike) {
+                            best_value = best_value.max(value + 20);
+                        } else {
+                            best_value = best_value.max(value);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only activate if there's a target worth destroying
+        // Threshold: at least a 2/2 creature (value 30)
+        best_value >= 30
     }
 
     /// Check if pumping this creature would enable better attacks
@@ -5249,5 +5338,174 @@ mod tests {
                 "Blue creature should be able to block creature with Protection from Red"
             );
         }
+    }
+
+    /// Test that Royal Assassin's activated ability is properly classified as Destroy
+    /// and the AI logic for evaluating destroy abilities works correctly.
+    ///
+    /// Royal Assassin (4ED): {T}: Destroy target tapped creature.
+    /// Reference: DestroyAi.java in forge-ai
+    #[test]
+    fn test_destroy_ability_classification() {
+        use crate::core::{ActivatedAbility, CardId, Cost, Effect, TargetRef, TargetRestriction};
+
+        let player_id = EntityId::new(1);
+        let controller = HeuristicController::new(player_id);
+
+        // Create a destroy ability similar to Royal Assassin
+        let destroy_ability = ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::DestroyPermanent {
+                target: CardId::new(0), // Placeholder target
+                restriction: TargetRestriction::any(),
+            }],
+            "Destroy target tapped creature".to_string(),
+            false, // not a mana ability
+        );
+
+        // Test that the ability is classified as Destroy
+        let ability_type = controller.classify_activated_ability(&destroy_ability);
+        assert!(
+            matches!(ability_type, ActivatedAbilityType::Destroy),
+            "Royal Assassin's ability should be classified as Destroy"
+        );
+
+        // Test that ping abilities are still classified correctly
+        let ping_ability = ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::DealDamage {
+                target: TargetRef::Permanent(CardId::new(0)),
+                amount: 1,
+            }],
+            "{T}: Deal 1 damage to any target".to_string(),
+            false,
+        );
+        assert!(
+            matches!(
+                controller.classify_activated_ability(&ping_ability),
+                ActivatedAbilityType::Ping { damage: 1 }
+            ),
+            "Prodigal Sorcerer's ability should be classified as Ping"
+        );
+
+        // Test that pump abilities are still classified correctly
+        let pump_ability = ActivatedAbility::new(
+            Cost::Mana(crate::core::ManaCost::from_string("R")),
+            vec![Effect::PumpCreature {
+                target: CardId::new(0),
+                power_bonus: 1,
+                toughness_bonus: 0,
+            }],
+            "{R}: +1/+0 until end of turn".to_string(),
+            false,
+        );
+        assert!(
+            matches!(
+                controller.classify_activated_ability(&pump_ability),
+                ActivatedAbilityType::Pump { power: 1, toughness: 0 }
+            ),
+            "Shivan Dragon's ability should be classified as Pump"
+        );
+    }
+
+    /// Test loading Royal Assassin from cardsfolder and verifying ability parsing
+    #[test]
+    fn test_royal_assassin_from_cardsfolder() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/royal_assassin.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Royal Assassin");
+        assert_eq!(def.name.as_str(), "Royal Assassin");
+
+        // Instantiate the card
+        let game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties
+        assert!(card.is_creature(), "Royal Assassin should be a creature");
+        assert_eq!(card.current_power(), 1, "Royal Assassin should be 1/1");
+        assert_eq!(card.current_toughness(), 1, "Royal Assassin should be 1/1");
+
+        // Verify the activated ability was parsed
+        assert!(
+            !card.activated_abilities.is_empty(),
+            "Royal Assassin should have at least one activated ability"
+        );
+
+        // Find the non-mana tap ability (the destroy ability)
+        let destroy_abilities: Vec<_> = card
+            .activated_abilities
+            .iter()
+            .filter(|a| !a.is_mana_ability && a.cost.includes_tap())
+            .collect();
+
+        assert_eq!(
+            destroy_abilities.len(),
+            1,
+            "Royal Assassin should have exactly one tap-to-destroy ability"
+        );
+
+        // Verify the ability has a DestroyPermanent effect
+        let ability = destroy_abilities[0];
+        let has_destroy_effect = ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }));
+
+        assert!(
+            has_destroy_effect,
+            "Royal Assassin's ability should have a DestroyPermanent effect"
+        );
+
+        // Test AI classification
+        let controller = HeuristicController::new(p1_id);
+        let ability_type = controller.classify_activated_ability(ability);
+        assert!(
+            matches!(ability_type, ActivatedAbilityType::Destroy),
+            "Royal Assassin's ability should be classified as Destroy by AI"
+        );
+    }
+
+    /// Test has_valuable_destroy_target evaluates tapped opponent creatures correctly
+    #[test]
+    fn test_has_valuable_destroy_target() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        // Create a game with two players
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Create an opponent's tapped 3/3 creature (valuable target)
+        let card_id = CardId::new(50);
+        let mut tapped_creature = Card::new(card_id, "Hill Giant", p2_id);
+        tapped_creature.add_type(CardType::Creature);
+        tapped_creature.set_base_power(Some(3));
+        tapped_creature.set_base_toughness(Some(3));
+        tapped_creature.tapped = true; // Tapped from attacking
+
+        // Add to battlefield
+        game.cards.insert(card_id, tapped_creature);
+        game.battlefield.cards.push(card_id);
+
+        // Create game state view
+        let view = GameStateView::new(&game, p1_id);
+
+        // Test that we detect this as a valuable target
+        assert!(
+            controller.has_valuable_destroy_target(&view),
+            "Should detect 3/3 tapped creature as valuable destroy target"
+        );
     }
 }
