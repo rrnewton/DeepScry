@@ -3284,13 +3284,18 @@ impl FancyTuiRenderer {
         // Get player name and determine if this is P1 or P2
         let player_name = view.get_player_name_by_id(player_id);
         let player_num = if player_id == view.player_id() { "P1" } else { "P2" };
-        let is_yours = player_id == view.player_id();
-        let ownership = if is_yours { "Your" } else { "Opponent's" };
 
-        // Left side: player stats with format "Your Battlefield, PlayerName (P1)"
+        // Format player label: avoid redundant "P1 (P1)" - just show "P1" if name matches
+        let player_label = if player_name == player_num {
+            player_name
+        } else {
+            format!("{} ({})", player_name, player_num)
+        };
+
+        // Left side: player stats (battlefield title already shows ownership)
         let stats_text = format!(
-            "{} Battlefield, {} ({}) | {} life | Hand: {} | GY: {} | Lib: {}",
-            ownership, player_name, player_num, life, hand_size, graveyard_size, library_size
+            "{} | {} life | Hand: {} | GY: {} | Lib: {}",
+            player_label, life, hand_size, graveyard_size, library_size
         );
 
         // Right side: turn and phase info
