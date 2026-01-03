@@ -312,6 +312,16 @@ impl PlayerController for WasmHumanController {
         })
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        _may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // WASM human controller: auto-untap everything for now
+        // TODO: Implement interactive UI for this choice
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Nothing to do
     }

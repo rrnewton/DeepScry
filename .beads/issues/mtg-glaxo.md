@@ -76,10 +76,14 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 
 **Files**: `mtg-engine/src/loader/ability_parser.rs` (needs new `Balance` API type)
 
-#### 7. Preacher (1WW) - NOT IMPLEMENTED
+#### 7. Preacher (1WW) - PARTIAL (keyword implemented)
 **Issue**: Complex control-changing ability with conditional duration
-- Keyword: "You may choose not to untap CARDNAME during your untap step"
-- Warning logged for unknown keyword
+- Keyword: "You may choose not to untap CARDNAME during your untap step" - IMPLEMENTED ✓
+  - Added `MayNotUntap` keyword to `KeywordSet` enum
+  - Added parsing in card loader
+  - Added `choose_permanents_to_not_untap()` to PlayerController trait
+  - Controller chooses during untap step which MayNotUntap permanents stay tapped
+- Remaining: Control-changing effect and conditional duration not implemented
 
 #### 8. Army of Allah (1WW) - PARTIAL
 **Issue**: Pump all attacking creatures - needs testing
@@ -95,4 +99,4 @@ This issue tracks all fixes needed to properly support the `decks/old_school2/wh
 - None - AI issues resolved in commit 5e904d3
 
 ---
-**Last updated: 2026-01-03**
+**Last updated: 2026-01-03 (MayNotUntap keyword added)**

@@ -139,6 +139,11 @@ pub enum Keyword {
     // ===== MAYFLASH VARIANTS =====
     MayFlashSac,
 
+    // ===== UNTAP RELATED =====
+    /// "You may choose not to untap CARDNAME during your untap step."
+    /// Controller chooses during untap whether to leave this permanent tapped.
+    MayNotUntap,
+
     // ===== COMPLEX KEYWORDS (with arguments stored separately in KeywordArgs) =====
     // Keywords with cost parameters
     Madness,

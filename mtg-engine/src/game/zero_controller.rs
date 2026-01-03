@@ -139,6 +139,15 @@ impl PlayerController for ZeroController {
         ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        _may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Zero controller always untaps everything (returns empty list = untap all)
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Zero controller doesn't need to log
     }

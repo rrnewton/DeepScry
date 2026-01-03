@@ -1026,6 +1026,15 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
             ChoiceResult::Ok(valid_permanents.iter().take(count).copied().collect())
         }
 
+        fn choose_permanents_to_not_untap(
+            &mut self,
+            _view: &GameStateView,
+            _may_not_untap_permanents: &[CardId],
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            // Untap everything
+            ChoiceResult::Ok(SmallVec::new())
+        }
+
         fn on_priority_passed(&mut self, _view: &GameStateView) {}
 
         fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}

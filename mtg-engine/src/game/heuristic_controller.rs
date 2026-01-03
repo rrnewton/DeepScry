@@ -4347,6 +4347,35 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(to_sacrifice)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Heuristic: Keep permanents tapped if they are providing an ongoing effect
+        // (e.g., control effects from Preacher, Coffin Queen, etc.)
+        // For now, simple logic: keep tapped if the card has an active control effect
+        // TODO(mtg-77): Improve by checking if the permanent is actively maintaining
+        // a stolen creature or ongoing effect
+
+        if may_not_untap_permanents.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // For now, always untap (return empty list) - most permanents want to untap
+        // so they can be used again. Control-stealing permanents need more complex
+        // logic to detect if they're maintaining control of something valuable.
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Untapping all {} permanents with MayNotUntap (default strategy)",
+                may_not_untap_permanents.len()
+            ),
+        );
+
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Could track game state here for future decisions
     }

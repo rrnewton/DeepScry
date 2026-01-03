@@ -1206,6 +1206,43 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(sacrifices)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Interactive selection for which permanents to keep tapped
+        if may_not_untap_permanents.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        println!("\n=== Untap Step ===");
+        println!("The following permanents have 'You may choose not to untap':");
+        for (idx, &card_id) in may_not_untap_permanents.iter().enumerate() {
+            let name = view.get_card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
+            println!("  [{}] {}", idx, name);
+        }
+
+        let mut stay_tapped = SmallVec::new();
+        println!("\nEnter indices of permanents to KEEP TAPPED (space-separated), or press Enter to untap all:");
+
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            let input = input.trim();
+            if !input.is_empty() {
+                for part in input.split_whitespace() {
+                    if let Ok(idx) = part.parse::<usize>() {
+                        if idx < may_not_untap_permanents.len() {
+                            stay_tapped.push(may_not_untap_permanents[idx]);
+                        }
+                    }
+                }
+            }
+        }
+
+        ChoiceResult::Ok(stay_tapped)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Optional: log when player passes
     }

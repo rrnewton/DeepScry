@@ -415,6 +415,16 @@ impl PlayerController for RichInputController {
         ChoiceResult::Ok(to_sacrifice)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        _may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Rich input controller always untaps everything (returns empty list = untap all)
+        // TODO: Could add command syntax for controlling untap decisions
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // No action needed
     }

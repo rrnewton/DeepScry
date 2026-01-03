@@ -3,8 +3,8 @@
 //! This module contains the individual step handlers (untap, upkeep, draw, main, end, cleanup)
 //! that execute during each turn of the game.
 
-use crate::core::{CardId, TriggerEvent};
-use crate::game::controller::{format_discard_prompt, GameStateView, PlayerController};
+use crate::core::{CardId, Keyword, TriggerEvent};
+use crate::game::controller::{format_discard_prompt, ChoiceResult, GameStateView, PlayerController};
 use crate::{handle_choice_result_break, Result};
 use smallvec::SmallVec;
 
@@ -12,32 +12,82 @@ use super::{GameLoop, GameResult, VerbosityLevel};
 
 impl<'a> GameLoop<'a> {
     /// Untap step - untap all permanents controlled by active player
-    pub(super) fn untap_step(&mut self) -> Result<()> {
+    ///
+    /// If permanents have "You may choose not to untap CARDNAME during your untap step"
+    /// (MayNotUntap keyword), the controller is asked which permanents to keep tapped.
+    pub(super) fn untap_step(
+        &mut self,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<Option<GameResult>> {
         let active_player = self.game.turn.active_player;
 
-        // Untap all permanents controlled by active player
-        // Use SmallVec to avoid heap allocation for typical small counts of tapped cards
-        let cards_to_untap: SmallVec<[CardId; 8]> = self
-            .game
-            .battlefield
-            .cards
-            .iter()
-            .copied()
-            .filter(|&card_id| {
-                self.game
-                    .cards
-                    .get(card_id)
-                    .map(|c| c.owner == active_player && c.tapped)
-                    .unwrap_or(false)
-            })
-            .collect();
+        // Collect tapped permanents controlled by active player
+        // Separate into: normal permanents and MayNotUntap permanents
+        let mut normal_to_untap: SmallVec<[CardId; 8]> = SmallVec::new();
+        let mut may_not_untap: SmallVec<[CardId; 8]> = SmallVec::new();
 
-        for card_id in cards_to_untap {
-            // Use untap_permanent to ensure mana cache is updated
+        for &card_id in &self.game.battlefield.cards {
+            if let Ok(card) = self.game.cards.get(card_id) {
+                if card.controller == active_player && card.tapped {
+                    if card.keywords.contains(Keyword::MayNotUntap) {
+                        may_not_untap.push(card_id);
+                    } else {
+                        normal_to_untap.push(card_id);
+                    }
+                }
+            }
+        }
+
+        // Untap all normal permanents
+        for card_id in normal_to_untap {
             let _ = self.game.untap_permanent(card_id);
         }
 
-        Ok(())
+        // If there are MayNotUntap permanents, ask controller which to keep tapped
+        if !may_not_untap.is_empty() {
+            let controller: &mut dyn PlayerController = if active_player == self.game.players[0].id {
+                controller1
+            } else {
+                controller2
+            };
+
+            let view = GameStateView::new(self.game, active_player);
+            let choice = controller.choose_permanents_to_not_untap(&view, &may_not_untap);
+
+            let stay_tapped: SmallVec<[CardId; 8]> = match choice {
+                ChoiceResult::Ok(ids) => ids,
+                ChoiceResult::ExitGame => {
+                    return Ok(Some(GameResult {
+                        winner: self.game.get_other_player_id(active_player),
+                        turns_played: self.turns_elapsed,
+                        end_reason: super::GameEndReason::Manual,
+                        action_count: self.game.action_count(),
+                    }));
+                }
+                ChoiceResult::Error(e) => {
+                    log::error!("Error in choose_permanents_to_not_untap: {}", e);
+                    SmallVec::new() // Default to untapping everything
+                }
+                ChoiceResult::UndoRequest(_) => SmallVec::new(), // Can't undo untap step
+                ChoiceResult::NeedInput(_) => SmallVec::new(),   // Not supported in untap
+            };
+
+            // Untap MayNotUntap permanents that weren't chosen to stay tapped
+            for card_id in may_not_untap {
+                if !stay_tapped.contains(&card_id) {
+                    let _ = self.game.untap_permanent(card_id);
+                } else if self.verbosity >= VerbosityLevel::Normal {
+                    // Log that this permanent stays tapped
+                    if let Ok(card) = self.game.cards.get(card_id) {
+                        let player_name = self.get_player_name(active_player);
+                        self.log_normal(&format!("{} chooses not to untap {}", player_name, card.name));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Check and execute phase-triggered abilities

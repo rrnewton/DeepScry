@@ -1296,6 +1296,23 @@ impl PlayerController for FancyTuiController {
         ChoiceResult::Ok(sacrifices)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // For interactive TUI, could prompt user to select which permanents to keep tapped
+        // For now, default to untapping everything (return empty list)
+        // TODO: Implement interactive selection UI for this choice
+        if !may_not_untap_permanents.is_empty() {
+            eprintln!(
+                "[TUI] Auto-untapping {} permanents with MayNotUntap (interactive selection not yet implemented)",
+                may_not_untap_permanents.len()
+            );
+        }
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Logging is handled by the game logger, no local state tracking needed
     }

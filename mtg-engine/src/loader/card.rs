@@ -1199,6 +1199,11 @@ impl CardDefinition {
                     "Partner" => keyword_set.insert_complex(KeywordArgs::Partner),
                     // ===== MAYFLASH VARIANTS =====
                     "MayFlashSac" => keyword_set.insert(Keyword::MayFlashSac),
+                    // ===== UNTAP RELATED =====
+                    "You may choose not to untap CARDNAME during your untap step."
+                    | "You may choose not to untap CARDNAME during your untap step" => {
+                        keyword_set.insert(Keyword::MayNotUntap)
+                    }
                     _ => {
                         // Unknown simple keyword - log warning
                         warn_with_context(&format!("Unknown simple keyword '{}'", keyword_str));

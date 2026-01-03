@@ -297,6 +297,17 @@ impl PlayerController for ReplayController {
             .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // TODO: Could add ReplayChoice::NotUntap variant for replaying untap decisions
+        // For now, delegate to inner controller
+        self.inner
+            .choose_permanents_to_not_untap(view, may_not_untap_permanents)
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         // Always delegate notifications to inner controller
         self.inner.on_priority_passed(view);

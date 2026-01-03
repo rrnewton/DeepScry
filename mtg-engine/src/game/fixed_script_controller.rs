@@ -341,6 +341,16 @@ impl PlayerController for FixedScriptController {
         ChoiceResult::Ok(to_sacrifice)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        _may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Script controller always untaps everything (returns empty list = untap all)
+        // TODO: Could add script commands for controlling this choice
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Script controller doesn't need to react to priority passes
     }

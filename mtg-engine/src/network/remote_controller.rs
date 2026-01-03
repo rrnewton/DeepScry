@@ -401,6 +401,16 @@ impl PlayerController for RemoteController {
         }
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        _may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // TODO: Add network protocol support for this choice
+        // For now, auto-untap everything
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Nothing to do
     }

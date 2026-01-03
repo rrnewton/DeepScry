@@ -691,6 +691,16 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         result
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Delegate to inner controller
+        self.inner
+            .choose_permanents_to_not_untap(view, may_not_untap_permanents)
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         self.inner.on_priority_passed(view);
     }

@@ -1284,6 +1284,32 @@ pub trait PlayerController {
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
+    /// Choose which permanents to NOT untap during untap step
+    ///
+    /// Called during the untap step for permanents with "You may choose not to
+    /// untap CARDNAME during your untap step." (MayNotUntap keyword).
+    ///
+    /// The controller chooses which of the given permanents should stay tapped.
+    /// Any permanents not returned will be untapped normally.
+    ///
+    /// MTG Rules 502.3: "After the active player has determined which permanents
+    /// they control will untap, they untap them all simultaneously."
+    ///
+    /// ## Parameters
+    /// - `view`: Read-only view of the game state
+    /// - `may_not_untap_permanents`: Tapped permanents with MayNotUntap that could stay tapped
+    ///
+    /// Returns ChoiceResult with permanents that should STAY TAPPED,
+    /// or a special request (UndoRequest, ExitGame, Error).
+    ///
+    /// ## Java Forge Equivalent
+    /// Matches `PlayerController.choosePermanentsToUntap(list)`
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
+
     /// Notification that priority was passed
     ///
     /// Called when this controller passes priority, allowing it to track

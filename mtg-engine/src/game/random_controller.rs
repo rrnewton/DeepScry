@@ -390,6 +390,41 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(to_sacrifice)
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Randomly decide for each permanent whether to not untap it
+        let log_active = view.logger().is_choice_logging_active();
+
+        if may_not_untap_permanents.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        let mut stay_tapped = SmallVec::new();
+
+        for &card_id in may_not_untap_permanents {
+            // 30% chance to keep tapped (most of the time, untap is preferred)
+            if self.rng.gen_bool(0.3) {
+                stay_tapped.push(card_id);
+            }
+        }
+
+        if log_active && !stay_tapped.is_empty() {
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!(
+                    "Chose to not untap {} of {} permanents with MayNotUntap",
+                    stay_tapped.len(),
+                    may_not_untap_permanents.len()
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(stay_tapped)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Random AI doesn't need to react to priority passes
     }

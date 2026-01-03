@@ -1059,10 +1059,7 @@ impl<'a> GameLoop<'a> {
         }
 
         match step {
-            Step::Untap => {
-                self.untap_step()?;
-                Ok(None)
-            }
+            Step::Untap => self.untap_step(controller1, controller2),
             Step::Upkeep => self.upkeep_step(controller1, controller2),
             Step::Draw => self.draw_step(controller1, controller2),
             Step::Main1 | Step::Main2 => self.main_phase(controller1, controller2),
@@ -1122,8 +1119,16 @@ mod tests {
 
     #[test]
     fn test_untap_step() {
+        use crate::game::ZeroController;
+
         let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
-        let alice = { game.players.iter().map(|p| p.id).next().expect("Should have player 1") };
+        let (alice, bob) = {
+            let mut players_iter = game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
 
         // Create a tapped land on battlefield
         let land_id = game.next_card_id();
@@ -1133,9 +1138,11 @@ mod tests {
         game.cards.insert(land_id, land);
         game.battlefield.add(land_id);
 
-        // Run untap step
+        // Run untap step with controllers
         let mut game_loop = GameLoop::new(&mut game);
-        game_loop.untap_step().unwrap();
+        let mut controller1 = ZeroController::new(alice);
+        let mut controller2 = ZeroController::new(bob);
+        game_loop.untap_step(&mut controller1, &mut controller2).unwrap();
 
         // Land should now be untapped
         let land = game.cards.get(land_id).unwrap();
