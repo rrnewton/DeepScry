@@ -1463,6 +1463,30 @@ impl GameState {
                 ));
             }
 
+            Effect::Firebend { controller, amount } => {
+                // Firebend effect: Add N red mana to controller's combat mana pool
+                // This mana lasts until end of combat (cleared in end_combat_step)
+                // CR 701.XX: Avatar set mechanic (custom)
+
+                // Get player name before mutable borrow for logging
+                let player_name = self
+                    .get_player(*controller)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|_| "Unknown".into());
+
+                // Add red mana to combat mana pool
+                let player = self.get_player_mut(*controller)?;
+                for _ in 0..*amount {
+                    player.combat_mana_pool.add_color(crate::core::Color::Red);
+                }
+
+                // Log the firebend
+                self.logger.gamelog(&format!(
+                    "{} adds {} {{R}} (combat mana, lasts until end of combat)",
+                    player_name, amount
+                ));
+            }
+
             Effect::GrantCantBeBlocked { target } => {
                 // GrantCantBeBlocked effect: Target creature can't be blocked this turn
                 // Created by AB$ Effect abilities with StaticAbilities$ containing "unblock"
@@ -2074,6 +2098,80 @@ impl GameState {
                         player: controller,
                         amount: *amount,
                     };
+                }
+                _ => {}
+            }
+
+            self.execute_effect(&effect)?;
+        }
+
+        Ok(())
+    }
+
+    /// Check and execute attack triggers for an attacking creature
+    ///
+    /// Called after each attacker is declared. Handles "Whenever this creature attacks"
+    /// triggers like Firebending, which add combat mana.
+    ///
+    /// MTG Rules 508.1m: Abilities that trigger on declaring attackers go on the stack.
+    pub fn check_attack_triggers(&mut self, attacker_id: CardId, _active_player: PlayerId) -> Result<()> {
+        // Get the card's triggers and controller
+        let (effects_to_execute, controller, creature_power): (Vec<Effect>, PlayerId, u8) = {
+            let card = self.cards.get(attacker_id)?;
+
+            // Collect Attacks triggers
+            let effects: Vec<Effect> = card
+                .triggers
+                .iter()
+                .filter(|trigger| trigger.event == TriggerEvent::Attacks)
+                .flat_map(|trigger| trigger.effects.clone())
+                .collect();
+
+            // Get current power for Firebending X calculations
+            // Use 0 if power is negative (shouldn't happen for attackers)
+            let power = card.current_power().max(0) as u8;
+
+            (effects, card.controller, power)
+        };
+
+        if effects_to_execute.is_empty() {
+            return Ok(());
+        }
+
+        // Log the trigger (official game action)
+        if let Ok(card) = self.cards.get(attacker_id) {
+            for trigger in &card.triggers {
+                if trigger.event == TriggerEvent::Attacks {
+                    self.logger
+                        .gamelog(&format!("Trigger: {} - {}", card.name, trigger.description));
+                }
+            }
+        }
+
+        // Execute each effect with placeholder resolution
+        for mut effect in effects_to_execute {
+            // Fill in placeholder values in trigger effects
+            match &mut effect {
+                Effect::Firebend {
+                    controller: ctrl,
+                    amount,
+                } if ctrl.as_u32() == 0 => {
+                    // Resolve placeholder controller to the actual creature controller
+                    // amount=0 means "use creature's power" (Firebending X)
+                    let actual_amount = if *amount == 0 { creature_power } else { *amount };
+
+                    effect = Effect::Firebend {
+                        controller,
+                        amount: actual_amount,
+                    };
+
+                    // Log the firebend trigger
+                    if let Ok(card) = self.cards.get(attacker_id) {
+                        self.logger.gamelog(&format!(
+                            "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                            card.name, actual_amount, actual_amount
+                        ));
+                    }
                 }
                 _ => {}
             }

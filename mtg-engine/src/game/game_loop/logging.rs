@@ -396,6 +396,13 @@ impl<'a> GameLoop<'a> {
                     format!("{source_name} ({source_id}) makes {target_name} ({target}) unblockable this turn");
                 self.game.logger.gamelog(&message);
             }
+            Effect::Firebend { controller, amount } => {
+                let player_name = self.get_player_name(*controller);
+                let message = format!(
+                    "{source_name} ({source_id}) triggers Firebending {amount} - {player_name} adds {amount} {{R}} to combat mana"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::ModalChoice {
                 modes, num_to_choose, ..
             } => {

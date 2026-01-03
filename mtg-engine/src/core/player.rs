@@ -15,8 +15,12 @@ pub struct Player {
     /// Life total
     pub life: i32,
 
-    /// Mana pool
+    /// Mana pool (regular mana, empties at end of each step)
     pub mana_pool: ManaPool,
+
+    /// Combat mana pool (mana that lasts until end of combat, e.g., from Firebending)
+    /// This mana is separate and only cleared at end of combat phase
+    pub combat_mana_pool: ManaPool,
 
     /// Has the player lost?
     pub has_lost: bool,
@@ -38,6 +42,7 @@ impl Player {
             name: name.into(),
             life: starting_life,
             mana_pool: ManaPool::new(),
+            combat_mana_pool: ManaPool::new(),
             has_lost: false,
             lands_played_this_turn: 0,
             max_lands_per_turn: 1,
@@ -70,6 +75,23 @@ impl Player {
 
     pub fn empty_mana_pool(&mut self) {
         self.mana_pool.clear();
+    }
+
+    /// Clear combat mana pool (at end of combat)
+    pub fn empty_combat_mana_pool(&mut self) {
+        self.combat_mana_pool.clear();
+    }
+
+    /// Get total available mana (regular + combat)
+    pub fn total_available_mana(&self) -> ManaPool {
+        ManaPool {
+            white: self.mana_pool.white + self.combat_mana_pool.white,
+            blue: self.mana_pool.blue + self.combat_mana_pool.blue,
+            black: self.mana_pool.black + self.combat_mana_pool.black,
+            red: self.mana_pool.red + self.combat_mana_pool.red,
+            green: self.mana_pool.green + self.combat_mana_pool.green,
+            colorless: self.mana_pool.colorless + self.combat_mana_pool.colorless,
+        }
     }
 }
 

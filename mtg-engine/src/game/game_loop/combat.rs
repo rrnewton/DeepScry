@@ -136,6 +136,12 @@ impl<'a> GameLoop<'a> {
                         self.game.logger.gamelog(&message);
                     }
                 }
+
+                // Check attack triggers (e.g., Firebending, "Whenever this creature attacks")
+                // MTG Rules 508.1m: Abilities that trigger on declaring attackers go on stack
+                if let Err(e) = self.game.check_attack_triggers(*attacker_id, active_player) {
+                    log::warn!(target: "trigger", "Failed to check attack triggers for {:?}: {}", attacker_id, e);
+                }
             }
         }
 
@@ -415,6 +421,15 @@ impl<'a> GameLoop<'a> {
     ) -> Result<Option<GameResult>> {
         // Clear combat state at end of combat
         self.game.combat.clear();
+
+        // Clear combat mana pools (mana from Firebending, etc. lasts until end of combat)
+        for player in &mut self.game.players {
+            if player.combat_mana_pool.total() > 0 {
+                log::debug!(target: "mana", "Clearing combat mana for {}: {:?}",
+                    player.name, player.combat_mana_pool);
+                player.empty_combat_mana_pool();
+            }
+        }
 
         // Players get priority
         if let Some(result) = self.priority_round(controller1, controller2)? {

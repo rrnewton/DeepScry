@@ -713,9 +713,9 @@ pub enum KeywordArgs {
     /// Emerge (e.g., "Emerge:5 G G" → cost, creature type implicit)
     /// TODO: Parse creature type requirement
     Emerge { cost: ManaCost },
-    /// Firebending (mana production keyword)
-    /// TODO: Parse mana production amount/type
-    Firebending { mana: String },
+    /// Firebending: Add N red mana on attack (lasts until end of combat)
+    /// e.g., "Firebending:1" → add 1 {R}, "Firebending:X" → add X {R} where X is creature's power
+    Firebending { amount: u8 },
     /// Ninjutsu (e.g., "Ninjutsu:U B" → cost, zone is hand by default)
     /// TODO: Parse zone (hand vs graveyard for commander ninjutsu)
     Ninjutsu { cost: ManaCost },

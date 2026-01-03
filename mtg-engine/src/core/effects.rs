@@ -307,6 +307,28 @@ pub enum Effect {
         num_counters: u8,
     },
 
+    /// Firebend: Add red mana to combat mana pool (lasts until end of combat).
+    ///
+    /// Avatar set mechanic. Effect: "Add N {R}. This mana lasts until end of combat."
+    ///
+    /// Corresponds to: `DB$ Mana | CombatMana$ True | Produced$ R | Amount$ N`
+    /// or keyword `K:Firebending:N`
+    ///
+    /// Implementation:
+    /// 1. Add N red mana to the player's combat_mana_pool
+    /// 2. The combat mana is cleared at end of combat (in end_combat_step)
+    ///
+    /// Cards using this:
+    /// - Firebending Student: "Firebending X, where X is this creature's power"
+    /// - Azula, Ruthless Firebender: "Firebending 1"
+    /// - Fire Nation Cadets: "Firebending 1"
+    Firebend {
+        /// The player who gets the mana
+        controller: PlayerId,
+        /// Amount of red mana to add
+        amount: u8,
+    },
+
     /// Grant "can't be blocked" until end of turn.
     ///
     /// Effect: Target creature can't be blocked this turn.

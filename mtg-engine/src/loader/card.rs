@@ -449,6 +449,36 @@ impl CardDefinition {
         // Copy SVars for SubAbility resolution during effect execution
         card.svars = self.svars.clone();
 
+        // Add Firebending attack trigger if the keyword is present
+        // Firebending N: "Whenever this creature attacks, add N {R}. This mana lasts until end of combat."
+        if let Some(KeywordArgs::Firebending { amount }) = card.keywords.get_args(Keyword::Firebending) {
+            use crate::core::{Effect, PlayerId, Trigger, TriggerEvent};
+
+            // Create attack trigger with Firebend effect
+            // amount=0 is a sentinel for "use creature's power" (Firebending X)
+            let description = if *amount == 0 {
+                format!(
+                    "Firebending X, where X is {}'s power (add X {{R}}, lasts until end of combat)",
+                    card.name
+                )
+            } else {
+                format!(
+                    "Firebending {} (add {} {{R}}, lasts until end of combat)",
+                    amount, amount
+                )
+            };
+
+            let firebend_trigger = Trigger::new(
+                TriggerEvent::Attacks,
+                vec![Effect::Firebend {
+                    controller: PlayerId::new(0), // Placeholder - resolved at runtime
+                    amount: *amount,              // 0 means use creature's power
+                }],
+                description,
+            );
+            card.triggers.push(firebend_trigger);
+        }
+
         // Update cache AFTER all abilities are parsed (including implicit mana abilities)
         // This derives mana production from Effect::AddMana in the abilities,
         // following Java Forge's approach of using structured Produced$ data.
@@ -963,9 +993,20 @@ impl CardDefinition {
                         keyword_set.insert_complex(KeywordArgs::Emerge { cost });
                     }
                     "Firebending" => {
-                        keyword_set.insert_complex(KeywordArgs::Firebending {
-                            mana: param.to_string(),
-                        });
+                        // Parse amount (e.g., "1", "2", or "X" for power-based)
+                        // For now, we handle numeric amounts only
+                        // "X" (where X is creature's power) requires runtime evaluation
+                        if let Ok(amount) = param.parse::<u8>() {
+                            keyword_set.insert_complex(KeywordArgs::Firebending { amount });
+                        } else if param == "X" {
+                            // X = creature's power, will be resolved at runtime
+                            // Use 0 as sentinel for "use creature's power"
+                            keyword_set.insert_complex(KeywordArgs::Firebending { amount: 0 });
+                        } else {
+                            // Try to parse complex expression like "X:, where X is this creature's power"
+                            // For now, use 0 (power-based) as default
+                            keyword_set.insert_complex(KeywordArgs::Firebending { amount: 0 });
+                        }
                     }
                     "Ninjutsu" => {
                         let cost = ManaCost::from_string(param);
