@@ -1,6 +1,8 @@
 //! Main game state structure
 
-use crate::core::{Card, CardId, Color, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId};
+use crate::core::{
+    Card, CardId, Color, DelayedTriggerStore, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId,
+};
 use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
 use crate::undo::UndoLog;
 use crate::zones::{CardZone, PlayerZones, Zone};
@@ -111,6 +113,18 @@ pub struct GameState {
     /// Effects are automatically cleaned up when their tracked cards change
     /// zones or when their source permanents leave the battlefield.
     pub persistent_effects: PersistentEffectStore,
+
+    /// Delayed triggers waiting to fire on specific events.
+    ///
+    /// Delayed triggers are created by effects and fire when conditions are met:
+    /// - Zone changes: "When this dies, return it to the battlefield tapped"
+    /// - Phase changes: "At the beginning of the next end step, sacrifice it"
+    ///
+    /// Examples:
+    /// - Earthbend: Return earthbent land to battlefield when it dies/is exiled
+    /// - Flicker: Return exiled creature at end of turn
+    /// - Suspend: Cast spell when last time counter is removed
+    pub delayed_triggers: DelayedTriggerStore,
 }
 
 impl GameState {
@@ -181,6 +195,7 @@ impl GameState {
             bump: Bump::new(),
             mana_state_version: 0,
             persistent_effects: PersistentEffectStore::new(),
+            delayed_triggers: DelayedTriggerStore::new(),
         }
     }
 
@@ -636,6 +651,11 @@ impl GameState {
             log::debug!(target: "persistent_effects", "Cleaning up {} effects on zone change for card {}", effects_to_remove.len(), card_id.as_u32());
             self.persistent_effects.remove_many(&effects_to_remove);
         }
+
+        // Check and fire delayed triggers for this zone change
+        // This handles effects like Earthbend that return cards to battlefield
+        // Note: This may cause recursive move_card calls (e.g., return to battlefield)
+        self.check_delayed_triggers_on_zone_change(card_id, from, to)?;
 
         Ok(())
     }
@@ -1630,6 +1650,156 @@ impl GameState {
             Ok(None)
         }
     }
+
+    /// Check and fire delayed triggers for a zone change.
+    ///
+    /// Called after a card moves between zones to fire any delayed triggers
+    /// that were waiting for this event (e.g., Earthbend's return-to-battlefield).
+    ///
+    /// Returns the number of triggers that fired.
+    pub fn check_delayed_triggers_on_zone_change(
+        &mut self,
+        card_id: CardId,
+        from_zone: Zone,
+        to_zone: Zone,
+    ) -> Result<usize> {
+        // Find all triggers that match this zone change
+        let trigger_ids = self
+            .delayed_triggers
+            .find_zone_change_triggers(card_id, from_zone, to_zone);
+
+        if trigger_ids.is_empty() {
+            return Ok(0);
+        }
+
+        log::debug!(
+            target: "delayed_triggers",
+            "Found {} delayed triggers for card {} moving from {:?} to {:?}",
+            trigger_ids.len(),
+            card_id.as_u32(),
+            from_zone,
+            to_zone
+        );
+
+        let mut fired_count = 0;
+
+        // Fire each trigger (remove it and execute its effect)
+        for trigger_id in trigger_ids {
+            if let Some(trigger) = self.delayed_triggers.remove(trigger_id) {
+                self.fire_delayed_trigger(trigger)?;
+                fired_count += 1;
+            }
+        }
+
+        Ok(fired_count)
+    }
+
+    /// Fire a delayed trigger, executing its effect.
+    fn fire_delayed_trigger(&mut self, trigger: crate::core::DelayedTrigger) -> Result<()> {
+        use crate::core::DelayedEffect;
+
+        let card_id = trigger.tracked_card;
+        let controller = trigger.controller;
+
+        match trigger.effect {
+            DelayedEffect::ReturnToBattlefield { tapped, to_owner } => {
+                // Get the card's current zone and owner
+                let (current_zone, card_owner) = {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        let owner = card.owner;
+                        // Find where the card currently is
+                        let zone = self.find_card_zone(card_id).unwrap_or(Zone::Graveyard);
+                        (zone, owner)
+                    } else {
+                        return Ok(()); // Card no longer exists
+                    }
+                };
+
+                // Determine who controls the returned card
+                let return_controller = if to_owner { card_owner } else { controller };
+
+                // Get card name for logging
+                let card_name = self
+                    .cards
+                    .get(card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                // Move card to battlefield
+                self.move_card(card_id, current_zone, Zone::Battlefield, return_controller)?;
+
+                // Tap if required
+                if tapped {
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.tapped = true;
+                    }
+                }
+
+                self.logger.normal(&format!(
+                    "{} returns to the battlefield{}",
+                    card_name,
+                    if tapped { " tapped" } else { "" }
+                ));
+            }
+
+            DelayedEffect::Sacrifice => {
+                // Find where the card is and sacrifice it
+                if let Some(zone) = self.find_card_zone(card_id) {
+                    if zone == Zone::Battlefield {
+                        let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(controller);
+                        self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    }
+                }
+            }
+
+            DelayedEffect::ExileCard => {
+                // Exile the card from wherever it is
+                if let Some(zone) = self.find_card_zone(card_id) {
+                    let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(controller);
+                    self.move_card(card_id, zone, Zone::Exile, owner)?;
+                }
+            }
+
+            DelayedEffect::CastWithoutPaying => {
+                // TODO: Implement for Suspend mechanic
+                // This requires putting the spell on the stack without paying costs
+                log::warn!(target: "delayed_triggers", "CastWithoutPaying not yet implemented");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Find which zone a card is currently in.
+    fn find_card_zone(&self, card_id: CardId) -> Option<Zone> {
+        // Check battlefield
+        if self.battlefield.cards.contains(&card_id) {
+            return Some(Zone::Battlefield);
+        }
+
+        // Check stack
+        if self.stack.cards.contains(&card_id) {
+            return Some(Zone::Stack);
+        }
+
+        // Check player zones
+        for (_, zones) in &self.player_zones {
+            if zones.hand.cards.contains(&card_id) {
+                return Some(Zone::Hand);
+            }
+            if zones.library.cards.contains(&card_id) {
+                return Some(Zone::Library);
+            }
+            if zones.graveyard.cards.contains(&card_id) {
+                return Some(Zone::Graveyard);
+            }
+            if zones.exile.cards.contains(&card_id) {
+                return Some(Zone::Exile);
+            }
+        }
+
+        None
+    }
 }
 
 impl Clone for GameState {
@@ -1665,6 +1835,7 @@ impl Clone for GameState {
             bump: Bump::new(),
             mana_state_version: self.mana_state_version,
             persistent_effects: self.persistent_effects.clone(),
+            delayed_triggers: self.delayed_triggers.clone(),
         }
     }
 }

@@ -372,6 +372,19 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Earthbend { target, num_counters } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) earthbends {target_name} ({target}) (0/0 creature with haste, {} +1/+1 counters)",
+                    num_counters
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::GrantCantBeBlocked { target } => {
                 let target_name = self
                     .game

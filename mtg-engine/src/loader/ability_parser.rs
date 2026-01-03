@@ -152,6 +152,11 @@ pub enum ApiType {
     /// CR 701.65b
     Airbend,
 
+    /// Earthbend: Target land becomes 0/0 creature with haste, put N +1/+1 counters.
+    /// When it dies or is exiled, return it to battlefield tapped.
+    /// CR 701.65a
+    Earthbend,
+
     // === Catch-all for unknown types ===
     Unknown(String),
 }
@@ -256,6 +261,7 @@ impl ApiType {
 
             // Avatar Set Mechanics
             "Airbend" => Self::Airbend,
+            "Earthbend" => Self::Earthbend,
 
             // Unknown type - preserve original string for debugging
             unknown => Self::Unknown(unknown.to_string()),
@@ -325,6 +331,7 @@ impl ApiType {
             Self::FlipACoin => "FlipACoin",
             Self::Balance => "Balance",
             Self::Airbend => "Airbend",
+            Self::Earthbend => "Earthbend",
             Self::Unknown(s) => s.as_str(),
         }
     }

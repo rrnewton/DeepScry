@@ -893,6 +893,31 @@ impl GameState {
                 mana: *mana,
                 produces_chosen_color: *produces_chosen_color,
             },
+            // Earthbend: Target land becomes 0/0 creature with haste
+            Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::Earthbend {
+                        target: resolved_target,
+                        num_counters: *num_counters,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            // Airbend: Exile target, owner may cast for {2}
+            Effect::Airbend { target } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::Airbend {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -1310,6 +1335,94 @@ impl GameState {
                 // Log the airbend
                 self.logger.gamelog(&format!(
                     "{} is airbended (exiled, owner may cast for {{2}})",
+                    card_name
+                ));
+            }
+
+            Effect::Earthbend { target, num_counters } => {
+                // Earthbend effect: Target land becomes 0/0 creature with haste, gets N +1/+1 counters
+                // When it dies or is exiled, return it to battlefield tapped
+                // CR 701.XX: Avatar set mechanic (custom)
+                //
+                // Implementation:
+                // 1. Skip if target is still placeholder (0)
+                // 2. Add Creature type to the land (it stays a land too)
+                // 3. Set base power/toughness to 0/0 (temp, for animate effects)
+                // 4. Add Haste keyword
+                // 5. Put N +1/+1 counters
+                // 6. Register delayed trigger for return-to-battlefield on death/exile
+
+                // Skip if target is still placeholder (0) - no valid targets found
+                if target.as_u32() == 0 {
+                    // Ability fizzles - no valid targets
+                    return Ok(());
+                }
+
+                // Get card info and apply modifications
+                let card_name = {
+                    let card = self.cards.get_mut(*target)?;
+
+                    // Must be a land to earthbend
+                    if !card.is_land() {
+                        return Err(crate::MtgError::InvalidAction(
+                            "Earthbend target must be a land".to_string(),
+                        ));
+                    }
+
+                    // Add Creature type (still remains a land)
+                    if !card.is_creature() {
+                        card.add_type(CardType::Creature);
+                    }
+
+                    // Set temp base power/toughness to 0/0 (animate effect)
+                    card.set_temp_base_power(0);
+                    card.set_temp_base_toughness(0);
+
+                    // Add Haste keyword so it can attack immediately
+                    use crate::core::Keyword;
+                    card.keywords.insert(Keyword::Haste);
+
+                    card.name.clone()
+                };
+
+                // Add +1/+1 counters
+                use crate::core::CounterType;
+                self.add_counters(*target, CounterType::P1P1, *num_counters)?;
+
+                // Get controller for the delayed trigger
+                let controller = self.turn.active_player;
+
+                // Register delayed trigger: when this land dies or is exiled, return it to battlefield tapped
+                use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition};
+                use smallvec::smallvec;
+
+                let trigger = DelayedTrigger::new(
+                    crate::core::DelayedTriggerId::new(0), // ID will be assigned by store
+                    *target,                               // tracked_card
+                    *target,                               // source_card (the land itself)
+                    controller,
+                    DelayedTriggerCondition::ZoneChange {
+                        from_zones: smallvec![Zone::Battlefield],
+                        to_zones: smallvec![Zone::Graveyard, Zone::Exile],
+                    },
+                    DelayedEffect::ReturnToBattlefield {
+                        tapped: true,
+                        to_owner: true,
+                    },
+                );
+
+                let trigger_id = self.delayed_triggers.add(trigger);
+
+                // Log the earthbend
+                self.logger.gamelog(&format!(
+                    "{} is earthbent! (0/0 creature with haste, {} +1/+1 counters, returns when dies/exiled)",
+                    card_name, num_counters
+                ));
+
+                // Log trigger creation for debugging
+                self.logger.gamelog(&format!(
+                    "  -> Delayed trigger {} registered: return {} to battlefield tapped when it leaves",
+                    trigger_id.as_u32(),
                     card_name
                 ));
             }

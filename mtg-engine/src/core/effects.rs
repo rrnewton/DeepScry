@@ -280,6 +280,33 @@ pub enum Effect {
         target: CardId,
     },
 
+    /// Earthbend: Target land becomes a 0/0 creature with haste, put N +1/+1 counters.
+    ///
+    /// Avatar set mechanic (CR 701.65a). Effect:
+    /// "Target land you control becomes a 0/0 creature with haste that's still a land.
+    /// Put N +1/+1 counters on it. When it dies or is exiled, return it to the
+    /// battlefield tapped."
+    ///
+    /// Corresponds to: `DB$ Earthbend | Num$ 8`
+    ///
+    /// Implementation:
+    /// 1. Add Creature type to the land (permanently)
+    /// 2. Set base power/toughness to 0/0
+    /// 3. Add Haste keyword
+    /// 4. Put N +1/+1 counters on it
+    /// 5. Create a DelayedTrigger for return-to-battlefield on death/exile
+    ///
+    /// Cards using this:
+    /// - Avatar Kyoshi, Earthbender: "earthbend 8, then untap that land"
+    /// - Bumi, Unleashed: "earthbend 4"
+    /// - Badgermole: "earthbend 2"
+    Earthbend {
+        /// The land to earthbend (becomes a creature)
+        target: CardId,
+        /// Number of +1/+1 counters to put on the land
+        num_counters: u8,
+    },
+
     /// Grant "can't be blocked" until end of turn.
     ///
     /// Effect: Target creature can't be blocked this turn.

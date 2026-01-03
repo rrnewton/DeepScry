@@ -2,6 +2,7 @@
 
 pub mod card;
 pub mod costs;
+pub mod delayed_trigger;
 pub mod effects;
 pub mod entity;
 pub mod keyword_set;
@@ -14,6 +15,10 @@ pub mod types;
 
 pub use card::{Card, CardCache, CardType};
 pub use costs::Cost;
+pub use delayed_trigger::{
+    DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerExpiry, DelayedTriggerId,
+    DelayedTriggerStore, TriggerPhase, TurnOwner,
+};
 pub use effects::{
     AbilityCache, ActivatedAbility, AffectedSelector, Effect, StaticAbility, TargetRef, TargetRestriction, TargetType,
     Trigger, TriggerEvent,

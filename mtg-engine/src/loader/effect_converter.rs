@@ -278,6 +278,23 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Earthbend => {
+            // Earthbend effect: DB$ Earthbend | Num$ 8
+            // Example: Avatar Kyoshi, Earthbender - "earthbend 8, then untap that land"
+            // Effect: Target land becomes 0/0 creature with haste, put N +1/+1 counters.
+            //
+            // Parameters:
+            // - Num$: Number of +1/+1 counters (default 1)
+            // - ValidTgts$: Target restriction (implied: Land.YouCtrl)
+            //
+            // Note: The target is a placeholder (CardId::new(0)) - filled in at cast time.
+            let num_counters = params.get_u8("Num").unwrap_or(1);
+            Some(Effect::Earthbend {
+                target: CardId::new(0), // Placeholder - filled in at cast time
+                num_counters,
+            })
+        }
+
         ApiType::Effect => {
             // Effect ability: AB$ Effect | StaticAbilities$ X | RememberObjects$ Targeted
             // Creates a persistent effect that applies to remembered objects.
