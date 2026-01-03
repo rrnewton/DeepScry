@@ -2092,6 +2092,74 @@ impl CardDefinition {
                 return Some(AffectedSelector::NonLandCmcLE { max_cmc });
             }
 
+            // Pattern: TYPE.YouOwn (e.g., "Merfolk.YouOwn", "Druid.YouOwn")
+            // For effects that grant flashback or let you cast from graveyard
+            if value.ends_with(".YouOwn") && !value.contains('+') {
+                let type_part = value.strip_suffix(".YouOwn")?;
+                // Check if it's a card type (Instant, Sorcery, etc.)
+                if let Some(card_type) = is_card_type(type_part) {
+                    return Some(AffectedSelector::CardTypeYouOwn { card_type });
+                }
+                // Otherwise treat as subtype (creature type like Merfolk, Druid)
+                return Some(AffectedSelector::SubtypeYouOwn {
+                    subtype: crate::core::Subtype::new(type_part),
+                });
+            }
+
+            // Pattern: TYPE.TopLibrary+YouCtrl (e.g., "Instant.TopLibrary+YouCtrl")
+            // For effects that let you cast specific card types from top of library
+            if value.ends_with(".TopLibrary+YouCtrl") && !value.contains("+nonLand") {
+                let type_part = value.strip_suffix(".TopLibrary+YouCtrl")?;
+                // Check if it's a card type
+                if let Some(card_type) = is_card_type(type_part) {
+                    return Some(AffectedSelector::CardTypeTopLibrary { card_type });
+                }
+                // For subtypes (creature types), use SubtypeTopLibraryNonLand
+                // (most top-of-library effects for creature types are nonLand anyway)
+                return Some(AffectedSelector::SubtypeTopLibraryNonLand {
+                    subtype: crate::core::Subtype::new(type_part),
+                });
+            }
+
+            // Pattern: TYPE.TopLibrary+YouCtrl+nonLand (e.g., "Angel.TopLibrary+YouCtrl+nonLand")
+            // For effects that let you cast non-land cards of a type from top of library
+            if value.ends_with(".TopLibrary+YouCtrl+nonLand") || value.ends_with(".TopLibrary+YouOwn+nonLand") {
+                let suffix = if value.ends_with(".TopLibrary+YouCtrl+nonLand") {
+                    ".TopLibrary+YouCtrl+nonLand"
+                } else {
+                    ".TopLibrary+YouOwn+nonLand"
+                };
+                let type_part = value.strip_suffix(suffix)?;
+                return Some(AffectedSelector::SubtypeTopLibraryNonLand {
+                    subtype: crate::core::Subtype::new(type_part),
+                });
+            }
+
+            // Pattern: Permanent.TYPE+YouCtrl (e.g., "Permanent.Servo+YouCtrl")
+            // For effects that buff all permanents of a specific subtype you control
+            if value.starts_with("Permanent.") && value.ends_with("+YouCtrl") && !value.contains("+Other") {
+                let remainder = value.strip_prefix("Permanent.")?;
+                let subtype = remainder.strip_suffix("+YouCtrl")?;
+                // Skip already-handled patterns like "Permanent.Sliver+YouCtrl"
+                if subtype != "Sliver" && subtype != "nonLand" {
+                    return Some(AffectedSelector::PermanentSubtypeYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Card.EquippedBy+TYPE (e.g., "Card.EquippedBy+Human")
+            // For equipment that grants bonuses to specific creature types
+            if value.starts_with("Card.EquippedBy+") {
+                let subtype = value.strip_prefix("Card.EquippedBy+")?;
+                // Skip "Legendary" which is already handled specially
+                if subtype != "Legendary" {
+                    return Some(AffectedSelector::EquippedBySubtype {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
             None
         }
 
@@ -2148,6 +2216,11 @@ impl CardDefinition {
                 "Land.nonBasic" | "Land.nonBasic+YouCtrl" => AffectedSelector::NonBasicLands,
                 // Human-specific equipment
                 "Human.EquippedBy" => AffectedSelector::HumanEquippedBy,
+                // Artifact selectors with control
+                "Artifact.nonCreature+YouCtrl" => AffectedSelector::ArtifactsNonCreatureYouControl,
+                "Artifact.Creature+YouCtrl+Other" | "Artifact.Creature+Other+YouCtrl" => {
+                    AffectedSelector::ArtifactCreaturesYouControlOther
+                }
                 // Tapped/untapped state selectors for creatures
                 "Creature.tapped+YouCtrl+Other" | "Creature.YouCtrl+tapped+Other" => {
                     AffectedSelector::TappedCreaturesYouControlOther

@@ -937,9 +937,57 @@ pub enum AffectedSelector {
     /// where Aura/Equipment are subtypes, not card types.
     /// Used by effects that grant flashback or graveyard casting
     SubtypeYouOwn {
-        /// The subtype (e.g., "Aura", "Equipment")
+        /// The subtype (e.g., "Aura", "Equipment", "Merfolk", "Druid")
         subtype: crate::core::Subtype,
     },
+
+    /// Card type on top of your library.
+    ///
+    /// Corresponds to: `Affected$ Instant.TopLibrary+YouCtrl`, `Affected$ Sorcery.TopLibrary+YouCtrl`
+    /// Used by effects that let you cast specific card types from top of library
+    CardTypeTopLibrary {
+        /// The card type (e.g., Instant, Sorcery)
+        card_type: crate::core::CardType,
+    },
+
+    /// Subtype on top of your library (non-land).
+    ///
+    /// Corresponds to: `Affected$ Angel.TopLibrary+YouCtrl+nonLand`, `Affected$ Human.TopLibrary+YouCtrl+nonLand`
+    /// Used by effects that let you cast specific creature types from top of library
+    SubtypeTopLibraryNonLand {
+        /// The creature subtype (e.g., "Angel", "Human")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Permanent of a specific subtype you control.
+    ///
+    /// Corresponds to: `Affected$ Permanent.Servo+YouCtrl`, `Affected$ Permanent.Thopter+YouCtrl`
+    /// Used by effects that buff specific permanent types
+    PermanentSubtypeYouControl {
+        /// The subtype (e.g., "Servo", "Thopter")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Creature equipped by this equipment, if it has a specific subtype.
+    ///
+    /// Corresponds to: `Affected$ Card.EquippedBy+Human`, `Affected$ Card.EquippedBy+Angel`
+    /// Used by equipment that grants bonuses to specific creature types
+    EquippedBySubtype {
+        /// The required subtype (e.g., "Human", "Angel")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Non-creature artifacts you control.
+    ///
+    /// Corresponds to: `Affected$ Artifact.nonCreature+YouCtrl`
+    /// Used by effects that affect non-creature artifacts you control
+    ArtifactsNonCreatureYouControl,
+
+    /// Other artifact creatures you control.
+    ///
+    /// Corresponds to: `Affected$ Artifact.Creature+YouCtrl+Other`
+    /// Used by cards like Master of Etherium
+    ArtifactCreaturesYouControlOther,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

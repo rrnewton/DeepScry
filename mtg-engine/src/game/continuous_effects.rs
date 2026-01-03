@@ -506,6 +506,31 @@ impl GameState {
             // Not relevant for P/T modifications of creatures on battlefield
             AffectedSelector::CardTypeYouOwn { .. } => false,
             AffectedSelector::SubtypeYouOwn { .. } => false,
+            // Top of library selectors - not relevant for P/T modifications on battlefield
+            AffectedSelector::CardTypeTopLibrary { .. } => false,
+            AffectedSelector::SubtypeTopLibraryNonLand { .. } => false,
+            // Permanent subtype selectors - these DO apply to battlefield creatures
+            AffectedSelector::PermanentSubtypeYouControl { subtype } => {
+                creature.controller == source.controller && creature.subtypes.contains(subtype)
+            }
+            // Equipped by subtype - check if equipped and has required subtype
+            AffectedSelector::EquippedBySubtype { subtype } => {
+                self.get_attached_equipment(creature_id).contains(&source_id)
+                    && creature.subtypes.contains(subtype)
+            }
+            // Non-creature artifacts you control
+            AffectedSelector::ArtifactsNonCreatureYouControl => {
+                creature.controller == source.controller
+                    && creature.cache.is_artifact
+                    && !creature.is_creature()
+            }
+            // Other artifact creatures you control
+            AffectedSelector::ArtifactCreaturesYouControlOther => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.cache.is_artifact
+                    && creature.is_creature()
+            }
         }
     }
 
@@ -1225,7 +1250,13 @@ impl GameState {
                             | AffectedSelector::RememberedCards
                             | AffectedSelector::CreatureYouControlWasCast
                             | AffectedSelector::CardTypeYouOwn { .. }
-                            | AffectedSelector::SubtypeYouOwn { .. } => {
+                            | AffectedSelector::SubtypeYouOwn { .. }
+                            | AffectedSelector::CardTypeTopLibrary { .. }
+                            | AffectedSelector::SubtypeTopLibraryNonLand { .. }
+                            | AffectedSelector::PermanentSubtypeYouControl { .. }
+                            | AffectedSelector::EquippedBySubtype { .. }
+                            | AffectedSelector::ArtifactsNonCreatureYouControl
+                            | AffectedSelector::ArtifactCreaturesYouControlOther => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;
