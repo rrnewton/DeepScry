@@ -501,13 +501,18 @@ impl WasmFancyTuiState {
 
         // rewind_to_turn_start returns None only if undo log is disabled
         // (which shouldn't happen for WASM TUI, but handle gracefully)
-        let (turn_number, choice_actions, actions_rewound, _log_size) = match result {
+        let (turn_number, choice_actions, actions_rewound, log_size_at_turn) = match result {
             Some(r) => r,
             None => {
                 log::warn!(target: "wasm_tui", "REWIND: Undo log disabled!");
                 return Vec::new();
             }
         };
+
+        // Truncate game logs to match the rewound state
+        // This removes log entries generated after the turn started, preventing duplicates
+        // when we replay the choices
+        self.game.logger.truncate_to(log_size_at_turn);
 
         log::debug!(
             target: "wasm_tui",
