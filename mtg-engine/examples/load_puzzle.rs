@@ -81,6 +81,11 @@ p1battlefield=Grizzly Bears
             if let (Some(p), Some(t)) = (card.base_power(), card.base_toughness()) {
                 println!("    {}/{}", p, t);
             }
+            // Show counters
+            let p1p1 = card.get_counter(mtg_forge_rs::core::CounterType::P1P1);
+            if p1p1 > 0 {
+                println!("    +1/+1 counters: {}", p1p1);
+            }
         }
     }
 

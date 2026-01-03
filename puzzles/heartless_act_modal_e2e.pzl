@@ -1,0 +1,25 @@
+[metadata]
+Name:Heartless Act Modal Spell Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests modal spell Heartless Act. P0 has Heartless Act in hand with mana to cast it. P1 has a creature (Grizzly Bears) with no counters. P0 should cast Heartless Act, choose mode 1 (Destroy target creature with no counters), target Grizzly Bears, and destroy it.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Heartless Act
+p0battlefield=Swamp; Mountain
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Grizzly Bears
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

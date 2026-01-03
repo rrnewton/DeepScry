@@ -1,0 +1,25 @@
+[metadata]
+Name:Heartless Act RemoveCounter Mode Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests modal spell Heartless Act mode 2 (Remove up to three counters). P0 has Heartless Act in hand with mana to cast it. P1 has a creature (Grizzly Bears) with 5 +1/+1 counters on it. P0 should cast Heartless Act, choose mode 2 (Remove up to three counters), target Grizzly Bears, and remove 3 counters leaving 2.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Heartless Act
+p0battlefield=Swamp; Mountain
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Grizzly Bears|Counters:P1P1=5
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=
