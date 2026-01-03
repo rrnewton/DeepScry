@@ -515,14 +515,11 @@ impl GameState {
             }
             // Equipped by subtype - check if equipped and has required subtype
             AffectedSelector::EquippedBySubtype { subtype } => {
-                self.get_attached_equipment(creature_id).contains(&source_id)
-                    && creature.subtypes.contains(subtype)
+                self.get_attached_equipment(creature_id).contains(&source_id) && creature.subtypes.contains(subtype)
             }
             // Non-creature artifacts you control
             AffectedSelector::ArtifactsNonCreatureYouControl => {
-                creature.controller == source.controller
-                    && creature.cache.is_artifact
-                    && !creature.is_creature()
+                creature.controller == source.controller && creature.cache.is_artifact && !creature.is_creature()
             }
             // Other artifact creatures you control
             AffectedSelector::ArtifactCreaturesYouControlOther => {
@@ -531,6 +528,21 @@ impl GameState {
                     && creature.cache.is_artifact
                     && creature.is_creature()
             }
+            // Treasure tokens you control
+            AffectedSelector::TreasuresYouControl => {
+                creature.controller == source.controller
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Treasure"))
+            }
+            // Cards you control that were cast - for battlefield creatures, assume they were cast
+            // TODO(mtg-147): Track actual cast vs ETB status
+            AffectedSelector::CardsYouControlWasCast => creature.controller == source.controller,
+            // Self on top of library - not applicable for battlefield P/T
+            AffectedSelector::SelfTopLibrary => false,
+            // Color-based instant/sorcery selectors - not applicable for battlefield creatures
+            AffectedSelector::InstantColorYouControl { .. } => false,
+            AffectedSelector::SorceryColorYouControl { .. } => false,
+            // Top of library with subtype - not applicable for battlefield creatures
+            AffectedSelector::TopLibraryWithSubtype { .. } => false,
         }
     }
 
@@ -1256,7 +1268,13 @@ impl GameState {
                             | AffectedSelector::PermanentSubtypeYouControl { .. }
                             | AffectedSelector::EquippedBySubtype { .. }
                             | AffectedSelector::ArtifactsNonCreatureYouControl
-                            | AffectedSelector::ArtifactCreaturesYouControlOther => {
+                            | AffectedSelector::ArtifactCreaturesYouControlOther
+                            | AffectedSelector::TreasuresYouControl
+                            | AffectedSelector::CardsYouControlWasCast
+                            | AffectedSelector::SelfTopLibrary
+                            | AffectedSelector::InstantColorYouControl { .. }
+                            | AffectedSelector::SorceryColorYouControl { .. }
+                            | AffectedSelector::TopLibraryWithSubtype { .. } => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;

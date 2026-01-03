@@ -988,6 +988,51 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Artifact.Creature+YouCtrl+Other`
     /// Used by cards like Master of Etherium
     ArtifactCreaturesYouControlOther,
+
+    /// Treasure tokens/permanents you control.
+    ///
+    /// Corresponds to: `Affected$ Card.Treasure+YouCtrl`
+    /// Used by cards that buff or care about Treasures
+    TreasuresYouControl,
+
+    /// Cards you control that were cast (not put onto battlefield).
+    ///
+    /// Corresponds to: `Affected$ Card.YouCtrl+wasCast`
+    /// Used by effects that care about cast vs ETB
+    CardsYouControlWasCast,
+
+    /// Self card on top of library.
+    ///
+    /// Corresponds to: `Affected$ Card.Self+TopLibrary`
+    /// Used by top-of-library casting effects on self
+    SelfTopLibrary,
+
+    /// Instant spells of a specific color you control.
+    ///
+    /// Corresponds to: `Affected$ Instant.Red+YouCtrl`, `Affected$ Instant.Green+YouCtrl`
+    /// Used by effects that grant abilities to colored instants
+    InstantColorYouControl {
+        /// The color (e.g., "Red", "Green")
+        color: String,
+    },
+
+    /// Sorcery spells of a specific color you control.
+    ///
+    /// Corresponds to: `Affected$ Sorcery.Red+YouCtrl`, `Affected$ Sorcery.Green+YouCtrl`
+    /// Used by effects that grant abilities to colored sorceries
+    SorceryColorYouControl {
+        /// The color (e.g., "Red", "Green")
+        color: String,
+    },
+
+    /// Card type with subtype on top of library.
+    ///
+    /// Corresponds to: `Affected$ Card.TopLibrary+YouCtrl+Bird`, `Affected$ Card.TopLibrary+YouCtrl+Land`
+    /// Used by effects that let you play specific types from top of library
+    TopLibraryWithSubtype {
+        /// The subtype filter (e.g., "Bird", "Land")
+        subtype: crate::core::Subtype,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility

@@ -2160,6 +2160,44 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: Instant.COLOR+YouCtrl (e.g., "Instant.Red+YouCtrl")
+            // For effects that grant abilities to colored instants
+            if value.starts_with("Instant.") && value.ends_with("+YouCtrl") {
+                let remainder = value.strip_prefix("Instant.")?;
+                let color = remainder.strip_suffix("+YouCtrl")?;
+                // Only handle color patterns (Red, Green, Blue, White, Black)
+                if matches!(color, "Red" | "Green" | "Blue" | "White" | "Black") {
+                    return Some(AffectedSelector::InstantColorYouControl {
+                        color: color.to_string(),
+                    });
+                }
+            }
+
+            // Pattern: Sorcery.COLOR+YouCtrl (e.g., "Sorcery.Red+YouCtrl")
+            // For effects that grant abilities to colored sorceries
+            if value.starts_with("Sorcery.") && value.ends_with("+YouCtrl") {
+                let remainder = value.strip_prefix("Sorcery.")?;
+                let color = remainder.strip_suffix("+YouCtrl")?;
+                // Only handle color patterns
+                if matches!(color, "Red" | "Green" | "Blue" | "White" | "Black") {
+                    return Some(AffectedSelector::SorceryColorYouControl {
+                        color: color.to_string(),
+                    });
+                }
+            }
+
+            // Pattern: Card.TopLibrary+YouCtrl+SUBTYPE (e.g., "Card.TopLibrary+YouCtrl+Bird")
+            // For effects that let you play specific types from top of library
+            if value.starts_with("Card.TopLibrary+YouCtrl+") {
+                let subtype = value.strip_prefix("Card.TopLibrary+YouCtrl+")?;
+                // Skip modifiers that aren't subtypes
+                if !subtype.starts_with("with") && !subtype.starts_with("has") && !subtype.starts_with("non") {
+                    return Some(AffectedSelector::TopLibraryWithSubtype {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
             None
         }
 
@@ -2304,6 +2342,11 @@ impl CardDefinition {
                 "Card.IsRemembered" => AffectedSelector::RememberedCards,
                 // Cast-based selectors
                 "Card.Creature+YouCtrl+wasCast" => AffectedSelector::CreatureYouControlWasCast,
+                "Card.YouCtrl+wasCast" => AffectedSelector::CardsYouControlWasCast,
+                // Treasure selectors
+                "Card.Treasure+YouCtrl" => AffectedSelector::TreasuresYouControl,
+                // Self on top of library
+                "Card.Self+TopLibrary" => AffectedSelector::SelfTopLibrary,
                 _ => {
                     // Try to parse tribal type patterns
                     return parse_tribal_selector(value);
