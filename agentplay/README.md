@@ -6,7 +6,7 @@ This directory contains scripts for playing MTG games step-by-step with scripted
 
 ```bash
 # Start a new game (creates numbered directory like 001.game and symlinks to current.game)
-./agentplay/start_game.sh decks/ryan_spiderman_draft.dck decks/ryan_spiderman_draft.dck
+./agentplay/start_game.sh decks/booster_draft/spiderman/ryan_spiderman_draft.dck decks/booster_draft/spiderman/ryan_spiderman_draft.dck
 
 # Continue with choices (auto-detects whose turn)
 ./agentplay/continue_game.sh "1"    # Choose action at index 1

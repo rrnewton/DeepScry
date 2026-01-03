@@ -33,7 +33,7 @@ OUTPUT_FILE="/tmp/tag_gamelogs_test.txt"
 # Run a short game with --tag-gamelogs enabled
 echo "Running game with --tag-gamelogs..."
 if run_mtg_with_timeout 30 tui \
-    "$WORKSPACE_ROOT/decks/julian_spiderman_draft.dck" \
+    "$WORKSPACE_ROOT/decks/booster_draft/spiderman/julian_spiderman_draft.dck" \
     --p1 random \
     --p2 random \
     --seed 42 \

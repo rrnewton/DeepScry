@@ -2073,6 +2073,7 @@ fn create_game_from_database(
 #[cfg(feature = "wasm-network")]
 fn create_network_game_state(
     our_player_id: PlayerId,
+    our_name: &str,
     opponent_name: &str,
     starting_life: i32,
     our_library_size: usize,
@@ -2082,9 +2083,9 @@ fn create_network_game_state(
 
     // Determine player order (P1 is index 0, P2 is index 1)
     let (p1_name, p2_name) = if our_player_id.as_u32() == 0 {
-        ("You".to_string(), opponent_name.to_string())
+        (our_name.to_string(), opponent_name.to_string())
     } else {
-        (opponent_name.to_string(), "You".to_string())
+        (opponent_name.to_string(), our_name.to_string())
     };
 
     // Create empty game with capacity for cards

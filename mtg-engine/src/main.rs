@@ -47,6 +47,20 @@ enum ControllerType {
     FancyFixed,
 }
 
+impl ControllerType {
+    /// Get the default player name for this controller type
+    fn default_name(&self, player_number: u8) -> String {
+        let base = match self {
+            ControllerType::Zero => "Zero",
+            ControllerType::Random => "Random",
+            ControllerType::Tui | ControllerType::Fancy | ControllerType::FancyFixed => "Human",
+            ControllerType::Heuristic => "AI-Heuristic",
+            ControllerType::Fixed => "Fixed",
+        };
+        format!("{}{}", base, player_number)
+    }
+}
+
 /// Verbosity level for game output (custom parser supporting both names and numbers)
 #[derive(Debug, Clone, Copy)]
 struct VerbosityArg(VerbosityLevel);
@@ -152,13 +166,13 @@ enum Commands {
         #[arg(long, value_enum, default_value = "heuristic")]
         p2: ControllerType,
 
-        /// Player 1 name (default: Player1)
-        #[arg(long, default_value = "Player1")]
-        p1_name: String,
+        /// Player 1 name (default: based on controller type, e.g. "Human1", "AI-Heuristic1")
+        #[arg(long)]
+        p1_name: Option<String>,
 
-        /// Player 2 name (default: Player2)
-        #[arg(long, default_value = "Player2")]
-        p2_name: String,
+        /// Player 2 name (default: based on controller type, e.g. "Human2", "AI-Heuristic2")
+        #[arg(long)]
+        p2_name: Option<String>,
 
         /// Fixed script input for player 1 (space or comma separated indices, e.g., "1 1 2" or "1,1,2")
         #[arg(long, value_name = "CHOICES")]
@@ -461,10 +475,11 @@ enum Commands {
         output: PathBuf,
 
         /// Glob pattern(s) for deck files to include (can specify multiple)
-        /// Default includes old_school decks and spiderman draft decks
+        /// Default includes old_school decks and booster_draft decks (recursive)
         #[arg(long, short = 'd', default_values_t = vec![
-            "decks/old_school/*.dck".to_string(),
-            "decks/*spiderman*.dck".to_string(),
+            "decks/old_school/**/*.dck".to_string(),
+            "decks/old_school2/**/*.dck".to_string(),
+            "decks/booster_draft/**/*.dck".to_string(),
         ])]
         deck_globs: Vec<String>,
     },
@@ -679,6 +694,10 @@ async fn main() -> Result<()> {
             } else {
                 mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
             };
+
+            // Apply default names based on controller type if not specified
+            let p1_name = p1_name.unwrap_or_else(|| p1.default_name(1));
+            let p2_name = p2_name.unwrap_or_else(|| p2.default_name(2));
 
             run_tui(
                 deck1,

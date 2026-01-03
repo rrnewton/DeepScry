@@ -3,7 +3,7 @@ decks/counterspells.dck
 decks/grizzly_bears.dck
 decks/heuristic_test_attacker.dck
 decks/heuristic_test_defender_no_blockers.dck
-decks/julian_spiderman_draft.dck
+decks/booster_draft/spiderman/julian_spiderman_draft.dck
 decks/monored.dck
 decks/monored_available.dck
 decks/monored_simple.dck
@@ -27,7 +27,7 @@ decks/old_school2/turbo_stasis.dck
 decks/old_school2/ur_burn.dck
 decks/old_school2/white_weenie_classic.dck
 decks/royal_assassin.dck
-decks/ryan_spiderman_draft.dck
+decks/booster_draft/spiderman/ryan_spiderman_draft.dck
 decks/simple_bolt.dck
 decks/vigilance_deck.dck
 decks/white_aggro_4ed.dck

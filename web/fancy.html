@@ -646,7 +646,7 @@ cast dark ritual</textarea>
                     <label>Deck Collection</label>
                     <select id="p1-collection">
                         <option value="old_school">Old School 1994</option>
-                        <option value="test_decks">Test Decks</option>
+                        <option value="booster_draft">Booster Draft</option>
                         <option value="custom">Custom Decks (Local)</option>
                     </select>
                 </div>
@@ -680,7 +680,7 @@ cast dark ritual</textarea>
                     <label>Deck Collection</label>
                     <select id="p2-collection">
                         <option value="old_school">Old School 1994</option>
-                        <option value="test_decks">Test Decks</option>
+                        <option value="booster_draft">Booster Draft</option>
                         <option value="custom">Custom Decks (Local)</option>
                     </select>
                 </div>
@@ -1328,7 +1328,7 @@ Name=My Deck
             const settings = window.pendingSettings;
 
             // Valid collection values
-            const validCollections = ['old_school', 'test_decks', 'custom'];
+            const validCollections = ['old_school', 'booster_draft', 'custom'];
 
             // Restore collections and trigger dropdown updates
             if (settings.p1Collection && validCollections.includes(settings.p1Collection)) {
@@ -2884,10 +2884,10 @@ Name=My Deck
                     deckName.includes('monolith')
                 )
             },
-            'test_decks': {
-                name: 'Test Decks',
-                // All other built-in decks
-                filter: (deckName) => !DECK_COLLECTIONS.old_school.filter(deckName)
+            'booster_draft': {
+                name: 'Booster Draft',
+                // All decks from booster_draft/ directory (avatar, spiderman, etc.)
+                filter: (deckName) => deckName.includes('avatar') || deckName.includes('spiderman')
             },
             'custom': {
                 name: 'Custom Decks (Local)',
@@ -2983,8 +2983,8 @@ Name=My Deck
                 // Filter built-in decks by collection
                 const collectionConfig = DECK_COLLECTIONS[collection];
                 if (!collectionConfig) {
-                    // Invalid collection, default to test_decks
-                    collectionSelect.value = 'test_decks';
+                    // Invalid collection, default to booster_draft
+                    collectionSelect.value = 'booster_draft';
                     updateDeckDropdown(player);
                     return;
                 }

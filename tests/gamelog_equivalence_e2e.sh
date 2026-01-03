@@ -47,7 +47,7 @@ if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
 fi
 
 # Use a simple deck for faster testing
-DECK="$WORKSPACE_ROOT/decks/julian_spiderman_draft.dck"
+DECK="$WORKSPACE_ROOT/decks/booster_draft/spiderman/julian_spiderman_draft.dck"
 
 if [[ ! -f "$DECK" ]]; then
     echo -e "${RED}Error: $DECK not found${NC}"

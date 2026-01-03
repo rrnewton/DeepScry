@@ -182,17 +182,13 @@ impl InteractiveController {
 
                 // Try to get more info about the card
                 if let Some(card) = view.get_card(card_id) {
-                    let controller = if card.controller == view.player_id() {
-                        "You"
-                    } else {
-                        "Opponent"
-                    };
+                    let controller_name = view.get_player_name_by_id(card.controller);
                     let pt = if card.is_creature() {
                         format!(" {}/{}", card.current_power(), card.current_toughness())
                     } else {
                         String::new()
                     };
-                    println!("  {} - {}{}{}", controller, name, pt, tapped);
+                    println!("  {} - {}{}{}", controller_name, name, pt, tapped);
                 } else {
                     println!("  {}{}", name, tapped);
                 }
@@ -206,7 +202,8 @@ impl InteractiveController {
         println!("\n=== Graveyard ===");
 
         // Show player's own graveyard
-        println!("Your graveyard:");
+        let player_name = view.player_name();
+        println!("{}'s graveyard:", player_name);
         let graveyard = view.graveyard();
         if graveyard.is_empty() {
             println!("  (empty)");
@@ -1305,8 +1302,9 @@ impl PlayerController for InteractiveController {
     }
 
     fn on_game_end(&mut self, view: &GameStateView, won: bool) {
+        let player_name = view.player_name();
         println!("\n=== Game Over ===");
-        println!("You {}", if won { "WON!" } else { "LOST!" });
+        println!("{} {}", player_name, if won { "WON!" } else { "LOST!" });
         println!("Final life total: {}", view.life());
     }
 

@@ -3281,12 +3281,16 @@ impl FancyTuiRenderer {
         let graveyard_size = view.player_graveyard(player_id).len();
         let library_size = view.player_library(player_id).len();
 
-        let player_label = if player_id == view.player_id() { "You" } else { "Opp" };
+        // Get player name and determine if this is P1 or P2
+        let player_name = view.get_player_name_by_id(player_id);
+        let player_num = if player_id == view.player_id() { "P1" } else { "P2" };
+        let is_yours = player_id == view.player_id();
+        let ownership = if is_yours { "Your" } else { "Opponent's" };
 
-        // Left side: player stats
+        // Left side: player stats with format "Your Battlefield, PlayerName (P1)"
         let stats_text = format!(
-            "{}: {} life | Hand: {} | GY: {} | Lib: {}",
-            player_label, life, hand_size, graveyard_size, library_size
+            "{} Battlefield, {} ({}) | {} life | Hand: {} | GY: {} | Lib: {}",
+            ownership, player_name, player_num, life, hand_size, graveyard_size, library_size
         );
 
         // Right side: turn and phase info

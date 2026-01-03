@@ -89,8 +89,9 @@ echo "Verifying P1's opening hand contains all requested cards..."
 # Extract P1's hand from Turn 1 output
 # After mtg-p9svf fix, hand contents is displayed AFTER the Draw Step
 # Look for the section with "Hand contents:" after "Turn 1" header
-# Format: Turn header, then Draw Step, then Player1 (active) with Hand contents
-P1_HAND=$(sed -n '/Turn 1.*Player1/,/Main Phase 1/p' /tmp/controlled_draw_test.txt | \
+# Format: Turn header, then Draw Step, then P1 name (active) with Hand contents
+# Note: Player names are now based on controller type (e.g., "Zero1" for --p1=zero)
+P1_HAND=$(sed -n '/Turn 1 -.*turn$/,/Main Phase 1/p' /tmp/controlled_draw_test.txt | \
           sed -n '/Hand contents:/,/Battlefield:/p' | head -10)
 
 # Check for Mountains (need at least 3)
@@ -120,10 +121,11 @@ fi
 echo
 echo "Verifying P2's opening hand contains all requested cards..."
 
-# Extract P2's hand from Turn 2 output (Player2's first turn as active player)
-# Note: Player2's first active turn shows his hand after the Draw Step
-# Note: Turn format is "  >>> Turn 2 - Player2 20 (Player1 19) <<<<"
-P2_HAND=$(sed -n '/Turn 2.*Player2/,/Main Phase 1/p' /tmp/controlled_draw_test.txt | \
+# Extract P2's hand from Turn 2 output (P2's first turn as active player)
+# Note: P2's first active turn shows his hand after the Draw Step
+# Note: Turn format is "Turn 2 - <PlayerName>'s turn"
+# Note: Player names are now based on controller type (e.g., "Zero2" for --p2=zero)
+P2_HAND=$(sed -n '/Turn 2 -.*turn$/,/Main Phase 1/p' /tmp/controlled_draw_test.txt | \
           sed -n '/Hand contents:/,/Battlefield:/p' | head -10)
 
 # Check P2's requested hand (3 Mountains, 2 Lightning Bolts)

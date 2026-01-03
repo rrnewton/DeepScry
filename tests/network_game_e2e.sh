@@ -40,8 +40,8 @@ if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
 fi
 
 # Check for Spiderman decks
-DECK1="$WORKSPACE_ROOT/decks/julian_spiderman_draft.dck"
-DECK2="$WORKSPACE_ROOT/decks/ryan_spiderman_draft.dck"
+DECK1="$WORKSPACE_ROOT/decks/booster_draft/spiderman/julian_spiderman_draft.dck"
+DECK2="$WORKSPACE_ROOT/decks/booster_draft/spiderman/ryan_spiderman_draft.dck"
 
 if [[ ! -f "$DECK1" ]]; then
     echo -e "${RED}Error: $DECK1 not found${NC}"

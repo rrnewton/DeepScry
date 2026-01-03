@@ -176,6 +176,7 @@ impl ClientConfig {
 /// Information needed to initialize client game state from GameStarted message
 pub struct GameStartInfo {
     pub your_player_id: PlayerId,
+    pub your_name: String,
     pub opponent_name: String,
     pub opening_hand: Vec<CardReveal>,
     pub opponent_hand_count: usize,
@@ -220,8 +221,8 @@ impl ClientGameState {
             PlayerId::new(0)
         };
 
-        // Create player names
-        let our_name = "You".to_string();
+        // Use player names from game start info
+        let our_name = info.your_name.clone();
 
         // Create shadow game state with remote libraries
         let mut game = GameState::new_two_player_with_capacity(
@@ -599,10 +600,11 @@ impl NetworkClient {
 
         // Determine player order - GameInitializer expects P1's deck first, then P2's
         let we_are_p1 = our_player_id.as_u32() == 0;
+        let our_name = self.config.player_name.clone();
         let (p1_deck, p2_deck, p1_name, p2_name) = if we_are_p1 {
-            (our_deck, opponent_deck, "You".to_string(), opponent_name.clone())
+            (our_deck, opponent_deck, our_name, opponent_name.clone())
         } else {
-            (opponent_deck, our_deck, opponent_name.clone(), "You".to_string())
+            (opponent_deck, our_deck, opponent_name.clone(), our_name)
         };
 
         // Debug: log deck order for entity ID verification
