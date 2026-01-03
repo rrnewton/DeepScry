@@ -177,7 +177,18 @@ impl<'a> GameLoop<'a> {
                                         self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                     }
                                 } else {
-                                    self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
+                                    // For non-targeting spells, check if we understand them
+                                    // Instants/sorceries with empty effects likely have unimplemented
+                                    // abilities (like Charm) - don't offer them
+                                    // Permanents (creatures, artifacts, enchantments) are still valid
+                                    // to cast even with no immediate effects (they enter battlefield)
+                                    let is_permanent = card.is_creature()
+                                        || card.is_artifact()
+                                        || card.is_enchantment()
+                                        || card.is_planeswalker();
+                                    if is_permanent || !card.effects.is_empty() {
+                                        self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
+                                    }
                                 }
                             }
                         }

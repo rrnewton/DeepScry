@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-01-02T21:28:30.803271986+00:00
-updated_at: 2026-01-02T21:29:32.505767248+00:00
+updated_at: 2026-01-03T02:30:20.020416522+00:00
 ---
 
 # Description
@@ -15,7 +15,27 @@ The game offers actions (spells and activated abilities) when they cannot be com
 1. Targeted spells offered when no valid targets exist
 2. Spells/abilities offered when mana cost cannot be paid
 
-## Reproducer 1: Targeted Spells
+## Status: PARTIALLY FIXED (2026-01-03_#1473)
+
+### Fixed:
+- Instants/sorceries with unimplemented API types (like Charm, modal spells) are no longer
+  offered when we don't understand their effects
+- This prevents cards like Heartless Act from being offered when we can't properly validate
+  their targeting requirements
+
+### Still Open:
+- The second issue (Waterbend abilities offered when cost can't be paid) needs investigation
+  - This may be an issue with alternative cost handling in push_activatable_abilities()
+  - Needs separate fix
+
+## Fix Details
+
+In `push_castable_spells()`, added check:
+- Instants/sorceries with empty effects are skipped (likely have unimplemented API types)
+- Permanents (creatures, artifacts, enchantments, planeswalkers) still castable with empty
+  effects since they enter the battlefield regardless
+
+## Reproducer 1: Targeted Spells (NOW FIXED)
 
 ```bash
 timeout 90 target/release/mtg tui decks/booster_draft/avatar/ryan_avatar_draft.dck \
@@ -25,7 +45,7 @@ timeout 90 target/release/mtg tui decks/booster_draft/avatar/ryan_avatar_draft.d
 
 Heartless Act was castable when no creatures existed on the battlefield.
 
-## Reproducer 2: Unaffordable Costs
+## Reproducer 2: Unaffordable Costs (STILL OPEN)
 
 ```bash
 timeout 90 target/release/mtg tui decks/booster_draft/avatar/gabriel_avatar_draft.dck \
@@ -34,26 +54,3 @@ timeout 90 target/release/mtg tui decks/booster_draft/avatar/gabriel_avatar_draf
 ```
 
 Shows many "Cannot pay Waterbend 5: only X available" errors - Foggy Swamp Vinebender's ability is being offered when it can't be paid.
-
-## Expected Behavior
-
-1. Spells that require targets should only be offered when at least one valid target exists
-2. Spells and activated abilities should only be offered when their costs can be paid
-
-## Affected Cards
-
-- Heartless Act (targets creatures)
-- Fatal Fissure (likely)
-- Lightning Strike (when targeting creatures)
-- Foggy Swamp Vinebender (Waterbend 5 ability)
-- Other Waterbend abilities
-
-## Root Cause (Suspected)
-
-The action generation code doesn't validate:
-1. Target availability before offering targeted spells
-2. Cost affordability before offering spells/abilities
-
-## Notes
-
-Found during random/random playtesting. The heuristic AI avoids these by making smarter choices.
