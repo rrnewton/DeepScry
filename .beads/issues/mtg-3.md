@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-03T03:30:02.918195915+00:00
+updated_at: 2026-01-03T03:49:53.795012567+00:00
 ---
 
 # Description
@@ -16,7 +16,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 ## Active Issues
 
 **Card Parsing & Selectors:**
-- mtg-147: Unhandled Affected$ selectors tracking (792 warnings remaining, 70% reduction from 2,672)
+- mtg-147: Unhandled Affected$ selectors tracking (772 warnings remaining, 71% reduction from 2,672)
 
 **ETB & Replacement Effects:**
 - mtg-zeuy0: Thriving Grove doesn't enter tapped or prompt for color choice (affects all Thriving lands)
@@ -29,15 +29,23 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
 - ⏳ Runtime evaluation still TODO (values default to 0)
 
-## Recent Fixes (2026-01-03_#1475)
+## Recent Fixes (2026-01-03_#1477)
 
-**Affected$ Selector Expansion (2026-01-03):**
+**Affected$ Selector Expansion (2026-01-03_#1477):**
+- ✅ Card.Treasure+YouCtrl (Treasure tokens you control)
+- ✅ Card.YouCtrl+wasCast (Cards you control that were cast)
+- ✅ Card.Self+TopLibrary (Self on top of library)
+- ✅ Instant.COLOR+YouCtrl, Sorcery.COLOR+YouCtrl (color-based spell buffs)
+- ✅ Card.TopLibrary+YouCtrl+SUBTYPE (subtype on top of library)
+- Warning count: 792 → 772 (-20 warnings)
+
+**Affected$ Selector Expansion (2026-01-03_#1475):**
 - ✅ Dynamic Subtype.YouOwn parsing (Merfolk.YouOwn, Druid.YouOwn, etc.)
 - ✅ CardType.TopLibrary+YouCtrl patterns (Instant, Sorcery)
 - ✅ Permanent.Subtype+YouCtrl patterns (Servo, Thopter)
 - ✅ Card.EquippedBy+TYPE patterns (Human, Angel)
 - ✅ Artifact.nonCreature+YouCtrl, Artifact.Creature+YouCtrl+Other
-- Warning count: 854 → 792 (62 fewer warnings)
+- Warning count: 854 → 792 (-62 warnings)
 
 **Avatar Set Mana Engine Fixes (2026-01-02):**
 - ✅ Ba Sing Se (non-basic land with Fixed mana production) now taps correctly for {G}

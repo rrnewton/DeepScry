@@ -281,7 +281,7 @@ cargo test --test determinism_e2e  # Determinism tests
 
 ## Performance Characteristics
 
-**Benchmarks (as of 2026-01-03_#1475):**
+**Benchmarks (as of 2026-01-03_#1471):**
 - Simple bolt rewind: ~6.3M actions/sec, ~3200 bytes/game
 - White weenie rewind: ~634k actions/sec
 - Jeskai troll-disk rewind: ~683k actions/sec
