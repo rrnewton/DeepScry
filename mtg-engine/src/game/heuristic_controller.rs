@@ -2509,6 +2509,23 @@ impl HeuristicController {
             return true;
         }
 
+        // Check for enchantments with static abilities
+        // Reference: AttachAi.java:47-91 (checkApiLogic) for Auras
+        // Reference: PumpAllAi.java:29-240 (checkApiLogic) for global enchantments
+        if spell.cache.is_enchantment {
+            // Handle Auras (require targeting)
+            if spell.cache.is_aura {
+                if self.should_cast_aura(spell, view) {
+                    return true;
+                }
+            } else {
+                // Handle global enchantments (no targeting)
+                if self.should_cast_global_enchantment(spell, view) {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 
@@ -2583,6 +2600,179 @@ impl HeuristicController {
         // CMC 0-1 spells: counter with 50% chance (simplified from Java's configurable chance)
         // In a real implementation, we'd check the RNG, but for now just counter CMC 1 spells
         cmc >= 1
+    }
+
+    /// Evaluate whether to cast a global enchantment (non-Aura)
+    ///
+    /// Reference: PumpAllAi.java:29-240 (checkApiLogic)
+    ///
+    /// Global enchantments are permanent effects that buff/debuff creatures.
+    /// Examples: Crusade (+1/+1 to white creatures), Bad Moon (+1/+1 to black creatures)
+    ///
+    /// Key decision logic:
+    /// 1. Check if we have creatures that benefit from the buff (static abilities)
+    /// 2. Compare our creature count vs opponent's for symmetric effects
+    /// 3. Cast if the net benefit is positive for us
+    fn should_cast_global_enchantment(&self, spell: &Card, view: &GameStateView) -> bool {
+        // Look for ModifyPT static abilities on the enchantment
+        let modify_pt_abilities: Vec<_> = spell
+            .static_abilities
+            .iter()
+            .filter_map(|ability| {
+                if let crate::core::StaticAbility::ModifyPT {
+                    affected,
+                    power,
+                    toughness,
+                    ..
+                } = ability
+                {
+                    Some((affected, *power, *toughness))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if modify_pt_abilities.is_empty() {
+            // No PT modification, so not a buff enchantment we can evaluate yet
+            // For now, don't cast unknown enchantments
+            return false;
+        }
+
+        // For each ModifyPT ability, count affected creatures
+        for (affected_selector, power_bonus, toughness_bonus) in modify_pt_abilities {
+            // Count creatures we control that would benefit
+            let our_creatures = view.battlefield().iter().filter_map(|&card_id| {
+                let card = view.get_card(card_id)?;
+                if card.owner == self.player_id
+                    && card.is_creature()
+                    && self.creature_matches_selector(card, affected_selector)
+                {
+                    Some(card_id)
+                } else {
+                    None
+                }
+            });
+
+            let our_count = our_creatures.clone().count();
+            let our_total_benefit = (power_bonus + toughness_bonus) * our_count as i32;
+
+            // Count opponent creatures that would benefit (for symmetric effects)
+            let opponent_creatures = view.battlefield().iter().filter_map(|&card_id| {
+                let card = view.get_card(card_id)?;
+                if card.owner != self.player_id
+                    && card.is_creature()
+                    && self.creature_matches_selector(card, affected_selector)
+                {
+                    Some(card_id)
+                } else {
+                    None
+                }
+            });
+
+            let opponent_count = opponent_creatures.count();
+            let opponent_total_benefit = (power_bonus + toughness_bonus) * opponent_count as i32;
+
+            // Cast if we benefit more than opponents
+            // Reference: PumpAllAi.java uses various calculations, simplified here to net benefit
+            if our_total_benefit > opponent_total_benefit && our_count > 0 {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Evaluate whether to cast an Aura enchantment
+    ///
+    /// Reference: AttachAi.java:47-91 (checkApiLogic)
+    ///
+    /// Auras enchant a creature and provide benefits (or penalties).
+    /// Examples: Spirit Link (gain life when creature deals damage), Holy Strength (+1/+2)
+    ///
+    /// Key decision logic:
+    /// 1. Check if there's a valid target creature
+    /// 2. Prefer enchanting our own creatures with beneficial effects
+    /// 3. Consider targeting opponent's creatures with negative effects
+    fn should_cast_aura(&self, spell: &Card, view: &GameStateView) -> bool {
+        // Look for beneficial static abilities (ModifyPT with positive values)
+        let has_beneficial_pt = spell.static_abilities.iter().any(|ability| {
+            if let crate::core::StaticAbility::ModifyPT { power, toughness, .. } = ability {
+                // Beneficial if it grants positive power or toughness
+                *power > 0 || *toughness > 0
+            } else {
+                false
+            }
+        });
+
+        // Look for beneficial triggers (e.g., Spirit Link's life gain trigger)
+        let has_beneficial_trigger = !spell.triggers.is_empty();
+
+        if has_beneficial_pt || has_beneficial_trigger {
+            // Try to find our best creature to enchant
+            let our_creatures: Vec<_> = view
+                .battlefield()
+                .iter()
+                .filter_map(|&card_id| {
+                    let card = view.get_card(card_id)?;
+                    if card.owner == self.player_id && card.is_creature() {
+                        Some(card_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !our_creatures.is_empty() {
+                // Cast if we have at least one creature to enchant
+                // Target selection will be handled by choose_aura_target
+                return true;
+            }
+        }
+
+        // TODO: Handle curse auras (negative effects on opponent creatures)
+        // For now, don't cast those
+
+        false
+    }
+
+    /// Helper to check if a creature matches an AffectedSelector
+    ///
+    /// Simplified implementation - matches "Creature.YouCtrl", "Creature.White", etc.
+    fn creature_matches_selector(&self, creature: &Card, selector: &crate::core::AffectedSelector) -> bool {
+        use crate::core::AffectedSelector;
+
+        match selector {
+            AffectedSelector::CreaturesYouControl => creature.owner == self.player_id,
+            AffectedSelector::AllCreatures => true,
+            AffectedSelector::AllCreaturesOfColor { color } => {
+                // Color is a String like "White", "Black", etc.
+                // We need to check if the creature's colors contain the specified color
+                creature.colors.iter().any(|c| {
+                    let color_name = format!("{:?}", c); // "Red", "Blue", etc.
+                    color.eq_ignore_ascii_case(&color_name)
+                })
+            }
+            AffectedSelector::AllCreaturesOfType { subtype } => creature.subtypes.contains(subtype),
+            AffectedSelector::CreatureTypeYouControl { subtype } => {
+                creature.owner == self.player_id && creature.subtypes.contains(subtype)
+            }
+            AffectedSelector::CreatureEquippedBy => {
+                // For equipment static abilities, not relevant for casting decision
+                false
+            }
+            AffectedSelector::CreatureEnchantedBy => {
+                // For aura static abilities, not relevant for casting decision
+                false
+            }
+            AffectedSelector::CreatureAttachedBy => {
+                // For equipment/aura static abilities, not relevant for casting decision
+                false
+            }
+            AffectedSelector::CreaturesOpponentControls => creature.owner != self.player_id,
+            // For other selectors, return false (not matched)
+            _ => false,
+        }
     }
 
     /// Choose the best creature to target with removal
