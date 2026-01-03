@@ -1313,6 +1313,41 @@ impl PlayerController for FancyTuiController {
         ChoiceResult::Ok(SmallVec::new())
     }
 
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Interactive mode selection for fancy TUI
+        let spell_name = view
+            .get_card_name(spell_id)
+            .unwrap_or_else(|| "Unknown Spell".to_string());
+
+        eprintln!(
+            "\n=== Choose {} Mode{} for {} ===",
+            mode_count,
+            if mode_count > 1 { "s" } else { "" },
+            spell_name
+        );
+        eprintln!("Minimum modes required: {}", min_modes);
+
+        for (idx, desc) in mode_descriptions.iter().enumerate() {
+            eprintln!("  [{}] {}", idx, desc);
+        }
+
+        // For now, default to first N modes since fancy TUI uses key-based input
+        // TODO: Add proper interactive mode selection UI
+        eprintln!(
+            "[TUI] Auto-selecting first {} mode(s) (interactive selection not yet implemented)",
+            mode_count
+        );
+        ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Logging is handled by the game logger, no local state tracking needed
     }

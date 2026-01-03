@@ -29,6 +29,8 @@ pub enum ReplayChoice {
     LibrarySearch(Option<CardId>),
     /// Choice of permanents to sacrifice
     Sacrifice(SmallVec<[CardId; 8]>),
+    /// Choice of modes for a modal spell
+    Modes(SmallVec<[usize; 4]>),
 }
 
 /// Controller that replays a sequence of choices then delegates to another controller
@@ -306,6 +308,31 @@ impl PlayerController for ReplayController {
         // For now, delegate to inner controller
         self.inner
             .choose_permanents_to_not_untap(view, may_not_untap_permanents)
+    }
+
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Try to consume a replay choice first
+        if let Some(modes) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::Modes(m) = c {
+                Some(m.clone())
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(modes);
+        }
+
+        // No replay choice available, delegate to inner controller
+        self.inner
+            .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
     }
 
     fn on_priority_passed(&mut self, view: &GameStateView) {

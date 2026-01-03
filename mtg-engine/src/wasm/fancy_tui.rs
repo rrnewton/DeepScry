@@ -678,6 +678,11 @@ impl WasmFancyTuiState {
                     ReplayChoice::Sacrifice(smallvec::SmallVec::new())
                 }
             }
+            PendingChoice::Modes(indices) => {
+                // Convert mode indices to ReplayChoice
+                let modes: smallvec::SmallVec<[usize; 4]> = indices.iter().copied().collect();
+                ReplayChoice::Modes(modes)
+            }
         }
     }
 
@@ -1116,6 +1121,7 @@ impl WasmFancyTuiState {
                     ChoiceContext::Discard { .. } => "Discard".to_string(),
                     ChoiceContext::LibrarySearch { .. } => "LibrarySearch".to_string(),
                     ChoiceContext::SacrificePermanents { .. } => "SacrificePermanents".to_string(),
+                    ChoiceContext::Modes { mode_count, .. } => format!("Modes({})", mode_count),
                 };
                 log::debug!(
                     target: "wasm_tui",
@@ -1181,6 +1187,7 @@ impl WasmFancyTuiState {
                 choices.extend(formatted_permanents.clone());
                 choices
             }
+            ChoiceContext::Modes { formatted_modes, .. } => formatted_modes.clone(),
         };
 
         // Set prompt based on context type using shared prompt functions
@@ -1222,6 +1229,17 @@ impl WasmFancyTuiState {
                 ..
             } => {
                 format!("Choose {} {} to sacrifice:", count, card_type_description)
+            }
+            ChoiceContext::Modes {
+                mode_count, spell_id, ..
+            } => {
+                let spell_name = self
+                    .game
+                    .cards
+                    .get(*spell_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("spell");
+                format!("Choose {} mode(s) for {}:", mode_count, spell_name)
             }
         };
         self.current_prompt = Some(prompt);
@@ -1293,6 +1311,10 @@ impl WasmFancyTuiState {
                     } else {
                         PendingChoice::Sacrifice(vec![idx - 1])
                     }
+                }
+                ChoiceContext::Modes { .. } => {
+                    // idx directly maps to mode index (0-based)
+                    PendingChoice::Modes(vec![idx])
                 }
             }
         };

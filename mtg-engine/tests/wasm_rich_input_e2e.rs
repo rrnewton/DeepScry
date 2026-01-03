@@ -258,6 +258,19 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
             ChoiceResult::Ok(SmallVec::new())
         }
 
+        fn choose_modes(
+            &mut self,
+            _view: &GameStateView,
+            _spell_id: CardId,
+            mode_descriptions: &[String],
+            mode_count: usize,
+            _min_modes: usize,
+            _can_repeat: bool,
+        ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+            // Default to first N modes
+            ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
+        }
+
         fn on_priority_passed(&mut self, _view: &GameStateView) {}
         fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
         fn get_controller_type(&self) -> ControllerType {
@@ -650,6 +663,19 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
         ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
             // Untap everything
             ChoiceResult::Ok(SmallVec::new())
+        }
+
+        fn choose_modes(
+            &mut self,
+            _view: &GameStateView,
+            _spell_id: CardId,
+            mode_descriptions: &[String],
+            mode_count: usize,
+            _min_modes: usize,
+            _can_repeat: bool,
+        ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+            // Default to first N modes
+            ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
         }
 
         fn on_priority_passed(&mut self, _view: &GameStateView) {}

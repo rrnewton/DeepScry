@@ -148,6 +148,19 @@ impl PlayerController for ZeroController {
         ChoiceResult::Ok(SmallVec::new())
     }
 
+    fn choose_modes(
+        &mut self,
+        _view: &GameStateView,
+        _spell_id: CardId,
+        _mode_descriptions: &[String],
+        mode_count: usize,
+        _min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Zero controller always chooses the first N modes (0, 1, 2, ...)
+        ChoiceResult::Ok((0..mode_count).collect())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Zero controller doesn't need to log
     }

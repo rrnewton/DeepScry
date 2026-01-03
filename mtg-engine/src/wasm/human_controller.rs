@@ -45,6 +45,8 @@ pub enum PendingChoice {
     LibrarySearch(Option<usize>),
     /// Sacrifice selection (indices into valid_permanents)
     Sacrifice(Vec<usize>),
+    /// Mode selection (indices into available modes)
+    Modes(Vec<usize>),
 }
 
 /// Human controller for WASM/browser gameplay
@@ -320,6 +322,31 @@ impl PlayerController for WasmHumanController {
         // WASM human controller: auto-untap everything for now
         // TODO: Implement interactive UI for this choice
         ChoiceResult::Ok(SmallVec::new())
+    }
+
+    fn choose_modes(
+        &mut self,
+        _view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Check for pending choice
+        if let Some(PendingChoice::Modes(indices)) = self.pending_choice.take() {
+            let modes: SmallVec<[usize; 4]> = indices.into_iter().filter(|&i| i < mode_descriptions.len()).collect();
+            return ChoiceResult::Ok(modes);
+        }
+
+        // No pending choice - request input
+        ChoiceResult::NeedInput(ChoiceContext::Modes {
+            spell_id,
+            mode_count,
+            min_modes,
+            can_repeat,
+            formatted_modes: mode_descriptions.to_vec(),
+        })
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

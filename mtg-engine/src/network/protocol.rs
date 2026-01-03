@@ -472,6 +472,22 @@ pub enum ChoiceType {
         /// Description of the permanent type (e.g., "creatures", "lands")
         card_type_description: String,
     },
+    /// Choose modes for a modal spell (e.g., "Choose one —")
+    ///
+    /// Modal spells like Heartless Act, Cryptic Command, or charms require
+    /// the player to select one or more modes when casting.
+    Modes {
+        /// The spell being cast (for context)
+        spell_id: CardId,
+        /// Number of modes to choose (usually 1, but can be more for "choose two")
+        mode_count: usize,
+        /// Minimum number of modes required (may be less than mode_count for optional modes)
+        min_modes: usize,
+        /// Whether the same mode can be chosen multiple times (for Entwine-like effects)
+        can_repeat: bool,
+        /// Total number of available modes
+        available_modes: usize,
+    },
 }
 
 /// Additional context for a choice request
@@ -1061,6 +1077,18 @@ mod tests {
             },
             ChoiceType::Discard { count: 2 },
             ChoiceType::LibrarySearch { valid_count: 10 },
+            ChoiceType::Sacrifice {
+                valid_count: 5,
+                count: 2,
+                card_type_description: "creatures".to_string(),
+            },
+            ChoiceType::Modes {
+                spell_id: card_id,
+                mode_count: 1,
+                min_modes: 1,
+                can_repeat: false,
+                available_modes: 2,
+            },
         ];
 
         for ct in choice_types {

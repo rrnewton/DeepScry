@@ -1243,6 +1243,63 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(stay_tapped)
     }
 
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Interactive mode selection
+        if mode_descriptions.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        let spell_name = view
+            .get_card_name(spell_id)
+            .unwrap_or_else(|| "Unknown Spell".to_string());
+        println!(
+            "\n=== Choose {} Mode{} for {} ===",
+            mode_count,
+            if mode_count > 1 { "s" } else { "" },
+            spell_name
+        );
+        println!("Minimum modes required: {}", min_modes);
+
+        for (idx, desc) in mode_descriptions.iter().enumerate() {
+            println!("  [{}] {}", idx, desc);
+        }
+
+        let mut chosen = SmallVec::new();
+        println!("\nEnter mode indices (space-separated):");
+
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            let input = input.trim();
+            for part in input.split_whitespace() {
+                if let Ok(idx) = part.parse::<usize>() {
+                    if idx < mode_descriptions.len() && chosen.len() < mode_count {
+                        chosen.push(idx);
+                    }
+                }
+            }
+        }
+
+        // If no modes chosen and min_modes > 0, default to first modes
+        while chosen.len() < min_modes {
+            for i in 0..mode_descriptions.len() {
+                if !chosen.contains(&i) {
+                    chosen.push(i);
+                    break;
+                }
+            }
+        }
+
+        ChoiceResult::Ok(chosen)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Optional: log when player passes
     }

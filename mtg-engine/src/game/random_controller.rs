@@ -425,6 +425,54 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(stay_tapped)
     }
 
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        _spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        _min_modes: usize,
+        can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        let log_active = view.logger().is_choice_logging_active();
+
+        if mode_descriptions.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        let mut chosen_modes: SmallVec<[usize; 4]> = SmallVec::new();
+        let mut available_indices: Vec<usize> = (0..mode_descriptions.len()).collect();
+
+        for _ in 0..mode_count {
+            if available_indices.is_empty() {
+                break;
+            }
+
+            // Randomly choose from available modes
+            let choice_idx = self.rng.gen_range(0..available_indices.len());
+            let mode_idx = available_indices[choice_idx];
+            chosen_modes.push(mode_idx);
+
+            // Remove chosen mode unless repeats are allowed
+            if !can_repeat {
+                available_indices.swap_remove(choice_idx);
+            }
+        }
+
+        if log_active {
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!(
+                    "Chose modes {:?} from {} available modes",
+                    chosen_modes,
+                    mode_descriptions.len()
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(chosen_modes)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Random AI doesn't need to react to priority passes
     }

@@ -4465,6 +4465,88 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(SmallVec::new())
     }
 
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        _spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        _min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Heuristic mode selection: evaluate each mode based on current board state
+        // For now, use simple text-based heuristics until we have full mode effect evaluation
+        //
+        // TODO(mtg-77): Implement proper mode evaluation based on:
+        // - Target availability (modes requiring targets that don't exist are useless)
+        // - Board state relevance (destruction when opponent has creatures)
+        // - Synergy with current game plan
+
+        if mode_descriptions.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // Score each mode based on simple heuristics
+        let mut mode_scores: Vec<(usize, i32)> = mode_descriptions
+            .iter()
+            .enumerate()
+            .map(|(idx, desc)| {
+                let desc_lower = desc.to_lowercase();
+                let mut score = 0i32;
+
+                // Prefer removal effects
+                if desc_lower.contains("destroy") || desc_lower.contains("exile") {
+                    score += 50;
+                }
+
+                // Prefer damage effects
+                if desc_lower.contains("damage") {
+                    score += 40;
+                }
+
+                // Value counter manipulation
+                if desc_lower.contains("counter") && !desc_lower.contains("counters on") {
+                    score += 30;
+                }
+
+                // Value card advantage
+                if desc_lower.contains("draw") || desc_lower.contains("card") {
+                    score += 35;
+                }
+
+                // Value life gain/drain
+                if desc_lower.contains("life") {
+                    score += 20;
+                }
+
+                // Value stat boosts
+                if desc_lower.contains("+") || desc_lower.contains("gets") {
+                    score += 15;
+                }
+
+                (idx, score)
+            })
+            .collect();
+
+        // Sort by score descending
+        mode_scores.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take the top N modes
+        let chosen: SmallVec<[usize; 4]> = mode_scores.iter().take(mode_count).map(|(idx, _)| *idx).collect();
+
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Chose modes {:?} (scores: {:?}) from {} available",
+                chosen,
+                mode_scores.iter().take(mode_count).collect::<Vec<_>>(),
+                mode_descriptions.len()
+            ),
+        );
+
+        ChoiceResult::Ok(chosen)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Could track game state here for future decisions
     }

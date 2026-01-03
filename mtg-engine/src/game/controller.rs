@@ -920,6 +920,19 @@ pub enum ChoiceContext {
         /// Pre-formatted permanent strings for display
         formatted_permanents: Vec<String>,
     },
+    /// Choose modes for a modal spell (e.g., "Choose one —")
+    Modes {
+        /// The spell being cast
+        spell_id: CardId,
+        /// Number of modes to choose
+        mode_count: usize,
+        /// Minimum modes required
+        min_modes: usize,
+        /// Whether the same mode can be chosen multiple times
+        can_repeat: bool,
+        /// Pre-formatted mode description strings for display
+        formatted_modes: Vec<String>,
+    },
 }
 
 impl<T> ChoiceResult<T> {
@@ -1309,6 +1322,40 @@ pub trait PlayerController {
         view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
+
+    /// Choose modes for a modal spell
+    ///
+    /// Called when casting a modal spell (e.g., "Choose one —", "Choose two —").
+    /// The controller must select the required number of modes from the available options.
+    ///
+    /// MTG Rules 700.2: "A spell or ability is modal if it has two or more options
+    /// in a bulleted list preceded by instructions for a player to choose a number
+    /// of those options."
+    ///
+    /// MTG Rules 601.2b: "If the spell is modal, the player announces the mode choice."
+    ///
+    /// ## Parameters
+    /// - `view`: Read-only view of the game state
+    /// - `spell_id`: The modal spell being cast
+    /// - `mode_descriptions`: Human-readable descriptions of each mode
+    /// - `mode_count`: Number of modes to choose
+    /// - `min_modes`: Minimum modes required (may be less than mode_count for optional)
+    /// - `can_repeat`: Whether the same mode can be chosen multiple times
+    ///
+    /// Returns ChoiceResult with indices of chosen modes (0-based),
+    /// or a special request (UndoRequest, ExitGame, Error).
+    ///
+    /// ## Java Forge Equivalent
+    /// Matches `CharmEffect.makePossibleOptions()` and `CharmAi.chooseOptionsAi()`
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>>;
 
     /// Notification that priority was passed
     ///

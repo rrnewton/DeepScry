@@ -351,6 +351,29 @@ impl PlayerController for FixedScriptController {
         ChoiceResult::Ok(SmallVec::new())
     }
 
+    fn choose_modes(
+        &mut self,
+        _view: &GameStateView,
+        _spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        _min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Script controller: use script to select modes if available
+        // Each mode choice consumes one script value
+        let mut chosen = SmallVec::new();
+
+        for _ in 0..mode_count {
+            let mode_idx = self.next_choice();
+            // Clamp to valid range
+            let valid_idx = mode_idx.min(mode_descriptions.len().saturating_sub(1));
+            chosen.push(valid_idx);
+        }
+
+        ChoiceResult::Ok(chosen)
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Script controller doesn't need to react to priority passes
     }

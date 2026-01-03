@@ -1035,6 +1035,19 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
             ChoiceResult::Ok(SmallVec::new())
         }
 
+        fn choose_modes(
+            &mut self,
+            _view: &GameStateView,
+            _spell_id: CardId,
+            mode_descriptions: &[String],
+            mode_count: usize,
+            _min_modes: usize,
+            _can_repeat: bool,
+        ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+            // Default to first N modes
+            ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
+        }
+
         fn on_priority_passed(&mut self, _view: &GameStateView) {}
 
         fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}

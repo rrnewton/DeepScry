@@ -327,6 +327,43 @@ impl PlayerController for WasmRemoteController {
         }
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        _view: &GameStateView,
+        _may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        // Network: auto-untap everything for now
+        // TODO: Add network protocol support for this choice
+        ChoiceResult::Ok(SmallVec::new())
+    }
+
+    fn choose_modes(
+        &mut self,
+        _view: &GameStateView,
+        _spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        _min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Server sends mode indices
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                let mut modes = SmallVec::new();
+                for idx in indices.into_iter().take(mode_count) {
+                    if idx < mode_descriptions.len() {
+                        modes.push(idx);
+                    }
+                }
+                ChoiceResult::Ok(modes)
+            }
+            ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+        }
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // Nothing to do
     }

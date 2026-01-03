@@ -701,6 +701,20 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             .choose_permanents_to_not_untap(view, may_not_untap_permanents)
     }
 
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Delegate to inner controller
+        self.inner
+            .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         self.inner.on_priority_passed(view);
     }

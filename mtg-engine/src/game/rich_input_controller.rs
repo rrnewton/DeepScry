@@ -425,6 +425,33 @@ impl PlayerController for RichInputController {
         ChoiceResult::Ok(SmallVec::new())
     }
 
+    fn choose_modes(
+        &mut self,
+        _view: &GameStateView,
+        _spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        _min_modes: usize,
+        _can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        // Rich input controller: use next command as mode index, or default to first N modes
+        // TODO: Could add command syntax like "mode 0 1" for selecting specific modes
+        if let Some(command_str) = self.peek_command() {
+            let command = command_str.to_string();
+            self.current_index += 1;
+
+            // Try to parse as mode index
+            if let Ok(idx) = command.trim().parse::<usize>() {
+                if idx < mode_descriptions.len() {
+                    return ChoiceResult::Ok(smallvec::smallvec![idx]);
+                }
+            }
+        }
+
+        // Default: choose first N modes
+        ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
+    }
+
     fn on_priority_passed(&mut self, _view: &GameStateView) {
         // No action needed
     }
