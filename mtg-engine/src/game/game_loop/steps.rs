@@ -135,7 +135,7 @@ impl<'a> GameLoop<'a> {
         // Skip draw on first turn (player going first doesn't draw)
         if self.game.turn.turn_number == 1 {
             // Still print battlefield state even on turn 1 (no draw)
-            if !self.replaying {
+            if !self.replaying && self.verbosity >= VerbosityLevel::Normal {
                 self.print_battlefield_state();
             }
             self.log_normal("(First turn - no draw)");
@@ -192,7 +192,7 @@ impl<'a> GameLoop<'a> {
         // Print battlefield state AFTER draw step completes
         // This ensures the active player's hand shows the newly drawn card
         // (Previously this was printed at turn start, before draw - see mtg-p9svf)
-        if !self.replaying {
+        if !self.replaying && self.verbosity >= VerbosityLevel::Normal {
             self.print_battlefield_state();
         }
 
