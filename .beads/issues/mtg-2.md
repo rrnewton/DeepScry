@@ -13,7 +13,16 @@ updated_at: 2026-01-03T01:23:13.670542403+00:00
 
 Track performance optimization work for MTG Forge Rust.
 
-## Latest Optimization (2026-01-03_#1469(e189dcb))
+## Latest Optimization (2026-01-03_#1472)
+
+✅ **Avoid String/Vec allocations in resolve_top_spell_from_stack when not logging** - **2.6% allocation reduction**
+- Moved card_name, card_effects, card_owner extraction inside `if should_log` branch
+- In Silent mode, uses empty placeholders that are never accessed
+- DHAT: 9,968 fewer bytes (-0.86%), 712 fewer blocks (-3.4%)
+- Benchmark: Bytes/game 3284.49 → 3200.50 (-2.6%)
+- Simple bolt benchmark: 359 MB → 334 MB allocations
+
+## Previous Optimization (2026-01-03_#1469(e189dcb))
 
 ✅ **Guard print_battlefield_state with verbosity check** - **3.4% allocation reduction**
 - Fixed wasteful allocations in Silent mode by checking verbosity level

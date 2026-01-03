@@ -29,13 +29,19 @@ impl<'a> GameLoop<'a> {
         // Check if verbose logging is enabled (avoids allocations when not logging)
         let should_log = self.verbosity >= VerbosityLevel::Normal && !self.replaying;
 
-        // Get card info for logging (only clone effects if we'll actually log them)
-        let (card_name, card_effects, card_owner) = if let Ok(card) = self.game.cards.get(spell_id) {
-            // Only clone effects when logging is enabled - this is expensive otherwise
-            let effects = if should_log { card.effects.clone() } else { Vec::new() };
-            (card.name.to_string(), effects, card.owner)
-        } else {
+        // Verify spell exists before proceeding
+        if self.game.cards.get(spell_id).is_err() {
             return Err(crate::MtgError::EntityNotFound(spell_id.as_u32()));
+        }
+
+        // Get card info for logging ONLY when logging is enabled
+        // This avoids String allocation and effects clone in Silent mode
+        let (card_name, card_effects, card_owner) = if should_log {
+            let card = self.game.cards.get(spell_id).unwrap(); // Safe: checked above
+            (card.name.to_string(), card.effects.clone(), card.owner)
+        } else {
+            // In Silent mode, use empty placeholders (never accessed)
+            (String::new(), Vec::new(), crate::core::PlayerId::new(0))
         };
 
         if should_log {
