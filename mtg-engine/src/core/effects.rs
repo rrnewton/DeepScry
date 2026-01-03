@@ -920,6 +920,26 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Card.Creature+YouCtrl+wasCast`
     /// Used by effects that care about cast vs. put into play
     CreatureYouControlWasCast,
+
+    /// Cards of a specific type that you own.
+    ///
+    /// Corresponds to: `Affected$ Instant.YouOwn`, `Affected$ Sorcery.YouOwn`, etc.
+    /// Used by flashback-granting effects like Snapcaster Mage's ability
+    /// or cards that let you cast spells from graveyard
+    CardTypeYouOwn {
+        /// The card type (e.g., Instant, Sorcery, Aura, Equipment)
+        card_type: crate::core::CardType,
+    },
+
+    /// Cards of a specific subtype that you own.
+    ///
+    /// Corresponds to: `Affected$ Aura.YouOwn`, `Affected$ Equipment.YouOwn`
+    /// where Aura/Equipment are subtypes, not card types.
+    /// Used by effects that grant flashback or graveyard casting
+    SubtypeYouOwn {
+        /// The subtype (e.g., "Aura", "Equipment")
+        subtype: crate::core::Subtype,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility

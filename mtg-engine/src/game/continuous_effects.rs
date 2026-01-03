@@ -502,6 +502,10 @@ impl GameState {
                 // TODO(mtg-147): Track whether creature was cast vs put into play
                 creature.is_creature() && creature.controller == source.controller
             }
+            // Ownership-based selectors for non-battlefield zones (graveyard, exile)
+            // Not relevant for P/T modifications of creatures on battlefield
+            AffectedSelector::CardTypeYouOwn { .. } => false,
+            AffectedSelector::SubtypeYouOwn { .. } => false,
         }
     }
 
@@ -1219,7 +1223,9 @@ impl GameState {
                             | AffectedSelector::NonLandCardsYouOwnWithoutForetell
                             | AffectedSelector::TopOfLibraryNonLand
                             | AffectedSelector::RememberedCards
-                            | AffectedSelector::CreatureYouControlWasCast => {
+                            | AffectedSelector::CreatureYouControlWasCast
+                            | AffectedSelector::CardTypeYouOwn { .. }
+                            | AffectedSelector::SubtypeYouOwn { .. } => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;

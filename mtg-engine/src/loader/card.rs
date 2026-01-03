@@ -2164,6 +2164,26 @@ impl CardDefinition {
                 // Spell types for stack effects (parsed but not yet implemented for P/T)
                 "Instant" => AffectedSelector::Self_,
                 "Sorcery" => AffectedSelector::Self_,
+                // CardType.YouOwn selectors (for flashback and graveyard casting effects)
+                "Instant.YouOwn" => AffectedSelector::CardTypeYouOwn {
+                    card_type: CardType::Instant,
+                },
+                "Sorcery.YouOwn" => AffectedSelector::CardTypeYouOwn {
+                    card_type: CardType::Sorcery,
+                },
+                "Enchantment.YouOwn" => AffectedSelector::CardTypeYouOwn {
+                    card_type: CardType::Enchantment,
+                },
+                "Artifact.YouOwn" => AffectedSelector::CardTypeYouOwn {
+                    card_type: CardType::Artifact,
+                },
+                // Subtype.YouOwn selectors (Aura, Equipment are subtypes)
+                "Aura.YouOwn" => AffectedSelector::SubtypeYouOwn {
+                    subtype: Subtype::new("Aura"),
+                },
+                "Equipment.YouOwn" => AffectedSelector::SubtypeYouOwn {
+                    subtype: Subtype::new("Equipment"),
+                },
                 // Exile-based effects
                 "Card.ExiledWithSource" => AffectedSelector::CardExiledWithSource,
                 // Top of library selectors
