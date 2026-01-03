@@ -918,6 +918,42 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // RemoveCounter: Remove counters from target permanent
+            Effect::RemoveCounter {
+                target,
+                counter_type,
+                amount,
+            } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::RemoveCounter {
+                        target: resolved_target,
+                        counter_type: *counter_type,
+                        amount: *amount,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            // PutCounter: Put counters on target permanent
+            Effect::PutCounter {
+                target,
+                counter_type,
+                amount,
+            } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::PutCounter {
+                        target: resolved_target,
+                        counter_type: *counter_type,
+                        amount: *amount,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }

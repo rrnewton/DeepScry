@@ -613,4 +613,230 @@ mod tests {
             spell_after.effects[0]
         );
     }
+
+    /// End-to-end test: Modal spell (Heartless Act) destroying a creature
+    ///
+    /// Tests the complete flow:
+    /// 1. Create a modal spell with ModalChoice effect
+    /// 2. Apply mode selection (choose "Destroy")
+    /// 3. Put spell on stack
+    /// 4. Resolve spell with target
+    /// 5. Verify creature is destroyed
+    #[test]
+    fn test_modal_spell_e2e_heartless_act_destroy() {
+        use crate::core::{Color, Effect, ManaCost, ModalMode, TargetRestriction};
+        use smallvec::smallvec;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // Create a creature for P2 (no counters - valid target for mode 1)
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Test Creature".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(3));
+        creature.set_base_toughness(Some(3));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Create Heartless Act with modal effect
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Heartless Act".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("1B");
+
+        // Mode 1: Destroy target creature with no counters
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0), // Placeholder
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy target creature with no counters on it.".to_string(),
+            svar_name: "Destroy".to_string(),
+        };
+
+        // Mode 2: Remove counters (not used in this test)
+        let mode2 = ModalMode {
+            effect: Box::new(Effect::RemoveCounter {
+                target: CardId::new(0),
+                counter_type: crate::core::CounterType::P1P1,
+                amount: 3,
+            }),
+            description: "Remove up to three counters from target creature.".to_string(),
+            svar_name: "Remove".to_string(),
+        };
+
+        spell.effects.push(Effect::ModalChoice {
+            modes: smallvec![mode1, mode2],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        });
+
+        game.cards.insert(spell_id, spell);
+
+        // Add spell to P1's hand
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Add mana for casting (1B)
+        let player = game.get_player_mut(p1_id).unwrap();
+        player.mana_pool.add_color(Color::Black);
+        player.mana_pool.add_color(Color::Colorless);
+
+        // Cast the spell
+        let cast_result = game.cast_spell(p1_id, spell_id, vec![]);
+        assert!(cast_result.is_ok(), "Should be able to cast spell: {:?}", cast_result);
+
+        // Apply mode selection: choose mode 0 (Destroy)
+        let mode_result = game.apply_selected_modes(spell_id, &[0]);
+        assert!(mode_result.is_ok(), "Should be able to apply mode selection");
+
+        // Verify spell is on stack
+        assert!(game.stack.contains(spell_id), "Spell should be on stack");
+
+        // Verify creature is still on battlefield (spell not resolved yet)
+        assert!(
+            game.battlefield.contains(creature_id),
+            "Creature should still be on battlefield before resolution"
+        );
+
+        // Resolve the spell with the creature as target
+        let resolve_result = game.resolve_spell(spell_id, &[creature_id]);
+        assert!(resolve_result.is_ok(), "Should resolve spell: {:?}", resolve_result);
+
+        // Verify creature was destroyed (moved to graveyard)
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "Creature should no longer be on battlefield"
+        );
+
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(creature_id),
+                "Creature should be in owner's graveyard"
+            );
+        }
+
+        // Verify spell is in P1's graveyard
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(
+                zones.graveyard.contains(spell_id),
+                "Heartless Act should be in P1's graveyard"
+            );
+        }
+    }
+
+    /// Test modal spell with RemoveCounter mode (Heartless Act mode 2)
+    #[test]
+    fn test_modal_spell_e2e_heartless_act_remove_counters() {
+        use crate::core::{Color, CounterType, Effect, ManaCost, ModalMode, TargetRestriction};
+        use smallvec::smallvec;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // Create a creature for P2 with +1/+1 counters
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Hydra Hatchling".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(0));
+        creature.set_base_toughness(Some(0));
+        creature.controller = p2_id;
+        // Add 5 +1/+1 counters
+        creature.add_counter(CounterType::P1P1, 5);
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Verify initial counter count
+        assert_eq!(
+            game.cards.get(creature_id).unwrap().get_counter(CounterType::P1P1),
+            5,
+            "Creature should start with 5 +1/+1 counters"
+        );
+
+        // Create Heartless Act with modal effect
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Heartless Act".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("1B");
+
+        // Mode 1: Destroy (not used)
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0),
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy target creature with no counters on it.".to_string(),
+            svar_name: "Destroy".to_string(),
+        };
+
+        // Mode 2: Remove up to 3 counters
+        let mode2 = ModalMode {
+            effect: Box::new(Effect::RemoveCounter {
+                target: CardId::new(0),
+                counter_type: CounterType::P1P1,
+                amount: 3,
+            }),
+            description: "Remove up to three counters from target creature.".to_string(),
+            svar_name: "Remove".to_string(),
+        };
+
+        spell.effects.push(Effect::ModalChoice {
+            modes: smallvec![mode1, mode2],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        });
+
+        game.cards.insert(spell_id, spell);
+
+        // Add spell to P1's hand
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Add mana for casting (1B)
+        let player = game.get_player_mut(p1_id).unwrap();
+        player.mana_pool.add_color(Color::Black);
+        player.mana_pool.add_color(Color::Colorless);
+
+        // Cast the spell
+        let cast_result = game.cast_spell(p1_id, spell_id, vec![]);
+        assert!(cast_result.is_ok(), "Should be able to cast spell");
+
+        // Apply mode selection: choose mode 1 (RemoveCounter)
+        let mode_result = game.apply_selected_modes(spell_id, &[1]);
+        assert!(mode_result.is_ok(), "Should be able to apply mode selection");
+
+        // Verify spell effect was changed to RemoveCounter
+        let spell = game.cards.get(spell_id).unwrap();
+        assert!(
+            matches!(spell.effects[0], Effect::RemoveCounter { amount: 3, .. }),
+            "Effect should be RemoveCounter after mode selection"
+        );
+
+        // Resolve the spell with the creature as target
+        let resolve_result = game.resolve_spell(spell_id, &[creature_id]);
+        assert!(resolve_result.is_ok(), "Should resolve spell: {:?}", resolve_result);
+
+        // Verify 3 counters were removed (5 - 3 = 2 remaining)
+        assert_eq!(
+            game.cards.get(creature_id).unwrap().get_counter(CounterType::P1P1),
+            2,
+            "Creature should have 2 +1/+1 counters remaining"
+        );
+
+        // Creature should still be on battlefield (just smaller now)
+        assert!(
+            game.battlefield.contains(creature_id),
+            "Creature should still be on battlefield"
+        );
+    }
 }

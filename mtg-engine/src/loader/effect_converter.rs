@@ -247,6 +247,41 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::RemoveCounter => {
+            // RemoveCounter effect: DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True
+            // Example: Heartless Act mode 2 - "Remove up to three counters from target creature"
+            //
+            // CounterType$ can be:
+            // - "P1P1" for +1/+1 counters
+            // - "M1M1" for -1/-1 counters
+            // - "Any" to remove any counter type
+            //
+            // UpTo$ True means "up to N counters" (minimum 0), otherwise exactly N counters
+            use crate::core::CounterType;
+
+            // Parse counter type (e.g., "P1P1" -> +1/+1 counter, "Any" -> P1P1 as default for now)
+            let counter_type_str = params.get("CounterType").unwrap_or("P1P1");
+            let counter_type = if counter_type_str == "Any" {
+                // "Any" means remove any counter type - for now default to P1P1
+                // TODO(mtg-charm): Support "Any" counter type properly
+                CounterType::P1P1
+            } else {
+                CounterType::parse(counter_type_str)?
+            };
+
+            // Parse counter count (default to 1)
+            let amount = params.get_u8("CounterNum").unwrap_or(1);
+
+            // Note: UpTo$ True is tracked for targeting validation but doesn't change
+            // the effect structure (amount is the maximum that CAN be removed)
+
+            Some(Effect::RemoveCounter {
+                target: CardId::new(0), // Placeholder - filled in at targeting time
+                counter_type,
+                amount,
+            })
+        }
+
         ApiType::Animate => {
             // Animate effect: AB$ Animate | Defined$ Self | Power$ 5 | Toughness$ 2
             // Example: Flexible Waterbender - "This creature has base power and toughness 5/2 until end of turn"
@@ -851,6 +886,185 @@ mod tests {
                 }
                 other => panic!("Expected StaticAbility, got {:?} for: {}", other, svar_body),
             }
+        }
+    }
+
+    #[test]
+    fn test_params_to_charm_effect_with_svars_heartless_act() {
+        // Test parsing Heartless Act modal spell:
+        // Choose one —
+        // • Destroy target creature with no counters on it.
+        // • Remove up to three counters from target creature.
+
+        let params = AbilityParams::parse("A:SP$ Charm | Choices$ Destroy,Remove").unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "Destroy".to_string(),
+            "DB$ Destroy | ValidTgts$ Creature.!HasCounters | TgtPrompt$ Select target creature with no counters on it | SpellDescription$ Destroy target creature with no counters on it.".to_string(),
+        );
+        svars.insert(
+            "Remove".to_string(),
+            "DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True | SpellDescription$ Remove up to three counters from target creature.".to_string(),
+        );
+
+        let effect = params_to_charm_effect_with_svars(&params, &svars);
+        assert!(effect.is_some(), "Should parse Charm effect with SVars");
+
+        match effect.unwrap() {
+            Effect::ModalChoice {
+                modes,
+                num_to_choose,
+                min_to_choose,
+                can_repeat_modes,
+            } => {
+                assert_eq!(modes.len(), 2, "Should have 2 modes");
+                assert_eq!(num_to_choose, 1, "Should choose 1 mode");
+                assert_eq!(min_to_choose, 1, "Minimum 1 mode");
+                assert!(!can_repeat_modes, "Cannot repeat modes");
+
+                // Check first mode (Destroy)
+                assert_eq!(modes[0].svar_name, "Destroy");
+                assert!(
+                    modes[0].description.contains("Destroy"),
+                    "First mode description should mention Destroy"
+                );
+                assert!(
+                    matches!(*modes[0].effect, Effect::DestroyPermanent { .. }),
+                    "First mode should be DestroyPermanent"
+                );
+
+                // Check second mode (Remove) - RemoveCounter is now implemented
+                assert_eq!(modes[1].svar_name, "Remove");
+                assert!(
+                    modes[1].description.contains("Remove"),
+                    "Second mode description should mention Remove"
+                );
+                assert!(
+                    matches!(*modes[1].effect, Effect::RemoveCounter { amount: 3, .. }),
+                    "Second mode should be RemoveCounter with amount 3, got: {:?}",
+                    modes[1].effect
+                );
+            }
+            _ => panic!("Expected ModalChoice effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_remove_counter() {
+        use crate::core::CounterType;
+
+        // Heartless Act mode 2: Remove up to three counters from target creature
+        let params = AbilityParams::parse(
+            "A:DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::RemoveCounter {
+                target: _,
+                counter_type,
+                amount,
+            } => {
+                // "Any" counter type defaults to P1P1 for now
+                assert_eq!(counter_type, CounterType::P1P1);
+                assert_eq!(amount, 3);
+            }
+            _ => panic!("Expected RemoveCounter effect, got: {:?}", effect),
+        }
+    }
+
+    #[test]
+    fn test_convert_remove_counter_specific_type() {
+        use crate::core::CounterType;
+
+        // Remove specific counter type (+1/+1)
+        let params =
+            AbilityParams::parse("A:DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ P1P1 | CounterNum$ 1")
+                .unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::RemoveCounter {
+                target: _,
+                counter_type,
+                amount,
+            } => {
+                assert_eq!(counter_type, CounterType::P1P1);
+                assert_eq!(amount, 1);
+            }
+            _ => panic!("Expected RemoveCounter effect"),
+        }
+    }
+
+    #[test]
+    fn test_charm_with_multiple_modes_to_choose() {
+        // Test a modal spell where you choose 2 modes (like Cryptic Command)
+        let params = AbilityParams::parse("A:SP$ Charm | Choices$ Mode1,Mode2,Mode3 | CharmNum$ 2").unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "Mode1".to_string(),
+            "DB$ Draw | NumCards$ 1 | SpellDescription$ Draw a card.".to_string(),
+        );
+        svars.insert(
+            "Mode2".to_string(),
+            "DB$ Tap | ValidTgts$ Creature | SpellDescription$ Tap target creature.".to_string(),
+        );
+        svars.insert(
+            "Mode3".to_string(),
+            "DB$ DealDamage | NumDmg$ 2 | SpellDescription$ Deal 2 damage.".to_string(),
+        );
+
+        let effect = params_to_charm_effect_with_svars(&params, &svars);
+        assert!(effect.is_some(), "Should parse Charm effect");
+
+        match effect.unwrap() {
+            Effect::ModalChoice {
+                modes,
+                num_to_choose,
+                min_to_choose,
+                ..
+            } => {
+                assert_eq!(modes.len(), 3, "Should have 3 modes");
+                assert_eq!(num_to_choose, 2, "Should choose 2 modes");
+                assert_eq!(min_to_choose, 2, "Minimum 2 modes");
+
+                // Verify mode 1 is DrawCards
+                assert!(
+                    matches!(*modes[0].effect, Effect::DrawCards { count: 1, .. }),
+                    "Mode 1 should be DrawCards"
+                );
+            }
+            _ => panic!("Expected ModalChoice effect"),
+        }
+    }
+
+    #[test]
+    fn test_charm_with_can_repeat_modes() {
+        // Test modal spell that can repeat modes (like Prismari Command)
+        let params =
+            AbilityParams::parse("A:SP$ Charm | Choices$ Mode1,Mode2 | CharmNum$ 2 | CanRepeatModes$ True").unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "Mode1".to_string(),
+            "DB$ DealDamage | NumDmg$ 2 | SpellDescription$ Deal 2 damage.".to_string(),
+        );
+        svars.insert(
+            "Mode2".to_string(),
+            "DB$ Draw | NumCards$ 1 | SpellDescription$ Draw a card.".to_string(),
+        );
+
+        let effect = params_to_charm_effect_with_svars(&params, &svars);
+        assert!(effect.is_some(), "Should parse Charm effect with repeatable modes");
+
+        match effect.unwrap() {
+            Effect::ModalChoice { can_repeat_modes, .. } => {
+                assert!(can_repeat_modes, "Should allow repeating modes");
+            }
+            _ => panic!("Expected ModalChoice effect"),
         }
     }
 }

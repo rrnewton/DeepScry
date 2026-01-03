@@ -1220,8 +1220,8 @@ impl CardDefinition {
     /// Uses tokenized parsing (ability_parser) for safety and correctness.
     /// Replaces unsafe substring matching with proper parameter extraction.
     fn parse_effects(&self) -> Vec<crate::core::Effect> {
-        use super::ability_parser::AbilityParams;
-        use super::effect_converter::params_to_effect;
+        use super::ability_parser::{AbilityParams, ApiType};
+        use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect};
 
         let mut effects = Vec::new();
 
@@ -1246,7 +1246,14 @@ impl CardDefinition {
             };
 
             // Convert parameters to Effect (if supported)
-            if let Some(effect) = params_to_effect(&params) {
+            // For Charm abilities, use SVar-aware conversion to resolve mode effects
+            let effect = if params.api_type == ApiType::Charm {
+                params_to_charm_effect_with_svars(&params, &self.svars)
+            } else {
+                params_to_effect(&params)
+            };
+
+            if let Some(effect) = effect {
                 effects.push(effect);
             }
             // Note: Unsupported API types are silently skipped (returns None)
