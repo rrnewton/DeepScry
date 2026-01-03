@@ -157,6 +157,16 @@ pub enum ApiType {
     /// CR 701.65a
     Earthbend,
 
+    // === Modal Spells ===
+    /// Charm: Modal spell with multiple choices (e.g., "Choose one —")
+    /// Parameters:
+    ///   Choices$ - comma-separated SVar references (e.g., "DBDestroy,DBDraw")
+    ///   CharmNum$ - number of modes to choose (default "1")
+    ///   MinCharmNum$ - minimum modes required (default = CharmNum$)
+    ///   CanRepeatModes$ - if present, same mode can be chosen twice
+    /// Example: A:SP$ Charm | Choices$ Destroy,Remove
+    Charm,
+
     // === Catch-all for unknown types ===
     Unknown(String),
 }
@@ -263,6 +273,9 @@ impl ApiType {
             "Airbend" => Self::Airbend,
             "Earthbend" => Self::Earthbend,
 
+            // Modal Spells
+            "Charm" => Self::Charm,
+
             // Unknown type - preserve original string for debugging
             unknown => Self::Unknown(unknown.to_string()),
         }
@@ -332,6 +345,7 @@ impl ApiType {
             Self::Balance => "Balance",
             Self::Airbend => "Airbend",
             Self::Earthbend => "Earthbend",
+            Self::Charm => "Charm",
             Self::Unknown(s) => s.as_str(),
         }
     }

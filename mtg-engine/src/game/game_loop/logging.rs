@@ -396,6 +396,17 @@ impl<'a> GameLoop<'a> {
                     format!("{source_name} ({source_id}) makes {target_name} ({target}) unblockable this turn");
                 self.game.logger.gamelog(&message);
             }
+            Effect::ModalChoice {
+                modes, num_to_choose, ..
+            } => {
+                // Modal choice logging happens when the mode is selected, not during effect resolution
+                let mode_descriptions: Vec<&str> = modes.iter().map(|m| m.description.as_str()).collect();
+                let message = format!(
+                    "{source_name} ({source_id}) is a modal spell (choose {}) - modes: {:?}",
+                    num_to_choose, mode_descriptions
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

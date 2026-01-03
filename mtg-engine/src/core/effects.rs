@@ -324,6 +324,46 @@ pub enum Effect {
         /// The creature that can't be blocked
         target: CardId,
     },
+
+    /// Modal spell choice - player selects modes from multiple predefined effects.
+    ///
+    /// Example: Heartless Act - "Choose one — Destroy target creature with no counters on it;
+    ///                           or Remove up to three counters from target creature."
+    /// Corresponds to: A:SP$ Charm | Choices$ Destroy,Remove
+    ///
+    /// During resolution, the controller is prompted to choose modes, then the selected
+    /// modes' effects are resolved in order. Each mode has its own targeting requirements.
+    ///
+    /// Cards using this:
+    /// - Heartless Act, Abzan Charm, Cryptic Command, Commands, etc.
+    ModalChoice {
+        /// The available modes the player can choose from.
+        /// Each is a tuple of (effect, description, SVar name).
+        /// The SVar name is used to look up targeting info.
+        modes: SmallVec<[ModalMode; 4]>,
+
+        /// Number of modes to select (e.g., 1 for "Choose one", 2 for "Choose two")
+        num_to_choose: u8,
+
+        /// Minimum number of modes to select (default = num_to_choose)
+        min_to_choose: u8,
+
+        /// Whether the same mode can be chosen multiple times
+        can_repeat_modes: bool,
+    },
+}
+
+/// A single mode in a modal spell.
+///
+/// Contains the effect to execute and metadata for display/targeting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModalMode {
+    /// The effect to execute when this mode is chosen
+    pub effect: Box<Effect>,
+    /// Human-readable description (from SpellDescription$)
+    pub description: String,
+    /// SVar name for this mode (e.g., "DBDestroy") - used for targeting lookup
+    pub svar_name: String,
 }
 
 /// Events that can trigger abilities

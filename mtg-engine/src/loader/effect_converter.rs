@@ -333,9 +333,146 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        ApiType::Charm => {
+            // Modal spell: A:SP$ Charm | Choices$ DBDestroy,DBDraw | CharmNum$ 1
+            //
+            // This requires SVar resolution to get the actual mode effects.
+            // Without SVars, we can only parse the metadata (num modes, can repeat).
+            // Use params_to_charm_effect_with_svars() for full parsing with modes.
+            //
+            // Parameters:
+            // - Choices$: comma-separated SVar names for each mode
+            // - CharmNum$: number of modes to choose (default 1)
+            // - MinCharmNum$: minimum modes required (default = CharmNum$)
+            // - CanRepeatModes$: if present, same mode can be chosen twice
+
+            let choices_str = params.get("Choices")?;
+            let choice_names: Vec<&str> = choices_str.split(',').map(|s| s.trim()).collect();
+
+            // Parse CharmNum$ - how many to choose (default 1)
+            let num_to_choose = params.get_u8("CharmNum").unwrap_or(1);
+
+            // Parse MinCharmNum$ - minimum to choose (default = num_to_choose)
+            let min_to_choose = params.get_u8("MinCharmNum").unwrap_or(num_to_choose);
+
+            // CanRepeatModes$ - can choose same mode twice
+            let can_repeat_modes = params.contains_key("CanRepeatModes");
+
+            // Without SVar resolution, create placeholder modes with just names
+            // The actual effects will be filled in by params_to_charm_effect_with_svars
+            let modes: smallvec::SmallVec<[crate::core::ModalMode; 4]> = choice_names
+                .iter()
+                .map(|name| crate::core::ModalMode {
+                    effect: Box::new(Effect::DrawCards {
+                        player: PlayerId::new(0),
+                        count: 0,
+                    }), // Placeholder
+                    description: format!("Mode: {}", name),
+                    svar_name: name.to_string(),
+                })
+                .collect();
+
+            log::debug!(
+                target: "effect_converter",
+                "Charm with {} modes (choose {}, min {}, repeat={}): {:?}",
+                modes.len(), num_to_choose, min_to_choose, can_repeat_modes, choice_names
+            );
+
+            Some(Effect::ModalChoice {
+                modes,
+                num_to_choose,
+                min_to_choose,
+                can_repeat_modes,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
+}
+
+/// Convert Charm ability parameters to a ModalChoice Effect with full SVar resolution.
+///
+/// This resolves each mode's SVar to get the actual effect and description.
+/// Use this when you have access to the card's SVars.
+///
+/// # Arguments
+///
+/// * `params` - The parsed ability parameters (must be ApiType::Charm)
+/// * `svars` - The card's SVar definitions (name -> body)
+///
+/// # Example
+///
+/// ```ignore
+/// // Card has: A:SP$ Charm | Choices$ Destroy,Remove
+/// // And SVar:Destroy:DB$ Destroy | ValidTgts$ Creature.!HasCounters | SpellDescription$ Destroy...
+/// // And SVar:Remove:DB$ RemoveCounter | ...
+/// let params = AbilityParams::parse("A:SP$ Charm | Choices$ Destroy,Remove")?;
+/// let effect = params_to_charm_effect_with_svars(&params, &card.svars);
+/// ```
+pub fn params_to_charm_effect_with_svars(params: &AbilityParams, svars: &HashMap<String, String>) -> Option<Effect> {
+    if params.api_type != ApiType::Charm {
+        return None;
+    }
+
+    let choices_str = params.get("Choices")?;
+    let choice_names: Vec<&str> = choices_str.split(',').map(|s| s.trim()).collect();
+
+    let num_to_choose = params.get_u8("CharmNum").unwrap_or(1);
+    let min_to_choose = params.get_u8("MinCharmNum").unwrap_or(num_to_choose);
+    let can_repeat_modes = params.contains_key("CanRepeatModes");
+
+    let mut modes: smallvec::SmallVec<[crate::core::ModalMode; 4]> = smallvec::SmallVec::new();
+
+    for name in choice_names {
+        // Look up the SVar for this mode
+        if let Some(svar_body) = svars.get(name) {
+            // Parse the SVar as an ability
+            if let Ok(mode_params) = AbilityParams::parse(&format!("A:{}", svar_body)) {
+                // Convert to effect
+                let effect = params_to_effect(&mode_params).unwrap_or(Effect::DrawCards {
+                    player: PlayerId::new(0),
+                    count: 0,
+                });
+
+                // Extract description from SpellDescription$ if available
+                let description = mode_params
+                    .get("SpellDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("Mode: {}", name));
+
+                modes.push(crate::core::ModalMode {
+                    effect: Box::new(effect),
+                    description,
+                    svar_name: name.to_string(),
+                });
+            } else {
+                log::warn!(
+                    target: "effect_converter",
+                    "Failed to parse Charm mode SVar '{}': {}",
+                    name, svar_body
+                );
+            }
+        } else {
+            log::warn!(
+                target: "effect_converter",
+                "Charm mode SVar '{}' not found in card SVars",
+                name
+            );
+        }
+    }
+
+    if modes.is_empty() {
+        log::warn!(target: "effect_converter", "Charm has no valid modes after SVar resolution");
+        return None;
+    }
+
+    Some(Effect::ModalChoice {
+        modes,
+        num_to_choose,
+        min_to_choose,
+        can_repeat_modes,
+    })
 }
 
 /// Convert ability parameters to an Effect, with SVar resolution.

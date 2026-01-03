@@ -1462,6 +1462,20 @@ impl GameState {
                 self.logger
                     .gamelog(&format!("{} can't be blocked this turn", card_name));
             }
+
+            Effect::ModalChoice { modes, .. } => {
+                // Modal spells are handled during casting, not execution.
+                // When the spell resolves, only the selected mode's effect is executed.
+                // This variant should not be encountered during execute_effect.
+                //
+                // If we get here, it means the modal choice wasn't processed during casting.
+                // Log a warning and skip execution.
+                log::warn!(
+                    target: "actions",
+                    "ModalChoice effect reached execute_effect - should have been resolved during casting. {} modes available.",
+                    modes.len()
+                );
+            }
         }
         Ok(())
     }
