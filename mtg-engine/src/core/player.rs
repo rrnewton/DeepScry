@@ -19,8 +19,11 @@ pub struct Player {
     pub mana_pool: ManaPool,
 
     /// Combat mana pool (mana that lasts until end of combat, e.g., from Firebending)
-    /// This mana is separate and only cleared at end of combat phase
-    pub combat_mana_pool: ManaPool,
+    /// Only allocated when needed (None in the common case for zero overhead).
+    /// This is an optimization: most games never use Firebending, so we avoid
+    /// allocating a ManaPool for every player. The Option check is a single
+    /// well-predicted branch in the common (None) case.
+    pub combat_mana_pool: Option<ManaPool>,
 
     /// Has the player lost?
     pub has_lost: bool,
@@ -42,7 +45,7 @@ impl Player {
             name: name.into(),
             life: starting_life,
             mana_pool: ManaPool::new(),
-            combat_mana_pool: ManaPool::new(),
+            combat_mana_pool: None, // Only allocated when Firebending is used
             has_lost: false,
             lands_played_this_turn: 0,
             max_lands_per_turn: 1,
@@ -78,19 +81,42 @@ impl Player {
     }
 
     /// Clear combat mana pool (at end of combat)
+    /// This is a no-op if no combat mana was ever added (Option is None).
+    #[inline]
     pub fn empty_combat_mana_pool(&mut self) {
-        self.combat_mana_pool.clear();
+        // Fast path: if None, nothing to do (well-predicted branch)
+        if self.combat_mana_pool.is_some() {
+            self.combat_mana_pool = None;
+        }
+    }
+
+    /// Check if player has any combat mana
+    #[inline]
+    pub fn has_combat_mana(&self) -> bool {
+        self.combat_mana_pool.as_ref().is_some_and(|pool| pool.total() > 0)
+    }
+
+    /// Add mana to combat mana pool (lazy initialization)
+    /// Called by Firebending and similar effects.
+    #[inline]
+    pub fn add_combat_mana(&mut self, color: crate::core::Color) {
+        self.combat_mana_pool.get_or_insert_with(ManaPool::new).add_color(color);
     }
 
     /// Get total available mana (regular + combat)
+    /// Fast path when no combat mana exists.
+    #[inline]
     pub fn total_available_mana(&self) -> ManaPool {
-        ManaPool {
-            white: self.mana_pool.white + self.combat_mana_pool.white,
-            blue: self.mana_pool.blue + self.combat_mana_pool.blue,
-            black: self.mana_pool.black + self.combat_mana_pool.black,
-            red: self.mana_pool.red + self.combat_mana_pool.red,
-            green: self.mana_pool.green + self.combat_mana_pool.green,
-            colorless: self.mana_pool.colorless + self.combat_mana_pool.colorless,
+        match &self.combat_mana_pool {
+            None => self.mana_pool, // Fast path: just return regular pool (Copy)
+            Some(combat) => ManaPool {
+                white: self.mana_pool.white + combat.white,
+                blue: self.mana_pool.blue + combat.blue,
+                black: self.mana_pool.black + combat.black,
+                red: self.mana_pool.red + combat.red,
+                green: self.mana_pool.green + combat.green,
+                colorless: self.mana_pool.colorless + combat.colorless,
+            },
         }
     }
 }

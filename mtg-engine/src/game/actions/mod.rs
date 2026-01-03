@@ -1474,10 +1474,10 @@ impl GameState {
                     .map(|p| p.name.clone())
                     .unwrap_or_else(|_| "Unknown".into());
 
-                // Add red mana to combat mana pool
+                // Add red mana to combat mana pool (lazy initialization)
                 let player = self.get_player_mut(*controller)?;
                 for _ in 0..*amount {
-                    player.combat_mana_pool.add_color(crate::core::Color::Red);
+                    player.add_combat_mana(crate::core::Color::Red);
                 }
 
                 // Log the firebend

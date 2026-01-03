@@ -423,8 +423,9 @@ impl<'a> GameLoop<'a> {
         self.game.combat.clear();
 
         // Clear combat mana pools (mana from Firebending, etc. lasts until end of combat)
+        // Fast path: has_combat_mana() is a single well-predicted branch (usually false)
         for player in &mut self.game.players {
-            if player.combat_mana_pool.total() > 0 {
+            if player.has_combat_mana() {
                 log::debug!(target: "mana", "Clearing combat mana for {}: {:?}",
                     player.name, player.combat_mana_pool);
                 player.empty_combat_mana_pool();

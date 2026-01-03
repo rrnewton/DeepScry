@@ -29,16 +29,26 @@ fn create_creature(
     creature_id
 }
 
+/// Helper to get combat mana red count (returns 0 if None)
+fn combat_red(player: &mtg_forge_rs::core::Player) -> u8 {
+    player.combat_mana_pool.as_ref().map_or(0, |p| p.red)
+}
+
+/// Helper to get combat mana total (returns 0 if None)
+fn combat_total(player: &mtg_forge_rs::core::Player) -> u8 {
+    player.combat_mana_pool.as_ref().map_or(0, |p| p.total())
+}
+
 #[test]
 fn test_firebend_basic_effect() {
     // Test that Firebend adds red mana to combat mana pool
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
 
-    // Verify initial state: no combat mana
-    assert_eq!(
-        game.players[0].combat_mana_pool.red, 0,
-        "Should start with no combat mana"
+    // Verify initial state: no combat mana (Option is None)
+    assert!(
+        game.players[0].combat_mana_pool.is_none(),
+        "Should start with no combat mana pool allocated"
     );
 
     // Execute Firebend with 3 red mana
@@ -48,9 +58,14 @@ fn test_firebend_basic_effect() {
     };
     game.execute_effect(&effect).expect("Firebend should succeed");
 
-    // Verify combat mana was added
+    // Verify combat mana was added (Option is now Some)
+    assert!(
+        game.players[0].combat_mana_pool.is_some(),
+        "Combat mana pool should be allocated after firebend"
+    );
     assert_eq!(
-        game.players[0].combat_mana_pool.red, 3,
+        combat_red(&game.players[0]),
+        3,
         "Should have 3 red combat mana after firebend"
     );
 
@@ -81,10 +96,7 @@ fn test_firebend_multiple_adds_stack() {
     game.execute_effect(&effect2).expect("Firebend 2 should succeed");
 
     // Verify combat mana accumulated
-    assert_eq!(
-        game.players[0].combat_mana_pool.red, 5,
-        "Should have 5 red combat mana (2 + 3)"
-    );
+    assert_eq!(combat_red(&game.players[0]), 5, "Should have 5 red combat mana (2 + 3)");
 }
 
 #[test]
@@ -109,14 +121,8 @@ fn test_firebend_different_players() {
     game.execute_effect(&effect2).expect("Firebend P2 should succeed");
 
     // Verify each player got their mana
-    assert_eq!(
-        game.players[0].combat_mana_pool.red, 2,
-        "P1 should have 2 red combat mana"
-    );
-    assert_eq!(
-        game.players[1].combat_mana_pool.red, 4,
-        "P2 should have 4 red combat mana"
-    );
+    assert_eq!(combat_red(&game.players[0]), 2, "P1 should have 2 red combat mana");
+    assert_eq!(combat_red(&game.players[1]), 4, "P2 should have 4 red combat mana");
 }
 
 #[test]
@@ -132,17 +138,18 @@ fn test_combat_mana_pool_clear() {
     };
     game.execute_effect(&effect).expect("Firebend should succeed");
 
-    assert_eq!(game.players[0].combat_mana_pool.red, 5);
+    assert_eq!(combat_red(&game.players[0]), 5);
+    assert!(game.players[0].combat_mana_pool.is_some());
 
     // Clear combat mana pool
     game.players[0].empty_combat_mana_pool();
 
-    assert_eq!(game.players[0].combat_mana_pool.red, 0, "Combat mana should be cleared");
-    assert_eq!(
-        game.players[0].combat_mana_pool.total(),
-        0,
-        "Total combat mana should be 0"
+    // After clearing, Option should be None (deallocated)
+    assert!(
+        game.players[0].combat_mana_pool.is_none(),
+        "Combat mana pool should be deallocated after clear"
     );
+    assert_eq!(combat_total(&game.players[0]), 0, "Total combat mana should be 0");
 }
 
 #[test]
@@ -170,6 +177,24 @@ fn test_total_available_mana() {
 }
 
 #[test]
+fn test_total_available_mana_no_combat() {
+    // Test that total_available_mana works when no combat mana (fast path)
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+
+    // Add some regular mana only
+    game.players[0].mana_pool.red = 2;
+    game.players[0].mana_pool.green = 1;
+
+    // No combat mana - should return regular pool directly
+    assert!(game.players[0].combat_mana_pool.is_none());
+
+    let total = game.players[0].total_available_mana();
+    assert_eq!(total.red, 2, "Total red should be 2 (regular only)");
+    assert_eq!(total.green, 1, "Total green should be 1 (regular only)");
+    assert_eq!(total.total(), 3, "Total mana should be 3");
+}
+
+#[test]
 fn test_firebend_zero_amount() {
     // Test Firebend with 0 amount (used as sentinel for "use creature power")
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
@@ -182,8 +207,11 @@ fn test_firebend_zero_amount() {
     };
     game.execute_effect(&effect).expect("Firebend 0 should succeed");
 
-    // No mana should be added (0 iterations)
-    assert_eq!(game.players[0].combat_mana_pool.red, 0, "Firebend 0 adds no mana");
+    // No mana should be added (0 iterations), pool stays None
+    assert!(
+        game.players[0].combat_mana_pool.is_none(),
+        "Firebend 0 should not allocate combat mana pool"
+    );
 }
 
 #[test]
@@ -246,16 +274,18 @@ fn test_firebend_attack_trigger_execution() {
         ));
     }
 
-    // Verify initial state
-    assert_eq!(game.players[0].combat_mana_pool.red, 0);
+    // Verify initial state - no combat mana allocated
+    assert!(game.players[0].combat_mana_pool.is_none());
 
     // Check attack triggers (simulates what happens when creature attacks)
     game.check_attack_triggers(creature_id, p1_id)
         .expect("Attack triggers should succeed");
 
-    // Verify Firebend executed
+    // Verify Firebend executed and allocated combat mana
+    assert!(game.players[0].combat_mana_pool.is_some());
     assert_eq!(
-        game.players[0].combat_mana_pool.red, 2,
+        combat_red(&game.players[0]),
+        2,
         "Firebend should have added 2 red combat mana"
     );
 }
@@ -285,8 +315,8 @@ fn test_firebend_attack_trigger_with_power() {
         ));
     }
 
-    // Verify initial state
-    assert_eq!(game.players[0].combat_mana_pool.red, 0);
+    // Verify initial state - no combat mana
+    assert!(game.players[0].combat_mana_pool.is_none());
 
     // Check attack triggers - should use power (4)
     game.check_attack_triggers(creature_id, p1_id)
@@ -294,7 +324,8 @@ fn test_firebend_attack_trigger_with_power() {
 
     // Verify Firebend used creature's power
     assert_eq!(
-        game.players[0].combat_mana_pool.red, 4,
+        combat_red(&game.players[0]),
+        4,
         "Firebend X should have added 4 red combat mana (creature's power)"
     );
 }
