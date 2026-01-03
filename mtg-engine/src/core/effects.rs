@@ -385,6 +385,10 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ Phase | Phase$ EndOfTurn | ValidPlayer$ You
     BeginningOfEndStep,
 
+    /// At the beginning of combat
+    /// Corresponds to: T:Mode$ Phase | Phase$ BeginCombat | ValidPlayer$ You
+    BeginningOfCombat,
+
     /// When a spell is cast
     /// Corresponds to: T:Mode$ SpellCast | ValidCard$ ...
     SpellCast,

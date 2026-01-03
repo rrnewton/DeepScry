@@ -3,8 +3,8 @@
 //! Loads card definitions from Forge's cardsfolder format
 
 use crate::core::{
-    Card, CardName, CardType, Color, Effect, Keyword, KeywordArgs, KeywordSet, ManaCost, PlayerId, Subtype, TargetRef,
-    Trigger, TriggerEvent,
+    Card, CardId, CardName, CardType, Color, Effect, Keyword, KeywordArgs, KeywordSet, ManaCost, PlayerId, Subtype,
+    TargetRef, Trigger, TriggerEvent,
 };
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
@@ -1452,6 +1452,32 @@ impl CardDefinition {
                                         });
                                     }
                                 }
+
+                                // Parse DB$ Earthbend effects
+                                // Example: "DB$ Earthbend | Num$ 2"
+                                // Used by cards like Badgermole, Avatar Kyoshi
+                                if body.contains("DB$ Earthbend") {
+                                    let mut num_counters = 1u8;
+
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+
+                                            if key == "Num" {
+                                                if let Ok(num) = value.parse::<u8>() {
+                                                    num_counters = num;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    effects.push(Effect::Earthbend {
+                                        target: CardId::new(0), // Placeholder - filled at trigger time
+                                        num_counters,
+                                    });
+                                }
                             }
                             break;
                         }
@@ -1559,6 +1585,7 @@ impl CardDefinition {
                 let trigger_event = match params.get("Phase").map(|s| s.as_str()) {
                     Some("Upkeep") => Some(TriggerEvent::BeginningOfUpkeep),
                     Some("EndOfTurn") | Some("End") => Some(TriggerEvent::BeginningOfEndStep),
+                    Some("BeginCombat") => Some(TriggerEvent::BeginningOfCombat),
                     _ => None, // Other phases not supported yet
                 };
 
@@ -1656,6 +1683,32 @@ impl CardDefinition {
                                                 amount: life_amount,
                                             });
                                         }
+                                    }
+
+                                    // Parse DB$ Earthbend effects
+                                    // Example: "DB$ Earthbend | Num$ 8"
+                                    // Used by cards like Avatar Kyoshi (begin combat trigger)
+                                    if body.contains("DB$ Earthbend") {
+                                        let mut num_counters = 1u8;
+
+                                        for param in body.split('|') {
+                                            let param = param.trim();
+                                            if let Some((key, value)) = param.split_once('$') {
+                                                let key = key.trim();
+                                                let value = value.trim();
+
+                                                if key == "Num" {
+                                                    if let Ok(num) = value.parse::<u8>() {
+                                                        num_counters = num;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        effects.push(Effect::Earthbend {
+                                            target: CardId::new(0), // Placeholder - filled at trigger time
+                                            num_counters,
+                                        });
                                     }
                                 }
                                 break;

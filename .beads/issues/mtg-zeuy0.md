@@ -4,8 +4,8 @@ status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-01-02T20:35:35.777706122+00:00
-updated_at: 2026-01-02T22:26:51.799438042+00:00
-closed_at: 2026-01-02T22:26:51.799437982+00:00
+updated_at: 2026-01-03T14:14:59.702403872+00:00
+closed_at: 2026-01-03T14:14:59.702403782+00:00
 ---
 
 # Description

@@ -1787,6 +1787,35 @@ impl GameState {
                             effect = Effect::ExilePermanent { target: target_id };
                         }
                     }
+                    Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
+                        // Placeholder CardId 0 means we need to target a land the controller controls
+                        // For now, pick the first land they control (AI could choose better targets)
+                        let controller = self.cards.get(trigger_source)?.controller;
+
+                        // Find a land controlled by the trigger's controller
+                        if let Some(land_id) = self
+                            .battlefield
+                            .cards
+                            .iter()
+                            .filter_map(|cid| {
+                                let card = self.cards.get(*cid).ok()?;
+                                if card.controller == controller && card.is_land() {
+                                    Some(*cid)
+                                } else {
+                                    None
+                                }
+                            })
+                            .next()
+                        {
+                            effect = Effect::Earthbend {
+                                target: land_id,
+                                num_counters: *num_counters,
+                            };
+                        } else {
+                            // No valid land target - skip this trigger
+                            continue;
+                        }
+                    }
                     _ => {}
                 }
 
@@ -1862,6 +1891,36 @@ impl GameState {
                         player: controller,
                         count: *count,
                     };
+                }
+                Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
+                    // Placeholder CardId 0 means we need to target a land the controller controls
+                    // For now, pick the first land they control (AI could choose better targets)
+                    let controller = self.cards.get(card_id)?.controller;
+
+                    // Find a land controlled by the trigger's controller
+                    let land_target = self
+                        .battlefield
+                        .cards
+                        .iter()
+                        .filter_map(|cid| {
+                            let card = self.cards.get(*cid).ok()?;
+                            if card.controller == controller && card.is_land() {
+                                Some(*cid)
+                            } else {
+                                None
+                            }
+                        })
+                        .next();
+
+                    if let Some(land_id) = land_target {
+                        effect = Effect::Earthbend {
+                            target: land_id,
+                            num_counters: *num_counters,
+                        };
+                    } else {
+                        // No valid land target - skip this trigger
+                        continue;
+                    }
                 }
                 _ => {}
             }
