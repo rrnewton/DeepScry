@@ -6,16 +6,24 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2025-12-07T20:17:14.501464466+00:00
+updated_at: 2026-01-03T01:23:13.670542403+00:00
 ---
 
 # Description
 
-
-Description:
 Track performance optimization work for MTG Forge Rust.
 
-## Latest Optimization (2025-12-04_#1140(d46eb3d))
+## Latest Optimization (2026-01-03_#1469(e189dcb))
+
+✅ **Guard print_battlefield_state with verbosity check** - **3.4% allocation reduction**
+- Fixed wasteful allocations in Silent mode by checking verbosity level
+- print_battlefield_state() now only executes when verbosity >= Normal
+- DHAT: 40,128 fewer bytes (-3.4%), 612 fewer blocks (-2.8%)
+- Eliminated hotspot #5: 37.50 KB in 600 blocks completely removed from top 20
+- Runtime impact minimal (+0.24% actions/sec) due to small benchmark size
+- Bigger impact expected in longer, more complex games with more turn transitions
+
+## Previous Optimization (2025-12-04_#1140(d46eb3d))
 
 ✅ **Use SmallVec for spell_targets** - **+1.6% throughput**
 - Changed spell_targets from `Vec<(CardId, Vec<CardId>)>` to `Vec<(CardId, SmallVec<[CardId; 2]>)>`
@@ -24,7 +32,7 @@ Track performance optimization work for MTG Forge Rust.
 - Bytes/action: -0.1% (3305.81 → 3301.60)
 - Note: Modest improvement - most allocations in benchmark are one-time initialization
 
-## Previous Optimization (2025-12-03_#1117(95ac82cf))
+## Earlier Optimization (2025-12-03_#1117(95ac82cf))
 
 ✅ **Eliminate Vec<Effect> clone in resolve_spell** - **2.5% allocation reduction, 5.5% fewer blocks**
 - Changed resolve_spell to use index-based iteration instead of cloning entire Vec<Effect>
