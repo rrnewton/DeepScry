@@ -432,4 +432,185 @@ mod tests {
             );
         }
     }
+
+    /// Test modal spell data structure (Effect::ModalChoice)
+    #[test]
+    fn test_modal_spell_effect_structure() {
+        use crate::core::{Effect, ModalMode, TargetRestriction};
+        use smallvec::smallvec;
+
+        // Create a modal spell like Heartless Act:
+        // Choose one —
+        // • Destroy target creature with no counters on it.
+        // • Remove up to three counters from target creature.
+
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0), // Placeholder
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy target creature with no counters on it.".to_string(),
+            svar_name: "Destroy".to_string(),
+        };
+
+        // For mode2, we'd use RemoveCounter but it's not implemented yet
+        // So we use a placeholder effect for testing the structure
+        let mode2 = ModalMode {
+            effect: Box::new(Effect::DrawCards {
+                player: PlayerId::new(0),
+                count: 0,
+            }), // Placeholder for RemoveCounter
+            description: "Remove up to three counters from target creature.".to_string(),
+            svar_name: "Remove".to_string(),
+        };
+
+        let modal_effect = Effect::ModalChoice {
+            modes: smallvec![mode1, mode2],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        };
+
+        // Verify the structure
+        if let Effect::ModalChoice {
+            modes,
+            num_to_choose,
+            min_to_choose,
+            can_repeat_modes,
+        } = modal_effect
+        {
+            assert_eq!(modes.len(), 2, "Should have 2 modes");
+            assert_eq!(num_to_choose, 1, "Should choose 1 mode");
+            assert_eq!(min_to_choose, 1, "Minimum 1 mode");
+            assert!(!can_repeat_modes, "Cannot repeat modes");
+
+            // Check mode descriptions
+            assert!(modes[0].description.contains("Destroy"));
+            assert!(modes[1].description.contains("Remove"));
+
+            // Check first mode is DestroyPermanent
+            assert!(
+                matches!(*modes[0].effect, Effect::DestroyPermanent { .. }),
+                "Mode 1 should be DestroyPermanent"
+            );
+        } else {
+            panic!("Expected ModalChoice effect");
+        }
+    }
+
+    /// Test get_modal_choice_info() detection
+    #[test]
+    fn test_get_modal_choice_info() {
+        use crate::core::{Effect, ModalMode, TargetRestriction};
+        use smallvec::smallvec;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a modal spell
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Test Modal Spell".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+
+        // Add modal effect
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0),
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy target creature".to_string(),
+            svar_name: "Destroy".to_string(),
+        };
+
+        spell.effects.push(Effect::ModalChoice {
+            modes: smallvec![mode1],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        });
+
+        game.cards.insert(spell_id, spell);
+
+        // Test detection
+        let modal_info = game.get_modal_choice_info(spell_id);
+        assert!(modal_info.is_ok());
+        assert!(modal_info.unwrap().is_some(), "Should detect modal spell");
+
+        // Create a non-modal spell
+        let bolt_id = game.next_card_id();
+        let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p1_id);
+        bolt.add_type(CardType::Instant);
+        bolt.effects.push(Effect::DealDamage {
+            target: crate::core::TargetRef::None,
+            amount: 3,
+        });
+        game.cards.insert(bolt_id, bolt);
+
+        // Non-modal spell should return None
+        let non_modal_info = game.get_modal_choice_info(bolt_id);
+        assert!(non_modal_info.is_ok());
+        assert!(non_modal_info.unwrap().is_none(), "Should not detect non-modal spell");
+    }
+
+    /// Test apply_selected_modes() replaces ModalChoice with selected mode effects
+    #[test]
+    fn test_apply_selected_modes() {
+        use crate::core::{Effect, ModalMode, TargetRestriction};
+        use smallvec::smallvec;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a modal spell with 2 modes
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Test Modal Spell".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0),
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy".to_string(),
+            svar_name: "Destroy".to_string(),
+        };
+
+        let mode2 = ModalMode {
+            effect: Box::new(Effect::DealDamage {
+                target: crate::core::TargetRef::None,
+                amount: 3,
+            }),
+            description: "Deal 3 damage".to_string(),
+            svar_name: "Damage".to_string(),
+        };
+
+        spell.effects.push(Effect::ModalChoice {
+            modes: smallvec![mode1, mode2],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        });
+
+        game.cards.insert(spell_id, spell);
+
+        // Verify spell has ModalChoice before applying
+        assert!(
+            matches!(game.cards.get(spell_id).unwrap().effects[0], Effect::ModalChoice { .. }),
+            "Should have ModalChoice before applying modes"
+        );
+
+        // Apply mode 1 (index 0 = Destroy)
+        let result = game.apply_selected_modes(spell_id, &[0]);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "Should return true for modal spell");
+
+        // Verify ModalChoice was replaced with DestroyPermanent
+        let spell_after = game.cards.get(spell_id).unwrap();
+        assert_eq!(spell_after.effects.len(), 1, "Should have 1 effect after applying");
+        assert!(
+            matches!(spell_after.effects[0], Effect::DestroyPermanent { .. }),
+            "Effect should be DestroyPermanent, got: {:?}",
+            spell_after.effects[0]
+        );
+    }
 }
