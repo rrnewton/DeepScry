@@ -3086,9 +3086,9 @@ impl FancyTuiRenderer {
             if let Some(card) = view.get_card(card_id) {
                 let mut lines = Vec::new();
 
-                // Card name
+                // Card name with ID (matches log format: "Island (35)")
                 lines.push(Line::from(Span::styled(
-                    card.name.to_string(),
+                    format!("{} ({})", card.name, card_id.as_u32()),
                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                 )));
 
