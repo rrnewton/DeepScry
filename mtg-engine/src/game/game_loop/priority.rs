@@ -3,7 +3,7 @@
 //! This module handles the priority system where players alternate making choices
 //! until both pass in succession, then resolves spells from the stack.
 
-use crate::core::CardId;
+use crate::core::{CardId, Effect};
 use crate::game::controller::{format_choice_menu, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use crate::game::GameState;
@@ -463,8 +463,65 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // MTG Rule 601.2b: Modal choice happens BEFORE targeting
+                                // Check if this is a modal spell and prompt for mode selection
+                                if let Ok(Some(Effect::ModalChoice {
+                                    modes,
+                                    num_to_choose,
+                                    min_to_choose,
+                                    can_repeat_modes,
+                                })) = self.game.get_modal_choice_info(card_id)
+                                {
+                                    // Get mode descriptions for the controller
+                                    let mode_descriptions: Vec<String> =
+                                        modes.iter().map(|m| m.description.clone()).collect();
+
+                                    // Ask controller to choose modes
+                                    let prior_log_size = self.game.logger.log_count();
+                                    let view = GameStateView::new(self.game, current_priority);
+                                    let choice = controller.choose_modes(
+                                        &view,
+                                        card_id,
+                                        &mode_descriptions,
+                                        num_to_choose as usize,
+                                        min_to_choose as usize,
+                                        can_repeat_modes,
+                                    );
+                                    let selected_modes =
+                                        handle_choice_result_break!(choice, self.game, current_priority);
+
+                                    // Log the mode choice
+                                    let replay_choice = crate::game::ReplayChoice::Modes(selected_modes.clone());
+                                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                                    // Apply selected modes to the spell (replaces ModalChoice with mode effects)
+                                    let selected_indices: Vec<usize> = selected_modes.iter().copied().collect();
+                                    if let Err(e) = self.game.apply_selected_modes(card_id, &selected_indices) {
+                                        log::warn!(
+                                            target: "priority",
+                                            "Failed to apply selected modes: {}",
+                                            e
+                                        );
+                                    }
+
+                                    // Log which mode was chosen
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        for &mode_idx in &selected_indices {
+                                            if let Some(desc) = mode_descriptions.get(mode_idx) {
+                                                let message = format!(
+                                                    "{} chooses mode: {}",
+                                                    self.get_player_name(current_priority),
+                                                    desc
+                                                );
+                                                self.game.logger.gamelog(&message);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Get valid targets BEFORE calling cast_spell_8_step
                                 // (we can't borrow controller inside the closure)
+                                // Note: For modal spells, this runs AFTER mode selection
                                 let valid_targets = self
                                     .game
                                     .get_valid_targets_for_spell(card_id)

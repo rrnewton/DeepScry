@@ -211,6 +211,31 @@ impl GameState {
                         }
                     }
                 }
+                Effect::ModalChoice { modes, .. } => {
+                    // Modal spells: Mode selection should happen BEFORE targeting.
+                    // When this code runs, modes should already be selected and the
+                    // ModalChoice effect replaced with the selected mode's effects.
+                    //
+                    // If we reach here, it means mode selection hasn't happened yet.
+                    // For now, collect targets from ALL modes (will be filtered later).
+                    for mode in modes {
+                        if let Effect::DestroyPermanent { target, restriction } = mode.effect.as_ref() {
+                            if target.as_u32() == 0 {
+                                // This mode destroys a permanent
+                                for &card_id in &self.battlefield.cards {
+                                    if let Ok(target_card) = self.cards.get(card_id) {
+                                        if restriction.matches(target_card)
+                                            && Self::is_legal_target(target_card, spell_owner)
+                                        {
+                                            valid_targets.push(card_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Add other effect types as needed
+                    }
+                }
                 _ => {
                     // Other effects either don't need targets or already have them specified
                     // (DrawCards, GainLife, Mill, AddMana all specify player directly)
@@ -491,6 +516,79 @@ impl GameState {
         // Sort for deterministic ordering (critical for snapshot/resume)
         valid_targets.sort();
         Ok(valid_targets)
+    }
+
+    /// Check if a spell has a modal choice effect.
+    ///
+    /// Returns Some with the ModalChoice parameters if the spell is modal,
+    /// or None if it's a regular spell.
+    ///
+    /// Modal spells have "Choose one —" or similar text and require mode
+    /// selection before targeting (MTG Rule 601.2b).
+    pub fn get_modal_choice_info(&self, spell_card_id: CardId) -> Result<Option<crate::core::Effect>> {
+        let spell_card = self.cards.get(spell_card_id)?;
+
+        for effect in &spell_card.effects {
+            if matches!(effect, Effect::ModalChoice { .. }) {
+                return Ok(Some(effect.clone()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get the mode descriptions for a modal spell.
+    ///
+    /// Returns a vector of mode descriptions for display to the player.
+    /// Used by controllers when prompting for mode selection.
+    pub fn get_modal_mode_descriptions(&self, spell_card_id: CardId) -> Result<Vec<String>> {
+        let spell_card = self.cards.get(spell_card_id)?;
+
+        for effect in &spell_card.effects {
+            if let Effect::ModalChoice { modes, .. } = effect {
+                return Ok(modes.iter().map(|m| m.description.clone()).collect());
+            }
+        }
+
+        Ok(Vec::new())
+    }
+
+    /// Apply selected modes to a modal spell, replacing the ModalChoice effect
+    /// with the effects from the selected modes.
+    ///
+    /// This is called after the player selects modes but before targeting.
+    /// The selected mode effects are inserted in place of the ModalChoice.
+    ///
+    /// # Arguments
+    /// * `spell_card_id` - The modal spell card
+    /// * `selected_mode_indices` - The indices of selected modes (0-based)
+    ///
+    /// # Returns
+    /// Ok(true) if modes were applied, Ok(false) if spell wasn't modal
+    pub fn apply_selected_modes(&mut self, spell_card_id: CardId, selected_mode_indices: &[usize]) -> Result<bool> {
+        let spell_card = self.cards.get_mut(spell_card_id)?;
+
+        // Find the ModalChoice effect and get selected mode effects
+        let mut new_effects = Vec::new();
+        let mut found_modal = false;
+
+        for effect in spell_card.effects.drain(..) {
+            if let Effect::ModalChoice { modes, .. } = effect {
+                found_modal = true;
+                // Add effects from selected modes in order
+                for &mode_idx in selected_mode_indices {
+                    if let Some(mode) = modes.get(mode_idx) {
+                        new_effects.push((*mode.effect).clone());
+                    }
+                }
+            } else {
+                // Keep non-modal effects as-is
+                new_effects.push(effect);
+            }
+        }
+
+        spell_card.effects = new_effects;
+        Ok(found_modal)
     }
 }
 
