@@ -2235,7 +2235,18 @@ impl GameState {
     ///
     /// MTG Rules 508.1m: Abilities that trigger on declaring attackers go on the stack.
     pub fn check_attack_triggers(&mut self, attacker_id: CardId, _active_player: PlayerId) -> Result<()> {
-        // Get the card's triggers and controller
+        // Fast path: Check if card has any attack triggers BEFORE allocating
+        // Most cards have no triggers at all, so this avoids allocation overhead
+        let has_attack_triggers = {
+            let card = self.cards.get(attacker_id)?;
+            card.triggers.iter().any(|t| t.event == TriggerEvent::Attacks)
+        };
+
+        if !has_attack_triggers {
+            return Ok(());
+        }
+
+        // Slow path: Card has attack triggers, collect and execute them
         let (effects_to_execute, controller, creature_power): (Vec<Effect>, PlayerId, u8) = {
             let card = self.cards.get(attacker_id)?;
 
@@ -2253,10 +2264,6 @@ impl GameState {
 
             (effects, card.controller, power)
         };
-
-        if effects_to_execute.is_empty() {
-            return Ok(());
-        }
 
         // Log the trigger (official game action)
         if let Ok(card) = self.cards.get(attacker_id) {
