@@ -3049,18 +3049,22 @@ async fn test_modal_spell_mode_validation_heartless_act() -> Result<()> {
          because Grizzly Bears has counters. Mode 2 (RemoveCounter) should be used instead."
     );
 
-    // If counters were removed, verify the correct amount
-    if final_counters < initial_counters {
-        let removed = initial_counters - final_counters;
-        assert!(
-            removed <= 3,
-            "Mode 2 should remove at most 3 counters, but removed {removed}"
-        );
-        println!("✓ Heartless Act correctly used mode 2 and removed {removed} counters");
-    } else {
-        // RemoveCounter "up to three" means zero is also valid
-        println!("Note: RemoveCounter chose to remove 0 counters (valid for 'up to' effects)");
-    }
+    // Verify counters were actually removed
+    // Mode 2 removes "up to three counters" so should remove 1-3 counters
+    // (AI/controller should choose to remove at least 1 when casting removal)
+    assert!(
+        final_counters < initial_counters,
+        "RemoveCounter effect should have removed at least one counter! \
+         Initial: {initial_counters}, Final: {final_counters}. \
+         This indicates targeting failed - no target was selected for the spell."
+    );
+
+    let removed = initial_counters - final_counters;
+    assert!(
+        removed <= 3,
+        "Mode 2 should remove at most 3 counters, but removed {removed}"
+    );
+    println!("✓ Heartless Act correctly used mode 2 and removed {removed} counters");
 
     println!("✓ Modal spell mode validation test passed");
 

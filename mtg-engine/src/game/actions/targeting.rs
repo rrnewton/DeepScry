@@ -211,6 +211,28 @@ impl GameState {
                         }
                     }
                 }
+                Effect::RemoveCounter { target, .. } if target.as_u32() == 0 => {
+                    // RemoveCounter targets creatures (e.g., Heartless Act mode 2)
+                    // TODO: Some RemoveCounter effects can target any permanent
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
+                Effect::PutCounter { target, .. } if target.as_u32() == 0 => {
+                    // PutCounter targets creatures (e.g., +1/+1 counter effects)
+                    // TODO: Some PutCounter effects can target any permanent
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::ModalChoice { modes, .. } => {
                     // Modal spells: Mode selection should happen BEFORE targeting.
                     // When this code runs, modes should already be selected and the
