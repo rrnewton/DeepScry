@@ -69,8 +69,8 @@ pub struct GameState {
     /// Token definitions cache (loaded at game initialization)
     /// Maps token script name (e.g., "c_a_food_sac") to card definition
     /// Not serialized - will be empty when loading from snapshot
-    /// Native only - requires loader module
-    #[cfg(feature = "native")]
+    /// For native builds, loaded from tokenscripts/ directory.
+    /// For WASM builds, loaded from bundled deck token data.
     #[serde(skip)]
     pub token_definitions: std::collections::HashMap<String, std::sync::Arc<crate::loader::CardDefinition>>,
 
@@ -190,7 +190,6 @@ impl GameState {
             next_entity_id: next_id,
             undo_log: UndoLog::new(),
             logger: GameLogger::new(),
-            #[cfg(feature = "native")]
             token_definitions: std::collections::HashMap::new(),
             bump: Bump::new(),
             mana_state_version: 0,
@@ -1829,7 +1828,6 @@ impl Clone for GameState {
             next_entity_id: self.next_entity_id,
             undo_log: self.undo_log.clone(),
             logger: self.logger.clone(),
-            #[cfg(feature = "native")]
             token_definitions: self.token_definitions.clone(),
             // Each clone gets a fresh empty bump allocator
             bump: Bump::new(),

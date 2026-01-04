@@ -3184,18 +3184,89 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         )))
     })?;
 
-    println!("\nGenerating per-deck card packs...");
+    // Find tokenscripts directory (sibling to cardsfolder)
+    let cardsfolder_canonical = std::fs::canonicalize(&cardsfolder).map_err(|e| {
+        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+            "Failed to resolve cardsfolder path: {}",
+            e
+        )))
+    })?;
+    let tokenscripts_dir = cardsfolder_canonical
+        .parent()
+        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidCardFormat("Invalid cardsfolder path".to_string()))?
+        .join("tokenscripts");
+
+    println!(
+        "\nToken scripts directory: {}",
+        if tokenscripts_dir.exists() {
+            tokenscripts_dir.display().to_string()
+        } else {
+            format!("{} (not found)", tokenscripts_dir.display())
+        }
+    );
+
+    // Create deck_tokens directory for per-deck token definitions
+    let deck_tokens_dir = output.join("deck_tokens");
+    if deck_tokens_dir.exists() {
+        fs::remove_dir_all(&deck_tokens_dir).map_err(|e| {
+            mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+                "Failed to clean deck_tokens directory: {}",
+                e
+            )))
+        })?;
+    }
+    fs::create_dir_all(&deck_tokens_dir).map_err(|e| {
+        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+            "Failed to create deck_tokens directory: {}",
+            e
+        )))
+    })?;
+
+    println!("\nGenerating per-deck card packs (with tokens)...");
     let mut deck_card_sizes: HashMap<String, usize> = HashMap::new();
+    let mut deck_token_sizes: HashMap<String, usize> = HashMap::new();
 
     for (deck_name, deck) in &decks {
         let unique_names = deck.unique_card_names();
         let mut deck_cards: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+        let mut deck_tokens: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+        let mut token_scripts_needed: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for card_name in &unique_names {
             if let Some(card_def) = card_definitions.get(card_name) {
                 deck_cards.insert(card_name.clone(), card_def.clone());
+
+                // Extract token scripts this card can create
+                for token_script in card_def.extract_token_scripts() {
+                    token_scripts_needed.insert(token_script);
+                }
             } else {
                 eprintln!("  Warning: Card '{}' not found for deck '{}'", card_name, deck_name);
+            }
+        }
+
+        // Load token definitions for this deck
+        for token_script in &token_scripts_needed {
+            let token_path = tokenscripts_dir.join(format!("{}.txt", token_script));
+            if token_path.exists() {
+                match CardLoader::load_from_file(&token_path) {
+                    Ok(token_def) => {
+                        deck_tokens.insert(token_script.clone(), token_def);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "  Warning: Failed to load token '{}' for deck '{}': {}",
+                            token_script, deck_name, e
+                        );
+                    }
+                }
+            } else {
+                eprintln!(
+                    "  Warning: Token script '{}' not found at {} for deck '{}'",
+                    token_script,
+                    token_path.display(),
+                    deck_name
+                );
             }
         }
 
@@ -3203,15 +3274,29 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         let deck_cards_path = deck_cards_dir.join(format!("{}.bin", deck_name));
         let deck_cards_data = bincode::serialize(&deck_cards)
             .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize deck cards: {}", e)))?;
-
         fs::write(&deck_cards_path, &deck_cards_data).map_err(mtg_forge_rs::MtgError::IoError)?;
         deck_card_sizes.insert(deck_name.clone(), deck_cards_data.len());
 
+        // Serialize this deck's tokens (even if empty - keeps consistent structure)
+        let deck_tokens_path = deck_tokens_dir.join(format!("{}.bin", deck_name));
+        let deck_tokens_data = bincode::serialize(&deck_tokens).map_err(|e| {
+            mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize deck tokens: {}", e))
+        })?;
+        fs::write(&deck_tokens_path, &deck_tokens_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+        deck_token_sizes.insert(deck_name.clone(), deck_tokens_data.len());
+
+        let token_info = if deck_tokens.is_empty() {
+            String::new()
+        } else {
+            format!(", {} tokens", deck_tokens.len())
+        };
         println!(
-            "  {} - {} unique cards ({} bytes)",
+            "  {} - {} unique cards{} ({} + {} bytes)",
             deck_name,
             deck_cards.len(),
-            deck_cards_data.len()
+            token_info,
+            deck_cards_data.len(),
+            deck_tokens_data.len()
         );
     }
 
@@ -3222,6 +3307,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         card_count: usize,
         unique_cards: usize,
         card_pack_bytes: usize,
+        token_pack_bytes: usize,
     }
 
     let deck_index: Vec<DeckIndexEntry> = decks
@@ -3231,6 +3317,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
             card_count: deck.total_cards(),
             unique_cards: deck.unique_card_names().len(),
             card_pack_bytes: deck_card_sizes.get(name).copied().unwrap_or(0),
+            token_pack_bytes: deck_token_sizes.get(name).copied().unwrap_or(0),
         })
         .collect();
     let index_path = output.join("deck_index.json");
@@ -3240,20 +3327,30 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     println!("\nExported deck index to {}", index_path.display());
 
     let total_deck_cards_size: usize = deck_card_sizes.values().sum();
+    let total_deck_tokens_size: usize = deck_token_sizes.values().sum();
     println!("\n=== Export Complete ===");
     println!("Files created in {}:", output.display());
     println!(
-        "  cards.bin       - {} card definitions ({} bytes) [fallback]",
+        "  cards.bin        - {} card definitions ({} bytes) [fallback]",
         card_definitions.len(),
         cards_data.len()
     );
-    println!("  decks.bin       - {} decks ({} bytes)", decks.len(), decks_data.len());
+    println!(
+        "  decks.bin        - {} decks ({} bytes)",
+        decks.len(),
+        decks_data.len()
+    );
     println!(
         "  deck_cards/*.bin - {} per-deck card packs ({} bytes total)",
         decks.len(),
         total_deck_cards_size
     );
-    println!("  deck_index.json - deck metadata");
+    println!(
+        "  deck_tokens/*.bin - {} per-deck token packs ({} bytes total)",
+        decks.len(),
+        total_deck_tokens_size
+    );
+    println!("  deck_index.json  - deck metadata");
 
     Ok(())
 }

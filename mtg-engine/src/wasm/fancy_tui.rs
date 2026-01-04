@@ -2052,6 +2052,12 @@ fn create_game_from_database(
         add_deck_cards(&mut game, p2_id, entry, &card_db.cards).map_err(|e| JsValue::from_str(&e))?;
     }
 
+    // Copy token definitions from card database into game state
+    if !card_db.tokens.is_empty() {
+        game.token_definitions = card_db.tokens.clone();
+        log::info!("Loaded {} token definitions into game", game.token_definitions.len());
+    }
+
     // Shuffle libraries
     game.shuffle_library(p1_id);
     game.shuffle_library(p2_id);

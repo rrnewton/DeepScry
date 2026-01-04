@@ -135,6 +135,8 @@ pub fn set_log_level(level: &str) {
 pub struct WasmCardDatabase {
     pub(crate) cards: HashMap<String, Arc<CardDefinition>>,
     pub(crate) decks: HashMap<String, DeckList>,
+    /// Token definitions loaded from per-deck token packs
+    pub(crate) tokens: HashMap<String, Arc<CardDefinition>>,
 }
 
 #[wasm_bindgen]
@@ -145,6 +147,7 @@ impl WasmCardDatabase {
         WasmCardDatabase {
             cards: HashMap::new(),
             decks: HashMap::new(),
+            tokens: HashMap::new(),
         }
     }
 
@@ -259,6 +262,35 @@ impl WasmCardDatabase {
 
         web_sys::console::log_1(&format!("Loaded {} cards from deck pack (total: {})", count, self.cards.len()).into());
         Ok(count)
+    }
+
+    /// Load tokens for a specific deck from a per-deck token pack
+    ///
+    /// This loads the token definitions needed for cards that can create tokens.
+    /// The data should be from `deck_tokens/<deck_name>.bin`.
+    ///
+    /// Tokens are merged into the existing token registry (duplicates are fine).
+    /// Returns the number of tokens loaded from this pack.
+    pub fn load_deck_tokens(&mut self, data: &[u8]) -> Result<u32, JsValue> {
+        let tokens: HashMap<String, CardDefinition> = bincode::deserialize(data)
+            .map_err(|e| JsValue::from_str(&format!("Failed to deserialize deck tokens: {}", e)))?;
+
+        let count = tokens.len() as u32;
+
+        // Merge into existing tokens (Arc wrap each)
+        for (name, def) in tokens {
+            self.tokens.entry(name).or_insert_with(|| Arc::new(def));
+        }
+
+        web_sys::console::log_1(
+            &format!("Loaded {} tokens from deck pack (total: {})", count, self.tokens.len()).into(),
+        );
+        Ok(count)
+    }
+
+    /// Get the number of loaded token definitions
+    pub fn token_count(&self) -> u32 {
+        self.tokens.len() as u32
     }
 
     /// Check if all cards needed for a deck are loaded
@@ -472,6 +504,14 @@ impl WasmGame {
         // Add player 2's deck
         for entry in &p2_deck.main_deck {
             add_deck_cards(&mut game, p2_id, entry, &card_db.cards).map_err(|e| JsValue::from_str(&e))?;
+        }
+
+        // Copy token definitions from card database into game state
+        if !card_db.tokens.is_empty() {
+            game.token_definitions = card_db.tokens.clone();
+            web_sys::console::log_1(
+                &format!("Loaded {} token definitions into game", game.token_definitions.len()).into(),
+            );
         }
 
         // Shuffle libraries
