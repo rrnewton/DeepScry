@@ -2235,8 +2235,10 @@ impl GameState {
     ///
     /// MTG Rules 508.1m: Abilities that trigger on declaring attackers go on the stack.
     pub fn check_attack_triggers(&mut self, attacker_id: CardId, _active_player: PlayerId) -> Result<()> {
-        // Fast path: Check if card has any attack triggers BEFORE allocating
-        // Most cards have no triggers at all, so this avoids allocation overhead
+        use smallvec::SmallVec;
+
+        // Fast path: Check if card has any attack triggers BEFORE any allocation
+        // Most cards have no triggers at all, so this skips all work in the common case
         let has_attack_triggers = {
             let card = self.cards.get(attacker_id)?;
             card.triggers.iter().any(|t| t.event == TriggerEvent::Attacks)
@@ -2246,64 +2248,68 @@ impl GameState {
             return Ok(());
         }
 
-        // Slow path: Card has attack triggers, collect and execute them
-        let (effects_to_execute, controller, creature_power): (Vec<Effect>, PlayerId, u8) = {
-            let card = self.cards.get(attacker_id)?;
-
-            // Collect Attacks triggers
-            let effects: Vec<Effect> = card
-                .triggers
-                .iter()
-                .filter(|trigger| trigger.event == TriggerEvent::Attacks)
-                .flat_map(|trigger| trigger.effects.clone())
-                .collect();
-
-            // Get current power for Firebending X calculations
-            // Use 0 if power is negative (shouldn't happen for attackers)
-            let power = card.current_power().max(0) as u8;
-
-            (effects, card.controller, power)
-        };
-
-        // Log the trigger (official game action)
-        if let Ok(card) = self.cards.get(attacker_id) {
-            for trigger in &card.triggers {
-                if trigger.event == TriggerEvent::Attacks {
-                    self.logger
-                        .gamelog(&format!("Trigger: {} - {}", card.name, trigger.description));
-                }
-            }
+        // Slow path: Card has attack triggers - extract data and execute
+        // Use SmallVec to avoid heap allocation (most triggers have 1-2 effects)
+        struct TriggerData {
+            card_name: String,
+            description: String,
+            effects: SmallVec<[Effect; 2]>,
         }
 
-        // Execute each effect with placeholder resolution
-        for mut effect in effects_to_execute {
-            // Fill in placeholder values in trigger effects
-            match &mut effect {
-                Effect::Firebend {
-                    controller: ctrl,
-                    amount,
-                } if ctrl.as_u32() == 0 => {
-                    // Resolve placeholder controller to the actual creature controller
-                    // amount=0 means "use creature's power" (Firebending X)
-                    let actual_amount = if *amount == 0 { creature_power } else { *amount };
+        let (controller, creature_power, triggers): (PlayerId, u8, SmallVec<[TriggerData; 1]>) = {
+            let card = self.cards.get(attacker_id)?;
+            let power = card.current_power().max(0) as u8;
 
-                    effect = Effect::Firebend {
-                        controller,
-                        amount: actual_amount,
-                    };
-
-                    // Log the firebend trigger
-                    if let Ok(card) = self.cards.get(attacker_id) {
-                        self.logger.gamelog(&format!(
-                            "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
-                            card.name, actual_amount, actual_amount
-                        ));
-                    }
+            let mut triggers: SmallVec<[TriggerData; 1]> = SmallVec::new();
+            for trigger in &card.triggers {
+                if trigger.event == TriggerEvent::Attacks {
+                    triggers.push(TriggerData {
+                        card_name: card.name.to_string(),
+                        description: trigger.description.clone(),
+                        effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
+                    });
                 }
-                _ => {}
             }
 
-            self.execute_effect(&effect)?;
+            (card.controller, power, triggers)
+        };
+
+        // Process each trigger - borrow is released, safe to call execute_effect
+        for trigger_data in triggers {
+            // Log the trigger (official game action)
+            self.logger.gamelog(&format!(
+                "Trigger: {} - {}",
+                trigger_data.card_name, trigger_data.description
+            ));
+
+            // Execute each effect with placeholder resolution
+            for mut effect in trigger_data.effects {
+                // Fill in placeholder values in trigger effects
+                match &mut effect {
+                    Effect::Firebend {
+                        controller: ctrl,
+                        amount,
+                    } if ctrl.as_u32() == 0 => {
+                        // Resolve placeholder controller to the actual creature controller
+                        // amount=0 means "use creature's power" (Firebending X)
+                        let actual_amount = if *amount == 0 { creature_power } else { *amount };
+
+                        effect = Effect::Firebend {
+                            controller,
+                            amount: actual_amount,
+                        };
+
+                        // Log the firebend trigger (using card_name already extracted)
+                        self.logger.gamelog(&format!(
+                            "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                            trigger_data.card_name, actual_amount, actual_amount
+                        ));
+                    }
+                    _ => {}
+                }
+
+                self.execute_effect(&effect)?;
+            }
         }
 
         Ok(())
