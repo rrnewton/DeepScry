@@ -9,7 +9,7 @@
 //! - Proxies choices to local PlayerController
 
 use crate::core::{CardId, CardName, CardType, Color, ManaCost, PlayerId, Subtype};
-use crate::game::{GameState, PlayerController, VerbosityLevel};
+use crate::game::{GameState, PlayerController, Step, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 use anyhow::{anyhow, Result};
@@ -1053,6 +1053,12 @@ impl NetworkClient {
         let mut local_controller = local_controller;
         let mut remote_controller = remote_controller;
         let game_result = tokio::task::spawn_blocking(move || {
+            // Track the last turn we blocked waiting for a draw reveal.
+            // This prevents blocking multiple times in the same turn (once in draw_step,
+            // again in priority_round after the draw has consumed the reveal).
+            // Use AtomicU32 because the closure needs to be Sync.
+            let last_draw_wait_turn = std::sync::atomic::AtomicU32::new(0);
+
             // Create drain function that processes reveals from the channel
             // This function WAITS for reveals when the active player's library is remote
             // (meaning we need to receive the draw reveal before proceeding)
@@ -1111,23 +1117,55 @@ impl NetworkClient {
                         }
                     };
 
-                // Check if the active player's library is remote
-                // If so, we need to wait for a draw reveal before proceeding
+                // Check if we need to wait for a draw reveal
+                // IMPORTANT: Only block-wait when we're SPECIFICALLY in the Draw step.
+                // drain_reveals is called at every priority check (priority.rs:208) AND at
+                // the draw step (steps.rs:197). We should only block at the draw step.
+                //
+                // The issue: After syncing to an action_count, the client's GameLoop runs
+                // ahead through automatic phases. If we block at priority checks waiting
+                // for a reveal, we deadlock because the server hasn't drawn yet.
                 let active_player = game.turn.active_player;
                 let turn_number = game.turn.turn_number;
+                let current_step = game.turn.current_step;
 
-                let expecting_reveal = turn_number > 1
-                    && game
-                        .get_player_zones(active_player)
-                        .is_some_and(|z| z.library.is_remote_library());
+                // Only block-wait if:
+                // 1. Turn > 1 (drawing happens on subsequent turns)
+                // 2. We're specifically in the Draw step (not at a priority check)
+                // 3. Active player's library is remote (we need a reveal)
+                // 4. No reveal is already pending (we need to wait for one)
+                // 5. We haven't already waited for a draw reveal THIS turn
+                //    (prevents blocking again in priority_round after draw_card consumed the reveal)
+                let library_is_remote = game
+                    .get_player_zones(active_player)
+                    .is_some_and(|z| z.library.is_remote_library());
 
-                if expecting_reveal {
-                    // We're about to draw from a remote library - WAIT for the reveal
+                let has_pending_reveal = game
+                    .get_player_zones(active_player)
+                    .is_some_and(|z| z.library.pending_reveals_count() > 0);
+
+                let already_waited_this_turn =
+                    last_draw_wait_turn.load(std::sync::atomic::Ordering::Relaxed) == turn_number;
+
+                let should_block = turn_number > 1
+                    && current_step == Step::Draw
+                    && library_is_remote
+                    && !has_pending_reveal
+                    && !already_waited_this_turn;
+
+                if should_block {
+                    // We're in the Draw step about to draw from a remote library with no
+                    // pending reveal - we must wait for the server to send it
                     log::debug!(
-                        "Turn {}: Waiting for draw reveal for {:?} (remote library)",
+                        "Turn {}: Waiting for draw reveal for {:?} (remote library, no pending reveal)",
                         turn_number,
                         active_player
                     );
+
+                    // Mark that we've waited for a reveal this turn
+                    // (even if it times out, don't block again in priority_round)
+                    last_draw_wait_turn.store(turn_number, std::sync::atomic::Ordering::Relaxed);
+
                     match reveal_rx.recv_timeout(Duration::from_secs(10)) {
                         Ok((owner, card_reveal, reason)) => {
                             process_reveal(game, owner, card_reveal, reason);
