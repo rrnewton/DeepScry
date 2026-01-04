@@ -59,18 +59,25 @@ impl TargetType {
 pub struct TargetRestriction {
     /// Valid target types (if empty, any permanent is valid)
     pub types: SmallVec<[TargetType; 2]>,
+    /// If true, target must have no counters on it (e.g., Heartless Act mode 1)
+    #[serde(default)]
+    pub requires_no_counters: bool,
 }
 
 impl TargetRestriction {
     /// Create a restriction allowing any permanent
     pub fn any() -> Self {
-        Self { types: SmallVec::new() }
+        Self {
+            types: SmallVec::new(),
+            requires_no_counters: false,
+        }
     }
 
     /// Create a restriction from a list of target types
     pub fn from_types(types: impl IntoIterator<Item = TargetType>) -> Self {
         Self {
             types: types.into_iter().collect(),
+            requires_no_counters: false,
         }
     }
 
@@ -79,9 +86,19 @@ impl TargetRestriction {
     /// Returns true if:
     /// - types is empty (any permanent allowed), OR
     /// - card matches at least one of the specified types
+    ///
+    /// AND
+    ///
+    /// - requires_no_counters is false, OR card has no counters
     pub fn matches(&self, card: &crate::core::Card) -> bool {
+        // Check counter restriction first
+        if self.requires_no_counters && card.has_counters() {
+            return false;
+        }
+
+        // Check type restriction
         if self.types.is_empty() {
-            return true; // No restriction
+            return true; // No type restriction
         }
         self.types.iter().any(|t| t.matches(card))
     }
@@ -92,12 +109,22 @@ impl TargetRestriction {
     /// - "Artifact,Enchantment" -> [Artifact, Enchantment]
     /// - "Creature" -> [Creature]
     /// - "Creature.nonArtifact+nonBlack" -> [Creature] (modifiers ignored for now)
+    /// - "Creature.!HasCounters" -> [Creature] with requires_no_counters=true
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
+        let mut requires_no_counters = false;
 
         for part in valid_tgts.split(',') {
-            // Strip any modifiers like ".nonArtifact+nonBlack"
-            let base_type = part.split('.').next().unwrap_or(part).trim();
+            // Check for modifiers after the base type
+            let parts: Vec<&str> = part.split('.').collect();
+            let base_type = parts.first().map(|s| s.trim()).unwrap_or("");
+
+            // Check for !HasCounters modifier
+            for modifier in parts.iter().skip(1) {
+                if *modifier == "!HasCounters" {
+                    requires_no_counters = true;
+                }
+            }
 
             match base_type {
                 "Artifact" => types.push(TargetType::Artifact),
@@ -110,7 +137,10 @@ impl TargetRestriction {
             }
         }
 
-        Self { types }
+        Self {
+            types,
+            requires_no_counters,
+        }
     }
 }
 

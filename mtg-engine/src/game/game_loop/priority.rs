@@ -472,48 +472,81 @@ impl<'a> GameLoop<'a> {
                                     can_repeat_modes,
                                 })) = self.game.get_modal_choice_info(card_id)
                                 {
-                                    // Get mode descriptions for the controller
-                                    let mode_descriptions: Vec<String> =
-                                        modes.iter().map(|m| m.description.clone()).collect();
+                                    // Get which modes have valid targets
+                                    let valid_modes = self
+                                        .game
+                                        .get_valid_modes_for_spell(card_id, current_priority)
+                                        .unwrap_or_default();
 
-                                    // Ask controller to choose modes
-                                    let prior_log_size = self.game.logger.log_count();
-                                    let view = GameStateView::new(self.game, current_priority);
-                                    let choice = controller.choose_modes(
-                                        &view,
-                                        card_id,
-                                        &mode_descriptions,
-                                        num_to_choose as usize,
-                                        min_to_choose as usize,
-                                        can_repeat_modes,
-                                    );
-                                    let selected_modes =
-                                        handle_choice_result_break!(choice, self.game, current_priority);
+                                    // Filter to only modes with valid targets
+                                    let valid_mode_indices: Vec<usize> = valid_modes
+                                        .iter()
+                                        .filter(|(_, has_targets)| *has_targets)
+                                        .map(|(idx, _)| *idx)
+                                        .collect();
 
-                                    // Log the mode choice
-                                    let replay_choice = crate::game::ReplayChoice::Modes(selected_modes.clone());
-                                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
-
-                                    // Apply selected modes to the spell (replaces ModalChoice with mode effects)
-                                    let selected_indices: Vec<usize> = selected_modes.iter().copied().collect();
-                                    if let Err(e) = self.game.apply_selected_modes(card_id, &selected_indices) {
+                                    // If no modes have valid targets, the spell can't be cast legally
+                                    // (this shouldn't happen if the spell was offered as castable)
+                                    if valid_mode_indices.is_empty() {
                                         log::warn!(
                                             target: "priority",
-                                            "Failed to apply selected modes: {}",
-                                            e
+                                            "Modal spell has no modes with valid targets, skipping"
                                         );
-                                    }
+                                        // Continue without applying any modes - spell will fizzle
+                                    } else {
+                                        // Get mode descriptions for valid modes only
+                                        let mode_descriptions: Vec<String> = valid_mode_indices
+                                            .iter()
+                                            .filter_map(|&idx| modes.get(idx).map(|m| m.description.clone()))
+                                            .collect();
 
-                                    // Log which mode was chosen
-                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                        for &mode_idx in &selected_indices {
-                                            if let Some(desc) = mode_descriptions.get(mode_idx) {
-                                                let message = format!(
-                                                    "{} chooses mode: {}",
-                                                    self.get_player_name(current_priority),
-                                                    desc
-                                                );
-                                                self.game.logger.gamelog(&message);
+                                        // Ask controller to choose from valid modes
+                                        let prior_log_size = self.game.logger.log_count();
+                                        let view = GameStateView::new(self.game, current_priority);
+                                        let choice = controller.choose_modes(
+                                            &view,
+                                            card_id,
+                                            &mode_descriptions,
+                                            num_to_choose as usize,
+                                            min_to_choose as usize,
+                                            can_repeat_modes,
+                                        );
+                                        let selected_modes =
+                                            handle_choice_result_break!(choice, self.game, current_priority);
+
+                                        // Map the controller's selection (indices into valid_mode_indices)
+                                        // back to the original mode indices
+                                        let original_indices: Vec<usize> = selected_modes
+                                            .iter()
+                                            .filter_map(|&idx| valid_mode_indices.get(idx).copied())
+                                            .collect();
+
+                                        // Log the mode choice (using original indices)
+                                        let replay_choice = crate::game::ReplayChoice::Modes(
+                                            original_indices.iter().copied().collect(),
+                                        );
+                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                                        // Apply selected modes to the spell (replaces ModalChoice with mode effects)
+                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
+                                            log::warn!(
+                                                target: "priority",
+                                                "Failed to apply selected modes: {}",
+                                                e
+                                            );
+                                        }
+
+                                        // Log which mode was chosen
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            for &mode_idx in &original_indices {
+                                                if let Some(mode) = modes.get(mode_idx) {
+                                                    let message = format!(
+                                                        "{} chooses mode: {}",
+                                                        self.get_player_name(current_priority),
+                                                        mode.description
+                                                    );
+                                                    self.game.logger.gamelog(&message);
+                                                }
                                             }
                                         }
                                     }

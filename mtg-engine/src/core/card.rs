@@ -927,6 +927,14 @@ impl Card {
             .unwrap_or(0)
     }
 
+    /// Check if the card has any counters on it
+    ///
+    /// Returns true if the card has at least one counter of any type.
+    /// Used for targeting restrictions like "creature with no counters".
+    pub fn has_counters(&self) -> bool {
+        self.counters.iter().any(|(_, count)| *count > 0)
+    }
+
     /// Set the card text
     ///
     /// NOTE: This does NOT update mana production in the cache. Mana production
@@ -1151,5 +1159,36 @@ mod tests {
         // Print size for debugging allocation issues
         eprintln!("sizeof(CardCache) = {} bytes", std::mem::size_of::<CardCache>());
         eprintln!("sizeof(Card) = {} bytes", std::mem::size_of::<Card>());
+    }
+
+    #[test]
+    fn test_has_counters() {
+        let id = CardId::new(1);
+        let owner = PlayerId::new(100);
+        let mut card = Card::new(id, "Test Creature", owner);
+
+        // Fresh card has no counters
+        assert!(!card.has_counters(), "Fresh card should have no counters");
+
+        // Add a +1/+1 counter
+        card.add_counter(CounterType::P1P1, 1);
+        assert!(card.has_counters(), "Card with +1/+1 counter should have counters");
+
+        // Remove the counter
+        card.remove_counter(CounterType::P1P1, 1);
+        assert!(
+            !card.has_counters(),
+            "Card with removed counter should have no counters"
+        );
+
+        // Add different counter types
+        card.add_counter(CounterType::Charge, 3);
+        assert!(card.has_counters(), "Card with charge counters should have counters");
+
+        card.add_counter(CounterType::P1P1, 2);
+        assert!(
+            card.has_counters(),
+            "Card with multiple counter types should have counters"
+        );
     }
 }

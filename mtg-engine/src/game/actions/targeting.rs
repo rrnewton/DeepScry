@@ -553,6 +553,133 @@ impl GameState {
         Ok(Vec::new())
     }
 
+    /// Get which mode indices have valid targets for a modal spell.
+    ///
+    /// This filters modes based on whether their effects have legal targets.
+    /// For example, Heartless Act mode 1 ("Destroy target creature with no counters")
+    /// requires a creature WITHOUT counters, so it's only valid if such a creature exists.
+    ///
+    /// # Arguments
+    /// * `spell_card_id` - The modal spell card
+    /// * `spell_owner` - The player casting the spell (for hexproof checks)
+    ///
+    /// # Returns
+    /// A vector of (mode_index, has_valid_targets) for each mode
+    pub fn get_valid_modes_for_spell(
+        &self,
+        spell_card_id: CardId,
+        spell_owner: PlayerId,
+    ) -> Result<Vec<(usize, bool)>> {
+        let spell_card = self.cards.get(spell_card_id)?;
+
+        for effect in &spell_card.effects {
+            if let Effect::ModalChoice { modes, .. } = effect {
+                let mut result = Vec::with_capacity(modes.len());
+
+                for (idx, mode) in modes.iter().enumerate() {
+                    let has_targets = self.effect_has_valid_targets(&mode.effect, spell_owner);
+                    result.push((idx, has_targets));
+                }
+
+                return Ok(result);
+            }
+        }
+
+        // Not a modal spell
+        Ok(Vec::new())
+    }
+
+    /// Check if a specific effect has any valid targets on the battlefield.
+    ///
+    /// Returns true if:
+    /// - The effect doesn't require targeting (e.g., DrawCards), or
+    /// - There exists at least one legal target for the effect
+    fn effect_has_valid_targets(&self, effect: &Effect, spell_owner: PlayerId) -> bool {
+        match effect {
+            Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                // Check if any permanent matches the restriction
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        restriction.matches(card) && Self::is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
+            Effect::RemoveCounter { target, .. } if target.as_u32() == 0 => {
+                // RemoveCounter can target any creature (mode 2 of Heartless Act)
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        card.is_creature() && Self::is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
+            Effect::PumpCreature { target, .. } if target.as_u32() == 0 => {
+                // Pump requires a creature target
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        card.is_creature() && Self::is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
+            Effect::TapPermanent { target } if target.as_u32() == 0 => {
+                // Tap requires an untapped permanent
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        !card.tapped && Self::is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
+            Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                // Untap requires a tapped permanent
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        card.tapped && Self::is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
+            Effect::DealDamage {
+                target: TargetRef::None,
+                ..
+            } => {
+                // Damage can target creatures or players - always has targets if there's a creature
+                // (players are always valid targets)
+                true
+            }
+            Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                // Exile requires a permanent target
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        Self::is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
+            Effect::CounterSpell { target } if target.as_u32() == 0 => {
+                // Counter requires a spell on the stack
+                !self.stack.is_empty()
+            }
+            // Effects that don't require targeting always "have targets"
+            Effect::DrawCards { .. }
+            | Effect::GainLife { .. }
+            | Effect::Mill { .. }
+            | Effect::AddMana { .. }
+            | Effect::Balance { .. }
+            | Effect::CreateToken { .. } => true,
+            // For other effects, assume they have valid targets (conservative)
+            _ => true,
+        }
+    }
+
     /// Apply selected modes to a modal spell, replacing the ModalChoice effect
     /// with the effects from the selected modes.
     ///

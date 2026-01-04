@@ -2895,3 +2895,174 @@ async fn test_spirit_link_aura_targeting() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that modal spells validate target availability for each mode
+///
+/// This test verifies that when casting Heartless Act against a creature that has
+/// counters on it, the game correctly filters out mode 1 ("Destroy target creature
+/// with no counters") and only allows mode 2 ("Remove up to three counters").
+///
+/// Scenario:
+/// - P1 has Heartless Act in hand with mana to cast it
+/// - P2 has Grizzly Bears with 5 +1/+1 counters
+/// - Mode 1 should NOT be available (no creatures without counters)
+/// - Mode 2 should be available and chosen automatically
+///
+/// This addresses issue mtg-29crm.
+#[tokio::test]
+async fn test_modal_spell_mode_validation_heartless_act() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    // Load puzzle file (integration tests run from mtg-engine/ directory)
+    let puzzle_path = PathBuf::from("../puzzles/heartless_act_remove_counter_e2e.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    // Create card database and load puzzle
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    // Enable log capture to verify mode selection
+    game.logger.enable_capture();
+
+    // Set deterministic seed
+    game.seed_rng(42);
+
+    // Get player IDs
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // Has Heartless Act
+    let p1_id = players[1]; // Has Grizzly Bears with 5 +1/+1 counters
+
+    // Find Grizzly Bears and verify it has counters
+    let grizzly_bears_id = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&card_id| game.cards.try_get(card_id).map(|c| (card_id, c)))
+        .find(|(_, card)| card.name.as_str() == "Grizzly Bears")
+        .map(|(id, _)| id)
+        .expect("Grizzly Bears should be on battlefield");
+
+    let grizzly_bears = game.cards.get(grizzly_bears_id)?;
+    let initial_counters = grizzly_bears.get_counter(mtg_forge_rs::core::CounterType::P1P1);
+    assert_eq!(initial_counters, 5, "Grizzly Bears should start with 5 +1/+1 counters");
+    assert!(grizzly_bears.has_counters(), "Grizzly Bears should have counters");
+
+    // Create controllers:
+    // - P0 uses FixedScriptController to force casting Heartless Act
+    //   Script: [1] = cast the first available spell (Heartless Act)
+    //   After script exhausts, defaults to 0 (pass priority)
+    // - P1 uses HeuristicController (won't have priority during P0's Main Phase)
+    //
+    // The mode selection is automatic when only one valid mode exists (mode 2)
+    // because mode 1 is filtered out (creature has counters).
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1]);
+    let mut controller1 = HeuristicController::new(p1_id);
+
+    // Run 1 turn to allow P0 to cast Heartless Act
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    // Get captured logs
+    let logs = game_loop.game.logger.logs();
+
+    // Print all logs for debugging (visible with --nocapture)
+    println!("\n=== Modal Spell Mode Validation Test ===");
+    println!("Turn(s) played: {}", result.turns_played);
+
+    println!("\n--- All captured logs ---");
+    for (i, log) in logs.iter().enumerate() {
+        if log.message.contains("Heartless")
+            || log.message.contains("mode")
+            || log.message.contains("SCRIPT")
+            || log.message.contains("counter")
+            || log.message.contains("Counter")
+            || log.message.contains("target")
+            || log.message.contains("Remove")
+        {
+            println!("{:3}. {}", i, log.message);
+        }
+    }
+    println!("--- End logs ---\n");
+
+    // Check if Heartless Act was cast (log format: "Player N casts Heartless Act")
+    let heartless_act_cast = logs.iter().any(|e| e.message.contains("casts Heartless Act"));
+
+    // Check if mode 2 was chosen (RemoveCounter mode)
+    // Log format: "Player N chooses mode: Remove up to three counters..."
+    let mode_2_chosen = logs
+        .iter()
+        .any(|e| e.message.contains("chooses mode") && e.message.contains("Remove up to three counters"));
+
+    // Check if Heartless Act resolved
+    let spell_resolved = logs
+        .iter()
+        .any(|e| e.message.contains("Heartless Act") && e.message.contains("resolves"));
+
+    println!("Heartless Act cast: {heartless_act_cast}");
+    println!("Mode 2 chosen: {mode_2_chosen}");
+    println!("Spell resolved: {spell_resolved}");
+
+    // Check final counter count on Grizzly Bears
+    let final_grizzly_bears = game_loop.game.cards.get(grizzly_bears_id)?;
+    let final_counters = final_grizzly_bears.get_counter(mtg_forge_rs::core::CounterType::P1P1);
+    println!(
+        "Grizzly Bears counters: {} -> {} (removed {})",
+        initial_counters,
+        final_counters,
+        initial_counters - final_counters
+    );
+
+    // Key assertions:
+    // 1. If Heartless Act was cast, it should have used mode 2 (RemoveCounter)
+    // 2. Grizzly Bears should NOT be destroyed (it has counters, so mode 1 is invalid)
+    // 3. If counters were removed, it should have removed up to 3
+
+    // Check that Grizzly Bears is still on the battlefield (not destroyed by mode 1)
+    let grizzly_still_alive = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&card_id| game_loop.game.cards.try_get(card_id).map(|c| (card_id, c)))
+        .any(|(_, card)| card.name.as_str() == "Grizzly Bears");
+
+    // Assert that Heartless Act was cast successfully
+    assert!(
+        heartless_act_cast,
+        "Heartless Act should have been cast by FixedScriptController"
+    );
+
+    // Assert that mode 2 (RemoveCounter) was chosen
+    // This is the key assertion: mode 1 (Destroy) should be filtered out
+    // because Grizzly Bears has counters, leaving only mode 2 available
+    assert!(
+        mode_2_chosen,
+        "Mode 2 (Remove up to three counters) should have been automatically chosen \
+         because mode 1 (Destroy creature with no counters) has no valid targets"
+    );
+
+    // Assert that Grizzly Bears is still alive (mode 1 wasn't incorrectly used)
+    assert!(
+        grizzly_still_alive,
+        "Grizzly Bears should NOT be destroyed - mode 1 should have been filtered out \
+         because Grizzly Bears has counters. Mode 2 (RemoveCounter) should be used instead."
+    );
+
+    // If counters were removed, verify the correct amount
+    if final_counters < initial_counters {
+        let removed = initial_counters - final_counters;
+        assert!(
+            removed <= 3,
+            "Mode 2 should remove at most 3 counters, but removed {removed}"
+        );
+        println!("✓ Heartless Act correctly used mode 2 and removed {removed} counters");
+    } else {
+        // RemoveCounter "up to three" means zero is also valid
+        println!("Note: RemoveCounter chose to remove 0 counters (valid for 'up to' effects)");
+    }
+
+    println!("✓ Modal spell mode validation test passed");
+
+    Ok(())
+}
