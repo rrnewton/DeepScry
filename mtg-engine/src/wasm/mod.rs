@@ -242,50 +242,47 @@ impl WasmCardDatabase {
         self.decks.contains_key(deck_name)
     }
 
-    /// Load cards for a specific deck from a per-deck card pack
+    /// Load a deck pack (cards + tokens) from a per-deck binary file
     ///
-    /// This is an optimization path that loads only the cards needed for one deck,
+    /// This is an optimization path that loads only the cards and tokens needed for one deck,
     /// rather than the full 24MB cards.bin. The data should be from `deck_cards/<deck_name>.bin`.
     ///
-    /// Cards are merged into the existing card database (duplicates are fine, same definition).
+    /// Cards and tokens are merged into the existing database (duplicates are fine).
     /// Returns the number of cards loaded from this pack.
-    pub fn load_deck_cards(&mut self, data: &[u8]) -> Result<u32, JsValue> {
-        let cards: HashMap<String, CardDefinition> = bincode::deserialize(data)
-            .map_err(|e| JsValue::from_str(&format!("Failed to deserialize deck cards: {}", e)))?;
+    pub fn load_deck_pack(&mut self, data: &[u8]) -> Result<u32, JsValue> {
+        let pack: crate::loader::DeckPack = bincode::deserialize(data)
+            .map_err(|e| JsValue::from_str(&format!("Failed to deserialize deck pack: {}", e)))?;
 
-        let count = cards.len() as u32;
+        let card_count = pack.cards.len() as u32;
+        let token_count = pack.tokens.len() as u32;
 
-        // Merge into existing cards (Arc wrap each)
-        for (name, def) in cards {
+        // Merge cards into existing cards (Arc wrap each)
+        for (name, def) in pack.cards {
             self.cards.entry(name).or_insert_with(|| Arc::new(def));
         }
 
-        web_sys::console::log_1(&format!("Loaded {} cards from deck pack (total: {})", count, self.cards.len()).into());
-        Ok(count)
-    }
-
-    /// Load tokens for a specific deck from a per-deck token pack
-    ///
-    /// This loads the token definitions needed for cards that can create tokens.
-    /// The data should be from `deck_tokens/<deck_name>.bin`.
-    ///
-    /// Tokens are merged into the existing token registry (duplicates are fine).
-    /// Returns the number of tokens loaded from this pack.
-    pub fn load_deck_tokens(&mut self, data: &[u8]) -> Result<u32, JsValue> {
-        let tokens: HashMap<String, CardDefinition> = bincode::deserialize(data)
-            .map_err(|e| JsValue::from_str(&format!("Failed to deserialize deck tokens: {}", e)))?;
-
-        let count = tokens.len() as u32;
-
-        // Merge into existing tokens (Arc wrap each)
-        for (name, def) in tokens {
+        // Merge tokens into existing tokens (Arc wrap each)
+        for (name, def) in pack.tokens {
             self.tokens.entry(name).or_insert_with(|| Arc::new(def));
         }
 
-        web_sys::console::log_1(
-            &format!("Loaded {} tokens from deck pack (total: {})", count, self.tokens.len()).into(),
-        );
-        Ok(count)
+        if token_count > 0 {
+            web_sys::console::log_1(
+                &format!(
+                    "Loaded {} cards + {} tokens from deck pack (total: {} cards, {} tokens)",
+                    card_count,
+                    token_count,
+                    self.cards.len(),
+                    self.tokens.len()
+                )
+                .into(),
+            );
+        } else {
+            web_sys::console::log_1(
+                &format!("Loaded {} cards from deck pack (total: {})", card_count, self.cards.len()).into(),
+            );
+        }
+        Ok(card_count)
     }
 
     /// Get the number of loaded token definitions

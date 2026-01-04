@@ -266,6 +266,44 @@ impl DeckList {
     }
 }
 
+/// A bundled pack of card definitions and token definitions for a deck.
+///
+/// Used by WASM export to bundle all definitions needed for a deck into a single file,
+/// avoiding separate HTTP requests for cards and tokens.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeckPack {
+    /// Card definitions indexed by card name
+    pub cards: std::collections::HashMap<String, super::CardDefinition>,
+    /// Token definitions indexed by token script name
+    pub tokens: std::collections::HashMap<String, super::CardDefinition>,
+}
+
+impl DeckPack {
+    /// Create a new empty deck pack
+    pub fn new() -> Self {
+        Self {
+            cards: std::collections::HashMap::new(),
+            tokens: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Number of card definitions in the pack
+    pub fn card_count(&self) -> usize {
+        self.cards.len()
+    }
+
+    /// Number of token definitions in the pack
+    pub fn token_count(&self) -> usize {
+        self.tokens.len()
+    }
+}
+
+impl Default for DeckPack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

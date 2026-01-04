@@ -1119,7 +1119,8 @@ Name=My Deck
                 needFallback = true;
             }
 
-            // Try per-deck card packs for built-in decks (fast path)
+            // Try per-deck packs for built-in decks (fast path)
+            // Each pack contains both cards and tokens needed for that deck
             for (const deckName of uniqueDecks) {
                 // Skip custom decks - they don't have .bin packs
                 if (customDecks[deckName]) {
@@ -1131,7 +1132,7 @@ Name=My Deck
                     const packResp = await fetch(`./data/deck_cards/${encodeURIComponent(deckName)}.bin`);
                     if (packResp.ok) {
                         const packData = new Uint8Array(await packResp.arrayBuffer());
-                        const count = cardDb.load_deck_cards(packData);
+                        const count = cardDb.load_deck_pack(packData);
                         console.log(`Loaded ${count} cards from deck pack: ${deckName}`);
                         loadedFromPacks++;
                     } else {
@@ -1169,32 +1170,6 @@ Name=My Deck
                 const missing = cardDb.get_missing_cards_for_deck(deckName);
                 if (missing.length > 0) {
                     throw new Error(`Missing cards for ${deckName}: ${missing.join(', ')}`);
-                }
-            }
-
-            // Load token definitions for built-in decks
-            for (const deckName of uniqueDecks) {
-                // Skip custom decks - they don't have .bin packs
-                if (customDecks[deckName]) {
-                    continue;
-                }
-
-                try {
-                    status.textContent = `Loading tokens for ${deckName}...`;
-                    const tokenResp = await fetch(`./data/deck_tokens/${encodeURIComponent(deckName)}.bin`);
-                    if (tokenResp.ok) {
-                        const tokenData = new Uint8Array(await tokenResp.arrayBuffer());
-                        const count = cardDb.load_deck_tokens(tokenData);
-                        if (count > 0) {
-                            console.log(`Loaded ${count} tokens from token pack: ${deckName}`);
-                        }
-                    } else {
-                        // Not all decks have tokens, this is fine
-                        console.log(`No token pack for ${deckName} (this is normal)`);
-                    }
-                } catch (e) {
-                    console.warn(`Failed to load token pack for ${deckName}:`, e);
-                    // Not critical - continue without tokens
                 }
             }
 
