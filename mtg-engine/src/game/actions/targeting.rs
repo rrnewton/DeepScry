@@ -233,6 +233,29 @@ impl GameState {
                         }
                     }
                 }
+                Effect::CopyPermanent { target, .. } if target.as_u32() == 0 => {
+                    // CopyPermanent targets creatures (most common case)
+                    // Cackling Counterpart: "target creature you control"
+                    // Clone: "any creature on the battlefield"
+                    // For now, default to any creature on battlefield (targeting
+                    // restrictions are in ValidTgts$ which is parsed separately)
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            // Default: creatures (most copy effects target creatures)
+                            let type_matches = if targets_any {
+                                // "Copy target permanent" - any permanent
+                                true
+                            } else {
+                                // Default to creatures
+                                target_card.is_creature()
+                            };
+
+                            if type_matches && Self::is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::ModalChoice { modes, .. } => {
                     // Modal spells: Mode selection should happen BEFORE targeting.
                     // When this code runs, modes should already be selected and the
@@ -241,8 +264,8 @@ impl GameState {
                     // If we reach here, it means mode selection hasn't happened yet.
                     // For now, collect targets from ALL modes (will be filtered later).
                     for mode in modes {
-                        if let Effect::DestroyPermanent { target, restriction } = mode.effect.as_ref() {
-                            if target.as_u32() == 0 {
+                        match mode.effect.as_ref() {
+                            Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
                                 // This mode destroys a permanent
                                 for &card_id in &self.battlefield.cards {
                                     if let Ok(target_card) = self.cards.get(card_id) {
@@ -254,8 +277,22 @@ impl GameState {
                                     }
                                 }
                             }
+                            Effect::CopyPermanent { target, .. } if target.as_u32() == 0 => {
+                                // This mode copies a permanent (e.g., Ember Island Production)
+                                for &card_id in &self.battlefield.cards {
+                                    if let Ok(target_card) = self.cards.get(card_id) {
+                                        // CopyPermanent modes typically target creatures
+                                        if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner)
+                                        {
+                                            valid_targets.push(card_id);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Add other effect types as needed
+                            }
                         }
-                        // Add other effect types as needed
                     }
                 }
                 _ => {

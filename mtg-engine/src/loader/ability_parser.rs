@@ -97,6 +97,17 @@ pub enum ApiType {
 
     // === Tokens & Counters ===
     Token,
+    /// Create a token that's a copy of a permanent
+    /// Parameters:
+    ///   ValidTgts$ / Defined$ - target permanent to copy
+    ///   NonLegendary$ True - remove Legendary supertype
+    ///   SetPower$ N - override power
+    ///   SetToughness$ N - override toughness
+    ///   AddTypes$ Type1 & Type2 - add creature types
+    ///   SetColor$ Color - override color
+    ///   AddKeywords$ Keyword - add keywords
+    ///   NumCopies$ N - create multiple copies
+    CopyPermanent,
     PutCounter,
     RemoveCounter,
     MoveCounter,
@@ -219,6 +230,7 @@ impl ApiType {
 
             // Tokens & Counters
             "Token" => Self::Token,
+            "CopyPermanent" => Self::CopyPermanent,
             "PutCounter" => Self::PutCounter,
             "RemoveCounter" => Self::RemoveCounter,
             "MoveCounter" => Self::MoveCounter,
@@ -312,6 +324,7 @@ impl ApiType {
             Self::Untap => "Untap",
             Self::UntapAll => "UntapAll",
             Self::Token => "Token",
+            Self::CopyPermanent => "CopyPermanent",
             Self::PutCounter => "PutCounter",
             Self::RemoveCounter => "RemoveCounter",
             Self::MoveCounter => "MoveCounter",

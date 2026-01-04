@@ -1,0 +1,25 @@
+[metadata]
+Name:CopyPermanent Basic Test - Cackling Counterpart
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests basic CopyPermanent effect with Cackling Counterpart. P0 has Cackling Counterpart in hand with mana (3 Islands) to cast it. P0 controls a Grizzly Bears (2/2). After casting Cackling Counterpart targeting Grizzly Bears, P0 should have two 2/2 creatures on the battlefield (the original and a token copy).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Cackling Counterpart
+p0battlefield=Island; Island; Island; Grizzly Bears
+p0library=Island; Island; Island
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

@@ -954,6 +954,36 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // CopyPermanent: Create token copy of target permanent
+            Effect::CopyPermanent {
+                target,
+                controller,
+                non_legendary,
+                set_power,
+                set_toughness,
+                add_types,
+                num_copies,
+            } if target.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::CopyPermanent {
+                        target: resolved_target,
+                        controller: if controller.as_u32() == 0 {
+                            card_owner
+                        } else {
+                            *controller
+                        },
+                        non_legendary: *non_legendary,
+                        set_power: *set_power,
+                        set_toughness: *set_toughness,
+                        add_types: add_types.clone(),
+                        num_copies: *num_copies,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -1524,6 +1554,107 @@ impl GameState {
                     "ModalChoice effect reached execute_effect - should have been resolved during casting. {} modes available.",
                     modes.len()
                 );
+            }
+
+            Effect::CopyPermanent {
+                target,
+                controller,
+                non_legendary: _, // TODO(mtg-8pen1): Implement legendary rule removal when legendary is tracked
+                set_power,
+                set_toughness,
+                ref add_types,
+                num_copies,
+            } => {
+                // Create token copies of the target permanent
+                // MTG Rules 707.2: A copy of a permanent has the same characteristics
+                // as the original, except for any modifications specified
+
+                // Verify target is still on battlefield
+                if !self.battlefield.contains(*target) {
+                    // Target was removed - spell fizzles
+                    log::debug!(target: "actions", "CopyPermanent target no longer on battlefield");
+                    return Ok(());
+                }
+
+                let original = self.cards.get(*target)?;
+                let original_name = original.name.clone();
+                let original_base_power = original.base_power();
+                let original_base_toughness = original.base_toughness();
+
+                for _ in 0..*num_copies {
+                    let token_id = self.next_card_id();
+
+                    // Clone the original card to get all characteristics
+                    let original = self.cards.get(*target)?;
+                    let mut token = original.clone();
+
+                    // Update identity for the new token
+                    token.id = token_id;
+                    token.owner = *controller;
+                    token.controller = *controller;
+
+                    // Reset state for new permanent
+                    token.tapped = false;
+                    token.turn_entered_battlefield = None; // Will be set when it enters battlefield
+                    token.counters.clear();
+                    token.damage = 0;
+                    token.attached_to = None;
+
+                    // Apply modifications
+
+                    // SetPower$ N - override power
+                    if let Some(power) = set_power {
+                        // Power is i8 in Card but i32 in Effect, clamp to i8 range
+                        token.set_base_power(Some(*power as i8));
+                    }
+
+                    // SetToughness$ N - override toughness
+                    if let Some(toughness) = set_toughness {
+                        token.set_base_toughness(Some(*toughness as i8));
+                    }
+
+                    // AddTypes$ Type1 & Type2 - add creature types (subtypes)
+                    for type_str in add_types {
+                        let subtype = crate::core::Subtype::from(type_str.as_str());
+                        if !token.subtypes.contains(&subtype) {
+                            token.subtypes.push(subtype);
+                        }
+                    }
+
+                    // Add token to game
+                    let token_name = token.name.to_string();
+                    self.cards.insert(token_id, token);
+
+                    // Put token onto battlefield
+                    self.battlefield.add(token_id);
+
+                    // Log token creation
+                    let modification_desc = if set_power.is_some() || set_toughness.is_some() || !add_types.is_empty() {
+                        let p = set_power.map(|x| x as i8).or(original_base_power).unwrap_or(0);
+                        let t = set_toughness.map(|x| x as i8).or(original_base_toughness).unwrap_or(0);
+                        let types_str = if add_types.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" {}", add_types.join(" "))
+                        };
+                        format!(" (as {}/{}{} copy)", p, t, types_str)
+                    } else {
+                        String::new()
+                    };
+
+                    log::debug!(
+                        target: "token",
+                        "Created token copy of {} (id={}) under player {}'s control{}",
+                        original_name, token_id.as_u32(), controller.as_u32(), modification_desc
+                    );
+
+                    self.logger.gamelog(&format!(
+                        "Created a token copy of {}{} under {}'s control",
+                        token_name,
+                        modification_desc,
+                        self.get_player(*controller)?.name
+                    ));
+                }
             }
         }
         Ok(())

@@ -279,7 +279,12 @@ impl WasmCardDatabase {
             );
         } else {
             web_sys::console::log_1(
-                &format!("Loaded {} cards from deck pack (total: {})", card_count, self.cards.len()).into(),
+                &format!(
+                    "Loaded {} cards from deck pack (total: {})",
+                    card_count,
+                    self.cards.len()
+                )
+                .into(),
             );
         }
         Ok(card_count)

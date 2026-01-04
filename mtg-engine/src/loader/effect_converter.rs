@@ -368,6 +368,46 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        ApiType::CopyPermanent => {
+            // CopyPermanent effect: DB$ CopyPermanent | ValidTgts$ Creature.YouCtrl | NonLegendary$ True | SetPower$ 4
+            // Creates a token copy of an existing permanent with optional modifications.
+            //
+            // Parameters:
+            // - ValidTgts$ / Defined$: Target selection (handled at cast time)
+            // - NonLegendary$ True: Remove Legendary supertype from the copy
+            // - SetPower$ N: Override power to N
+            // - SetToughness$ N: Override toughness to N
+            // - AddTypes$ Type1 & Type2: Add creature types (& separated)
+            // - SetColor$ Color: Override color
+            // - AddKeywords$ Keyword: Add keywords (comma separated)
+            // - NumCopies$ N: Create N copies (default 1)
+            //
+            // Examples:
+            // - Cackling Counterpart: simple copy of own creature
+            // - Ember Island Production: copy with SetPower/SetToughness/AddTypes
+
+            let non_legendary = params.get("NonLegendary") == Some("True");
+            let set_power = params.get_i32("SetPower").ok();
+            let set_toughness = params.get_i32("SetToughness").ok();
+            let num_copies = params.get_u8("NumCopies").unwrap_or(1);
+
+            // Parse AddTypes$ - types are separated by " & "
+            let add_types: Vec<String> = params
+                .get("AddTypes")
+                .map(|s| s.split(" & ").map(|t| t.trim().to_string()).collect())
+                .unwrap_or_default();
+
+            Some(Effect::CopyPermanent {
+                target: CardId::new(0),       // Placeholder - filled in at cast time
+                controller: PlayerId::new(0), // Placeholder - filled in at cast time
+                non_legendary,
+                set_power,
+                set_toughness,
+                add_types,
+                num_copies,
+            })
+        }
+
         ApiType::Charm => {
             // Modal spell: A:SP$ Charm | Choices$ DBDestroy,DBDraw | CharmNum$ 1
             //
@@ -1063,6 +1103,152 @@ mod tests {
         match effect.unwrap() {
             Effect::ModalChoice { can_repeat_modes, .. } => {
                 assert!(can_repeat_modes, "Should allow repeating modes");
+            }
+            _ => panic!("Expected ModalChoice effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_copy_permanent_simple() {
+        // Cackling Counterpart: simple copy of own creature
+        let params = AbilityParams::parse(
+            "A:SP$ CopyPermanent | ValidTgts$ Creature.YouCtrl | TgtPrompt$ Select target creature you control",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::CopyPermanent {
+                target: _,
+                controller: _,
+                non_legendary,
+                set_power,
+                set_toughness,
+                add_types,
+                num_copies,
+            } => {
+                assert!(!non_legendary, "Simple copy should not remove legendary");
+                assert!(set_power.is_none(), "No power override");
+                assert!(set_toughness.is_none(), "No toughness override");
+                assert!(add_types.is_empty(), "No added types");
+                assert_eq!(num_copies, 1, "Default to 1 copy");
+            }
+            _ => panic!("Expected CopyPermanent effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_copy_permanent_with_modifications() {
+        // Ember Island Production mode 1: copy with SetPower, SetToughness, AddTypes
+        let params = AbilityParams::parse(
+            "A:DB$ CopyPermanent | ValidTgts$ Creature.YouCtrl | NonLegendary$ True | SetPower$ 4 | SetToughness$ 4 | AddTypes$ Hero"
+        ).unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::CopyPermanent {
+                target: _,
+                controller: _,
+                non_legendary,
+                set_power,
+                set_toughness,
+                add_types,
+                num_copies,
+            } => {
+                assert!(non_legendary, "Should remove legendary");
+                assert_eq!(set_power, Some(4), "Power override to 4");
+                assert_eq!(set_toughness, Some(4), "Toughness override to 4");
+                assert_eq!(add_types, vec!["Hero".to_string()], "Should add Hero type");
+                assert_eq!(num_copies, 1, "Default to 1 copy");
+            }
+            _ => panic!("Expected CopyPermanent effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_copy_permanent_multiple_types() {
+        // Test parsing AddTypes$ with multiple types separated by " & "
+        let params =
+            AbilityParams::parse("A:DB$ CopyPermanent | ValidTgts$ Creature | AddTypes$ Warrior & Soldier").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::CopyPermanent { add_types, .. } => {
+                assert_eq!(add_types, vec!["Warrior".to_string(), "Soldier".to_string()]);
+            }
+            _ => panic!("Expected CopyPermanent effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_copy_permanent_with_num_copies() {
+        // Test NumCopies$ parameter
+        let params = AbilityParams::parse("A:DB$ CopyPermanent | ValidTgts$ Creature | NumCopies$ 3").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::CopyPermanent { num_copies, .. } => {
+                assert_eq!(num_copies, 3, "Should create 3 copies");
+            }
+            _ => panic!("Expected CopyPermanent effect"),
+        }
+    }
+
+    #[test]
+    fn test_charm_with_copy_permanent_ember_island() {
+        // Test Ember Island Production: Charm with CopyPermanent modes
+        let params = AbilityParams::parse("A:SP$ Charm | Choices$ DBCopy1,DBCopy2").unwrap();
+
+        let mut svars = HashMap::new();
+        svars.insert(
+            "DBCopy1".to_string(),
+            "DB$ CopyPermanent | ValidTgts$ Creature.YouCtrl | TgtPrompt$ Select target creature you control | NonLegendary$ True | SetPower$ 4 | SetToughness$ 4 | AddTypes$ Hero | SpellDescription$ Create a nonlegendary token that's a copy of target creature you control, except it's a 4/4 Hero.".to_string(),
+        );
+        svars.insert(
+            "DBCopy2".to_string(),
+            "DB$ CopyPermanent | ValidTgts$ Creature.OppCtrl | TgtPrompt$ Select target creature an opponent controls | NonLegendary$ True | SetPower$ 2 | SetToughness$ 2 | AddTypes$ Coward | SpellDescription$ Create a nonlegendary token that's a copy of target creature an opponent controls, except it's a 2/2 Coward.".to_string(),
+        );
+
+        let effect = params_to_charm_effect_with_svars(&params, &svars);
+        assert!(effect.is_some(), "Should parse Ember Island Production charm");
+
+        match effect.unwrap() {
+            Effect::ModalChoice { modes, .. } => {
+                assert_eq!(modes.len(), 2, "Should have 2 modes");
+
+                // Mode 1: Copy as 4/4 Hero
+                match &*modes[0].effect {
+                    Effect::CopyPermanent {
+                        non_legendary,
+                        set_power,
+                        set_toughness,
+                        add_types,
+                        ..
+                    } => {
+                        assert!(*non_legendary);
+                        assert_eq!(*set_power, Some(4));
+                        assert_eq!(*set_toughness, Some(4));
+                        assert_eq!(add_types, &vec!["Hero".to_string()]);
+                    }
+                    _ => panic!("Mode 1 should be CopyPermanent"),
+                }
+
+                // Mode 2: Copy as 2/2 Coward
+                match &*modes[1].effect {
+                    Effect::CopyPermanent {
+                        non_legendary,
+                        set_power,
+                        set_toughness,
+                        add_types,
+                        ..
+                    } => {
+                        assert!(*non_legendary);
+                        assert_eq!(*set_power, Some(2));
+                        assert_eq!(*set_toughness, Some(2));
+                        assert_eq!(add_types, &vec!["Coward".to_string()]);
+                    }
+                    _ => panic!("Mode 2 should be CopyPermanent"),
+                }
             }
             _ => panic!("Expected ModalChoice effect"),
         }

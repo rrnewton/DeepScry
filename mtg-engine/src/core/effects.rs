@@ -261,6 +261,29 @@ pub enum Effect {
         amount: u8,
     },
 
+    /// Create a token that's a copy of an existing permanent
+    /// Example: Cackling Counterpart, Ember Island Production
+    /// Corresponds to: DB$ CopyPermanent | ValidTgts$ Creature.YouCtrl | SetPower$ 4 | AddTypes$ Hero
+    ///
+    /// Creates a token with the same characteristics as the target permanent,
+    /// optionally with modifications (different P/T, additional types, etc.)
+    CopyPermanent {
+        /// The permanent to copy
+        target: CardId,
+        /// Player who will control the token
+        controller: PlayerId,
+        /// If true, remove Legendary supertype from the copy
+        non_legendary: bool,
+        /// Override the copy's power (None = use original)
+        set_power: Option<i32>,
+        /// Override the copy's toughness (None = use original)
+        set_toughness: Option<i32>,
+        /// Types to add to the copy (e.g., ["Hero"], ["Coward"])
+        add_types: Vec<String>,
+        /// Number of copies to create (default 1)
+        num_copies: u8,
+    },
+
     /// Balance effect - equalizes a type of permanent/cards across all players
     /// Example: "Each player sacrifices creatures until all players control the same number"
     /// Corresponds to: SP$ Balance | Valid$ Creature/Land | Zone$ Battlefield/Hand

@@ -496,6 +496,8 @@ impl<'a> GameLoop<'a> {
                 Effect::UntapPermanent { target } if target.as_u32() == 0 => true,
                 // ExilePermanent with placeholder target
                 Effect::ExilePermanent { target } if target.as_u32() == 0 => true,
+                // CopyPermanent with placeholder target
+                Effect::CopyPermanent { target, .. } if target.as_u32() == 0 => true,
                 _ => false,
             }
         })

@@ -414,6 +414,55 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::CopyPermanent {
+                target,
+                controller,
+                non_legendary,
+                set_power,
+                set_toughness,
+                ref add_types,
+                num_copies,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|_| "unknown".to_string());
+
+                let mut mods = Vec::new();
+                if *non_legendary {
+                    mods.push("non-legendary".to_string());
+                }
+                if let Some(p) = set_power {
+                    mods.push(format!("power={}", p));
+                }
+                if let Some(t) = set_toughness {
+                    mods.push(format!("toughness={}", t));
+                }
+                if !add_types.is_empty() {
+                    mods.push(format!("add types: {}", add_types.join(", ")));
+                }
+
+                let mods_desc = if mods.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", mods.join(", "))
+                };
+
+                let copies_desc = if *num_copies > 1 {
+                    format!("{} copies of ", num_copies)
+                } else {
+                    String::new()
+                };
+
+                let message = format!(
+                    "{source_name} ({source_id}) creates {}a token copy of {target_name}{mods_desc} for {controller_name}",
+                    copies_desc
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }
