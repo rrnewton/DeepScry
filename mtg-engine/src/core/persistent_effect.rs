@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Persistent effects system for tracking long-lived game effects.
 //!
 //! # Design Rationale: Why NOT the Command Zone

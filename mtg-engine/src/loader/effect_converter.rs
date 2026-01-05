@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Convert parsed ability parameters to Effect objects
 //!
 //! This module bridges between ability_parser (tokenized parameters) and the Effect enum.

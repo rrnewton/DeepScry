@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Network protocol message types
 //!
 //! Defines all messages exchanged between client and server.

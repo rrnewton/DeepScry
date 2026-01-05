@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Undo log for efficient game tree search
 //!
 //! This module provides a transaction log of game actions that can be

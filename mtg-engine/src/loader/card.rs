@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Card file loader (.txt format)
 //!
 //! Loads card definitions from Forge's cardsfolder format

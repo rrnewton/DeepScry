@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Game actions and mechanics
 
 use crate::core::{CardId, CardType, Effect, PlayerId, TargetRef, TriggerEvent};

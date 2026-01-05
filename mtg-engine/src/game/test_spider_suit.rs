@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 #[cfg(test)]
 mod tests {
     use crate::core::{Card, CardName, CardType, ManaCost, Subtype};

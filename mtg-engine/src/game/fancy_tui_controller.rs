@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Fancy TUI controller with full-screen ratatui interface
 //!
 //! This controller provides a rich, multi-panel TUI interface similar to MTG Arena,

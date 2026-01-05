@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Action query module for GameLoop
 //!
 //! Provides read-only queries for available player actions (attackers, blockers, spells, abilities).

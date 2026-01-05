@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Deterministic state hashing for debugging snapshot/resume and network sync
 //!
 //! This module provides functionality to compute a deterministic hash of game state,

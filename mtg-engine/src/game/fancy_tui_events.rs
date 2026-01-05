@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Shared event handling for FancyTUI (native and WASM)
 //!
 //! This module provides common input handling logic that can be used by both

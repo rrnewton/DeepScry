@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Network-aware local controller wrapper
 //!
 //! This wraps any PlayerController and sends choices to the server after each decision.

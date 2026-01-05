@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Load puzzle state into a Game object
 //!
 //! This module handles applying parsed PZL state to create initialized games

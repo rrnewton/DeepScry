@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Strongly-typed wrappers for game concepts
 //!
 //! This module provides newtypes to prevent type confusion and make the code

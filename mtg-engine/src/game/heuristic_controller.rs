@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Heuristic AI controller - faithful port of Java Forge AI
 //!
 //! This implementation aims to faithfully reproduce the decision-making logic

@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Game state evaluation for heuristic AI
 //!
 //! This module provides holistic board evaluation, scoring the overall game state
