@@ -286,6 +286,76 @@ where
             .unwrap_or(false)
     }
 
+    // =========================================================================
+    // LATE-BINDING CARDID SUPPORT (mtg-qtqcr)
+    // =========================================================================
+    //
+    // These methods support the late-binding CardID<=>CardName architecture where
+    // CardIDs are pre-allocated at game start, but the actual card entity is only
+    // inserted when the card is revealed to the player.
+
+    /// Reserve a slot for an entity that will be revealed later
+    ///
+    /// Called during game initialization to pre-allocate CardIDs. The slot
+    /// remains None until insert() is called with the revealed entity.
+    /// This ensures the Vec has sufficient capacity without inserting entities.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Pre-allocate slots for a 40-card deck
+    /// for i in 0..40 {
+    ///     store.reserve(EntityId::new(i));
+    /// }
+    /// // Later, when card is revealed:
+    /// store.insert(EntityId::new(5), revealed_card);
+    /// ```
+    pub fn reserve(&mut self, id: EntityId<T>) {
+        let idx = id.as_u32() as usize;
+        if idx >= self.entities.len() {
+            self.entities.resize_with(idx + 1, || None);
+        }
+        // Note: We don't check if occupied - reserve is just ensuring capacity.
+        // The slot may already have an entity (if revealed) or be None (unrevealed).
+    }
+
+    /// Reserve a contiguous range of slots [start, end)
+    ///
+    /// More efficient than calling reserve() in a loop.
+    /// Used during game initialization to pre-allocate CardIDs for both decks.
+    pub fn reserve_range(&mut self, start: EntityId<T>, count: u32) {
+        let end_idx = (start.as_u32() + count) as usize;
+        if end_idx > self.entities.len() {
+            self.entities.resize_with(end_idx, || None);
+        }
+    }
+
+    /// Check if a slot is revealed (has an entity) vs unrevealed (None)
+    ///
+    /// Returns true if the slot contains Some(entity), false if None or out of bounds.
+    /// This is semantically equivalent to contains() but named for clarity in the
+    /// late-binding context where "revealed" means "identity is known".
+    #[inline]
+    pub fn is_revealed(&self, id: EntityId<T>) -> bool {
+        self.contains(id)
+    }
+
+    /// Clear a slot back to None (for undo of RevealCard)
+    ///
+    /// Returns the removed entity if present, None if slot was empty or out of bounds.
+    /// This is used when undoing a RevealCard action to "unreveal" a card.
+    ///
+    /// # Note
+    /// Unlike the old remove() which panicked, this gracefully handles the operation.
+    /// The slot remains in the Vec as None, preserving the sparse storage structure.
+    pub fn clear(&mut self, id: EntityId<T>) -> Option<T> {
+        let idx = id.as_u32() as usize;
+        if idx < self.entities.len() {
+            self.entities[idx].take()
+        } else {
+            None
+        }
+    }
+
     /// Remove an entity (not supported - entities are never removed)
     ///
     /// This method exists only for API compatibility but will panic if called.
@@ -474,5 +544,180 @@ mod tests {
         assert!(!store.insert_if_vacant(id, entity2));
         // Original value should still be there
         assert_eq!(store.get(id).unwrap().name, "First");
+    }
+
+    // =========================================================================
+    // LATE-BINDING CARDID TESTS (mtg-qtqcr)
+    // =========================================================================
+
+    #[test]
+    fn test_entity_store_reserve() {
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        // Reserve slots for a "40-card deck"
+        for i in 0..40 {
+            store.reserve(EntityId::new(i));
+        }
+
+        // All slots should exist but be None (unrevealed)
+        for i in 0..40 {
+            assert!(!store.is_revealed(EntityId::new(i)));
+            assert!(!store.contains(EntityId::new(i)));
+            assert!(store.get(EntityId::new(i)).is_err());
+        }
+
+        // len() should still be 0 (no actual entities)
+        assert_eq!(store.len(), 0);
+        assert!(store.is_empty());
+
+        // Now "reveal" card 5
+        let id5 = EntityId::new(5);
+        let entity = TestEntity {
+            id: id5,
+            name: "Lightning Bolt".to_string(),
+        };
+        store.insert(id5, entity);
+
+        // Card 5 should now be revealed
+        assert!(store.is_revealed(id5));
+        assert!(store.contains(id5));
+        assert_eq!(store.get(id5).unwrap().name, "Lightning Bolt");
+
+        // Other cards still unrevealed
+        assert!(!store.is_revealed(EntityId::new(0)));
+        assert!(!store.is_revealed(EntityId::new(39)));
+
+        // len() should be 1
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_entity_store_reserve_range() {
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        // Reserve slots for two decks: 0..40 and 40..80
+        store.reserve_range(EntityId::new(0), 40);
+        store.reserve_range(EntityId::new(40), 40);
+
+        // All 80 slots should be reserved but unrevealed
+        for i in 0..80 {
+            assert!(!store.is_revealed(EntityId::new(i)));
+        }
+
+        // Insert at slot 50 (second deck)
+        let id50 = EntityId::new(50);
+        store.insert(
+            id50,
+            TestEntity {
+                id: id50,
+                name: "Mountain".to_string(),
+            },
+        );
+
+        assert!(store.is_revealed(id50));
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_entity_store_clear() {
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        // Insert an entity
+        let id = EntityId::new(5);
+        let entity = TestEntity {
+            id,
+            name: "Serra Angel".to_string(),
+        };
+        store.insert(id, entity.clone());
+
+        assert!(store.is_revealed(id));
+        assert_eq!(store.len(), 1);
+
+        // Clear (unreveal) the entity
+        let removed = store.clear(id);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().name, "Serra Angel");
+
+        // Slot should now be unrevealed
+        assert!(!store.is_revealed(id));
+        assert!(!store.contains(id));
+        assert_eq!(store.len(), 0);
+
+        // Can insert again (re-reveal)
+        store.insert(
+            id,
+            TestEntity {
+                id,
+                name: "Serra Angel Again".to_string(),
+            },
+        );
+        assert!(store.is_revealed(id));
+        assert_eq!(store.get(id).unwrap().name, "Serra Angel Again");
+    }
+
+    #[test]
+    fn test_entity_store_clear_empty_slot() {
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        // Reserve but don't insert
+        store.reserve(EntityId::new(5));
+
+        // Clear should return None (no entity to remove)
+        let removed = store.clear(EntityId::new(5));
+        assert!(removed.is_none());
+
+        // Clear out-of-bounds should also return None
+        let removed = store.clear(EntityId::new(999));
+        assert!(removed.is_none());
+    }
+
+    #[test]
+    fn test_entity_store_late_binding_workflow() {
+        // Simulates the full late-binding workflow:
+        // 1. Pre-allocate CardIDs at game start
+        // 2. Cards start unrevealed
+        // 3. Reveal cards as they become known
+        // 4. Undo reveal (clear)
+
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        // Game start: allocate IDs for two 40-card decks
+        store.reserve_range(EntityId::new(0), 40); // P1's deck
+        store.reserve_range(EntityId::new(40), 40); // P2's deck
+
+        // Initial state: all unrevealed
+        assert_eq!(store.len(), 0);
+
+        // P1 draws card 0 and it's revealed to them
+        let card0 = EntityId::new(0);
+        store.insert(
+            card0,
+            TestEntity {
+                id: card0,
+                name: "Lightning Bolt".to_string(),
+            },
+        );
+
+        // P1 knows card 0
+        assert!(store.is_revealed(card0));
+        // P2's card 40 is still unknown
+        assert!(!store.is_revealed(EntityId::new(40)));
+
+        // P1 plays card 0 onto stack - P2 now sees it
+        // (In P2's store, they would now insert it)
+
+        // Undo the reveal (for undo functionality)
+        store.clear(card0);
+        assert!(!store.is_revealed(card0));
+
+        // Re-reveal (redo)
+        store.insert(
+            card0,
+            TestEntity {
+                id: card0,
+                name: "Lightning Bolt".to_string(),
+            },
+        );
+        assert!(store.is_revealed(card0));
     }
 }
