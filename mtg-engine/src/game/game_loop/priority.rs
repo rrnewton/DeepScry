@@ -71,11 +71,23 @@ impl<'a> GameLoop<'a> {
         // Log effects for instants/sorceries (only when verbose logging is enabled)
         // Note: We need to manually replace placeholder targets for logging
         if should_log {
-            use crate::core::Effect;
+            use crate::core::{Effect, TargetRef};
             let mut target_index = 0;
             for effect in &card_effects {
                 // Replace placeholder targets with chosen targets for logging
                 let effect_to_log = match effect {
+                    Effect::DealDamage {
+                        target: TargetRef::None,
+                        amount,
+                    } if target_index < targets.len() => {
+                        // Replace placeholder with actual permanent target for logging
+                        let replaced = Effect::DealDamage {
+                            target: TargetRef::Permanent(targets[target_index]),
+                            amount: *amount,
+                        };
+                        target_index += 1;
+                        replaced
+                    }
                     Effect::CounterSpell { target } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
@@ -174,6 +186,14 @@ impl<'a> GameLoop<'a> {
                     // Use gamelog for official game action
                     self.game.logger.gamelog(&message);
                 }
+            }
+        }
+
+        // Check state-based actions after spell effects resolve (MTG Rules 704.3)
+        // This handles lethal damage from damage-dealing spells like Lightning Bolt
+        if let Err(e) = self.game.check_lethal_damage() {
+            if should_log {
+                eprintln!("    Failed to check lethal damage: {e}");
             }
         }
 

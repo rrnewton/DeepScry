@@ -1,0 +1,20 @@
+[metadata]
+Name:Ryan Avatar Test - Basic Lands and Lightning Strike
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has basic lands and Lightning Strike in hand
+p0life=20
+p0hand=Lightning Strike; Mountain
+p0battlefield=Mountain; Mountain; Swamp; Swamp
+p0library=Mountain; Mountain; Mountain; Swamp; Swamp; Swamp
+
+# P1 has a simple creature to target
+p1life=20
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest; Forest
