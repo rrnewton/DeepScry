@@ -89,9 +89,11 @@ impl GameState {
             card.mana_cost
         };
 
-        // Pay the mana cost
+        // Pay the mana cost (from both regular and combat mana pools)
         let player = self.get_player_mut(player_id)?;
-        player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
+        player
+            .pay_from_total_mana(&mana_cost)
+            .map_err(MtgError::InvalidAction)?;
 
         // Move card to stack
         self.move_card(card_id, Zone::Hand, Zone::Stack, player_id)?;
@@ -586,8 +588,9 @@ impl GameState {
         use crate::core::ManaCost;
         use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
 
-        // Get current mana pool to check for floating mana
-        let current_pool = self.get_player(player_id)?.mana_pool;
+        // Get total available mana (regular pool + combat mana from Firebending)
+        // Combat mana lasts until end of combat and can be used for spells
+        let current_pool = self.get_player(player_id)?.total_available_mana();
 
         // Calculate the remaining cost after using pool mana
         // First satisfy colored requirements from pool, then generic
@@ -723,9 +726,9 @@ impl GameState {
             }
         }
 
-        // Step 7: Pay costs
+        // Step 7: Pay costs (from both regular and combat mana pools)
         let player = self.get_player_mut(player_id)?;
-        if let Err(e) = player.mana_pool.pay_cost(&mana_cost) {
+        if let Err(e) = player.pay_from_total_mana(&mana_cost) {
             // If we can't pay, we need to unwind:
             // 1. Move card back to hand from stack
             // 2. Untap all mana sources that were tapped

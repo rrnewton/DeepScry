@@ -119,6 +119,120 @@ impl Player {
             },
         }
     }
+
+    /// Pay a mana cost from total available mana (regular + combat pools).
+    ///
+    /// Spends from regular pool first, then combat pool for the remainder.
+    /// This is used during combat when Firebending has added combat mana.
+    ///
+    /// Returns Ok(()) if payment successful, Err with message if insufficient mana.
+    pub fn pay_from_total_mana(&mut self, cost: &crate::core::ManaCost) -> Result<(), String> {
+        let total = self.total_available_mana();
+        if !total.can_pay(cost) {
+            return Err(format!(
+                "Insufficient total mana to pay {}. Have: {}W {}U {}B {}R {}G {}C (regular) + combat",
+                cost,
+                self.mana_pool.white,
+                self.mana_pool.blue,
+                self.mana_pool.black,
+                self.mana_pool.red,
+                self.mana_pool.green,
+                self.mana_pool.colorless
+            ));
+        }
+
+        // Fast path: no combat mana, just pay from regular pool
+        if self.combat_mana_pool.is_none() {
+            return self.mana_pool.pay_cost(cost);
+        }
+
+        // Slow path: have combat mana, need to coordinate payment between pools
+        // Strategy: Pay colored requirements first (from both pools), then generic
+        let combat = self.combat_mana_pool.as_mut().unwrap();
+
+        // Pay colored costs - use regular pool first, then combat pool
+        // White
+        let regular_white = cost.white.min(self.mana_pool.white);
+        self.mana_pool.white -= regular_white;
+        let combat_white = (cost.white - regular_white).min(combat.white);
+        combat.white -= combat_white;
+
+        // Blue
+        let regular_blue = cost.blue.min(self.mana_pool.blue);
+        self.mana_pool.blue -= regular_blue;
+        let combat_blue = (cost.blue - regular_blue).min(combat.blue);
+        combat.blue -= combat_blue;
+
+        // Black
+        let regular_black = cost.black.min(self.mana_pool.black);
+        self.mana_pool.black -= regular_black;
+        let combat_black = (cost.black - regular_black).min(combat.black);
+        combat.black -= combat_black;
+
+        // Red
+        let regular_red = cost.red.min(self.mana_pool.red);
+        self.mana_pool.red -= regular_red;
+        let combat_red = (cost.red - regular_red).min(combat.red);
+        combat.red -= combat_red;
+
+        // Green
+        let regular_green = cost.green.min(self.mana_pool.green);
+        self.mana_pool.green -= regular_green;
+        let combat_green = (cost.green - regular_green).min(combat.green);
+        combat.green -= combat_green;
+
+        // Colorless
+        let regular_colorless = cost.colorless.min(self.mana_pool.colorless);
+        self.mana_pool.colorless -= regular_colorless;
+        let combat_colorless = (cost.colorless - regular_colorless).min(combat.colorless);
+        combat.colorless -= combat_colorless;
+
+        // Pay generic cost from remaining mana (any color, regular first then combat)
+        let mut generic_remaining = cost.generic;
+
+        // From regular pool (WUBRG order)
+        for color_mana in [
+            &mut self.mana_pool.white,
+            &mut self.mana_pool.blue,
+            &mut self.mana_pool.black,
+            &mut self.mana_pool.red,
+            &mut self.mana_pool.green,
+            &mut self.mana_pool.colorless,
+        ] {
+            let used = generic_remaining.min(*color_mana);
+            *color_mana -= used;
+            generic_remaining -= used;
+            if generic_remaining == 0 {
+                break;
+            }
+        }
+
+        // From combat pool if still needed (WUBRG order)
+        if generic_remaining > 0 {
+            for color_mana in [
+                &mut combat.white,
+                &mut combat.blue,
+                &mut combat.black,
+                &mut combat.red,
+                &mut combat.green,
+                &mut combat.colorless,
+            ] {
+                let used = generic_remaining.min(*color_mana);
+                *color_mana -= used;
+                generic_remaining -= used;
+                if generic_remaining == 0 {
+                    break;
+                }
+            }
+        }
+
+        // If combat pool is now empty, deallocate it
+        if combat.total() == 0 {
+            self.combat_mana_pool = None;
+        }
+
+        Ok(())
+    }
 }
 
 impl GameEntity<Player> for Player {

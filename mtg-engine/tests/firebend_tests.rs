@@ -329,3 +329,240 @@ fn test_firebend_attack_trigger_with_power() {
         "Firebend X should have added 4 red combat mana (creature's power)"
     );
 }
+
+/// Full e2e test: Attack with Firebending creature, generate combat mana, cast a spell with it
+///
+/// This test demonstrates the complete Firebending workflow:
+/// 1. Declare a creature with Firebending as attacker
+/// 2. Firebending triggers and adds red mana to combat mana pool
+/// 3. Player casts Lightning Bolt (R cost) using the combat mana
+/// 4. Combat mana is spent, spell resolves
+#[test]
+fn test_firebend_e2e_attack_and_cast_spell() {
+    use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+
+    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let alice = game.players[0].id;
+    let bob = game.players[1].id;
+
+    // Create a 2/2 creature with Firebending 2
+    let firebender_id = create_creature(&mut game, "Fire Nation Cadet", alice, 2, 2);
+    game.battlefield.add(firebender_id);
+
+    // Add Firebending trigger (adds 2 red mana when attacking)
+    {
+        let creature = game.cards.get_mut(firebender_id).unwrap();
+        creature.triggers.push(Trigger::new(
+            TriggerEvent::Attacks,
+            vec![Effect::Firebend {
+                controller: PlayerId::new(0), // Placeholder
+                amount: 2,
+            }],
+            "Firebending 2".to_string(),
+        ));
+    }
+
+    // Create Lightning Bolt (R - instant, deal 3 damage)
+    let bolt_id = game.next_card_id();
+    let mut bolt = Card::new(bolt_id, "Lightning Bolt", alice);
+    bolt.set_types(SmallVec::from_vec(vec![CardType::Instant]));
+    bolt.mana_cost = ManaCost {
+        red: 1,
+        ..Default::default()
+    };
+    bolt.controller = alice;
+    game.cards.insert(bolt_id, bolt);
+
+    // Put bolt in hand
+    if let Some(zones) = game.get_player_zones_mut(alice) {
+        zones.hand.add(bolt_id);
+    }
+
+    // Verify initial state
+    assert!(game.players[0].combat_mana_pool.is_none(), "No combat mana initially");
+    assert_eq!(game.players[0].mana_pool.red, 0, "No regular mana initially");
+    assert_eq!(game.players[1].life, 20, "Bob starts at 20 life");
+
+    // Step 1: Attack triggers Firebending
+    game.check_attack_triggers(firebender_id, alice)
+        .expect("Attack triggers should succeed");
+
+    // Verify combat mana was added
+    assert_eq!(
+        combat_red(&game.players[0]),
+        2,
+        "Should have 2 red combat mana from Firebending"
+    );
+
+    // Step 2: Cast Lightning Bolt using combat mana
+    // First, set up target (Bob)
+    let targets = vec![];
+
+    // Move bolt from hand to stack and pay cost
+    let cast_result = game.cast_spell(alice, bolt_id, targets);
+    assert!(
+        cast_result.is_ok(),
+        "Should be able to cast Lightning Bolt with combat mana: {:?}",
+        cast_result
+    );
+
+    // Verify combat mana was spent
+    // We had 2 red combat mana, bolt costs 1 red, so 1 should remain
+    assert_eq!(
+        combat_red(&game.players[0]),
+        1,
+        "Should have 1 red combat mana remaining after casting bolt (2 - 1 = 1)"
+    );
+
+    // Verify bolt is on the stack
+    assert!(game.stack.contains(bolt_id), "Lightning Bolt should be on the stack");
+
+    // Resolve the bolt (simplified - just execute its effect)
+    // In a real game, resolve_top_spell_from_stack would handle this
+    let bolt_effect = Effect::DealDamage {
+        target: mtg_forge_rs::core::TargetRef::Player(bob),
+        amount: 3,
+    };
+    game.execute_effect(&bolt_effect).expect("Bolt should deal damage");
+
+    // Verify damage was dealt
+    assert_eq!(
+        game.players[1].life, 17,
+        "Bob should be at 17 life after Lightning Bolt (20 - 3)"
+    );
+}
+
+/// Test that combat mana can pay for a more expensive spell
+#[test]
+fn test_firebend_e2e_combat_mana_pays_expensive_spell() {
+    use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+
+    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let alice = game.players[0].id;
+
+    // Create a 4/4 creature with Firebending X (X = power = 4)
+    let firebender_id = create_creature(&mut game, "Firebending Master", alice, 4, 4);
+    game.battlefield.add(firebender_id);
+
+    // Add Firebending X trigger (amount=0 means use creature's power)
+    {
+        let creature = game.cards.get_mut(firebender_id).unwrap();
+        creature.triggers.push(Trigger::new(
+            TriggerEvent::Attacks,
+            vec![Effect::Firebend {
+                controller: PlayerId::new(0), // Placeholder
+                amount: 0,                    // X = creature's power
+            }],
+            "Firebending X".to_string(),
+        ));
+    }
+
+    // Create a 3R spell (4 total mana)
+    let spell_id = game.next_card_id();
+    let mut spell = Card::new(spell_id, "Fireblast", alice);
+    spell.set_types(SmallVec::from_vec(vec![CardType::Instant]));
+    spell.mana_cost = ManaCost {
+        generic: 3,
+        red: 1,
+        ..Default::default()
+    };
+    spell.controller = alice;
+    game.cards.insert(spell_id, spell);
+
+    // Put spell in hand
+    if let Some(zones) = game.get_player_zones_mut(alice) {
+        zones.hand.add(spell_id);
+    }
+
+    // Attack triggers Firebending X (adds 4 red mana)
+    game.check_attack_triggers(firebender_id, alice)
+        .expect("Attack triggers should succeed");
+
+    assert_eq!(
+        combat_red(&game.players[0]),
+        4,
+        "Should have 4 red combat mana from Firebending X"
+    );
+
+    // Cast the 3R spell using combat mana
+    let cast_result = game.cast_spell(alice, spell_id, vec![]);
+    assert!(
+        cast_result.is_ok(),
+        "Should be able to cast 3R spell with 4 red combat mana: {:?}",
+        cast_result
+    );
+
+    // Verify all combat mana was spent (1R for red, 3R for generic = 4R total)
+    assert!(
+        game.players[0].combat_mana_pool.is_none(),
+        "All combat mana should be spent (pool deallocated)"
+    );
+}
+
+/// Test that regular mana and combat mana work together
+#[test]
+fn test_firebend_e2e_combined_regular_and_combat_mana() {
+    use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+
+    let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+    let alice = game.players[0].id;
+
+    // Give Alice 2 regular red mana (from lands tapped earlier)
+    game.players[0].mana_pool.red = 2;
+
+    // Create a creature with Firebending 2
+    let firebender_id = create_creature(&mut game, "Fire Elemental", alice, 3, 3);
+    game.battlefield.add(firebender_id);
+
+    {
+        let creature = game.cards.get_mut(firebender_id).unwrap();
+        creature.triggers.push(Trigger::new(
+            TriggerEvent::Attacks,
+            vec![Effect::Firebend {
+                controller: PlayerId::new(0),
+                amount: 2,
+            }],
+            "Firebending 2".to_string(),
+        ));
+    }
+
+    // Create a 3R spell (needs 4 mana total)
+    let spell_id = game.next_card_id();
+    let mut spell = Card::new(spell_id, "Volcanic Hammer", alice);
+    spell.set_types(SmallVec::from_vec(vec![CardType::Instant]));
+    spell.mana_cost = ManaCost {
+        generic: 3,
+        red: 1,
+        ..Default::default()
+    };
+    spell.controller = alice;
+    game.cards.insert(spell_id, spell);
+
+    if let Some(zones) = game.get_player_zones_mut(alice) {
+        zones.hand.add(spell_id);
+    }
+
+    // Attack triggers Firebending
+    game.check_attack_triggers(firebender_id, alice)
+        .expect("Attack triggers should succeed");
+
+    // Now have: 2 regular red + 2 combat red = 4 red total
+    assert_eq!(game.players[0].mana_pool.red, 2, "2 regular red mana");
+    assert_eq!(combat_red(&game.players[0]), 2, "2 combat red mana");
+
+    // Cast 3R spell - should use regular mana first, then combat
+    let cast_result = game.cast_spell(alice, spell_id, vec![]);
+    assert!(cast_result.is_ok(), "Should cast with combined mana: {:?}", cast_result);
+
+    // Should have spent: 1R (colored) + 3 generic (from remaining red)
+    // Regular pool first: 2R used (1 for colored, 1 for generic) = 0 remaining
+    // Combat pool: 2R used for generic = 0 remaining
+    assert_eq!(
+        game.players[0].mana_pool.red, 0,
+        "Regular red mana should be spent first"
+    );
+    assert!(
+        game.players[0].combat_mana_pool.is_none(),
+        "Combat mana should be spent after regular"
+    );
+}
