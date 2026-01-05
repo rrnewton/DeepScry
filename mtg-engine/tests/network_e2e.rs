@@ -1224,11 +1224,17 @@ mod websocket_integration {
     /// - Treating "Game exit requested" errors as graceful shutdown when game has ended
     /// - Trying to receive winner from game_end_rx before reporting error
     ///
-    /// SKIPPED: Network synchronized GameLoop has known sync issues causing games to hang.
-    /// The client GameLoop can get out of sync with the server GameLoop around Turn 5-7.
-    /// See mtg-037fw for details on the synchronization issues.
-    /// TODO(mtg-037fw): Re-enable once NetworkLocalController sync is fixed.
-    #[ignore = "mtg-037fw: Network GameLoop sync issues cause timeout"]
+    /// PARTIALLY FIXED (2025-01-05): Network synchronization issues were improved by:
+    /// 1. Disabling async reveal channels (reveal_pusher, opponent_reveal_tx) to prevent
+    ///    out-of-order delivery due to tokio::select! scheduling
+    /// 2. Buffering Played reveals and sending via reveal_tx AFTER OpponentChoice so
+    ///    drain_reveals() processes them before spell execution
+    /// 3. Increased game end timeout from 100ms to 5s for winner notification
+    ///
+    /// REMAINING ISSUE: Intermittent action_count mismatch (client gets ahead of server)
+    /// when "Card not in hand" errors occur. Needs investigation of how failed actions
+    /// affect action_count tracking.
+    #[ignore = "Intermittent action_count mismatch - needs further debugging"]
     #[tokio::test]
     async fn test_run_game_with_random_controllers() {
         use mtg_forge_rs::game::RandomController;

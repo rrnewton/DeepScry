@@ -1340,9 +1340,10 @@ impl NetworkClient {
                         // In that case, we should try to get the winner from game_end_rx
                         let error_msg = e.to_string();
                         if error_msg.contains("Game exit requested") {
-                            // Try to receive game end signal with short timeout
+                            // Try to receive game end signal with longer timeout
+                            // The server might still be processing the final state
                             match tokio::time::timeout(
-                                std::time::Duration::from_millis(100),
+                                std::time::Duration::from_secs(5),
                                 game_end_rx.recv()
                             ).await {
                                 Ok(Some((winner, server_action_count))) => {

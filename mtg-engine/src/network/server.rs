@@ -143,7 +143,8 @@ struct OpponentChoiceInfo {
 }
 
 /// Card reveal info to broadcast to a player
-/// Fields are used for message passing but not directly read (future use for reveal UI)
+/// NOTE: Currently unused - reveal broadcasts are disabled to prevent ordering issues.
+/// Kept for potential future use when async reveal ordering is fixed.
 #[derive(Clone)]
 #[allow(dead_code)]
 struct RevealBroadcast {
