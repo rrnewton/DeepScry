@@ -966,6 +966,7 @@ impl GameState {
                 set_toughness,
                 add_types,
                 num_copies,
+                restriction,
             } if target.as_u32() == 0 => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -982,6 +983,7 @@ impl GameState {
                         set_toughness: *set_toughness,
                         add_types: add_types.clone(),
                         num_copies: *num_copies,
+                        restriction: restriction.clone(),
                     }
                 } else {
                     effect.clone()
@@ -1567,6 +1569,7 @@ impl GameState {
                 set_toughness,
                 ref add_types,
                 num_copies,
+                restriction: _, // Used at targeting time, not execution time
             } => {
                 // Create token copies of the target permanent
                 // MTG Rules 707.2: A copy of a permanent has the same characteristics

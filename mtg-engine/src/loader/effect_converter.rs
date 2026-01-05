@@ -373,7 +373,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Creates a token copy of an existing permanent with optional modifications.
             //
             // Parameters:
-            // - ValidTgts$ / Defined$: Target selection (handled at cast time)
+            // - ValidTgts$: Target restriction (YouCtrl, OppCtrl, etc.)
             // - NonLegendary$ True: Remove Legendary supertype from the copy
             // - SetPower$ N: Override power to N
             // - SetToughness$ N: Override toughness to N
@@ -383,8 +383,14 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // - NumCopies$ N: Create N copies (default 1)
             //
             // Examples:
-            // - Cackling Counterpart: simple copy of own creature
-            // - Ember Island Production: copy with SetPower/SetToughness/AddTypes
+            // - Cackling Counterpart: simple copy of own creature (YouCtrl)
+            // - Ember Island Production: copy with SetPower/SetToughness/AddTypes (YouCtrl or OppCtrl modes)
+
+            // Parse target restriction from ValidTgts$ (e.g., Creature.YouCtrl, Creature.OppCtrl)
+            let restriction = params
+                .get("ValidTgts")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
 
             let non_legendary = params.get("NonLegendary") == Some("True");
             let set_power = params.get_i32("SetPower").ok();
@@ -405,6 +411,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 set_toughness,
                 add_types,
                 num_copies,
+                restriction,
             })
         }
 
@@ -1126,12 +1133,15 @@ mod tests {
                 set_toughness,
                 add_types,
                 num_copies,
+                restriction,
             } => {
                 assert!(!non_legendary, "Simple copy should not remove legendary");
                 assert!(set_power.is_none(), "No power override");
                 assert!(set_toughness.is_none(), "No toughness override");
                 assert!(add_types.is_empty(), "No added types");
                 assert_eq!(num_copies, 1, "Default to 1 copy");
+                // Default restriction should allow any creature
+                assert!(restriction.types.is_empty() || restriction.types.contains(&crate::core::TargetType::Creature));
             }
             _ => panic!("Expected CopyPermanent effect"),
         }
@@ -1154,12 +1164,19 @@ mod tests {
                 set_toughness,
                 add_types,
                 num_copies,
+                restriction,
             } => {
                 assert!(non_legendary, "Should remove legendary");
                 assert_eq!(set_power, Some(4), "Power override to 4");
                 assert_eq!(set_toughness, Some(4), "Toughness override to 4");
                 assert_eq!(add_types, vec!["Hero".to_string()], "Should add Hero type");
                 assert_eq!(num_copies, 1, "Default to 1 copy");
+                // Should have YouCtrl controller restriction
+                assert_eq!(
+                    restriction.controller,
+                    crate::core::ControllerRestriction::YouCtrl,
+                    "Should have YouCtrl restriction"
+                );
             }
             _ => panic!("Expected CopyPermanent effect"),
         }

@@ -15,6 +15,21 @@ pub enum TargetRef {
     None,
 }
 
+/// Controller restriction for targeting
+///
+/// Used by spells like Cackling Counterpart ("target creature you control")
+/// or Ember Island Production modes to restrict targets by controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ControllerRestriction {
+    /// Target can be controlled by anyone (no restriction)
+    #[default]
+    Any,
+    /// Target must be controlled by the spell/ability's controller
+    YouCtrl,
+    /// Target must be controlled by an opponent
+    OppCtrl,
+}
+
 /// Types of permanents that can be targeted
 ///
 /// Used by spells like Disenchant (Artifact, Enchantment) or Terror (Creature)
@@ -62,6 +77,9 @@ pub struct TargetRestriction {
     /// If true, target must have no counters on it (e.g., Heartless Act mode 1)
     #[serde(default)]
     pub requires_no_counters: bool,
+    /// Controller restriction (e.g., YouCtrl, OppCtrl)
+    #[serde(default)]
+    pub controller: ControllerRestriction,
 }
 
 impl TargetRestriction {
@@ -70,6 +88,7 @@ impl TargetRestriction {
         Self {
             types: SmallVec::new(),
             requires_no_counters: false,
+            controller: ControllerRestriction::Any,
         }
     }
 
@@ -78,10 +97,11 @@ impl TargetRestriction {
         Self {
             types: types.into_iter().collect(),
             requires_no_counters: false,
+            controller: ControllerRestriction::Any,
         }
     }
 
-    /// Check if a card matches this restriction
+    /// Check if a card matches this restriction (type and counter checks only)
     ///
     /// Returns true if:
     /// - types is empty (any permanent allowed), OR
@@ -90,6 +110,9 @@ impl TargetRestriction {
     /// AND
     ///
     /// - requires_no_counters is false, OR card has no counters
+    ///
+    /// Note: This does NOT check controller restrictions. Use `matches_with_controller`
+    /// for full validation including controller checks.
     pub fn matches(&self, card: &crate::core::Card) -> bool {
         // Check counter restriction first
         if self.requires_no_counters && card.has_counters() {
@@ -103,26 +126,66 @@ impl TargetRestriction {
         self.types.iter().any(|t| t.matches(card))
     }
 
+    /// Check if a card matches this restriction including controller checks
+    ///
+    /// # Arguments
+    /// * `card` - The target card to check
+    /// * `spell_controller` - The controller of the spell/ability
+    /// * `target_controller` - The controller of the target card
+    ///
+    /// Returns true if all restrictions match:
+    /// - Type restriction matches
+    /// - Counter restriction matches
+    /// - Controller restriction matches (YouCtrl/OppCtrl/Any)
+    pub fn matches_with_controller(
+        &self,
+        card: &crate::core::Card,
+        spell_controller: PlayerId,
+        target_controller: PlayerId,
+    ) -> bool {
+        // Check type and counter restrictions
+        if !self.matches(card) {
+            return false;
+        }
+
+        // Check controller restriction
+        match self.controller {
+            ControllerRestriction::Any => true,
+            ControllerRestriction::YouCtrl => target_controller == spell_controller,
+            ControllerRestriction::OppCtrl => target_controller != spell_controller,
+        }
+    }
+
     /// Parse ValidTgts string from Java Forge format
     ///
     /// Examples:
     /// - "Artifact,Enchantment" -> [Artifact, Enchantment]
     /// - "Creature" -> [Creature]
+    /// - "Creature.YouCtrl" -> [Creature] with YouCtrl controller restriction
+    /// - "Creature.OppCtrl" -> [Creature] with OppCtrl controller restriction
     /// - "Creature.nonArtifact+nonBlack" -> [Creature] (modifiers ignored for now)
     /// - "Creature.!HasCounters" -> [Creature] with requires_no_counters=true
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
         let mut requires_no_counters = false;
+        let mut controller = ControllerRestriction::Any;
 
         for part in valid_tgts.split(',') {
             // Check for modifiers after the base type
+            // Example: "Creature.YouCtrl" or "Creature.Other+YouCtrl+powerLE2"
             let parts: Vec<&str> = part.split('.').collect();
             let base_type = parts.first().map(|s| s.trim()).unwrap_or("");
 
-            // Check for !HasCounters modifier
-            for modifier in parts.iter().skip(1) {
-                if *modifier == "!HasCounters" {
-                    requires_no_counters = true;
+            // Check for modifiers (may be combined with +)
+            for modifier_part in parts.iter().skip(1) {
+                // Split by + to handle combined modifiers like "Other+YouCtrl"
+                for modifier in modifier_part.split('+') {
+                    match modifier {
+                        "!HasCounters" => requires_no_counters = true,
+                        "YouCtrl" => controller = ControllerRestriction::YouCtrl,
+                        "OppCtrl" => controller = ControllerRestriction::OppCtrl,
+                        _ => {} // Other modifiers ignored for now
+                    }
                 }
             }
 
@@ -140,6 +203,7 @@ impl TargetRestriction {
         Self {
             types,
             requires_no_counters,
+            controller,
         }
     }
 }
@@ -282,6 +346,8 @@ pub enum Effect {
         add_types: Vec<String>,
         /// Number of copies to create (default 1)
         num_copies: u8,
+        /// Target restriction from ValidTgts$ (e.g., Creature.YouCtrl, Creature.OppCtrl)
+        restriction: TargetRestriction,
     },
 
     /// Balance effect - equalizes a type of permanent/cards across all players

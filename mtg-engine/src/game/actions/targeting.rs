@@ -233,24 +233,32 @@ impl GameState {
                         }
                     }
                 }
-                Effect::CopyPermanent { target, .. } if target.as_u32() == 0 => {
-                    // CopyPermanent targets creatures (most common case)
-                    // Cackling Counterpart: "target creature you control"
-                    // Clone: "any creature on the battlefield"
-                    // For now, default to any creature on battlefield (targeting
-                    // restrictions are in ValidTgts$ which is parsed separately)
+                Effect::CopyPermanent {
+                    target, restriction, ..
+                } if target.as_u32() == 0 => {
+                    // CopyPermanent targets creatures with controller restrictions
+                    // Cackling Counterpart: "target creature you control" (YouCtrl)
+                    // Ember Island Production mode 2: "target creature an opponent controls" (OppCtrl)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            // Default: creatures (most copy effects target creatures)
+                            // Use restriction which includes type AND controller filtering
+                            // Default: creatures if no type specified in restriction
                             let type_matches = if targets_any {
                                 // "Copy target permanent" - any permanent
                                 true
-                            } else {
-                                // Default to creatures
+                            } else if restriction.types.is_empty() {
+                                // Default to creatures when no explicit type restriction
                                 target_card.is_creature()
+                            } else {
+                                // Use restriction's type filtering
+                                restriction.matches(target_card)
                             };
 
-                            if type_matches && Self::is_legal_target(target_card, spell_owner) {
+                            // Check controller restriction (YouCtrl, OppCtrl, Any)
+                            let controller_matches =
+                                restriction.matches_with_controller(target_card, spell_owner, target_card.owner);
+
+                            if type_matches && controller_matches && Self::is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -277,12 +285,27 @@ impl GameState {
                                     }
                                 }
                             }
-                            Effect::CopyPermanent { target, .. } if target.as_u32() == 0 => {
+                            Effect::CopyPermanent {
+                                target, restriction, ..
+                            } if target.as_u32() == 0 => {
                                 // This mode copies a permanent (e.g., Ember Island Production)
+                                // Use restriction for controller filtering (YouCtrl, OppCtrl)
                                 for &card_id in &self.battlefield.cards {
                                     if let Ok(target_card) = self.cards.get(card_id) {
-                                        // CopyPermanent modes typically target creatures
-                                        if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner)
+                                        // Check type (default to creature) and controller restriction
+                                        let type_matches = if restriction.types.is_empty() {
+                                            target_card.is_creature()
+                                        } else {
+                                            restriction.matches(target_card)
+                                        };
+                                        let controller_matches = restriction.matches_with_controller(
+                                            target_card,
+                                            spell_owner,
+                                            target_card.owner,
+                                        );
+                                        if type_matches
+                                            && controller_matches
+                                            && Self::is_legal_target(target_card, spell_owner)
                                         {
                                             valid_targets.push(card_id);
                                         }

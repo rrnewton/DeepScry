@@ -422,6 +422,7 @@ impl<'a> GameLoop<'a> {
                 set_toughness,
                 ref add_types,
                 num_copies,
+                restriction: _, // Not used for logging
             } => {
                 let controller_name = self.get_player_name(*controller);
                 let target_name = self

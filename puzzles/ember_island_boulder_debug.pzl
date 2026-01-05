@@ -1,0 +1,25 @@
+[metadata]
+Name:Ember Island Production Debug - The Boulder Target
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:10
+Difficulty:Medium
+Description:Debug scenario for Ember Island Production targeting issues. P0 has Ember Island Production in hand with 5 mana (3UU). P0 controls Knowledge Seeker (2/1). P1 controls The Boulder, Ready to Rumble (4/4). Tests mode-based target filtering: Mode 1 should only allow targeting P0's creatures, Mode 2 should only allow targeting P1's creatures.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Ember Island Production
+p0battlefield=Island; Island; Plains; Plains; Plains; Knowledge Seeker
+p0library=Island; Island; Island
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Forest; Forest; Forest; The Boulder, Ready to Rumble
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=
