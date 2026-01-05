@@ -2,6 +2,9 @@
 //!
 //! Text-based Magic: The Gathering game engine with TUI support
 
+// TODO(mtg-0et0f): Remove this once all wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
+
 // Use mimalloc as the global allocator for better performance
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

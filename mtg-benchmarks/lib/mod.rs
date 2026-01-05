@@ -7,6 +7,9 @@
 //! - Core benchmark implementations (`core_benches`)
 //! - Parallel execution utilities (`par_utils`)
 
+// TODO(mtg-0et0f): Remove this once all wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
+
 #[path = "../benches/allocator.rs"]
 pub mod allocator;
 #[path = "../benches/core_benches.rs"]

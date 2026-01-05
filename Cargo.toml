@@ -11,3 +11,9 @@ edition = "2021"
 
 [profile.release]
 debug = true
+
+# Workspace-wide lint configuration
+[workspace.lints.clippy]
+# Warn on wildcard enum match arms - these can silently fail when new variants are added
+# Use #[allow(clippy::wildcard_enum_match_arm)] with a comment for intentional exceptions
+wildcard_enum_match_arm = "warn"

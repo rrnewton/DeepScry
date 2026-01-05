@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Expanded Activated Abilities Demo
 //!
 //! Demonstrates various activated abilities loaded from cardsfolder:

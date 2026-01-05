@@ -63,3 +63,7 @@ bench-stats-alloc = []
 bench-mimalloc = []
 bench-jemalloc = []
 dhat-heap = []
+
+# Inherit workspace lints
+[lints]
+workspace = true

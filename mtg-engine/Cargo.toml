@@ -198,3 +198,7 @@ wasm-network = [
     "wasm-tui",  # Network requires TUI base
 ]
 
+
+# Inherit workspace lints
+[lints]
+workspace = true

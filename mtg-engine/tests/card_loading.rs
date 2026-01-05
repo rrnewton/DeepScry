@@ -2,6 +2,9 @@
 //!
 //! Tests that verify cards from cardsfolder can be loaded and parsed correctly
 
+// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
+
 use mtg_forge_rs::core::{CardId, CardType, Keyword, KeywordArgs, PlayerId};
 use mtg_forge_rs::loader::CardLoader;
 use mtg_forge_rs::{MtgError, Result};

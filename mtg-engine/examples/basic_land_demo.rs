@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
 //! Basic Land Demo
 //!
 //! Demonstrates that basic lands (Plains, Island, Swamp, Mountain, Forest)

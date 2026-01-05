@@ -1,3 +1,6 @@
+// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
+
 //! End-to-end tests for browser TUI rewind/replay pattern
 //!
 //! These tests verify that the game loop can properly handle scripted input

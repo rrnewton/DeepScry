@@ -1,3 +1,6 @@
+// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+#![allow(clippy::wildcard_enum_match_arm)]
+
 //! End-to-end tests for the undo/replay system
 //!
 //! These tests verify that we can rewind and replay game states correctly,

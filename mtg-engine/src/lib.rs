@@ -10,6 +10,9 @@
 //! - `verbose-logging`: Enable verbose game event logging (increases allocations)
 
 #![feature(allocator_api)]
+// TODO(mtg-0et0f): Remove this crate-level allow once all wildcard patterns are audited
+// Track progress at: https://github.com/rrnewton/mtg-forge-rs - issue mtg-0et0f
+#![allow(clippy::wildcard_enum_match_arm)]
 
 pub mod core;
 pub mod deck_builder;
