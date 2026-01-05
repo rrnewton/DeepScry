@@ -1,10 +1,11 @@
 ---
 title: Audit and fix wildcard enum match patterns
-status: open
+status: closed
 priority: 1
 issue_type: chore
 created_at: 2026-01-05T19:27:43.276210152+00:00
-updated_at: 2026-01-05T20:21:26.724859644+00:00
+updated_at: 2026-01-05T21:56:04.347994577+00:00
+closed_at: 2026-01-05T21:56:04.347994330+00:00
 ---
 
 # Description
