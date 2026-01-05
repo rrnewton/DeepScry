@@ -143,7 +143,9 @@ struct OpponentChoiceInfo {
 }
 
 /// Card reveal info to broadcast to a player
+/// Fields are used for message passing but not directly read (future use for reveal UI)
 #[derive(Clone)]
+#[allow(dead_code)]
 struct RevealBroadcast {
     /// Owner of the card
     owner: PlayerId,
