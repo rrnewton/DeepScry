@@ -1,0 +1,20 @@
+[metadata]
+Name:Ryan Avatar Test - Heartless Act Modal
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Heartless Act in hand
+p0life=20
+p0hand=Heartless Act
+p0battlefield=Swamp; Swamp
+p0library=Mountain; Mountain; Mountain; Swamp; Swamp; Swamp
+
+# P1 has creature to target (no counters)
+p1life=20
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest; Forest
