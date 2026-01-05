@@ -1,7 +1,3 @@
-// File-level allow: This file handles ServerMessage enum from protocol.rs which has
-// many variants. The local controller wrapper handles specific message types needed
-// for game state sync and uses wildcard for unhandled messages. This is intentional.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Network-aware local controller wrapper
 //!
 //! This wraps any PlayerController and sends choices to the server after each decision.
@@ -326,6 +322,9 @@ impl<C: PlayerController> NetworkLocalController<C> {
     }
 }
 
+/// Note: Wildcards are intentional in match arms on ChoiceResult - the enum
+/// has several variants; we handle Choice and ExitGame specially, others pass through.
+#[allow(clippy::wildcard_enum_match_arm)]
 impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
     fn player_id(&self) -> PlayerId {
         self.inner.player_id()

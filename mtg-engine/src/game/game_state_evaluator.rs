@@ -1,6 +1,3 @@
-// Wildcards intentional: AffectedSelector enum has 70+ variants, evaluator only handles
-// the subset relevant to board evaluation. Unsupported selectors correctly return 0.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Game state evaluation for heuristic AI
 //!
 //! This module provides holistic board evaluation, scoring the overall game state
@@ -103,6 +100,10 @@ impl GameStateEvaluator {
     /// Internal implementation of game state evaluation
     ///
     /// Reference: GameStateEvaluator.getScoreForGameStateImpl() (lines 102-174)
+    ///
+    /// Note: Wildcards are intentional - AffectedSelector has 80+ variants, Cost has 10+,
+    /// Keyword has 160+. We handle the subset relevant to board evaluation.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn evaluate_game_state_impl(&self, view: &GameStateView, ai_player: PlayerId) -> Score {
         let mut score = 0;
 
@@ -275,6 +276,10 @@ impl GameStateEvaluator {
     ///
     /// OPT-STR-1: Uses ManaColors bitfield instead of HashSet<&str>
     /// for zero-allocation color tracking.
+    ///
+    /// Note: Wildcards are intentional - Cost enum has 10+ variants;
+    /// we handle the subset relevant to mana ability cost checking.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn evaluate_land(card: &Card) -> i32 {
         let mut value = 3;
 
@@ -410,6 +415,10 @@ impl GameStateEvaluator {
     /// - For Auras attached to creatures: evaluate the P/T bonus and keyword grants
     /// - For global enchantments: evaluate based on their effects
     /// - Default to 0 if we can't determine the value (conservative)
+    ///
+    /// Note: Wildcards are intentional - AffectedSelector has 80+ variants;
+    /// we handle only CreatureEnchantedBy for aura evaluation.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn evaluate_enchantment(&self, view: &GameStateView, card: &Card) -> i32 {
         use crate::core::{AffectedSelector, StaticAbility};
 
@@ -490,6 +499,10 @@ impl GameStateEvaluator {
     /// Estimate the value of granting a keyword to a creature
     ///
     /// This uses similar logic to HeuristicController::evaluate_creature_impl
+    ///
+    /// Note: Wildcard is intentional - Keyword has 160+ variants;
+    /// we handle the subset with meaningful value impact for aura evaluation.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn estimate_keyword_value(&self, keyword: &crate::core::Keyword, card: &Card) -> i32 {
         use crate::core::Keyword;
 

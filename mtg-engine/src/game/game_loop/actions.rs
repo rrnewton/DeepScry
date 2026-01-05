@@ -1,6 +1,3 @@
-// Wildcards intentional: Effect enum has 24+ variants, action queries only check
-// for specific effect types (e.g., DestroyPermanent for sacrifice detection).
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Action query module for GameLoop
 //!
 //! Provides read-only queries for available player actions (attackers, blockers, spells, abilities).
@@ -484,6 +481,10 @@ impl<'a> GameLoop<'a> {
     /// Returns true if the spell has effects that require targeting a permanent.
     /// Per MTG Rule 601.2c: You can't begin casting a spell that targets unless
     /// there's a legal target.
+    ///
+    /// Note: Wildcard is intentional - Effect has 24+ variants; we check for specific
+    /// targeting effect types (Destroy, Pump, Tap, Exile, Copy with placeholder targets).
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn spell_requires_battlefield_target(card: &crate::core::Card) -> bool {
         use crate::core::Effect;
 

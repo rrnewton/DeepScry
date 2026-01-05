@@ -1,6 +1,3 @@
-// Wildcards intentional: crossterm KeyCode/Event/MouseEventKind have 25+ variants each,
-// we only handle the subset of keys/events we use. Adds compile-time safety for our FocusedPane enum.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Fancy TUI controller with full-screen ratatui interface
 //!
 //! This controller provides a rich, multi-panel TUI interface similar to MTG Arena,
@@ -149,6 +146,10 @@ impl FancyTuiController {
     }
 
     /// Wait for user input and update highlighted choice
+    ///
+    /// Note: Wildcards are intentional - crossterm KeyCode/Event/MouseEventKind have 25+ variants
+    /// each, and FocusedPane is internal. We handle the subset of keys/events we use.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn wait_for_choice_input(&mut self, num_choices: usize, view: &GameStateView) -> io::Result<InputAction> {
         // Set up signal handlers for suspend/resume
         let sigtstp_flag = Arc::new(AtomicBool::new(false));

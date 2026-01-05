@@ -1,6 +1,3 @@
-// Wildcards intentional: ManaProductionKind enum handling - some variants are
-// processed in earlier passes, wildcards catch "shouldn't happen" cases.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Mana payment resolution system
 //!
 //! This module provides the interface and implementations for determining
@@ -335,6 +332,9 @@ impl Default for SimpleManaResolver {
 }
 
 impl ManaPaymentResolver for SimpleManaResolver {
+    /// Note: Wildcard is intentional - SimpleManaResolver only handles Fixed/Colorless
+    /// kinds; other ManaProductionKind variants are skipped (they indicate complex sources).
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn check_payment(
         &self,
         cost: &ManaCost,
@@ -479,6 +479,9 @@ impl GreedyManaResolver {
 
     /// Score a source for a specific color (lower = better = more specific)
     /// This helps us tap the most specific sources first
+    ///
+    /// Note: Wildcard is intentional - sources that can't produce the color get worst score.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn score_for_color(production: &ManaProduction, color: ManaColor) -> u8 {
         match &production.kind {
             ManaProductionKind::Fixed(c) if *c == color => 0, // Best: exact match

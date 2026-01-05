@@ -1,6 +1,3 @@
-// Wildcards intentional: FocusedPane and Entity enums have many variants,
-// we only handle relevant subsets in each match. New variants require explicit handling.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Shared event handling for FancyTUI (native and WASM)
 //!
 //! This module provides common input handling logic that can be used by both
@@ -84,6 +81,10 @@ const CARDS_PER_ROW: usize = 4;
 ///
 /// This is the main entry point for shared event handling.
 /// Both native and WASM implementations should call this.
+///
+/// Note: Wildcard is intentional - FocusedPane enum has many variants;
+/// we handle the relevant subset per context.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn handle_key_event(
     state: &mut FancyTuiState,
     key: KeyInput,
@@ -341,6 +342,9 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
 }
 
 /// Handle Left arrow key navigation
+/// Note: Wildcard is intentional - FocusedPane has many variants;
+/// we handle the relevant subset for left navigation.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
     match state.focused_pane {
         FocusedPane::YourBattlefield => {
@@ -375,6 +379,9 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
 }
 
 /// Handle Right arrow key navigation
+/// Note: Wildcard is intentional - FocusedPane has many variants;
+/// we handle the relevant subset for right navigation.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
     match state.focused_pane {
         FocusedPane::YourBattlefield => {
@@ -552,6 +559,10 @@ fn navigate_battlefield_right(
 /// Handle a mouse click event, updating state
 ///
 /// Returns true if the click was handled and the UI should be redrawn.
+///
+/// Note: Wildcard is intentional - Entity enum has many variants (SingleCard, Stack types);
+/// we handle clicking on specific entity types.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &GameStateView) -> bool {
     // Check entity positions FIRST (more specific than pane areas)
     // This allows clicking on individual cards within panes
@@ -691,6 +702,7 @@ pub fn get_help_text(include_wasm_only: bool) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
     use super::*;
     use crate::game::fancy_tui_renderer::{Entity, EntityPosition};

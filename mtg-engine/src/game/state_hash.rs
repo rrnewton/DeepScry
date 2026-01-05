@@ -1,6 +1,3 @@
-// Wildcards intentional: serde_json::Value enum has Array/Object/Null/Bool/Number/String,
-// we recursively process Array/Object and pass through primitives unchanged.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Deterministic state hashing for debugging snapshot/resume and network sync
 //!
 //! This module provides functionality to compute a deterministic hash of game state,
@@ -159,6 +156,10 @@ pub fn compute_undo_test_hash(game: &GameState) -> u64 {
 }
 
 /// Recursively strip metadata fields from JSON value (for snapshot/replay)
+///
+/// Note: Wildcard is intentional - serde_json::Value primitives (Null/Bool/Number/String)
+/// pass through unchanged; only Object/Array are recursively processed.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
@@ -183,6 +184,10 @@ fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
 }
 
 /// Recursively strip metadata fields from JSON value (for undo testing - stricter)
+///
+/// Note: Wildcard is intentional - serde_json::Value primitives (Null/Bool/Number/String)
+/// pass through unchanged; only Object/Array are recursively processed.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn strip_metadata_for_undo_test(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
@@ -412,6 +417,9 @@ fn strip_fields_for_mode(value: serde_json::Value, mode: HashMode) -> serde_json
 }
 
 /// Recursively strip specified fields from JSON value
+///
+/// Note: Wildcard is intentional - serde_json::Value primitives pass through unchanged.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn strip_fields_recursive(value: serde_json::Value, excluded: &[&str], mode: HashMode) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {

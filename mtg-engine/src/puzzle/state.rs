@@ -1,7 +1,3 @@
-// File-level allow: CardModifier enum has 24+ variants. This file extracts some
-// modifiers to top-level fields and keeps the rest in a modifiers list. Using
-// exhaustive matching here would be fragile as new modifier types are added.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Game state parsing
 //!
 //! Handles the \[state\] section of .pzl files
@@ -26,6 +22,10 @@ pub struct CardDefinition {
 
 impl CardDefinition {
     /// Parse a card from notation string
+    ///
+    /// Note: Wildcard is intentional - CardModifier has 24+ variants. Set/Art/Id
+    /// are extracted to top-level fields; all others go to the modifiers list.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn parse(notation: &str) -> Result<Self> {
         let (name, modifiers) = parse_card_notation(notation)?;
 

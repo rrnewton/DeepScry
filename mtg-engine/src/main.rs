@@ -2,9 +2,6 @@
 //!
 //! Text-based Magic: The Gathering game engine with TUI support
 
-// TODO(mtg-0et0f): Remove this once all wildcard patterns are audited
-#![allow(clippy::wildcard_enum_match_arm)]
-
 // Use mimalloc as the global allocator for better performance
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -753,6 +750,9 @@ async fn main() -> Result<()> {
             mirror_only,
         } => {
             // Convert ControllerType to tournament::ControllerType
+            // Note: Wildcards are intentional - ControllerType has Human/Fixed/etc
+            // variants that aren't supported for tournament mode.
+            #[allow(clippy::wildcard_enum_match_arm)]
             let p1_tourney = match p1 {
                 ControllerType::Zero => mtg_forge_rs::tournament::ControllerType::Zero,
                 ControllerType::Random => mtg_forge_rs::tournament::ControllerType::Random,
@@ -763,6 +763,7 @@ async fn main() -> Result<()> {
                     ))
                 }
             };
+            #[allow(clippy::wildcard_enum_match_arm)]
             let p2_tourney = match p2 {
                 ControllerType::Zero => mtg_forge_rs::tournament::ControllerType::Zero,
                 ControllerType::Random => mtg_forge_rs::tournament::ControllerType::Random,

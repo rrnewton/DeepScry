@@ -744,9 +744,10 @@ impl GameState {
                                     CardType::Land => creature.cache.is_land,
                                     CardType::Creature => creature.is_creature(),
                                     // Enchantment and other types use direct check
-                                    CardType::Instant | CardType::Sorcery | CardType::Enchantment | CardType::Planeswalker => {
-                                        creature.types.contains(card_type)
-                                    }
+                                    CardType::Instant
+                                    | CardType::Sorcery
+                                    | CardType::Enchantment
+                                    | CardType::Planeswalker => creature.types.contains(card_type),
                                 };
 
                                 if has_type {
@@ -772,9 +773,10 @@ impl GameState {
                                     CardType::Artifact => creature.cache.is_artifact,
                                     CardType::Land => creature.cache.is_land,
                                     CardType::Creature => creature.is_creature(),
-                                    CardType::Instant | CardType::Sorcery | CardType::Enchantment | CardType::Planeswalker => {
-                                        creature.types.contains(card_type)
-                                    }
+                                    CardType::Instant
+                                    | CardType::Sorcery
+                                    | CardType::Enchantment
+                                    | CardType::Planeswalker => creature.types.contains(card_type),
                                 };
 
                                 if has_type {

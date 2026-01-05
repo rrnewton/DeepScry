@@ -1,8 +1,3 @@
-// File-level allow: This file handles ServerMessage enum from protocol.rs which has
-// many variants (GameStarted, ChoiceRequest, CardRevealed, OpponentChoice, etc.).
-// We match specific variants needed in each context and use wildcard for the rest.
-// This is intentional protocol handling - unrecognized messages are logged and skipped.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! WebSocket client for multiplayer MTG
 //!
 //! Implements a client that:
@@ -477,6 +472,10 @@ impl NetworkClient {
     }
 
     /// Connect to the server and authenticate
+    ///
+    /// Note: Wildcard is intentional - ServerMessage has 12+ variants;
+    /// we only expect AuthResult during connect, others are errors.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn connect(&mut self) -> Result<()> {
         // Load card database
         log::info!("Loading card database...");
@@ -537,6 +536,10 @@ impl NetworkClient {
     /// 3. Converts libraries to Remote mode
     /// 4. Receives CardRevealed messages for opening hands (14 cards)
     /// 5. Queues revealed card IDs for the shadow GameLoop to draw
+    ///
+    /// Note: Wildcards are intentional - ServerMessage has 12+ variants;
+    /// we handle specific variants and log/ignore unexpected ones.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn wait_for_game_start(&mut self) -> Result<()> {
         use crate::loader::GameInitializer;
 
@@ -809,6 +812,10 @@ impl NetworkClient {
     /// │  └──────────────────┘     └────────────────────────────────┘   │
     /// └─────────────────────────────────────────────────────────────────┘
     /// ```
+    ///
+    /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
+    /// variants; we handle specific variants and log/ignore unexpected ones.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
         use crate::network::{
@@ -1431,6 +1438,10 @@ impl NetworkClient {
     /// 3. Uses channels to communicate between them
     ///
     /// This allows non-Send controllers (like fancy TUI) to work with networking.
+    ///
+    /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
+    /// variants; we handle specific variants and log/ignore unexpected ones.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn run_game_sync<C: PlayerController>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
         use crate::network::{

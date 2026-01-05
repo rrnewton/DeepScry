@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! WASM Fancy TUI - RatZilla-based TUI rendering for browser
 //!
 //! This module provides the fancy TUI experience in the browser using RatZilla.
@@ -221,6 +219,10 @@ pub fn tui_get_battlefield_cards() -> String {
 /// EntityPosition now stores:
 /// - `area`: MAX bounds (cells) - the card's public bounding box
 /// - `layout_area_px`: Optional pixel-based layout (if in GUI mode)
+///
+/// Note: Wildcard is intentional - Entity enum has many variants (hand cards, etc.);
+/// we only export battlefield card positions for overlays.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn export_card_positions_from_renderer(
     entity_positions: &[crate::game::fancy_tui_renderer::EntityPosition],
     game: &GameState,
@@ -1415,8 +1417,12 @@ impl WasmFancyTuiState {
 /// Launch the WASM fancy TUI in the browser
 ///
 /// This function creates and runs the RatZilla-based TUI application.
+///
+/// Note: Wildcards are intentional - ratzilla KeyCode has 25+ variants, KeyInput
+/// and FocusedPane have many variants; we handle the subset used in WASM TUI.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn launch_fancy_tui(
     card_db: &WasmCardDatabase,
     p1_deck_name: &str,

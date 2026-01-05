@@ -1,8 +1,3 @@
-// File-level allow: This file handles ClientMessage enum from protocol.rs which has
-// multiple variants (Authenticate, SubmitChoice, Ping, Disconnect). We explicitly match
-// the expected variant in context (e.g. Authenticate during handshake) and use wildcard
-// to reject unexpected variants with an error. This is intentional protocol handling.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! WebSocket game server for multiplayer MTG
 //!
 //! Implements a server that:
@@ -305,6 +300,10 @@ impl GameServer {
     }
 
     /// Handle a new WebSocket connection
+    ///
+    /// Note: Wildcard is intentional - ClientMessage has 4+ variants;
+    /// we expect Authenticate at connection time, others are errors.
+    #[allow(clippy::wildcard_enum_match_arm)]
     async fn handle_connection(&mut self, stream: TcpStream) -> Result<()> {
         let ws_stream = accept_async(stream).await?;
         let (ws_tx, mut ws_rx) = ws_stream.split();
@@ -476,6 +475,10 @@ fn submission_to_decklist(submission: &DeckSubmission) -> DeckList {
 }
 
 /// Run a single game between two players
+///
+/// Note: Wildcard is intentional - GameEndReason enum has several variants;
+/// we handle PlayerDeath/Decking specially and derive from winner for others.
+#[allow(clippy::wildcard_enum_match_arm)]
 async fn run_game(
     game_id: u64,
     p1: WaitingPlayer,
@@ -1730,7 +1733,11 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
 ///
 /// NOTE: Currently unused - reveals are now handled by the immediate reveal system.
 /// Kept for potential future use with non-draw reveals.
+///
+/// Note: Wildcard is intentional - GameAction has many variants;
+/// we only collect MoveCard from Library and stop at ChoicePoint.
 #[allow(dead_code)]
+#[allow(clippy::wildcard_enum_match_arm)]
 fn collect_reveals_for_player(game: &GameState, player_id: PlayerId, last_reveal_index: usize) -> Vec<CardRevealInfo> {
     use crate::undo::GameAction;
 

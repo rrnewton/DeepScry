@@ -1,7 +1,3 @@
-// File-level allow: This file defines protocol enums (ServerMessage, ClientMessage,
-// ChoiceType) and provides display implementations that use wildcards for extensibility.
-// New protocol variants should be added here, and handlers update to match as needed.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Network protocol message types
 //!
 //! Defines all messages exchanged between client and server.
@@ -800,6 +796,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_client_message_serialization() {
         let msg = ClientMessage::Authenticate {
             password: "secret".to_string(),
@@ -829,6 +826,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_server_message_serialization() {
         let msg = ServerMessage::ChoiceRequest {
             choice_seq: 42,
@@ -885,6 +883,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_choice_type_serialization() {
         let choice = ChoiceType::Targets {
             spell_id: CardId::new(42),

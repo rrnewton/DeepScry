@@ -1,7 +1,3 @@
-// File-level allow: This file handles ChoiceType enum from protocol.rs which has
-// multiple variants. Network controller processes subset of choice types and uses
-// wildcard to handle unexpected types gracefully. This is intentional protocol handling.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Network controller for remote player communication
 //!
 //! This module provides `NetworkController`, a `PlayerController` implementation
@@ -370,6 +366,10 @@ impl NetworkController {
     ///
     /// Called by request_choice to bundle reveals with the ChoiceRequest.
     /// Uses the shared_reveal_index to coordinate with the immediate reveal pusher.
+    ///
+    /// Note: Wildcard is intentional - GameAction has many variants;
+    /// we only collect MoveCard from Library.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn collect_reveals_since_last_choice(&mut self, view: &GameStateView) -> Vec<CardRevealInfo> {
         let actions = view.undo_log_actions();
         let mut reveals = Vec::new();

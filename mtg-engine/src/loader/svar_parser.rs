@@ -1,7 +1,3 @@
-// File-level allow: This file parses SVars from Java Forge which have many modes
-// (CantBlockBy, Continuous, etc.). Only a subset of static ability modes are
-// currently implemented - unrecognized modes return appropriate defaults.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! SVar (Script Variable) parsing for Java Forge card format.
 //!
 //! SVars are a core mechanism in Java Forge for:
@@ -341,6 +337,7 @@ pub fn uses_remembered(def: &StaticAbilityDef) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
     use super::*;
 
@@ -388,6 +385,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_parse_effect_def_db() {
         let svar = "DB$ Draw | NumCards$ 1";
         match parse_svar(svar) {
@@ -400,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_parse_effect_def_with_subability() {
         let svar = "DB$ Pump | Defined$ Self | KW$ Flying | SubAbility$ DBGainLife";
         match parse_svar(svar) {

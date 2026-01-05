@@ -1,7 +1,3 @@
-// File-level allow: This file converts ApiType enum (50+ variants from Java Forge)
-// to Effect enum. Only a subset of API types are currently implemented - unimplemented
-// types return None, which is intentional incremental porting behavior.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Convert parsed ability parameters to Effect objects
 //!
 //! This module bridges between ability_parser (tokenized parameters) and the Effect enum.
@@ -29,6 +25,10 @@ use std::collections::HashMap;
 /// let params = AbilityParams::parse("A:SP$ DealDamage | NumDmg$ 3")?;
 /// let effect = params_to_effect(&params);
 /// ```
+///
+/// Note: Wildcard is intentional - ApiType enum has 50+ variants from Java Forge.
+/// Only implemented types return Some; unimplemented types return None for incremental porting.
+#[allow(clippy::wildcard_enum_match_arm)]
 pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
     match params.api_type {
         ApiType::DealDamage => {
@@ -681,6 +681,7 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
     use super::*;
 

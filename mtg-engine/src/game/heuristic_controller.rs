@@ -1,6 +1,3 @@
-// Wildcards intentional: Effect enum has 24+ variants, AI controller handles subset
-// relevant to heuristic decision-making. Unhandled effects are safely ignored.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Heuristic AI controller - faithful port of Java Forge AI
 //!
 //! This implementation aims to faithfully reproduce the decision-making logic
@@ -2831,6 +2828,10 @@ impl HeuristicController {
     /// Helper to check if a creature matches an AffectedSelector
     ///
     /// Simplified implementation - matches "Creature.YouCtrl", "Creature.White", etc.
+    ///
+    /// Note: Wildcard is intentional - AffectedSelector has 80+ variants;
+    /// we handle the subset relevant to AI creature targeting decisions.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn creature_matches_selector(&self, creature: &Card, selector: &crate::core::AffectedSelector) -> bool {
         use crate::core::AffectedSelector;
 

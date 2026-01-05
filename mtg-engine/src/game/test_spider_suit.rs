@@ -1,6 +1,5 @@
-// Wildcards intentional: test file uses match patterns for verification
-#![allow(clippy::wildcard_enum_match_arm)]
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
     use crate::core::{Card, CardName, CardType, ManaCost, Subtype};
     use crate::game::{mana_engine::ManaEngine, GameState};

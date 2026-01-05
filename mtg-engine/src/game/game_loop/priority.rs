@@ -1,6 +1,3 @@
-// Wildcards intentional: Effect enum has 24+ variants, priority system handles
-// specific effect types (e.g., AddMana) specially and passes through others unchanged.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Priority system and spell resolution
 //!
 //! This module handles the priority system where players alternate making choices
@@ -15,6 +12,10 @@ use smallvec::SmallVec;
 
 use super::{GameLoop, GameResult, VerbosityLevel};
 
+/// Note: Wildcards are intentional throughout - Effect enum has 24+ variants.
+/// Priority system handles specific effect types (AddMana, GainLife, etc.) specially
+/// and passes through others unchanged. Using exhaustive matching would be verbose.
+#[allow(clippy::wildcard_enum_match_arm)]
 impl<'a> GameLoop<'a> {
     /// Resolve the top spell from the stack
     ///

@@ -1,7 +1,3 @@
-// File-level allow: CardModifier enum has 24+ variants (Tapped, Transformed, FaceDown,
-// Attacking, ChosenColor, etc.). Only a subset are currently implemented for puzzle
-// loading - others are skipped for forward compatibility as features are added.
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Load puzzle state into a Game object
 //!
 //! This module handles applying parsed PZL state to create initialized games
@@ -145,6 +141,10 @@ pub async fn load_puzzle_into_game(puzzle: &PuzzleFile, card_db: &AsyncCardDatab
 }
 
 /// Create a card from a card definition
+///
+/// Note: Wildcard is intentional - CardModifier has 24+ variants. Only a subset
+/// (Tapped, Counters) are handled in first pass; others need second pass or aren't implemented.
+#[allow(clippy::wildcard_enum_match_arm)]
 async fn create_card_from_definition<'a>(
     card_def: &CardDefinition,
     owner: PlayerId,
