@@ -836,6 +836,8 @@ impl NetworkClient {
         let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteMessage>();
         // Game end signal: (winner, server_action_count)
         let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<(Option<PlayerId>, u64)>(1);
+        // Fatal error signal from WebSocket handler
+        let (fatal_error_tx, mut fatal_error_rx) = tokio_mpsc::channel::<String>(1);
 
         // Channel for card reveals (WebSocket handler -> Game thread)
         // Using std::sync::mpsc so game thread can do blocking recv_timeout
@@ -973,7 +975,9 @@ impl NetworkClient {
                                     Ok(ServerMessage::Error { message, fatal }) => {
                                         if fatal {
                                             log::error!("Fatal server error: {}", message);
-                                            let _ = local_msg_tx.send(LocalControllerMessage::Error(message));
+                                            let _ = local_msg_tx.send(LocalControllerMessage::Error(message.clone()));
+                                            // Signal the fatal error to the main task
+                                            let _ = fatal_error_tx.send(message).await;
                                             return;
                                         }
                                         log::warn!("Server warning: {}", message);
@@ -1307,15 +1311,24 @@ impl NetworkClient {
                                     Ok(winner)
                                 }
                                 Ok(None) => {
-                                    // Channel closed without sending winner - treat as graceful exit
-                                    log::info!("Game ended gracefully (channel closed)");
-                                    Ok(None)
+                                    // Channel closed without sending winner - check if fatal error
+                                    if let Ok(msg) = fatal_error_rx.try_recv() {
+                                        log::error!("Game terminated due to fatal error: {}", msg);
+                                        Err(anyhow!("Fatal server error: {}", msg))
+                                    } else {
+                                        log::info!("Game ended gracefully (channel closed)");
+                                        Ok(None)
+                                    }
                                 }
                                 Err(_) => {
-                                    // Timeout - no game end signal, but still treat as graceful exit
-                                    // since we received ExitGame from controller
-                                    log::info!("Game ended gracefully (no server signal within timeout)");
-                                    Ok(None)
+                                    // Timeout - no game end signal, check if fatal error
+                                    if let Ok(msg) = fatal_error_rx.try_recv() {
+                                        log::error!("Game terminated due to fatal error: {}", msg);
+                                        Err(anyhow!("Fatal server error: {}", msg))
+                                    } else {
+                                        log::info!("Game ended gracefully (no server signal within timeout)");
+                                        Ok(None)
+                                    }
                                 }
                             }
                         } else {
@@ -1334,7 +1347,29 @@ impl NetworkClient {
                         // The per-choice verification during the game should catch sync issues
                         Ok(winner)
                     }
-                    None => Ok(None),
+                    None => {
+                        // Channel closed without sending winner - check if fatal error
+                        if let Ok(msg) = fatal_error_rx.try_recv() {
+                            log::error!("Game terminated due to fatal error: {}", msg);
+                            Err(anyhow!("Fatal server error: {}", msg))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                }
+            }
+            // Fatal error from WebSocket handler
+            error_msg = fatal_error_rx.recv() => {
+                ws_handler.abort();
+                match error_msg {
+                    Some(msg) => {
+                        log::error!("Game terminated due to fatal error: {}", msg);
+                        Err(anyhow!("Fatal server error: {}", msg))
+                    }
+                    None => {
+                        // Error channel closed without message - shouldn't happen
+                        Ok(None)
+                    }
                 }
             }
         }
@@ -1376,6 +1411,8 @@ impl NetworkClient {
         let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteMessage>();
         let (reveal_tx, reveal_rx) = mpsc::channel::<RevealMsg>();
         let (game_end_tx, game_end_rx) = mpsc::channel::<(Option<PlayerId>, u64)>();
+        // Fatal error signal from WebSocket handler
+        let (fatal_error_tx, fatal_error_rx) = mpsc::channel::<String>();
 
         let network_debug = self.network_debug;
 
@@ -1440,7 +1477,9 @@ impl NetworkClient {
                                         Ok(ServerMessage::Error { message, fatal }) => {
                                             if fatal {
                                                 log::error!("Fatal error: {}", message);
-                                                let _ = local_msg_tx.send(LocalControllerMessage::Error(message));
+                                                let _ = local_msg_tx.send(LocalControllerMessage::Error(message.clone()));
+                                                // Signal fatal error to main thread
+                                                let _ = fatal_error_tx.send(message);
                                                 return;
                                             }
                                             log::warn!("Server warning: {}", message);
@@ -1548,6 +1587,12 @@ impl NetworkClient {
         // Wait for WebSocket thread to finish
         let _ = ws_thread.join();
 
+        // Check for fatal error first (highest priority)
+        if let Ok(msg) = fatal_error_rx.try_recv() {
+            log::error!("Game terminated due to fatal error: {}", msg);
+            return Err(anyhow!("Fatal server error: {}", msg));
+        }
+
         // Check for game end signal
         if let Ok((winner, _)) = game_end_rx.try_recv() {
             return Ok(winner);
@@ -1558,8 +1603,18 @@ impl NetworkClient {
             Err(e) => {
                 // Check if it was a normal exit
                 if e.to_string().contains("Game exit requested") {
+                    // Check for fatal error again
+                    if let Ok(msg) = fatal_error_rx.try_recv() {
+                        log::error!("Game terminated due to fatal error: {}", msg);
+                        return Err(anyhow!("Fatal server error: {}", msg));
+                    }
                     if let Ok((winner, _)) = game_end_rx.recv_timeout(Duration::from_millis(100)) {
                         return Ok(winner);
+                    }
+                    // Check fatal error one more time after timeout
+                    if let Ok(msg) = fatal_error_rx.try_recv() {
+                        log::error!("Game terminated due to fatal error: {}", msg);
+                        return Err(anyhow!("Fatal server error: {}", msg));
                     }
                     return Ok(None);
                 }

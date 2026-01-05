@@ -791,11 +791,11 @@ async fn run_game(
 
     // Spawn WebSocket handlers for each player
     let game_clone = game.clone();
-    let p1_handler =
+    let mut p1_handler =
         tokio::spawn(async move { handle_player_websocket(p1_conn, p1_ws_rx, game_clone, PlayerId::new(1)).await });
 
     let game_clone = game.clone();
-    let p2_handler =
+    let mut p2_handler =
         tokio::spawn(async move { handle_player_websocket(p2_conn, p2_ws_rx, game_clone, PlayerId::new(0)).await });
 
     // Run game loop in blocking thread (uses sync channels)
@@ -819,8 +819,27 @@ async fn run_game(
         )
     });
 
-    // Wait for game to complete
-    let result = game_loop_handle.await?;
+    // Wait for game to complete, OR for either handler to fail with a fatal error
+    // This prevents the server from hanging when a desync is detected
+    let result: Result<GameResult> = tokio::select! {
+        // Game loop completed (success or error)
+        game_result = game_loop_handle => {
+            match game_result {
+                Ok(r) => r,
+                Err(e) => Err(anyhow!("Game loop panic: {}", e)),
+            }
+        }
+        // P1 WebSocket handler exited (error means fatal issue like desync)
+        p1_result = &mut p1_handler => {
+            log::error!("Game {}: P1 handler exited unexpectedly: {:?}", game_id, p1_result);
+            Err(anyhow!("P1 connection terminated unexpectedly"))
+        }
+        // P2 WebSocket handler exited (error means fatal issue like desync)
+        p2_result = &mut p2_handler => {
+            log::error!("Game {}: P2 handler exited unexpectedly: {:?}", game_id, p2_result);
+            Err(anyhow!("P2 connection terminated unexpectedly"))
+        }
+    };
 
     // Get final state hash for the GameEnded message
     // Note: We use final_hash from the stale mutex (for hash continuity) but
