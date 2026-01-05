@@ -897,6 +897,12 @@ impl NetworkClient {
             // We MUST echo this back in SubmitChoice
             let mut server_choice_seq: Option<u32> = None;
 
+            // Buffer for pending CardRevealed with RevealReason::Played
+            // The server sends CardRevealed immediately before OpponentChoice for spell plays.
+            // We buffer it here and include it in the RemoteMessage so the game thread
+            // has the card info BEFORE trying to execute the spell.
+            let mut pending_played_reveal: Option<(PlayerId, CardReveal)> = None;
+
             loop {
                 tokio::select! {
                     // Receive messages from server
@@ -906,20 +912,53 @@ impl NetworkClient {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
                                         log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
-                                        // Send full CardReveal to game thread so it can instantiate the card
-                                        if let Err(e) = reveal_tx.send((owner, card, reason)) {
-                                            log::error!("Failed to send reveal to game thread: {:?}", e);
+
+                                        // Buffer Played reveals to include with OpponentChoice
+                                        // This ensures the game thread has the card info before
+                                        // trying to execute the spell cast.
+                                        if reason == RevealReason::Played {
+                                            log::debug!(
+                                                "WebSocket: Buffering Played reveal for opponent spell: {} (id={})",
+                                                card.name, card.card_id.as_u32()
+                                            );
+                                            pending_played_reveal = Some((owner, card));
+                                        } else {
+                                            // Send other reveals (Draw, etc.) directly to game thread
+                                            if let Err(e) = reveal_tx.send((owner, card, reason)) {
+                                                log::error!("Failed to send reveal to game thread: {:?}", e);
+                                            }
                                         }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
                                         log::debug!("WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}, sending to RemoteController channel", description, choice_indices, spell_ability);
+
+                                        // Send the opponent choice to RemoteController
+                                        // The card_reveal field is no longer used - we send Played reveals
+                                        // via reveal_tx instead so drain_reveals() can process them.
                                         match remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_indices,
                                             description: description.clone(),
                                             spell_ability,
+                                            card_reveal: None, // Not used - reveal sent via reveal_tx
                                         }) {
                                             Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController channel successfully"),
                                             Err(e) => log::error!("WebSocket: FAILED to send opponent choice to RemoteController channel: {:?}", e),
+                                        }
+
+                                        // CRITICAL: Send the pending Played reveal via reveal_tx AFTER sending OpponentChoice
+                                        // This way:
+                                        // 1. RemoteController.wait_for_choice() unblocks and choose_spell_ability_to_play() returns
+                                        // 2. drain_reveals() at priority.rs:343 processes the Played reveal
+                                        // 3. The card is instantiated in game.cards
+                                        // 4. Game proceeds to execute the spell
+                                        if let Some((owner, card)) = pending_played_reveal.take() {
+                                            log::debug!(
+                                                "WebSocket: Sending buffered Played reveal for {} (id={}) via reveal_tx",
+                                                card.name, card.card_id.as_u32()
+                                            );
+                                            if let Err(e) = reveal_tx.send((owner, card, RevealReason::Played)) {
+                                                log::error!("Failed to send Played reveal to game thread: {:?}", e);
+                                            }
                                         }
                                     }
                                     Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
@@ -1453,6 +1492,7 @@ impl NetworkClient {
                                                 choice_indices,
                                                 description,
                                                 spell_ability,
+                                                card_reveal: None, // Not used in basic mode
                                             });
                                         }
                                         Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {

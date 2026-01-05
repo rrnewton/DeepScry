@@ -1,0 +1,61 @@
+---
+title: 'Network desync: reveal ordering causes card ID mismatch on draw'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-01-05T20:00:40.383230233+00:00
+updated_at: 2026-01-05T20:00:40.383230233+00:00
+---
+
+# Description
+
+## Summary
+
+Network games desync around turn 5-6 due to reveals being queued in the wrong order on the client.
+
+## Root Cause Analysis
+
+From debug logs:
+1. Server draws card 55 for P1 (Gabriel) at action_count=246
+2. Server sends CardRevealed for card 66 **before** card 55
+3. Client receives and queues card 66 first
+4. When client GameLoop draws, it pops 66 from the queue instead of 55
+5. Client's undo_log shows MoveCard(66) where server shows MoveCard(55)
+6. State hash mismatch detected at action_count=254
+
+## Evidence from logs
+
+Server reveal order:
+```
+Player 1: Sending CardRevealed for draw: card 66 to Hand
+Player 1: Sending CardRevealed for draw: card 55 to Hand
+```
+
+But server's actual draw order (from undo_log):
+```
+[ 246] MoveCard(55 Library -> Hand owner=P1)
+```
+
+The reveals are being sent in the wrong order - 66 before 55, but 55 was drawn first.
+
+## Likely Source
+
+The reveal system may be batching reveals from multiple turns/phases and sending them in an undefined order, rather than strictly FIFO by action_count.
+
+Need to investigate:
+1. How `ChoiceRequest.reveals` is populated in `game_loop/network_controller.rs`
+2. Whether the reveal pusher system preserves ordering
+3. The interaction between immediate reveals and the pusher channels
+
+## Reproducer
+
+```bash
+./scripts/network_desync_reproducer.sh
+```
+
+Wait for ~30 seconds until FATAL SYNC ERROR appears.
+
+## Related
+
+- Previous commit fixed reveal broadcast filtering (29a938b7)
+- Error handling improved in 8f02300b

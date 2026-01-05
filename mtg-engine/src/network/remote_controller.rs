@@ -23,6 +23,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
+use crate::network::protocol::CardReveal;
 use smallvec::SmallVec;
 use std::sync::mpsc;
 
@@ -43,6 +44,10 @@ pub enum RemoteMessage {
         /// When present, RemoteController can return this directly instead
         /// of looking up by index in the local available list
         spell_ability: Option<SpellAbility>,
+        /// Card reveal for the spell being cast (for hidden hand cards)
+        /// When opponent casts a spell from their hand that we don't know about,
+        /// this contains the card reveal info so we can instantiate it.
+        card_reveal: Option<(PlayerId, CardReveal)>,
     },
     /// Signal that the game has ended normally
     ///
@@ -69,6 +74,8 @@ pub struct RemoteController {
     game_ended: bool,
     /// Last received spell ability (from Priority choices)
     last_spell_ability: Option<SpellAbility>,
+    /// Last received card reveal (for instantiating hidden hand cards)
+    last_card_reveal: Option<(PlayerId, CardReveal)>,
 }
 
 impl RemoteController {
@@ -84,13 +91,19 @@ impl RemoteController {
             disconnected: false,
             game_ended: false,
             last_spell_ability: None,
+            last_card_reveal: None,
         }
+    }
+
+    /// Get and clear the last card reveal (for instantiating hidden hand cards)
+    pub fn take_card_reveal(&mut self) -> Option<(PlayerId, CardReveal)> {
+        self.last_card_reveal.take()
     }
 
     /// Wait for the next choice from the server
     ///
     /// Returns the choice indices, or signals disconnect if channel is closed.
-    /// Also stores any spell_ability for use by choose_spell_ability_to_play.
+    /// Also stores any spell_ability and card_reveal for use by choose_spell_ability_to_play.
     fn wait_for_choice(&mut self) -> ChoiceResult<Vec<usize>> {
         if self.disconnected || self.game_ended {
             return ChoiceResult::ExitGame;
@@ -102,16 +115,20 @@ impl RemoteController {
                 choice_indices,
                 description,
                 spell_ability,
+                card_reveal,
             }) => {
                 log::debug!(
-                    "RemoteController {:?}: Opponent chose indices {:?} ({}) spell_ability={:?}",
+                    "RemoteController {:?}: Opponent chose indices {:?} ({}) spell_ability={:?} card_reveal={:?}",
                     self.player_id,
                     choice_indices,
                     description,
-                    spell_ability
+                    spell_ability,
+                    card_reveal.as_ref().map(|(owner, reveal)| (owner, &reveal.name))
                 );
                 // Store spell_ability for choose_spell_ability_to_play to use
                 self.last_spell_ability = spell_ability;
+                // Store card_reveal for instantiating hidden hand cards
+                self.last_card_reveal = card_reveal;
                 ChoiceResult::Ok(choice_indices)
             }
             Ok(RemoteMessage::GameEnded) => {
@@ -461,6 +478,7 @@ mod tests {
             choice_indices: vec![2],
             description: "Cast Lightning Bolt".to_string(),
             spell_ability: None,
+            card_reveal: None,
         })
         .unwrap();
 

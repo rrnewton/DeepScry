@@ -193,6 +193,9 @@ struct PlayerConnection {
     /// Channel to broadcast reveals to this player (receives from opponent's ChoiceRequest)
     reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
     /// Channel to send reveals to the opponent (when we receive ChoiceRequest with reveals)
+    /// NOTE: Currently unused - reveals are sent synchronously via ChoiceRequest to avoid ordering issues.
+    /// Kept for potential future use when async reveal ordering is fixed.
+    #[allow(dead_code)]
     opponent_reveal_tx: tokio_mpsc::Sender<Vec<RevealBroadcast>>,
     /// Channel to receive immediate reveals from the game thread (after automatic actions like draws)
     immediate_reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
@@ -1000,17 +1003,15 @@ async fn handle_player_websocket(
                                 }
                             }
 
-                            // Broadcast reveals to the opponent immediately
-                            // This ensures the opponent's client has reveals before its game loop needs them
-                            if !reveals_to_broadcast.is_empty() {
-                                log::debug!(
-                                    "Player {:?}: Broadcasting {} reveals to opponent",
-                                    conn.player_id, reveals_to_broadcast.len()
-                                );
-                                if let Err(e) = conn.opponent_reveal_tx.send(reveals_to_broadcast).await {
-                                    log::error!("Failed to broadcast reveals: {:?}", e);
-                                }
-                            }
+                            // NOTE: We intentionally do NOT broadcast reveals to the opponent via
+                            // async channels. The async broadcast can arrive out of order due to
+                            // tokio::select! scheduling, causing desync. Instead, the opponent's
+                            // NetworkController collects its own reveals synchronously from the
+                            // undo_log when it makes its next choice.
+                            //
+                            // The reveals_to_broadcast is kept for documentation of what WOULD be
+                            // sent, but we don't actually send it.
+                            let _ = reveals_to_broadcast; // Silence unused warning
                         }
 
                         // Track the choice type for broadcasting to opponent
@@ -1360,107 +1361,38 @@ async fn handle_player_websocket(
                 }
             }
 
-            // Check for reveal broadcasts from the other player's ChoiceRequest
-            // These are reveals that the opponent received and is broadcasting to us
-            // so our client has them before its game loop needs them
+            // DISABLED: Async reveal broadcast channels
+            //
+            // These channels used to forward reveals from the opponent's ChoiceRequest and
+            // from the reveal_pusher hook. However, async channels can deliver messages in
+            // any order due to tokio::select! scheduling, causing desync issues where cards
+            // get queued in the wrong order on the client.
+            //
+            // Instead, all reveals are now sent synchronously:
+            // 1. Each NetworkController collects reveals from the undo_log when making a choice
+            // 2. Reveals are bundled with the ChoiceRequest message
+            // 3. This ensures strict ordering and prevents race conditions
+            //
+            // We still need to drain these channels to prevent them from filling up
+            // (since the channel infrastructure is still in place for backwards compat).
             reveals = conn.reveal_rx.recv() => {
                 if let Some(reveal_list) = reveals {
-                    log::debug!(
-                        "Player {:?}: Received {} broadcast reveals from opponent",
+                    log::trace!(
+                        "Player {:?}: Draining {} broadcast reveals (not sending - using sync path)",
                         conn.player_id, reveal_list.len()
                     );
-                    let game_guard = game.lock().await;
-                    for reveal in reveal_list {
-                        // Build CardReveal from the broadcast info
-                        if let Some(card) = game_guard.cards.try_get(reveal.card_id) {
-                            let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-                            let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
-                            let type_line = if subtypes_str.is_empty() {
-                                types_str.join(" ")
-                            } else {
-                                format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
-                            };
-
-                            let card_reveal = CardReveal {
-                                card_id: reveal.card_id,
-                                name: card.name.to_string(),
-                                mana_cost: card.mana_cost.to_string(),
-                                type_line,
-                                text: card.text.clone(),
-                                pt: if card.is_creature() {
-                                    match (card.base_power(), card.base_toughness()) {
-                                        (Some(p), Some(t)) => Some((p as i32, t as i32)),
-                                        _ => None,
-                                    }
-                                } else {
-                                    None
-                                },
-                            };
-
-                            let reason = zone_to_reveal_reason(reveal.to_zone);
-                            log::debug!(
-                                "Player {:?}: Sending CardRevealed broadcast to client: {} (id={}) reason={:?}",
-                                conn.player_id,
-                                card.name,
-                                reveal.card_id.as_u32(),
-                                reason
-                            );
-                            conn.send(&ServerMessage::CardRevealed {
-                                owner: reveal.owner,
-                                card: card_reveal,
-                                reason,
-                            }).await?;
-                        }
-                    }
+                    // Intentionally not sending - reveals come via sync ChoiceRequest path
                 }
             }
 
-            // Check for immediate reveals from the game thread (after automatic actions like draws)
-            // These are pushed immediately by the reveal_pusher hook in the GameLoop
+            // Drain immediate reveals from game thread (now disabled reveal_pusher)
             immed_reveals = conn.immediate_reveal_rx.recv() => {
                 if let Some(reveal_list) = immed_reveals {
-                    log::debug!(
-                        "Player {:?}: Received {} immediate reveals from game thread",
+                    log::trace!(
+                        "Player {:?}: Draining {} immediate reveals (not sending - using sync path)",
                         conn.player_id, reveal_list.len()
                     );
-                    let game_guard = game.lock().await;
-                    for reveal in reveal_list {
-                        // Build CardReveal from the broadcast info
-                        if let Some(card) = game_guard.cards.try_get(reveal.card_id) {
-                            let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-                            let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
-                            let type_line = if subtypes_str.is_empty() {
-                                types_str.join(" ")
-                            } else {
-                                format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
-                            };
-
-                            let card_reveal = CardReveal {
-                                card_id: reveal.card_id,
-                                name: card.name.to_string(),
-                                mana_cost: card.mana_cost.to_string(),
-                                type_line,
-                                text: card.text.clone(),
-                                pt: if card.is_creature() {
-                                    match (card.base_power(), card.base_toughness()) {
-                                        (Some(p), Some(t)) => Some((p as i32, t as i32)),
-                                        _ => None,
-                                    }
-                                } else {
-                                    None
-                                },
-                            };
-
-                            let reason = zone_to_reveal_reason(reveal.to_zone);
-                            conn.send(&ServerMessage::CardRevealed {
-                                owner: reveal.owner,
-                                card: card_reveal,
-                                reason,
-                            }).await?;
-                        }
-                    }
-                    // Update last_reveal_index since we've now sent these
-                    conn.last_reveal_index = game_guard.undo_log.len();
+                    // Intentionally not sending - reveals come via sync ChoiceRequest path
                 }
             }
 
@@ -1651,9 +1583,13 @@ fn run_game_loop(
     // Create game loop with skip_opening_hands() to match client behavior.
     // Both server and client will draw opening hands during GameLoop::setup_game(),
     // ensuring identical undo_log entries and synchronized action_counts.
-    let mut game_loop = GameLoop::new(&mut game)
-        .skip_opening_hands()
-        .with_reveal_pusher(reveal_pusher);
+    //
+    // NOTE: We intentionally do NOT use .with_reveal_pusher() here. The reveal_pusher
+    // sends reveals via async channels which can arrive out of order due to tokio::select!
+    // scheduling. Instead, all reveals are sent synchronously via ChoiceRequest messages,
+    // ensuring strict ordering and preventing desync issues.
+    let _ = reveal_pusher; // Silence unused warning - kept for documentation
+    let mut game_loop = GameLoop::new(&mut game).skip_opening_hands();
 
     // Run until game ends
     let result = game_loop.run_game(&mut p1_controller, &mut p2_controller);
