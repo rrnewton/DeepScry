@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file handles ServerMessage enum from protocol.rs which has
+// many variants. The local controller wrapper handles specific message types needed
+// for game state sync and uses wildcard for unhandled messages. This is intentional.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Network-aware local controller wrapper
 //!

@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Game zones (Library, Hand, Graveyard, Battlefield, etc.)
 //!
 //! ## Library Modes (for networking)
@@ -403,7 +401,8 @@ impl PlayerZones {
             Zone::Hand => Some(&self.hand),
             Zone::Graveyard => Some(&self.graveyard),
             Zone::Exile => Some(&self.exile),
-            _ => None,
+            // Battlefield, Stack, and Command are shared zones on GameState, not per-player
+            Zone::Battlefield | Zone::Stack | Zone::Command => None,
         }
     }
 
@@ -413,7 +412,8 @@ impl PlayerZones {
             Zone::Hand => Some(&mut self.hand),
             Zone::Graveyard => Some(&mut self.graveyard),
             Zone::Exile => Some(&mut self.exile),
-            _ => None,
+            // Battlefield, Stack, and Command are shared zones on GameState, not per-player
+            Zone::Battlefield | Zone::Stack | Zone::Command => None,
         }
     }
 }

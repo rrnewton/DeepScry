@@ -1,4 +1,7 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file handles ClientMessage enum from protocol.rs which has
+// multiple variants (Authenticate, SubmitChoice, Ping, Disconnect). We explicitly match
+// the expected variant in context (e.g. Authenticate during handshake) and use wildcard
+// to reject unexpected variants with an error. This is intentional protocol handling.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! WebSocket game server for multiplayer MTG
 //!

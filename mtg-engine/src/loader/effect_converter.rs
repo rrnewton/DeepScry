@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file converts ApiType enum (50+ variants from Java Forge)
+// to Effect enum. Only a subset of API types are currently implemented - unimplemented
+// types return None, which is intentional incremental porting behavior.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Convert parsed ability parameters to Effect objects
 //!

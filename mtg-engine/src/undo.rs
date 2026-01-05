@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Undo log for efficient game tree search
 //!
 //! This module provides a transaction log of game actions that can be
@@ -573,6 +571,10 @@ impl UndoLog {
     /// - log_size_at_turn_boundary: The log buffer size at the turn boundary (for truncation)
     ///
     /// Returns None if undo log is disabled.
+    ///
+    /// Note: Wildcard is intentional for the inner match - we want to undo ALL GameAction
+    /// variants except ChangeTurn (stop point) and ChoicePoint (non-mutating).
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn rewind_to_turn_start(&mut self, game: &mut GameState) -> Option<(u32, Vec<GameAction>, usize, usize)> {
         if !self.enabled {
             return None;

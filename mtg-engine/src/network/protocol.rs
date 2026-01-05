@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file defines protocol enums (ServerMessage, ClientMessage,
+// ChoiceType) and provides display implementations that use wildcards for extensibility.
+// New protocol variants should be added here, and handlers update to match as needed.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Network protocol message types
 //!

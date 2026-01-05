@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: CardModifier enum has 24+ variants. This file extracts some
+// modifiers to top-level fields and keeps the rest in a modifiers list. Using
+// exhaustive matching here would be fragile as new modifier types are added.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Game state parsing
 //!
@@ -41,6 +43,7 @@ impl CardDefinition {
                 CardModifier::Set(ref set) => card.set_code = Some(set.clone()),
                 CardModifier::Art(art) => card.art_id = Some(art),
                 CardModifier::Id(id) => card.id = Some(id),
+                // All other modifiers are kept in the modifiers list for later processing
                 _ => card.modifiers.push(modifier),
             }
         }

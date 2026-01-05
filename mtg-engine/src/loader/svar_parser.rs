@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file parses SVars from Java Forge which have many modes
+// (CantBlockBy, Continuous, etc.). Only a subset of static ability modes are
+// currently implemented - unrecognized modes return appropriate defaults.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! SVar (Script Variable) parsing for Java Forge card format.
 //!

@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: CardModifier enum has 24+ variants (Tapped, Transformed, FaceDown,
+// Attacking, ChosenColor, etc.). Only a subset are currently implemented for puzzle
+// loading - others are skipped for forward compatibility as features are added.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Load puzzle state into a Game object
 //!

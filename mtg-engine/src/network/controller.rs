@@ -1,4 +1,6 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file handles ChoiceType enum from protocol.rs which has
+// multiple variants. Network controller processes subset of choice types and uses
+// wildcard to handle unexpected types gracefully. This is intentional protocol handling.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Network controller for remote player communication
 //!

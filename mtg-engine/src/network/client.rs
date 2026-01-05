@@ -1,4 +1,7 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// File-level allow: This file handles ServerMessage enum from protocol.rs which has
+// many variants (GameStarted, ChoiceRequest, CardRevealed, OpponentChoice, etc.).
+// We match specific variants needed in each context and use wildcard for the rest.
+// This is intentional protocol handling - unrecognized messages are logged and skipped.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! WebSocket client for multiplayer MTG
 //!

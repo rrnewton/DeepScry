@@ -23,7 +23,7 @@ wildcards have `#![allow(clippy::wildcard_enum_match_arm)]` with a
 
 ## Files with Remaining Wildcards (to be whittled away)
 
-Progress: 14 files fixed, 21 remaining with file-level allows
+Progress: 17 files fixed, all source file TODO comments removed
 
 ### Fixed (wildcards removed or justified with function-level allows):
 - [x] `core/costs.rs` - exhaustive Cost matching (7 patterns)
@@ -40,12 +40,16 @@ Progress: 14 files fixed, 21 remaining with file-level allows
 - [x] `game/actions/targeting.rs` - exhaustive Cost matching (1 pattern)
 - [x] `game/controller.rs` - exhaustive ChoiceResult matching (1 pattern)
 - [x] `game/continuous_effects.rs` - exhaustive CardType + function-level allow (5 patterns)
+- [x] `zones.rs` - exhaustive Zone matching in PlayerZones::get_zone() (2 patterns)
+- [x] `undo.rs` - function-level allow for rewind_to_turn_start() (1 pattern)
 
 ### Files with documented file-level allows (justified wildcards):
 These files handle external crate enums (crossterm KeyCode/Event/MouseEventKind 25+ variants)
-or large internal enums (Effect 24+ variants, AffectedSelector 70+ variants) where wildcards
-are intentional - only a subset of variants is handled, and unmatched variants are safely ignored.
+or large internal enums (Effect 24+ variants, AffectedSelector 70+ variants, CardModifier 24+,
+ApiType 50+, ServerMessage/ClientMessage protocol enums) where wildcards are intentional - only
+a subset of variants is handled, and unmatched variants are safely ignored or return defaults.
 
+#### Game module:
 - [x] `game/fancy_tui_controller.rs` - crossterm KeyCode/Event/MouseEventKind
 - [x] `game/fancy_tui_events.rs` - FocusedPane/Entity enums
 - [x] `game/game_loop/actions.rs` - Effect enum (24+ variants)
@@ -56,18 +60,20 @@ are intentional - only a subset of variants is handled, and unmatched variants a
 - [x] `game/state_hash.rs` - serde_json::Value enum
 - [x] `game/test_spider_suit.rs` - test file
 
-### Source files (10 remaining):
-- [ ] `loader/effect_converter.rs` (3 warnings)
-- [ ] `loader/svar_parser.rs` (1 warning)
-- [ ] `network/client.rs` (1 warning)
-- [ ] `network/controller.rs` (1 warning)
-- [ ] `network/local_controller.rs` (1 warning)
-- [ ] `network/protocol.rs` (1 warning)
-- [ ] `network/server.rs` (1 warning)
-- [ ] `puzzle/loader.rs` (1 warning)
-- [ ] `puzzle/state.rs` (2 warnings)
-- [ ] `undo.rs` (1 warning)
-- [ ] `zones.rs` (2 warnings)
+#### Loader module:
+- [x] `loader/effect_converter.rs` - ApiType enum (50+ variants, incremental porting)
+- [x] `loader/svar_parser.rs` - StaticAbilityMode enum (incremental porting)
+
+#### Network module:
+- [x] `network/client.rs` - ServerMessage enum (protocol handling)
+- [x] `network/controller.rs` - ChoiceType enum (protocol handling)
+- [x] `network/local_controller.rs` - ServerMessage enum (protocol handling)
+- [x] `network/protocol.rs` - protocol enums for extensibility
+- [x] `network/server.rs` - ClientMessage enum (protocol handling)
+
+#### Puzzle module:
+- [x] `puzzle/loader.rs` - CardModifier enum (24+ variants)
+- [x] `puzzle/state.rs` - CardModifier enum (24+ variants)
 
 ### WASM-only files (2):
 - [ ] `wasm/deck_builder.rs` (KeyCode/Entity wildcards)
