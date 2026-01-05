@@ -6,14 +6,30 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-03T04:25:19.351448151+00:00
+updated_at: 2026-01-04T16:55:22.389002562+00:00
 ---
 
 # Description
 
 Track performance optimization work for MTG Forge Rust.
 
-## Latest Optimization (2026-01-03_#1479)
+## Latest Optimization (2026-01-04_#1498)
+
+✅ **Optimize check_attack_triggers with SmallVec and fast path** - **Recovered 5.6% of 7.6% Firebending regression**
+- Added early-exit fast path: `.any()` check before any allocation
+- Use SmallVec<[TriggerData; 1]> instead of Vec for trigger collection
+- Use SmallVec<[Effect; 2]> instead of Vec for effects storage
+- Reduced card lookups from 3 to 2 (fast path: 1, slow path: 1)
+
+**Remaining ~2.5% overhead (non-Firebending decks):**
+- check_attack_triggers() called for every attacker declared
+- Even with early exit, pays: function call + card lookup + iterator scan
+- **Future optimization**: Add `has_attack_trigger_cards: bool` to GameState
+  - Set during game init when loading cards
+  - Skip check_attack_triggers() entirely if false
+  - Would eliminate all overhead for non-Firebending decks
+
+## Previous Optimization (2026-01-03_#1479)
 
 ✅ **Reduce allocations in game loop** - **15.7% allocation reduction, +1.6% throughput**
 - Guard debug_log_state_hash format!() calls with enabled check
@@ -74,9 +90,13 @@ Track performance optimization work for MTG Forge Rust.
   - Investigate RatZilla manual redraw APIs or dirty-flag pattern
   - See ai_docs/UI_ARCHITECTURE.md for current event architecture
 
+**Priority 3 (Future optimization):**
+- Add game-level `has_attack_trigger_cards` flag to eliminate remaining 2.5% overhead
+  for decks without Firebending/attack triggers
+
 **Other optimization issues:**
 - See OPTIMIZATION.md for methodology and allocation reduction patterns
 - Continue profiling with DHAT to find allocation hotspots
 - Target Vec clones in hot paths (game loop, effect resolution)
 
-Checked up-to-date as of 2026-01-03.
+Checked up-to-date as of 2026-01-04.
