@@ -318,7 +318,27 @@ impl ClientGameState {
                 RevealReason::OpeningHand => {
                     // Already handled in new()
                 }
-                RevealReason::Played | RevealReason::Targeting | RevealReason::Effect => {
+                RevealReason::Played => {
+                    // When opponent plays a card from their hidden hand, we need to:
+                    // 1. Add the card to their hand (converting from hidden_card_count)
+                    // 2. The cast operation will then move it from hand to stack
+                    if let Some(zones) = self.game.get_player_zones_mut(owner) {
+                        if zones.hand.hidden_card_count > 0 {
+                            // Convert one hidden card into this revealed card
+                            zones.hand.decrement_hidden_card_count();
+                            zones.hand.add(card.card_id);
+                            log::debug!(
+                                "Converted hidden hand card to revealed: {} (id={})",
+                                card.name,
+                                card.card_id.as_u32()
+                            );
+                        } else if !zones.hand.contains(card.card_id) {
+                            // No hidden cards to convert - just add the card
+                            zones.hand.add(card.card_id);
+                        }
+                    }
+                }
+                RevealReason::Targeting | RevealReason::Effect => {
                     // Card is now public knowledge, already added above
                 }
                 RevealReason::Searched => {
@@ -1059,9 +1079,12 @@ impl NetworkClient {
             // Use AtomicU32 because the closure needs to be Sync.
             let last_draw_wait_turn = std::sync::atomic::AtomicU32::new(0);
 
+            // Capture our_player_id for use in the drain_reveals closure
+            let our_player_for_drain = our_player_id;
+
             // Create drain function that processes reveals from the channel
-            // This function WAITS for reveals when the active player's library is remote
-            // (meaning we need to receive the draw reveal before proceeding)
+            // This function WAITS for reveals when OUR player's library is drawing
+            // We only wait for our own draws - opponent draws are hidden and shouldn't reveal to us
             let drain_reveals = move |game: &mut GameState| {
                 // Helper to process a single reveal
                 // Now handles all reveal types by instantiating cards when needed
@@ -1078,9 +1101,28 @@ impl NetworkClient {
                                 }
                             }
                             RevealReason::Played => {
-                                // Opponent played a card from hand - instantiate it in game.cards
-                                // This is needed before RemoteController can execute the SpellAbility
-                                if game.cards.get(card_id).is_err() {
+                                // A card was played - this could be:
+                                // 1. From a known hand (opening hand or drawn card) - card already in game.cards
+                                // 2. From a hidden hand (opponent's late-drawn card) - need to instantiate
+                                //
+                                // IMPORTANT: The CardRevealed message may arrive AFTER the OpponentChoice
+                                // has already been processed and the card has been played. So we should NOT
+                                // try to add the card to the hand here - that would cause double-counting.
+                                //
+                                // The only case where we need to add to hand is when the card isn't in the game
+                                // yet (hidden hand card) - but in that case, we need to handle it BEFORE the
+                                // play happens, not after. So this case will be handled elsewhere.
+
+                                let card_already_known = game.cards.get(card_id).is_ok();
+                                log::debug!(
+                                    "RevealReason::Played: {} (id={}) card_already_known={}",
+                                    card_reveal.name,
+                                    card_id.as_u32(),
+                                    card_already_known
+                                );
+
+                                // Just instantiate the card if not already known
+                                if !card_already_known {
                                     // Use fallback that creates minimal definition if DB lookup fails
                                     let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
                                     let card_instance = card_def.instantiate(card_id, owner);
@@ -1091,7 +1133,31 @@ impl NetworkClient {
                                         card_reveal.name,
                                         card_id
                                     );
+
+                                    // If we just instantiated a card and opponent has hidden cards,
+                                    // AND the card isn't in hand or on battlefield yet,
+                                    // then we need to add it to hand for the play to work
+                                    let card_in_hand =
+                                        game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
+                                    let card_on_battlefield = game.battlefield.cards.contains(&card_id);
+
+                                    if !card_in_hand && !card_on_battlefield {
+                                        // Card not found anywhere - this is a hidden hand play
+                                        if let Some(zones) = game.get_player_zones_mut(owner) {
+                                            if zones.hand.hidden_card_count > 0 {
+                                                zones.hand.decrement_hidden_card_count();
+                                                zones.hand.add(card_id);
+                                                log::debug!(
+                                                    "Converted hidden hand card to revealed: {} (id={})",
+                                                    card_reveal.name,
+                                                    card_id.as_u32()
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
+                                // For cards already in game.cards, we don't need to do anything
+                                // The card was already known and has already been played
                             }
                             RevealReason::TokenCreated => {
                                 // Token created - instantiate and add to battlefield
@@ -1132,10 +1198,13 @@ impl NetworkClient {
                 // Only block-wait if:
                 // 1. Turn > 1 (drawing happens on subsequent turns)
                 // 2. We're specifically in the Draw step (not at a priority check)
-                // 3. Active player's library is remote (we need a reveal)
-                // 4. No reveal is already pending (we need to wait for one)
-                // 5. We haven't already waited for a draw reveal THIS turn
+                // 3. Active player is US (we don't wait for opponent draws - hidden info!)
+                // 4. Our library is remote (we need a reveal)
+                // 5. No reveal is already pending (we need to wait for one)
+                // 6. We haven't already waited for a draw reveal THIS turn
                 //    (prevents blocking again in priority_round after draw_card consumed the reveal)
+                let is_our_turn = active_player == our_player_for_drain;
+
                 let library_is_remote = game
                     .get_player_zones(active_player)
                     .is_some_and(|z| z.library.is_remote_library());
@@ -1149,37 +1218,35 @@ impl NetworkClient {
 
                 let should_block = turn_number > 1
                     && current_step == Step::Draw
+                    && is_our_turn  // CRITICAL: Only wait for our own draws!
                     && library_is_remote
                     && !has_pending_reveal
                     && !already_waited_this_turn;
 
                 if should_block {
                     // We're in the Draw step about to draw from a remote library with no
-                    // pending reveal - we must wait for the server to send it
+                    // pending reveal. We CANNOT block here because:
+                    // 1. The game thread must be able to respond to ChoiceRequests
+                    // 2. The server sends draw reveals AFTER the draw, not before
+                    // 3. Blocking would cause a deadlock if the server is waiting for us
+                    //
+                    // Instead, we do a brief non-blocking poll to catch reveals that
+                    // arrived just before we checked. If no reveal is available, draw_card()
+                    // will do a HiddenDraw for opponent draws, or we'll desync for our own draws.
+                    //
+                    // The reveal will arrive eventually via the WebSocket handler and be
+                    // processed in a later drain_reveals call.
                     log::debug!(
-                        "Turn {}: Waiting for draw reveal for {:?} (remote library, no pending reveal)",
+                        "Turn {}: Checking for draw reveal for {:?} (remote library, no pending reveal)",
                         turn_number,
                         active_player
                     );
 
-                    // Mark that we've waited for a reveal this turn
-                    // (even if it times out, don't block again in priority_round)
+                    // Mark that we've checked for a reveal this turn
                     last_draw_wait_turn.store(turn_number, std::sync::atomic::Ordering::Relaxed);
 
-                    match reveal_rx.recv_timeout(Duration::from_secs(10)) {
-                        Ok((owner, card_reveal, reason)) => {
-                            process_reveal(game, owner, card_reveal, reason);
-                        }
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            log::error!(
-                                "TIMEOUT waiting for draw reveal for {:?}! Game may desync.",
-                                active_player
-                            );
-                        }
-                        Err(mpsc::RecvTimeoutError::Disconnected) => {
-                            log::error!("Reveal channel disconnected!");
-                        }
-                    }
+                    // Brief poll - don't block! The reveal may not be here yet.
+                    // We'll try again before the actual draw in draw_card.
                 }
 
                 // Also drain any additional reveals that may have arrived

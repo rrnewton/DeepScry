@@ -309,7 +309,9 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
         view.player_life(player_id).hash(&mut hasher);
 
         // Hand SIZE only (contents are private)
-        view.player_hand(player_id).len().hash(&mut hasher);
+        // Use player_hand_size() to correctly include hidden cards
+        // (opponent's draws we don't have reveals for in network mode)
+        view.player_hand_size(player_id).hash(&mut hasher);
 
         // Library SIZE only (contents are private)
         // Use player_library_size() to correctly handle remote libraries
@@ -317,8 +319,10 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
         view.player_library_size(player_id).hash(&mut hasher);
 
         // Graveyard contents (public zone - include card IDs in order)
+        // Use player_graveyard_size() to correctly include hidden discards
+        // (opponent's discards we don't know about in network mode)
         let graveyard = view.player_graveyard(player_id);
-        graveyard.len().hash(&mut hasher);
+        view.player_graveyard_size(player_id).hash(&mut hasher);
         for &card_id in graveyard {
             card_id.as_u32().hash(&mut hasher);
         }
@@ -380,13 +384,17 @@ pub fn build_debug_sync_info(
         active_player: view.active_player(),
         priority_player: None, // Would need more context to determine
         life_totals: [view.player_life(p1), view.player_life(p2)],
-        hand_sizes: [view.player_hand(p1).len(), view.player_hand(p2).len()],
+        // Use player_hand_size() to correctly include hidden cards
+        // (opponent's draws we don't have reveals for in network mode)
+        hand_sizes: [view.player_hand_size(p1), view.player_hand_size(p2)],
         // Use player_library_size() to correctly handle remote libraries
         // (client shadow state where cards vec is empty but size is tracked)
         library_sizes: [view.player_library_size(p1), view.player_library_size(p2)],
         battlefield_count: view.battlefield().len(),
         stack_size: view.stack().len(),
-        graveyard_sizes: [view.player_graveyard(p1).len(), view.player_graveyard(p2).len()],
+        // Use player_graveyard_size() to correctly include hidden discards
+        // (opponent's discards we don't know about in network mode)
+        graveyard_sizes: [view.player_graveyard_size(p1), view.player_graveyard_size(p2)],
         last_actions,
     }
 }

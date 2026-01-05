@@ -68,10 +68,20 @@ impl LibraryMode {
 
     /// Queue a revealed card for later drawing (remote mode only)
     ///
-    /// Returns false if this is a local library (no-op).
+    /// Returns false if this is a local library (no-op) or if the card is already queued.
+    /// Deduplication prevents issues when reveals are sent multiple times (e.g., from both
+    /// the immediate reveal system and NetworkController).
     pub fn queue_reveal(&mut self, card_id: CardId) -> bool {
         match self {
             LibraryMode::Remote { pending_reveals, .. } => {
+                // Check if this card is already queued to prevent duplicates
+                if pending_reveals.contains(&card_id) {
+                    log::debug!(
+                        "queue_reveal: card {:?} already in pending_reveals, skipping duplicate",
+                        card_id
+                    );
+                    return false;
+                }
                 pending_reveals.push_back(card_id);
                 true
             }
@@ -92,6 +102,14 @@ impl LibraryMode {
                 card
             }
             LibraryMode::Local => None,
+        }
+    }
+
+    /// Check if there are any pending reveals
+    pub fn has_pending_reveals(&self) -> bool {
+        match self {
+            LibraryMode::Remote { pending_reveals, .. } => !pending_reveals.is_empty(),
+            LibraryMode::Local => false,
         }
     }
 
@@ -146,6 +164,18 @@ pub struct CardZone {
     /// are revealed via the pending_reveals buffer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_mode: Option<LibraryMode>,
+
+    /// Count of hidden cards (network mode only)
+    ///
+    /// Used for opponent's hand when they draw cards we haven't received reveals for.
+    /// This allows tracking hand SIZE without knowing card IDs.
+    /// Total hand size = cards.len() + hidden_card_count
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hidden_card_count: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 impl CardZone {
@@ -155,6 +185,7 @@ impl CardZone {
             owner,
             cards: Vec::new(),
             library_mode: None,
+            hidden_card_count: 0,
         }
     }
 
@@ -168,6 +199,7 @@ impl CardZone {
             owner,
             cards: Vec::new(),
             library_mode: Some(LibraryMode::new_remote(size)),
+            hidden_card_count: 0,
         }
     }
 
@@ -200,6 +232,16 @@ impl CardZone {
             // would break determinism tests.
             self.cards.remove(pos);
             true
+        } else if self.hidden_card_count > 0 {
+            // Card not in cards vec, but we have hidden cards (network mode)
+            // This happens when a hidden card is revealed (e.g., opponent discards a card)
+            // We "remove" it by decrementing the hidden count
+            //
+            // The card was tracked as a hidden card (drawn by opponent), and now it's
+            // being moved to a public zone (like graveyard). We decrement hidden_card_count
+            // to reflect that one hidden card is leaving.
+            self.hidden_card_count -= 1;
+            true
         } else {
             false
         }
@@ -216,7 +258,8 @@ impl CardZone {
         if let Some(LibraryMode::Remote { size, .. }) = &self.library_mode {
             *size
         } else {
-            self.cards.len()
+            // Include hidden cards (used for opponent's hand in network mode)
+            self.cards.len() + self.hidden_card_count
         }
     }
 
@@ -317,6 +360,21 @@ impl CardZone {
         if let Some(ref mut mode) = self.library_mode {
             mode.decrement_size();
         }
+    }
+
+    /// Increment the hidden card count (for opponent's hidden draws in network mode)
+    ///
+    /// Used when opponent draws a card but we don't receive a reveal (hidden info).
+    /// This increments the hand SIZE without knowing the actual card ID.
+    pub fn increment_hidden_card_count(&mut self) {
+        self.hidden_card_count += 1;
+    }
+
+    /// Decrement the hidden card count (for undo or when card is revealed)
+    ///
+    /// Used when undoing a HiddenDraw action.
+    pub fn decrement_hidden_card_count(&mut self) {
+        self.hidden_card_count = self.hidden_card_count.saturating_sub(1);
     }
 }
 

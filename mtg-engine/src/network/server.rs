@@ -150,6 +150,18 @@ struct RevealBroadcast {
     to_zone: Zone,
 }
 
+/// Configuration for the reveal pusher system (bundled to reduce function arguments)
+struct RevealPusherConfig {
+    /// Channel to send immediate reveals to P1
+    p1_reveal_tx: std::sync::mpsc::Sender<Vec<RevealBroadcast>>,
+    /// Channel to send immediate reveals to P2
+    p2_reveal_tx: std::sync::mpsc::Sender<Vec<RevealBroadcast>>,
+    /// Shared index tracking how many reveals P1 has processed
+    p1_reveal_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Shared index tracking how many reveals P2 has processed
+    p2_reveal_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
 /// A SubmitChoice that arrived before the corresponding ChoiceRequest.
 /// This can happen in synchronized GameLoop mode due to timing differences.
 /// We store it and process it once the ChoiceRequest arrives.
@@ -760,11 +772,14 @@ async fn run_game(
         opening_hand_count
     );
 
-    // Create NetworkControllers and set their baseline reveal index
-    let mut p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx);
-    let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx);
-    p1_controller.set_last_reveal_index(opening_hand_count);
-    p2_controller.set_last_reveal_index(opening_hand_count);
+    // Create shared reveal indices for coordinating between NetworkControllers and reveal_pusher
+    // Initialize to opening_hand_count to skip opening hand reveals (already sent)
+    let p1_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
+    let p2_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
+
+    // Create NetworkControllers with shared reveal indices
+    let mut p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx, p1_reveal_index.clone());
+    let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx, p2_reveal_index.clone());
     p1_controller.set_network_debug(config.network_debug);
     p2_controller.set_network_debug(config.network_debug);
     // Wire up ability channels so NetworkControllers can report chosen abilities
@@ -787,6 +802,12 @@ async fn run_game(
     let game_clone = game.clone();
     let tag_gamelogs = config.tag_gamelogs;
     let verbosity = config.verbosity;
+    let reveal_config = RevealPusherConfig {
+        p1_reveal_tx: p1_immed_sync_tx,
+        p2_reveal_tx: p2_immed_sync_tx,
+        p1_reveal_index,
+        p2_reveal_index,
+    };
     let game_loop_handle = tokio::task::spawn_blocking(move || {
         run_game_loop(
             game_clone,
@@ -794,8 +815,7 @@ async fn run_game(
             p2_controller,
             tag_gamelogs,
             verbosity,
-            p1_immed_sync_tx,
-            p2_immed_sync_tx,
+            reveal_config,
         )
     });
 
@@ -912,12 +932,28 @@ async fn handle_player_websocket(
                         // Send CardRevealed messages for each reveal before the choice
                         // AND broadcast them to the opponent so they have reveals before their game loop needs them
                         if !choice_request.reveals.is_empty() {
+                            log::debug!(
+                                "Player {:?}: Processing {} reveals from ChoiceRequest",
+                                conn.player_id,
+                                choice_request.reveals.len()
+                            );
                             let game_guard = game.lock().await;
 
                             // Collect reveals to broadcast to opponent
+                            // IMPORTANT: Only broadcast reveals that the OPPONENT should see
+                            // - Opponent's own cards (they already see them)
+                            // - Cards going to public zones (visible to all)
+                            // We do NOT broadcast our own draws to hand - that's hidden info!
                             let mut reveals_to_broadcast = Vec::new();
+                            let opponent_id = PlayerId::new(1 - conn.player_id.as_u32());
 
                             for reveal_info in &choice_request.reveals {
+                                log::debug!(
+                                    "Player {:?}: Sending CardRevealed for draw: card {} to {:?}",
+                                    conn.player_id,
+                                    reveal_info.card_id.as_u32(),
+                                    reveal_info.to_zone
+                                );
                                 if let Some(card_reveal) = build_card_reveal(&game_guard, reveal_info) {
                                     let reason = zone_to_reveal_reason(reveal_info.to_zone);
                                     conn.send(&ServerMessage::CardRevealed {
@@ -926,12 +962,22 @@ async fn handle_player_websocket(
                                         reason,
                                     }).await?;
 
-                                    // Add to broadcast list
-                                    reveals_to_broadcast.push(RevealBroadcast {
-                                        owner: reveal_info.owner,
-                                        card_id: reveal_info.card_id,
-                                        to_zone: reveal_info.to_zone,
-                                    });
+                                    // Only broadcast to opponent if THEY should see it:
+                                    // - It's their card (they already know about it)
+                                    // - It's going to a public zone (visible to all)
+                                    let is_public_zone = matches!(
+                                        reveal_info.to_zone,
+                                        Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile
+                                    );
+                                    let is_opponents_card = reveal_info.owner == opponent_id;
+
+                                    if is_opponents_card || is_public_zone {
+                                        reveals_to_broadcast.push(RevealBroadcast {
+                                            owner: reveal_info.owner,
+                                            card_id: reveal_info.card_id,
+                                            to_zone: reveal_info.to_zone,
+                                        });
+                                    }
                                 }
                             }
 
@@ -1333,6 +1379,13 @@ async fn handle_player_websocket(
                             };
 
                             let reason = zone_to_reveal_reason(reveal.to_zone);
+                            log::debug!(
+                                "Player {:?}: Sending CardRevealed broadcast to client: {} (id={}) reason={:?}",
+                                conn.player_id,
+                                card.name,
+                                reveal.card_id.as_u32(),
+                                reason
+                            );
                             conn.send(&ServerMessage::CardRevealed {
                                 owner: reveal.owner,
                                 card: card_reveal,
@@ -1474,8 +1527,7 @@ fn run_game_loop(
     mut p2_controller: NetworkController,
     tag_gamelogs: bool,
     verbosity: crate::game::VerbosityLevel,
-    p1_immed_reveal_tx: std::sync::mpsc::Sender<Vec<RevealBroadcast>>,
-    p2_immed_reveal_tx: std::sync::mpsc::Sender<Vec<RevealBroadcast>>,
+    reveal_config: RevealPusherConfig,
 ) -> Result<GameResult> {
     // Take ownership of game for the game loop
     let mut game = {
@@ -1494,20 +1546,28 @@ fn run_game_loop(
         game.undo_log.len()
     );
 
-    // Track where we last collected reveals (to avoid re-sending)
-    // Initialize to 14 to skip the opening hand draws that will be done by setup_game.
-    // Both players draw 7 cards = 14 MoveCard entries that we don't need to re-reveal
-    // (they were already revealed during the GameStarted handshake).
-    let opening_hand_draws = 14;
-    let last_reveal_index = std::sync::atomic::AtomicUsize::new(opening_hand_draws);
+    // Extract reveal config fields for use in closure
+    let p1_immed_reveal_tx = reveal_config.p1_reveal_tx;
+    let p2_immed_reveal_tx = reveal_config.p2_reveal_tx;
+    let p1_reveal_index = reveal_config.p1_reveal_index;
+    let p2_reveal_index = reveal_config.p2_reveal_index;
 
-    // Create reveal pusher that sends reveals immediately after automatic actions
+    // Create immediate reveal pusher that sends reveals after automatic actions (spell effects, etc.)
+    // This is necessary for spell/ability effects that draw cards - clients need reveals BEFORE
+    // their shadow GameLoop tries to draw, but the ChoiceRequest won't be sent until after resolution.
+    //
+    // The pusher coordinates with NetworkControllers via shared reveal indices to prevent duplicates.
+    // Both systems read/write the same AtomicUsize, so whichever runs first "claims" the reveals.
     let reveal_pusher = move |game_state: &GameState, _acting_player: PlayerId| {
         let current_len = game_state.undo_log.len();
-        let last_idx = last_reveal_index.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Read current indices - get whichever is lower (less revealed so far)
+        let p1_idx = p1_reveal_index.load(std::sync::atomic::Ordering::Acquire);
+        let p2_idx = p2_reveal_index.load(std::sync::atomic::Ordering::Acquire);
+        let last_idx = p1_idx.min(p2_idx);
 
         if current_len <= last_idx {
-            return; // No new actions
+            return; // No new actions since last reveal
         }
 
         // Collect reveals from new undo log entries
@@ -1529,29 +1589,42 @@ fn run_game_loop(
                     to_zone: *to_zone,
                 };
 
-                // BOTH players need ALL reveals to keep their shadow states in sync.
-                // Even if P2 draws a card, P1 needs to know about it to update their
-                // shadow game state's view of P2's library/hand counts.
-                // Cards going to:
-                // - Hand: Player needs to know what they drew, opponent needs to track zone count
-                // - Public zones (battlefield, graveyard, stack, exile): All players see
-                //
-                // We send ALL library-to-other-zone moves to BOTH players for synchronization.
-                p1_reveals.push(reveal.clone());
-                p2_reveals.push(reveal);
+                // Information-safe reveal rules:
+                // - Owner always sees their own cards going anywhere
+                // - Both players see cards going to public zones
+                // - Opponent NEVER sees cards going to opponent's hand (hidden info)
+                let is_public = matches!(to_zone, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
+
+                // P1 sees: their own cards OR public zone movements
+                if owner.as_u32() == 0 || is_public {
+                    p1_reveals.push(reveal.clone());
+                }
+
+                // P2 sees: their own cards OR public zone movements
+                if owner.as_u32() == 1 || is_public {
+                    p2_reveals.push(reveal);
+                }
             }
         }
 
-        // Update last index
-        last_reveal_index.store(current_len, std::sync::atomic::Ordering::Relaxed);
+        // NOTE: We intentionally DON'T update shared indices here. The NetworkController's
+        // collect_reveals_since_last_choice will also collect these reveals and send them
+        // with the ChoiceRequest. This ensures reveals arrive WITH the ChoiceRequest (synchronously)
+        // rather than via async channel (which can be slow).
+        //
+        // The immediate reveal system is kept as a backup for spell effects where reveals
+        // need to arrive quickly, but the NetworkController is the primary delivery mechanism
+        // for draw reveals.
+        //
+        // If both systems send the same reveal, the client handles duplicates gracefully.
 
-        // Send reveals to handlers
+        // Send reveals to handlers (best-effort, may arrive before or after ChoiceRequest)
         if !p1_reveals.is_empty() {
-            log::debug!("Immediate reveal pusher: {} reveals for P1", p1_reveals.len());
+            log::debug!("Immediate reveal pusher: {} reveals for P1 (backup)", p1_reveals.len());
             let _ = p1_immed_reveal_tx.send(p1_reveals);
         }
         if !p2_reveals.is_empty() {
-            log::debug!("Immediate reveal pusher: {} reveals for P2", p2_reveals.len());
+            log::debug!("Immediate reveal pusher: {} reveals for P2 (backup)", p2_reveals.len());
             let _ = p2_immed_reveal_tx.send(p2_reveals);
         }
     };

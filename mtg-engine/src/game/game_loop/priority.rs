@@ -36,6 +36,9 @@ impl<'a> GameLoop<'a> {
             return Err(crate::MtgError::EntityNotFound(spell_id.as_u32()));
         }
 
+        // Get spell owner (needed for push_reveals even without logging)
+        let spell_owner = self.game.cards.get(spell_id).unwrap().owner; // Safe: checked above
+
         // Get card info for logging ONLY when logging is enabled
         // This avoids String allocation and effects clone in Silent mode
         let (card_name, card_effects, card_owner) = if should_log {
@@ -54,6 +57,15 @@ impl<'a> GameLoop<'a> {
 
         // Resolve the spell (this modifies effects with target replacement)
         self.game.resolve_spell(spell_id, &targets)?;
+
+        // Push reveals after spell resolution for network mode (server-side)
+        // Spells can draw cards (e.g., "draw 3 cards", "target player draws 3"),
+        // and network clients need the card IDs before their shadow GameLoop draws.
+        // Push for both players since spells can target either player for draws.
+        self.push_reveals(spell_owner);
+        if let Some(opponent) = self.game.get_other_player_id(spell_owner) {
+            self.push_reveals(opponent);
+        }
 
         // Log effects for instants/sorceries (only when verbose logging is enabled)
         // Note: We need to manually replace placeholder targets for logging
@@ -325,6 +337,12 @@ impl<'a> GameLoop<'a> {
                     let view = GameStateView::new(self.game, current_priority);
                     let choice_result = controller.choose_spell_ability_to_play(&view, &available);
                     let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
+
+                    // IMPORTANT: Drain reveals after receiving opponent choice (network mode)
+                    // During wait_for_choice(), reveals may have arrived via WebSocket for cards
+                    // that the opponent is about to play. We need to process those reveals NOW
+                    // before the game tries to act on the choice (e.g., cast a spell from hand).
+                    self.drain_reveals();
 
                     // Log this choice point for snapshot/replay
                     let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
@@ -1041,6 +1059,13 @@ impl<'a> GameLoop<'a> {
                                                 eprintln!("    Failed to execute effect: {e}");
                                             }
                                         }
+                                    }
+
+                                    // Push reveals after ability effects for network mode (server-side)
+                                    // Abilities can draw cards, and clients need the card IDs before drawing
+                                    self.push_reveals(current_priority);
+                                    if let Some(opponent) = self.game.get_other_player_id(current_priority) {
+                                        self.push_reveals(opponent);
                                     }
 
                                     // Check state-based actions after effects resolve (MTG Rules 704.3)

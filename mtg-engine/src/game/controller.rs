@@ -483,6 +483,20 @@ impl<'a> GameStateView<'a> {
             .unwrap_or(&[])
     }
 
+    /// Get a player's hand SIZE (including hidden cards in network mode)
+    ///
+    /// This is used for network hash computation where we need the total
+    /// hand size including hidden cards drawn by opponents.
+    ///
+    /// Unlike `player_hand().len()`, this uses `CardZone::len()` which
+    /// includes the `hidden_card_count` for opponent's hidden draws.
+    pub fn player_hand_size(&self, player_id: PlayerId) -> usize {
+        self.game
+            .get_player_zones(player_id)
+            .map(|zones| zones.hand.len())
+            .unwrap_or(0)
+    }
+
     /// Get cards on the battlefield
     pub fn battlefield(&self) -> &[CardId] {
         &self.game.battlefield.cards
@@ -502,6 +516,17 @@ impl<'a> GameStateView<'a> {
             .get_player_zones(player_id)
             .map(|zones| zones.graveyard.cards.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Get number of cards in a player's graveyard (includes hidden cards in network mode)
+    ///
+    /// This uses `CardZone::len()` which includes `hidden_card_count` for proper
+    /// network synchronization when opponent discards cards we don't know about.
+    pub fn player_graveyard_size(&self, player_id: PlayerId) -> usize {
+        self.game
+            .get_player_zones(player_id)
+            .map(|zones| zones.graveyard.len())
+            .unwrap_or(0)
     }
 
     /// Get cards in a specific player's library

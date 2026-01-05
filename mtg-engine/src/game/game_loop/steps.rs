@@ -155,6 +155,13 @@ impl<'a> GameLoop<'a> {
                 .check_triggers_for_controller(trigger_event, card_id, active_player)?;
         }
 
+        // Push reveals after phase triggers for network mode (server-side)
+        // Triggered abilities can draw cards, and clients need the card IDs
+        self.push_reveals(active_player);
+        if let Some(opponent) = self.game.get_other_player_id(active_player) {
+            self.push_reveals(opponent);
+        }
+
         Ok(())
     }
 
@@ -298,11 +305,12 @@ impl<'a> GameLoop<'a> {
 
         // Process active player first, then non-active player
         for &player_id in &[active_player, non_active_player] {
-            let hand_size = self
+            // Use hand.len() which includes hidden_card_count (for network mode)
+            let (hand_size, hidden_cards) = self
                 .game
                 .get_player_zones(player_id)
-                .map(|z| z.hand.cards.len())
-                .unwrap_or(0);
+                .map(|z| (z.hand.len(), z.hand.hidden_card_count))
+                .unwrap_or((0, 0));
 
             let max_hand_size = self.game.get_player(player_id)?.max_hand_size;
 
@@ -353,15 +361,21 @@ impl<'a> GameLoop<'a> {
                 let replay_choice = crate::game::ReplayChoice::Discard(cards_to_discard.clone());
                 self.log_choice_point(player_id, Some(replay_choice), prior_log_size);
 
-                // Verify correct number of cards
-                if cards_to_discard.len() != discard_count {
+                // Handle hidden cards (network mode: opponent's hand is hidden)
+                // If controller returned fewer cards than required, the remaining
+                // must be hidden cards we don't know about
+                let known_discards = cards_to_discard.len();
+                let hidden_discards_needed = discard_count.saturating_sub(known_discards);
+
+                // Verify we can fulfill the discard requirement
+                if known_discards + hidden_cards < discard_count {
                     return Err(crate::MtgError::InvalidAction(format!(
-                        "Must discard exactly {discard_count} cards, got {}",
-                        cards_to_discard.len()
+                        "Must discard exactly {discard_count} cards, got {} known + {} hidden",
+                        known_discards, hidden_cards
                     )));
                 }
 
-                // Move cards to graveyard
+                // Move known cards to graveyard
                 for card_id in cards_to_discard {
                     // Verify card is in hand before moving
                     if let Some(zones) = self.game.get_player_zones(player_id) {
@@ -391,6 +405,17 @@ impl<'a> GameLoop<'a> {
                             .unwrap_or("Unknown"),
                         card_id
                     );
+                }
+
+                // Handle hidden discards (network mode)
+                for _ in 0..hidden_discards_needed {
+                    if !self.game.discard_hidden(player_id) {
+                        return Err(crate::MtgError::InvalidAction(format!(
+                            "Failed to discard hidden card for player {}",
+                            player_id.as_u32()
+                        )));
+                    }
+                    log_if_verbose!(self, "{} discards a hidden card", self.get_player_name(player_id));
                 }
             }
         }

@@ -13,7 +13,9 @@ use crate::network::protocol::ChoiceType;
 use crate::undo::GameAction;
 use crate::zones::Zone;
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 /// Message sent from NetworkController to WebSocket handler after a priority choice
 /// This allows the handler to include the actual ability in OpponentChoice
@@ -143,11 +145,10 @@ pub struct NetworkController {
     response_rx: mpsc::Receiver<ChoiceResponse>,
     /// Current choice sequence number
     choice_seq: u32,
-    /// The index into the undo_log where we last sent reveals.
+    /// Shared index into the undo_log where reveals were last sent.
+    /// This is shared with the immediate reveal pusher to prevent duplicate reveals.
     /// Initialized to the number of opening hand draw actions (14 for 7+7).
-    /// This prevents re-sending opening hand reveals that were already sent
-    /// during the GameStarted handshake phase.
-    last_reveal_index: usize,
+    shared_reveal_index: Arc<AtomicUsize>,
     /// Network debug mode - include debug info in choice requests
     network_debug: bool,
     /// Channel to send the chosen ability back to WebSocket handler
@@ -156,30 +157,32 @@ pub struct NetworkController {
 }
 
 impl NetworkController {
-    /// Create a new network controller
+    /// Create a new network controller with a shared reveal index
+    ///
+    /// The `shared_reveal_index` is shared with the immediate reveal pusher hook
+    /// to ensure both systems track the same position and don't send duplicate reveals.
     pub fn new(
         player_id: PlayerId,
         request_tx: mpsc::Sender<ChoiceRequest>,
         response_rx: mpsc::Receiver<ChoiceResponse>,
+        shared_reveal_index: Arc<AtomicUsize>,
     ) -> Self {
         NetworkController {
             player_id,
             request_tx,
             response_rx,
             choice_seq: 0,
-            last_reveal_index: 0, // Will be set by set_last_reveal_index
+            shared_reveal_index,
             network_debug: false,
             ability_tx: None,
         }
     }
 
-    /// Set the baseline reveal index
+    /// Get the shared reveal index for the immediate reveal pusher
     ///
-    /// This should be called after opening hands are dealt but before the game loop starts.
-    /// It tells the controller to skip reveals for actions before this index, since they
-    /// were already sent during the GameStarted handshake.
-    pub fn set_last_reveal_index(&mut self, index: usize) {
-        self.last_reveal_index = index;
+    /// This allows the reveal pusher hook to share the same tracking index.
+    pub fn shared_reveal_index(&self) -> Arc<AtomicUsize> {
+        self.shared_reveal_index.clone()
     }
 
     /// Set the channel for sending chosen abilities back to WebSocket handler
@@ -200,22 +203,40 @@ impl NetworkController {
     /// Send a choice request and wait for response
     ///
     /// This also collects any card reveals since this player's last choice
-    /// and includes them in the request.
-    ///
-    /// NOTE: Reveals are now handled by the immediate reveal system (reveal_pusher)
-    /// which sends reveals directly after automatic actions like draws.
-    /// We no longer collect reveals here to avoid duplicates.
+    /// and includes them in the request, ensuring reveals arrive before the client's
+    /// shadow GameLoop needs them (eliminates race conditions with immediate reveals).
     fn request_choice(
-        &self,
+        &mut self,
         view: &GameStateView,
         choice_type: ChoiceType,
         options: Vec<String>,
         state_hash: u64,
     ) -> Result<Vec<usize>, NetworkError> {
-        // Reveals are now sent by the immediate reveal system (reveal_pusher hook)
-        // to ensure clients receive them before their GameLoop needs them.
-        // We don't collect them here anymore to avoid duplicate CardRevealed messages.
-        let reveals = Vec::new();
+        // Collect reveals since this player's last choice and include them in the request.
+        // This ensures reveals are sent BEFORE the ChoiceRequest arrives, eliminating
+        // race conditions where the client's shadow GameLoop needs reveals before they arrive.
+        //
+        // The immediate reveal system (reveal_pusher) coordinates with us via shared_reveal_index
+        // to ensure each reveal is only sent once (either here or by the pusher, not both).
+        let reveals = self.collect_reveals_since_last_choice(view);
+
+        if !reveals.is_empty() {
+            log::debug!(
+                "NetworkController {:?}: collected {} reveals for ChoiceRequest (action_count={})",
+                self.player_id,
+                reveals.len(),
+                view.action_count()
+            );
+            for reveal in &reveals {
+                log::debug!(
+                    "  Reveal: card {:?} from {:?} to {:?} (owner {:?})",
+                    reveal.card_id,
+                    reveal.from_zone,
+                    reveal.to_zone,
+                    reveal.owner
+                );
+            }
+        }
 
         // Get action count from GameState undo log for synchronization
         let action_count = view.action_count() as u64;
@@ -337,19 +358,23 @@ impl NetworkController {
     /// Scans the undo log backwards from the current position until we find
     /// a `ChoicePoint` for this player, or until we reach `last_reveal_index`
     /// (actions before that were already sent during handshake).
-    /// Returns all `MoveCard` actions from Library that this player should see.
+    /// Returns `MoveCard` actions from Library that this player should see.
     ///
     /// A player sees a reveal if:
-    /// - They own the card (e.g., their own draw)
+    /// - They own the card (e.g., their own draw to hand)
     /// - The card moved to a public zone (battlefield, graveyard, stack, exile)
     ///
-    /// NOTE: Currently unused - reveals are now handled by the immediate reveal system.
-    /// Kept for potential future use with non-draw reveals.
-    #[allow(dead_code)]
-    fn collect_reveals_since_last_choice(&self, view: &GameStateView) -> Vec<CardRevealInfo> {
+    /// We do NOT reveal opponent's draws to hand - that would leak hidden information.
+    ///
+    /// Called by request_choice to bundle reveals with the ChoiceRequest.
+    /// Uses the shared_reveal_index to coordinate with the immediate reveal pusher.
+    fn collect_reveals_since_last_choice(&mut self, view: &GameStateView) -> Vec<CardRevealInfo> {
         let actions = view.undo_log_actions();
         let mut reveals = Vec::new();
         let total_actions = actions.len();
+
+        // Read the shared index - this may have been updated by the immediate reveal pusher
+        let last_reveal_index = self.shared_reveal_index.load(Ordering::Acquire);
 
         // Scan backwards from the end of the log, but stop at last_reveal_index
         for (rev_idx, action) in actions.iter().rev().enumerate() {
@@ -357,7 +382,7 @@ impl NetworkController {
             let forward_idx = total_actions.saturating_sub(rev_idx + 1);
 
             // Stop if we've reached actions that were already handled
-            if forward_idx < self.last_reveal_index {
+            if forward_idx < last_reveal_index {
                 break;
             }
 
@@ -366,16 +391,17 @@ impl NetworkController {
                 GameAction::ChoicePoint { player_id, .. } if *player_id == self.player_id => {
                     break;
                 }
-                // Collect card moves from library
+                // Collect card moves from library for THIS player only
+                // A player sees a reveal if:
+                // - They own the card (their own draw to hand)
+                // - The card moved to a public zone (battlefield, graveyard, stack, exile)
+                // We do NOT reveal opponent's draws to hand - that's hidden information
                 GameAction::MoveCard {
                     card_id,
                     from_zone: Zone::Library,
                     to_zone,
                     owner,
                 } => {
-                    // Player sees reveal if:
-                    // 1. They own the card (their draw)
-                    // 2. Card went to a public zone (all players see)
                     let is_public_zone =
                         matches!(to_zone, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
                     let is_own_card = *owner == self.player_id;
@@ -391,6 +417,14 @@ impl NetworkController {
                 }
                 _ => {}
             }
+        }
+
+        // Update shared index to current position after collecting reveals
+        // This tracks our progress through the undo log for reveal collection.
+        // The immediate reveal pusher runs in parallel but doesn't update the index,
+        // so reveals may be sent twice (once via pusher, once here) - client handles duplicates.
+        if !reveals.is_empty() {
+            self.shared_reveal_index.store(total_actions, Ordering::Release);
         }
 
         // Reverse to get chronological order
@@ -904,8 +938,9 @@ mod tests {
     fn test_network_controller_creation() {
         let (request_tx, _request_rx) = mpsc::channel();
         let (_response_tx, response_rx) = mpsc::channel();
+        let shared_reveal_index = Arc::new(AtomicUsize::new(0));
 
-        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx, shared_reveal_index);
 
         assert_eq!(controller.player_id(), PlayerId::new(1));
         assert_eq!(controller.choice_seq, 0);
@@ -915,8 +950,9 @@ mod tests {
     fn test_choice_request_response() {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
+        let shared_reveal_index = Arc::new(AtomicUsize::new(0));
 
-        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx, shared_reveal_index);
 
         // Create a test game state and view
         let game = create_test_game_state();
@@ -949,8 +985,9 @@ mod tests {
     fn test_sequence_mismatch_error() {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
+        let shared_reveal_index = Arc::new(AtomicUsize::new(0));
 
-        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx, shared_reveal_index);
 
         // Create a test game state and view
         let game = create_test_game_state();
@@ -984,8 +1021,9 @@ mod tests {
     fn test_invalid_choice_clamped() {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
+        let shared_reveal_index = Arc::new(AtomicUsize::new(0));
 
-        let controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx);
+        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx, shared_reveal_index);
 
         // Create a test game state and view
         let game = create_test_game_state();

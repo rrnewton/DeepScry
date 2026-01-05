@@ -737,14 +737,20 @@ impl GameState {
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<Option<CardId>> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             // Debug: check if library is in remote mode
+            let is_remote = zones.library.is_remote_library();
+            let pending_reveals = zones.library.pending_reveals_count();
+            let lib_size = zones.library.len();
             log::debug!(
                 "draw_card: player {} library is_remote={}, pending_reveals={}, cards_len={}",
                 player_id.as_u32(),
-                zones.library.is_remote_library(),
-                zones.library.pending_reveals_count(),
-                zones.library.len()
+                is_remote,
+                pending_reveals,
+                lib_size
             );
+
+            // Try to draw from the library
             if let Some(card_id) = zones.library.draw_top() {
+                // Normal draw with known card ID
                 zones.hand.add(card_id);
 
                 // Log the card movement for undo with prior log size
@@ -760,9 +766,58 @@ impl GameState {
                 );
 
                 return Ok(Some(card_id));
+            } else if is_remote && lib_size > 0 {
+                // Remote library has cards but no pending reveal - this is a hidden draw
+                // (opponent drawing a card, we don't know what card it is)
+                //
+                // We still need to:
+                // 1. Decrement library size
+                // 2. Increment hand's hidden_card_count
+                // 3. Log HiddenDraw action to keep action_count in sync
+                zones.library.decrement_size();
+                zones.hand.increment_hidden_card_count();
+
+                let prior_log_size = self.logger.log_count();
+                self.undo_log
+                    .log(crate::undo::GameAction::HiddenDraw { player_id }, prior_log_size);
+
+                log::debug!(
+                    "draw_card: player {} hidden draw (no reveal, opponent's card)",
+                    player_id.as_u32()
+                );
+
+                // Return None since we don't know the card ID
+                return Ok(None);
             }
         }
         Ok(None)
+    }
+
+    /// Discard a hidden card (network client-side only)
+    ///
+    /// Used when opponent discards a card but we don't know what card it is.
+    /// This decrements hand's hidden_card_count and increments graveyard's hidden_card_count.
+    ///
+    /// Returns true if successful, false if no hidden cards to discard.
+    pub fn discard_hidden(&mut self, player_id: PlayerId) -> bool {
+        if let Some(zones) = self.get_player_zones_mut(player_id) {
+            if zones.hand.hidden_card_count > 0 {
+                zones.hand.decrement_hidden_card_count();
+                zones.graveyard.increment_hidden_card_count();
+
+                let prior_log_size = self.logger.log_count();
+                self.undo_log
+                    .log(crate::undo::GameAction::HiddenDiscard { player_id }, prior_log_size);
+
+                log::debug!(
+                    "discard_hidden: player {} hidden discard (opponent's card)",
+                    player_id.as_u32()
+                );
+
+                return true;
+            }
+        }
+        false
     }
 
     /// Mill cards from library to graveyard (used by mill effects)
@@ -1639,6 +1694,31 @@ impl GameState {
                 }
                 crate::undo::GameAction::ChoicePoint { .. } => {
                     // Choice points don't need to be undone
+                }
+                crate::undo::GameAction::HiddenDraw { player_id } => {
+                    // Undo hidden draw: decrement hand's hidden_card_count and increment library size
+                    // This is only used in client shadow states, never on server
+                    //
+                    // When draw happened: library.decrement_size(), hand.increment_hidden_card_count()
+                    // To undo: hand.decrement_hidden_card_count(), library.increment_size()
+                    if let Some(zones) = self.get_player_zones_mut(player_id) {
+                        zones.hand.decrement_hidden_card_count();
+                        if let Some(ref mut mode) = zones.library.library_mode {
+                            mode.increment_size();
+                        }
+                    }
+                }
+
+                crate::undo::GameAction::HiddenDiscard { player_id } => {
+                    // Undo hidden discard: increment hand's hidden_card_count and decrement graveyard
+                    // This is only used in client shadow states, never on server
+                    //
+                    // When discard happened: hand.decrement_hidden_card_count(), graveyard.increment_hidden_card_count()
+                    // To undo: hand.increment_hidden_card_count(), graveyard.decrement_hidden_card_count()
+                    if let Some(zones) = self.get_player_zones_mut(player_id) {
+                        zones.hand.increment_hidden_card_count();
+                        zones.graveyard.decrement_hidden_card_count();
+                    }
                 }
             }
 
