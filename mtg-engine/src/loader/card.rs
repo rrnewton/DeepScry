@@ -1780,9 +1780,10 @@ impl CardDefinition {
             // Parse attack triggers (Mode$ Attacks)
             // Example: T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ ...
             if mode == Some("Attacks") && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self") {
-                use crate::core::{Effect, PlayerId};
+                use crate::core::{Cost, Effect, PlayerId};
 
                 let mut effects = Vec::new();
+                let mut trigger_cost: Option<Cost> = None;
 
                 // Check if we have Execute$ parameter (references a SVar with effects)
                 if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
@@ -1792,6 +1793,17 @@ impl CardDefinition {
                             // Parse the SVar body
                             if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
                             {
+                                // Extract Cost$ parameter if present (for optional triggers)
+                                // Example: "Cost$ Sac<1/Artifact.Other;Creature.Other/...>"
+                                for param in body.split('|') {
+                                    let param = param.trim();
+                                    if let Some((key, value)) = param.split_once('$') {
+                                        if key.trim() == "Cost" {
+                                            trigger_cost = Cost::parse(value.trim());
+                                        }
+                                    }
+                                }
+
                                 // Parse AB$ Draw effects (draw cards on attack)
                                 // Example: "AB$ Draw | Cost$ Sac<...> | SubAbility$ DBPutCounter"
                                 if body.contains("AB$ Draw") || body.contains("DB$ Draw") {
@@ -1813,9 +1825,53 @@ impl CardDefinition {
                                     });
                                 }
 
-                                // Parse DB$ PutCounter effects (put counters on attack)
-                                // Example: "DB$ PutCounter | CounterType$ P1P1 | CounterNum$ 1"
-                                if body.contains("DB$ PutCounter") {
+                                // Parse SubAbility$ to follow chains (e.g., DBPutCounter)
+                                let mut sub_ability_ref: Option<String> = None;
+                                for param in body.split('|') {
+                                    let param = param.trim();
+                                    if let Some((key, value)) = param.split_once('$') {
+                                        if key.trim() == "SubAbility" {
+                                            sub_ability_ref = Some(value.trim().to_string());
+                                        }
+                                    }
+                                }
+
+                                // If there's a SubAbility, look it up and parse it
+                                if let Some(sub_ref) = sub_ability_ref {
+                                    for sub_ab in &self.raw_abilities {
+                                        if sub_ab.starts_with(&format!("SVar:{}:", sub_ref)) {
+                                            if let Some((_, sub_body)) =
+                                                sub_ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                                            {
+                                                // Parse DB$ PutCounter from SubAbility
+                                                if sub_body.contains("DB$ PutCounter") {
+                                                    let mut counter_num = 1u8;
+                                                    for param in sub_body.split('|') {
+                                                        let param = param.trim();
+                                                        if let Some((key, value)) = param.split_once('$') {
+                                                            if key.trim() == "CounterNum" {
+                                                                if let Ok(n) = value.trim().parse::<u8>() {
+                                                                    counter_num = n;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    effects.push(Effect::PutCounter {
+                                                        target: CardId::new(0), // Placeholder - self
+                                                        counter_type: crate::core::CounterType::P1P1,
+                                                        amount: counter_num,
+                                                    });
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Parse DB$ PutCounter effects directly in body (for simpler cards)
+                                if body.contains("DB$ PutCounter")
+                                    && !effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }))
+                                {
                                     let mut counter_num = 1u8;
                                     for param in body.split('|') {
                                         let param = param.trim();
@@ -1883,7 +1939,22 @@ impl CardDefinition {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Whenever this creature attacks".to_string());
 
-                triggers.push(Trigger::new(TriggerEvent::Attacks, effects, description));
+                // Check if trigger is optional (has "you may" in description or OptionalDecider$)
+                let is_optional =
+                    description.to_lowercase().contains("you may") || params.contains_key("OptionalDecider");
+
+                // Create appropriate trigger type based on optional and cost
+                let trigger = if is_optional {
+                    if let Some(cost) = trigger_cost {
+                        Trigger::new_optional_with_cost(TriggerEvent::Attacks, effects, description, cost)
+                    } else {
+                        Trigger::new_optional(TriggerEvent::Attacks, effects, description)
+                    }
+                } else {
+                    Trigger::new(TriggerEvent::Attacks, effects, description)
+                };
+
+                triggers.push(trigger);
             }
         }
 
@@ -3123,5 +3194,89 @@ Oracle:Whenever this creature attacks, put a +1/+1 counter on it.
         // Verify it has a PutCounter effect
         let has_put_counter = trigger.effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }));
         assert!(has_put_counter, "Trigger should have PutCounter effect");
+    }
+
+    #[test]
+    fn test_parse_optional_attack_trigger_with_sacrifice_cost() {
+        use crate::core::{Cost, Effect, TriggerEvent};
+
+        // Test Beetle-Headed Merchants style trigger:
+        // "Whenever this creature attacks, you may sacrifice another creature or artifact.
+        //  If you do, draw a card and put a +1/+1 counter on this creature."
+        let content = r#"
+Name:Beetle-Headed Merchants
+ManaCost:4 B
+Types:Creature Human Citizen
+PT:5/4
+T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ Whenever this creature attacks, you may sacrifice another creature or artifact. If you do, draw a card and put a +1/+1 counter on this creature.
+SVar:TrigDraw:AB$ Draw | Cost$ Sac<1/Artifact.Other;Creature.Other/another creature or artifact> | SubAbility$ DBPutCounter
+SVar:DBPutCounter:DB$ PutCounter | CounterType$ P1P1 | CounterNum$ 1
+Oracle:Whenever this creature attacks, you may sacrifice another creature or artifact. If you do, draw a card and put a +1/+1 counter on this creature.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the attack trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::Attacks);
+
+        // Verify it's marked as optional (because of "you may" in description)
+        assert!(
+            trigger.optional,
+            "Trigger should be optional due to 'you may' in description"
+        );
+
+        // Verify it has a sacrifice cost
+        assert!(trigger.cost.is_some(), "Trigger should have a sacrifice cost");
+        if let Some(ref cost) = trigger.cost {
+            assert!(cost.requires_sacrifice(), "Cost should require sacrifice");
+            // Verify it's a SacrificePattern cost
+            if let Cost::SacrificePattern { count, card_type } = cost {
+                assert_eq!(*count, 1, "Should sacrifice 1 permanent");
+                assert!(
+                    card_type.contains("Artifact") || card_type.contains("Creature"),
+                    "Card type should include Artifact or Creature"
+                );
+            }
+        }
+
+        // Verify it has both Draw and PutCounter effects
+        let has_draw = trigger.effects.iter().any(|e| matches!(e, Effect::DrawCards { .. }));
+        let has_put_counter = trigger.effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }));
+        assert!(has_draw, "Trigger should have DrawCards effect");
+        assert!(has_put_counter, "Trigger should have PutCounter effect");
+    }
+
+    #[test]
+    fn test_parse_non_optional_attack_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Test a mandatory attack trigger (no "you may")
+        let content = r#"
+Name:Mandatory Attack Trigger
+ManaCost:2 R
+Types:Creature Warrior
+PT:3/2
+T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigDamage | TriggerDescription$ Whenever this creature attacks, it deals 1 damage to each opponent.
+SVar:TrigDamage:DB$ DealDamage | NumDmg$ 1
+Oracle:Whenever this creature attacks, it deals 1 damage to each opponent.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::Attacks);
+
+        // Verify it's NOT optional (no "you may")
+        assert!(!trigger.optional, "Trigger should NOT be optional - it's mandatory");
+
+        // Verify it has no cost
+        assert!(trigger.cost.is_none(), "Mandatory trigger should have no cost");
     }
 }

@@ -563,6 +563,16 @@ pub struct Trigger {
     /// (e.g., "When this creature enters" only fires for this specific creature)
     /// If false, triggers for any card matching the event (e.g., "When any creature enters")
     pub trigger_self_only: bool,
+
+    /// If true, the player may choose whether to use this triggered ability
+    /// (e.g., "you may sacrifice a creature" - player can decline)
+    /// If false, the trigger is mandatory
+    pub optional: bool,
+
+    /// Cost that must be paid to execute the trigger effects (for optional triggers)
+    /// e.g., sacrificing a permanent, paying life, paying mana
+    /// If None, the trigger has no additional cost beyond being optional
+    pub cost: Option<super::Cost>,
 }
 
 impl Trigger {
@@ -574,6 +584,8 @@ impl Trigger {
             effects,
             description,
             trigger_self_only: true, // Default: only fire for this card
+            optional: false,         // Default: mandatory trigger
+            cost: None,              // Default: no additional cost
         }
     }
 
@@ -584,6 +596,39 @@ impl Trigger {
             effects,
             description,
             trigger_self_only: false,
+            optional: false,
+            cost: None,
+        }
+    }
+
+    /// Create an optional trigger with a cost
+    /// Used for "you may [cost]. If you do, [effect]" abilities
+    pub fn new_optional_with_cost(
+        event: TriggerEvent,
+        effects: Vec<Effect>,
+        description: String,
+        cost: super::Cost,
+    ) -> Self {
+        Trigger {
+            event,
+            effects,
+            description,
+            trigger_self_only: true,
+            optional: true,
+            cost: Some(cost),
+        }
+    }
+
+    /// Create an optional trigger without a cost
+    /// Used for "you may [effect]" abilities
+    pub fn new_optional(event: TriggerEvent, effects: Vec<Effect>, description: String) -> Self {
+        Trigger {
+            event,
+            effects,
+            description,
+            trigger_self_only: true,
+            optional: true,
+            cost: None,
         }
     }
 }

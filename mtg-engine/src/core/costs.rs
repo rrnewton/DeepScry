@@ -312,6 +312,23 @@ impl Cost {
             | Cost::Discard { .. } => None,
         }
     }
+
+    /// Get the sacrifice pattern if this is a SacrificePattern cost
+    /// Returns (count, card_type) where card_type is the pattern string
+    pub fn get_sacrifice_pattern(&self) -> Option<(u8, &str)> {
+        match self {
+            Cost::SacrificePattern { count, card_type } => Some((*count, card_type.as_str())),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_sacrifice_pattern()),
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::Waterbend { .. } => None,
+        }
+    }
 }
 
 #[cfg(test)]

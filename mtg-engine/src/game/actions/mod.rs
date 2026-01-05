@@ -1767,9 +1767,77 @@ impl GameState {
     }
 
     /// Check for triggered abilities and execute them
+    /// Check if a sacrifice pattern cost can be paid by the given player.
+    /// Returns true if the player has enough valid permanents to sacrifice.
+    ///
+    /// Sacrifice patterns are strings like:
+    /// - "Artifact.Other" - an artifact other than the source
+    /// - "Creature.Other" - a creature other than the source
+    /// - "Artifact.Other;Creature.Other" - an artifact or creature other than the source
+    pub fn can_pay_sacrifice_pattern(
+        &self,
+        pattern: &str,
+        count: u8,
+        source_card_id: CardId,
+        player_id: PlayerId,
+    ) -> bool {
+        // Parse the pattern - it can be multiple options separated by semicolons
+        // e.g., "Artifact.Other;Creature.Other" means artifact OR creature
+        let patterns: Vec<&str> = pattern.split(';').collect();
+
+        // Count valid sacrifice targets
+        let valid_targets: usize = self
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&card_id| {
+                if let Ok(card) = self.cards.get(card_id) {
+                    // Must be controlled by the player
+                    if card.controller != player_id {
+                        return false;
+                    }
+
+                    // Check each pattern option (OR logic)
+                    for p in &patterns {
+                        let mut matches = false;
+
+                        // Check card type
+                        if p.contains("Artifact") && card.is_artifact() {
+                            matches = true;
+                        }
+                        if p.contains("Creature") && card.is_creature() {
+                            matches = true;
+                        }
+                        if p.contains("Land") && card.is_land() {
+                            matches = true;
+                        }
+
+                        // Check "Other" modifier - can't sacrifice self
+                        if p.contains(".Other") && card_id == source_card_id {
+                            matches = false;
+                        }
+
+                        if matches {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .count();
+
+        valid_targets >= count as usize
+    }
+
     ///
     /// This checks all permanents on the battlefield for triggers matching the given event.
     /// When triggers are found, their effects are executed immediately (for now).
+    ///
+    /// Optional triggers with costs (e.g., "you may sacrifice...") are skipped if:
+    /// - The cost cannot be paid (auto-decline)
+    ///
+    /// If the cost CAN be paid, the trigger fires (AI auto-accepts for now).
+    /// TODO: Add player choice for optional triggers when the cost is payable.
     ///
     /// TODO: In full MTG rules, triggers should go on the stack and wait for priority,
     /// but for simplicity we're executing them immediately.
@@ -1778,38 +1846,88 @@ impl GameState {
     /// target resolution; others execute as-is.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
-        // Collect all triggered effects to execute (without holding a borrow on self.cards)
-        let triggered_effects: Vec<(CardId, Vec<Effect>)> = self
+        use crate::core::Trigger;
+
+        // Info needed to check trigger payability
+        struct TriggerInfo {
+            card_id: CardId,
+            card_name: String,
+            controller: PlayerId,
+            trigger: Trigger,
+        }
+
+        // Phase 1: Collect matching triggers with their metadata
+        let candidate_triggers: Vec<TriggerInfo> = self
             .battlefield
             .cards
             .iter()
             .filter_map(|&card_id| {
                 if let Ok(card) = self.cards.get(card_id) {
+                    let controller = card.controller;
+                    let card_name = card.name.clone();
+
                     // Find triggers matching this event
-                    // For trigger_self_only triggers, only fire if this card is the source
-                    let matching_triggers: Vec<Effect> = card
+                    let triggers: Vec<TriggerInfo> = card
                         .triggers
                         .iter()
                         .filter(|trigger| {
                             trigger.event == event && (!trigger.trigger_self_only || card_id == source_card_id)
                         })
-                        .flat_map(|trigger| trigger.effects.clone())
+                        .map(|trigger| TriggerInfo {
+                            card_id,
+                            card_name: card_name.to_string(),
+                            controller,
+                            trigger: trigger.clone(),
+                        })
                         .collect();
 
-                    if !matching_triggers.is_empty() {
-                        log::debug!(
-                            "Found {} triggers on card {} ({})",
-                            matching_triggers.len(),
-                            card_id.as_u32(),
-                            card.name
-                        );
-                        for effect in &matching_triggers {
-                            log::debug!("  Trigger effect: {:?}", effect);
-                        }
-                        Some((card_id, matching_triggers))
-                    } else {
+                    if triggers.is_empty() {
                         None
+                    } else {
+                        Some(triggers)
                     }
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+
+        // Phase 2: Filter by cost payability and collect effects
+        let triggered_effects: Vec<(CardId, Vec<Effect>)> = candidate_triggers
+            .into_iter()
+            .filter_map(|info| {
+                // For optional triggers with costs, check payability
+                if info.trigger.optional {
+                    if let Some(ref cost) = info.trigger.cost {
+                        // Check if sacrifice cost can be paid
+                        if let Some((count, pattern)) = cost.get_sacrifice_pattern() {
+                            if !self.can_pay_sacrifice_pattern(pattern, count, info.card_id, info.controller) {
+                                log::debug!(
+                                    "Skipping optional trigger on {} - sacrifice cost not payable (need {} {})",
+                                    info.card_name,
+                                    count,
+                                    pattern
+                                );
+                                return None; // Auto-decline if can't pay
+                            }
+                        }
+                        // TODO: Check other cost types (mana, life, etc.)
+                    }
+                }
+
+                // Trigger passes all checks - collect effects
+                if !info.trigger.effects.is_empty() {
+                    log::debug!(
+                        "Found {} triggers on card {} ({})",
+                        info.trigger.effects.len(),
+                        info.card_id.as_u32(),
+                        info.card_name
+                    );
+                    for effect in &info.trigger.effects {
+                        log::debug!("  Trigger effect: {:?}", effect);
+                    }
+                    Some((info.card_id, info.trigger.effects))
                 } else {
                     None
                 }
