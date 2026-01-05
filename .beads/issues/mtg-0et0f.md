@@ -23,21 +23,21 @@ wildcards have `#![allow(clippy::wildcard_enum_match_arm)]` with a
 
 ## Files with Remaining Wildcards (to be whittled away)
 
-Progress: 4 files fixed, 31 remaining with file-level allows
+Progress: 10 files fixed, 25 remaining with file-level allows
 
 ### Fixed (wildcards removed or justified with function-level allows):
 - [x] `core/costs.rs` - exhaustive Cost matching (7 patterns)
 - [x] `game/actions/mod.rs` - exhaustive patterns + function-level allows for triggers (7 patterns)
 - [x] `game/state.rs` - exhaustive Zone matching + function-level allow for undo (7 patterns)
 - [x] `loader/card.rs` - converted test wildcards to `let...else` pattern (5 patterns)
+- [x] `core/card.rs` - exhaustive CardType matching (1 pattern)
+- [x] `core/persistent_effect.rs` - exhaustive CleanupCondition matching (3 patterns)
+- [x] `core/types.rs` - function-level allow for CounterType::power_toughness_mod() (1 pattern)
+- [x] `core/delayed_trigger.rs` - exhaustive DelayedTriggerCondition matching (1 pattern)
+- [x] `core/effects.rs` - converted test wildcards to `let...else` pattern (3 patterns)
+- [x] `core/keyword_set.rs` - converted test wildcard to `let...else` pattern (1 pattern)
 
-### Source files (25 remaining):
-- [ ] `core/card.rs` (5 warnings)
-- [ ] `core/delayed_trigger.rs` (2 warnings)
-- [ ] `core/effects.rs` (1 warning)
-- [ ] `core/keyword_set.rs` (1 warning)
-- [ ] `core/persistent_effect.rs` (4 warnings)
-- [ ] `core/types.rs` (4 warnings)
+### Source files (19 remaining):
 - [ ] `deck_builder/native.rs` (1 warning)
 - [ ] `game/actions/targeting.rs` (1 warning)
 - [ ] `game/controller.rs` (1 warning)

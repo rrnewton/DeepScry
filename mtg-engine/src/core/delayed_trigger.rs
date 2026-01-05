@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Delayed trigger infrastructure for effects that fire on future events.
 //!
 //! Delayed triggers are created by effects and fire when specific conditions are met:
@@ -94,7 +92,7 @@ impl DelayedTrigger {
                 let to_matches = to_zones.is_empty() || to_zones.contains(&to_zone);
                 from_matches && to_matches
             }
-            _ => false,
+            DelayedTriggerCondition::Phase { .. } | DelayedTriggerCondition::LastCounterRemoved { .. } => false,
         }
     }
 }

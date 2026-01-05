@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Card types and definitions
 
 use crate::core::{
@@ -670,7 +668,10 @@ impl Card {
             }
             CardType::Creature => self.cache.is_creature = true,
             CardType::Artifact => self.cache.is_artifact = true,
-            _ => {}
+            CardType::Instant => self.cache.is_instant = true,
+            CardType::Sorcery => self.cache.is_sorcery = true,
+            CardType::Enchantment => self.cache.is_enchantment = true,
+            CardType::Planeswalker => {} // No cache flag for Planeswalker yet
         }
     }
 

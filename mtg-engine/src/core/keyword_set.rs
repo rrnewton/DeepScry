@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Efficient keyword storage using enumset with strongly-typed arguments
 //!
 //! This module provides the `KeywordSet` abstraction that stores keywords efficiently:
@@ -1033,13 +1031,11 @@ mod tests {
         assert!(set.contains(Keyword::Madness));
 
         let args = set.get_args(Keyword::Madness).unwrap();
-        match args {
-            KeywordArgs::Madness { cost } => {
-                assert_eq!(cost.generic, 1);
-                assert_eq!(cost.red, 1);
-            }
-            _ => panic!("Wrong args type"),
-        }
+        let KeywordArgs::Madness { cost } = args else {
+            panic!("Wrong args type: expected Madness, got {args:?}");
+        };
+        assert_eq!(cost.generic, 1);
+        assert_eq!(cost.red, 1);
     }
 
     #[test]

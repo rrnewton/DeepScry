@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Strongly-typed wrappers for game concepts
 //!
 //! This module provides newtypes to prevent type confusion and make the code
@@ -788,6 +786,10 @@ impl CounterType {
 
     /// Get the power/toughness modification amount (if applicable)
     /// Returns (power_mod, toughness_mod)
+    ///
+    /// Note: Wildcard is intentional here - only P/T counter types (13 of 200+)
+    /// have modifiers. All other counter types (Charge, Loyalty, etc.) return None.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn power_toughness_mod(&self) -> Option<(i32, i32)> {
         match self {
             CounterType::M1M1 => Some((-1, -1)),

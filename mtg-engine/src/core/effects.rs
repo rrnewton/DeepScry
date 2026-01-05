@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Card effects and ability system
 
 use crate::core::{CardId, PlayerId};
@@ -1352,37 +1350,31 @@ mod tests {
             amount: 3,
         };
 
-        match damage_effect {
-            Effect::DealDamage { target, amount } => {
-                assert_eq!(amount, 3);
-                assert_eq!(target, TargetRef::Player(player_id));
-            }
-            _ => panic!("Wrong effect type"),
-        }
+        let Effect::DealDamage { target, amount } = damage_effect else {
+            panic!("Wrong effect type: expected DealDamage, got {damage_effect:?}");
+        };
+        assert_eq!(amount, 3);
+        assert_eq!(target, TargetRef::Player(player_id));
 
         let draw_effect = Effect::DrawCards {
             player: player_id,
             count: 2,
         };
 
-        match draw_effect {
-            Effect::DrawCards { player, count } => {
-                assert_eq!(player, player_id);
-                assert_eq!(count, 2);
-            }
-            _ => panic!("Wrong effect type"),
-        }
+        let Effect::DrawCards { player, count } = draw_effect else {
+            panic!("Wrong effect type: expected DrawCards, got {draw_effect:?}");
+        };
+        assert_eq!(player, player_id);
+        assert_eq!(count, 2);
 
         let destroy_effect = Effect::DestroyPermanent {
             target: card_id,
             restriction: TargetRestriction::any(),
         };
 
-        match destroy_effect {
-            Effect::DestroyPermanent { target, .. } => {
-                assert_eq!(target, card_id);
-            }
-            _ => panic!("Wrong effect type"),
-        }
+        let Effect::DestroyPermanent { target, .. } = destroy_effect else {
+            panic!("Wrong effect type: expected DestroyPermanent, got {destroy_effect:?}");
+        };
+        assert_eq!(target, card_id);
     }
 }

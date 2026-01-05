@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Persistent effects system for tracking long-lived game effects.
 //!
 //! # Design Rationale: Why NOT the Command Zone
@@ -284,7 +282,7 @@ impl PersistentEffectStore {
             CleanupCondition::Any(conditions) => conditions
                 .iter()
                 .any(|c| Self::should_cleanup_on_zone_change(c, card_id, from_zone)),
-            _ => false,
+            CleanupCondition::TrackedCardIsCast { .. } | CleanupCondition::EndOfTurn | CleanupCondition::Never => false,
         }
     }
 
@@ -304,7 +302,10 @@ impl PersistentEffectStore {
         match condition {
             CleanupCondition::TrackedCardIsCast { card } => *card == card_id,
             CleanupCondition::Any(conditions) => conditions.iter().any(|c| Self::should_cleanup_on_cast(c, card_id)),
-            _ => false,
+            CleanupCondition::TrackedCardLeavesZone { .. }
+            | CleanupCondition::SourceLeavesBattlefield { .. }
+            | CleanupCondition::EndOfTurn
+            | CleanupCondition::Never => false,
         }
     }
 
@@ -324,7 +325,10 @@ impl PersistentEffectStore {
         match condition {
             CleanupCondition::EndOfTurn => true,
             CleanupCondition::Any(conditions) => conditions.iter().any(Self::should_cleanup_at_eot),
-            _ => false,
+            CleanupCondition::TrackedCardLeavesZone { .. }
+            | CleanupCondition::SourceLeavesBattlefield { .. }
+            | CleanupCondition::TrackedCardIsCast { .. }
+            | CleanupCondition::Never => false,
         }
     }
 
