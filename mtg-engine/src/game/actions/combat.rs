@@ -5,7 +5,7 @@
 //! - Declaring blockers (with flying/reach restrictions)
 //! - Assigning and dealing combat damage (with first strike, trample, lifelink, deathtouch)
 
-use crate::core::{CardId, Keyword, PlayerId};
+use crate::core::{CardId, Keyword, PlayerId, TriggerEvent};
 use crate::game::state::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
@@ -94,6 +94,10 @@ impl GameState {
             // Use helper that handles tap + undo log + mana version
             self.tap_permanent(card_id)?;
         }
+
+        // Check for attack triggers (MTG Rules 508.1m)
+        // "Whenever this creature attacks" triggers fire after attackers are declared
+        self.check_triggers(TriggerEvent::Attacks, card_id)?;
 
         Ok(())
     }

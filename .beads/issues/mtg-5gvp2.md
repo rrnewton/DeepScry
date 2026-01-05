@@ -1,44 +1,56 @@
 ---
 title: Attack triggers (T:Mode$ Attacks) not firing
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-01-05T21:16:53.606707469+00:00
-updated_at: 2026-01-05T21:16:53.606707469+00:00
+updated_at: 2026-01-05T21:34:59.578271405+00:00
 ---
 
 # Description
 
+## Attack triggers (T:Mode$ Attacks) now firing
+
 ## Summary
 
-Attack triggers (T:Mode$ Attacks | ValidCard$ Card.Self) are defined but never fire when creatures attack. Similar to mtg-ijo2m (SpellCast triggers).
+Attack triggers (`Mode$ Attacks`) were defined but never fired when creatures attacked. Similar to mtg-ijo2m (SpellCast triggers).
 
-## Evidence
+## Fix Applied
 
-grep shows TriggerEvent::Attacks is defined but check_triggers is never called with it:
-- TriggerEvent::Attacks exists in effects.rs:539
-- declare_attacker() in actions/combat.rs doesn't call check_triggers
+### 1. Added `check_triggers()` call in `declare_attacker()`
 
-## Currently Implemented Triggers
-
-Only these trigger types actually fire:
-1. EntersBattlefield - called in actions/mod.rs:205
-2. BeginningOfUpkeep - called in steps.rs:155
-
-## Affected Cards (ryan_avatar_draft)
-
-- Beetle-Headed Merchants: "Whenever this creature attacks, you may sacrifice..."
-- Any card with attack triggers
-
-## Fix
-
-Add to declare_attacker() in actions/combat.rs:
+In `mtg-engine/src/game/actions/combat.rs`:
 ```rust
-// After declaring attacker, check for attack triggers
+// Check for attack triggers (MTG Rules 508.1m)
+// "Whenever this creature attacks" triggers fire after attackers are declared
 self.check_triggers(TriggerEvent::Attacks, card_id)?;
 ```
 
+### 2. Added `Mode$ Attacks` parsing in `parse_triggers()`
+
+In `mtg-engine/src/loader/card.rs`, added support for parsing attack triggers from card definitions:
+- Parses `T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ ...` lines
+- Supports DB$ Draw, DB$ PutCounter, DB$ GainLife, DB$ DealDamage effects
+
+## Evidence
+
+Debug log shows Beetle-Headed Merchants attack trigger firing:
+```
+Found 1 triggers on card 3 (Beetle-Headed Merchants)
+  Trigger effect: DrawCards { player: 0, count: 1 }
+AI-Heuristic1 declares Beetle-Headed Merchants (3) (5/4) as attacker
+  Trigger: Beetle-Headed Merchants - Whenever this creature attacks...
+```
+
+## Tests Added
+
+- `test_parse_attack_trigger` - verifies basic attack trigger parsing
+- `test_parse_attack_trigger_with_put_counter` - verifies PutCounter effect parsing
+
+## Limitations
+
+The current implementation captures basic effects (DrawCards, PutCounter, etc.) but does not handle complex costs like "may sacrifice" in Beetle-Headed Merchants. That would require implementing optional triggered abilities with costs (mtg-ijo2m scope).
+
 ## Related Issues
 
-- mtg-ijo2m: SpellCast triggers not implemented
-- Should consider implementing ALL missing trigger types systematically
+- mtg-ijo2m: SpellCast triggers not implemented (similar pattern)

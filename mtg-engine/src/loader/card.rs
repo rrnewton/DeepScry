@@ -1776,6 +1776,115 @@ impl CardDefinition {
                     triggers.push(Trigger::new(event, effects, desc_with_flag));
                 }
             }
+
+            // Parse attack triggers (Mode$ Attacks)
+            // Example: T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ ...
+            if mode == Some("Attacks") && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self") {
+                use crate::core::{Effect, PlayerId};
+
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
+                    // Look up the SVar that Execute$ references
+                    for ab in &self.raw_abilities {
+                        if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
+                            // Parse the SVar body
+                            if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                            {
+                                // Parse AB$ Draw effects (draw cards on attack)
+                                // Example: "AB$ Draw | Cost$ Sac<...> | SubAbility$ DBPutCounter"
+                                if body.contains("AB$ Draw") || body.contains("DB$ Draw") {
+                                    // Check for NumCards parameter
+                                    let mut draw_count = 1u8;
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            if key.trim() == "NumCards" {
+                                                if let Ok(n) = value.trim().parse::<u8>() {
+                                                    draw_count = n;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    effects.push(Effect::DrawCards {
+                                        player: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                        count: draw_count,
+                                    });
+                                }
+
+                                // Parse DB$ PutCounter effects (put counters on attack)
+                                // Example: "DB$ PutCounter | CounterType$ P1P1 | CounterNum$ 1"
+                                if body.contains("DB$ PutCounter") {
+                                    let mut counter_num = 1u8;
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            if key.trim() == "CounterNum" {
+                                                if let Ok(n) = value.trim().parse::<u8>() {
+                                                    counter_num = n;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    effects.push(Effect::PutCounter {
+                                        target: CardId::new(0), // Placeholder - self
+                                        counter_type: crate::core::CounterType::P1P1,
+                                        amount: counter_num,
+                                    });
+                                }
+
+                                // Parse DB$ GainLife effects
+                                if body.contains("DB$ GainLife") {
+                                    let mut life_amount = 1i32;
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            if key.trim() == "LifeAmount" {
+                                                if let Ok(amt) = value.trim().parse::<i32>() {
+                                                    life_amount = amt;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    effects.push(Effect::GainLife {
+                                        player: PlayerId::new(0),
+                                        amount: life_amount,
+                                    });
+                                }
+
+                                // Parse DB$ DealDamage effects
+                                if body.contains("DB$ DealDamage") {
+                                    let mut damage_amount = 1i32;
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            if key.trim() == "NumDmg" {
+                                                if let Ok(amt) = value.trim().parse::<i32>() {
+                                                    damage_amount = amt;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    effects.push(Effect::DealDamage {
+                                        target: TargetRef::None, // Will need targeting
+                                        amount: damage_amount,
+                                    });
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever this creature attacks".to_string());
+
+                triggers.push(Trigger::new(TriggerEvent::Attacks, effects, description));
+            }
         }
 
         triggers
@@ -2952,5 +3061,67 @@ Oracle:Each player has hexproof.
             }
         });
         assert!(has_player_selector, "Should have GrantKeyword with Player selector");
+    }
+
+    #[test]
+    fn test_parse_attack_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Test parsing Mode$ Attacks triggers (like Beetle-Headed Merchants)
+        let content = r#"
+Name:Test Attack Trigger Creature
+ManaCost:4 B
+Types:Creature Human Citizen
+PT:5/4
+T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ Whenever this creature attacks, draw a card.
+SVar:TrigDraw:DB$ Draw | NumCards$ 1
+Oracle:Whenever this creature attacks, draw a card.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the attack trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(
+            trigger.event,
+            TriggerEvent::Attacks,
+            "Trigger should be on attacks event"
+        );
+        assert!(
+            trigger.description.contains("attacks"),
+            "Description should mention attacks"
+        );
+    }
+
+    #[test]
+    fn test_parse_attack_trigger_with_put_counter() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Test attack trigger that puts counters (similar to Beetle-Headed Merchants' effect)
+        let content = r#"
+Name:Test Counter on Attack
+ManaCost:3 G
+Types:Creature Beast
+PT:3/3
+T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigPutCounter | TriggerDescription$ Whenever this creature attacks, put a +1/+1 counter on it.
+SVar:TrigPutCounter:DB$ PutCounter | CounterType$ P1P1 | CounterNum$ 1
+Oracle:Whenever this creature attacks, put a +1/+1 counter on it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the attack trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::Attacks);
+
+        // Verify it has a PutCounter effect
+        let has_put_counter = trigger.effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }));
+        assert!(has_put_counter, "Trigger should have PutCounter effect");
     }
 }
