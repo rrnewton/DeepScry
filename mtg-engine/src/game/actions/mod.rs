@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Game actions and mechanics
 
 use crate::core::{CardId, CardType, Effect, PlayerId, TargetRef, TriggerEvent};
@@ -771,7 +769,12 @@ impl GameState {
     /// - `target_index`: Mutable index tracking which target to consume next
     /// - `card_owner`: The controller of the spell (for "you" player references)
     /// - `opponent_id`: Pre-computed opponent ID for untargeted damage effects
+    ///
+    /// Note: Wildcard match is intentional - effects without placeholder targets
+    /// are returned unchanged. New Effect variants should be reviewed for target
+    /// resolution needs.
     #[inline]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_effect_target(
         &self,
         effect: &Effect,
@@ -1770,6 +1773,10 @@ impl GameState {
     ///
     /// TODO: In full MTG rules, triggers should go on the stack and wait for priority,
     /// but for simplicity we're executing them immediately.
+    ///
+    /// Note: Wildcard match is intentional - only specific effects need placeholder
+    /// target resolution; others execute as-is.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
         // Collect all triggered effects to execute (without holding a borrow on self.cards)
         let triggered_effects: Vec<(CardId, Vec<Effect>)> = self
@@ -2019,6 +2026,10 @@ impl GameState {
     /// This is used by phase triggers where we've already determined which cards
     /// should trigger based on the active player (controller_only filtering).
     /// Accepts the active player for proper trigger filtering.
+    ///
+    /// Note: Wildcard matches are intentional - only specific effects need placeholder
+    /// resolution or formatted logging; others pass through unchanged.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers_for_controller(
         &mut self,
         event: TriggerEvent,
@@ -2153,6 +2164,10 @@ impl GameState {
     /// MTG Rules 603.6c: Triggered abilities look back in time to determine if
     /// the event occurred. Death triggers trigger when a creature moves from
     /// battlefield to graveyard.
+    ///
+    /// Note: Wildcard match is intentional - only AddMana effects need player
+    /// resolution; others execute as-is.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_death_triggers(&mut self, dying_card_id: CardId) -> Result<()> {
         // Get the card's triggers and controller while it's still on battlefield
         let (effects_to_execute, controller): (Vec<Effect>, PlayerId) = {
@@ -2242,6 +2257,10 @@ impl GameState {
     /// triggers like Firebending, which add combat mana.
     ///
     /// MTG Rules 508.1m: Abilities that trigger on declaring attackers go on the stack.
+    ///
+    /// Note: Wildcard match is intentional - only AddMana/Firebend effects need player
+    /// resolution; others execute as-is.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_attack_triggers(&mut self, attacker_id: CardId, _active_player: PlayerId) -> Result<()> {
         use smallvec::SmallVec;
 
@@ -2601,8 +2620,14 @@ impl GameState {
                             }
                         }
                     }
-                    _ => {
-                        // Other costs not handled yet (mana, life, etc.)
+                    // Other costs not yet handled by mana abilities:
+                    Cost::Untap
+                    | Cost::Mana(_)
+                    | Cost::TapAndMana(_)
+                    | Cost::PayLife { .. }
+                    | Cost::Discard { .. }
+                    | Cost::Waterbend { .. } => {
+                        // These cost types aren't currently used in mana ability costs
                     }
                 }
             }

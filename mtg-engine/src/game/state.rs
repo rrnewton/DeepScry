@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Main game state structure
 
 use crate::core::{
@@ -511,7 +509,7 @@ impl GameState {
         let removed = match from {
             Zone::Battlefield => self.battlefield.remove(card_id),
             Zone::Stack => self.stack.remove(card_id),
-            _ => {
+            Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
                 if let Some(zones) = self.get_player_zones_mut(owner) {
                     if let Some(zone) = zones.get_zone_mut(from) {
                         zone.remove(card_id)
@@ -534,7 +532,7 @@ impl GameState {
         match to {
             Zone::Battlefield => self.battlefield.add(card_id),
             Zone::Stack => self.stack.add(card_id),
-            _ => {
+            Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
                 if let Some(zones) = self.get_player_zones_mut(owner) {
                     if let Some(zone) = zones.get_zone_mut(to) {
                         zone.add(card_id);
@@ -1110,6 +1108,10 @@ impl GameState {
     /// - choice_log_size: the log size to truncate to (from the ChoicePoint)
     ///
     /// Returns Ok(None) if no ChoicePoint for the specified player is found.
+    ///
+    /// Note: Wildcard matches are intentional - we match ChoicePoint specially,
+    /// then handle all other GameAction variants through detailed inner matching.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
         // Debug: Log initial state
         log::debug!(
@@ -1433,7 +1435,7 @@ impl GameState {
                     let removed = match to_zone {
                         Zone::Battlefield => self.battlefield.remove(card_id),
                         Zone::Stack => self.stack.remove(card_id),
-                        _ => {
+                        Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
                             if let Some(zones) = self.get_player_zones_mut(owner) {
                                 if let Some(zone) = zones.get_zone_mut(to_zone) {
                                     zone.remove(card_id)
@@ -1472,7 +1474,7 @@ impl GameState {
                         match from_zone {
                             Zone::Battlefield => self.battlefield.add(card_id),
                             Zone::Stack => self.stack.add(card_id),
-                            _ => {
+                            Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
                                 if let Some(zones) = self.get_player_zones_mut(owner) {
                                     if let Some(zone) = zones.get_zone_mut(from_zone) {
                                         zone.add(card_id);

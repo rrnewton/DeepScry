@@ -1,3 +1,5 @@
+// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+#![allow(clippy::wildcard_enum_match_arm)]
 //! WASM Deck Builder - RatZilla-based TUI rendering for browser
 //!
 //! This module provides the deck builder TUI experience in the browser using RatZilla.

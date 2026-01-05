@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Cost system for activated abilities
 //!
 //! Represents the various costs players can pay to activate abilities,
@@ -103,7 +101,15 @@ impl Cost {
                 } else if let Some(parsed) = Self::parse_single(&comp) {
                     match parsed {
                         Cost::Mana(_) => mana_parts.push(comp),
-                        _ => costs.push(parsed),
+                        Cost::Tap
+                        | Cost::Untap
+                        | Cost::TapAndMana(_)
+                        | Cost::Sacrifice { .. }
+                        | Cost::SacrificePattern { .. }
+                        | Cost::PayLife { .. }
+                        | Cost::Discard { .. }
+                        | Cost::Composite(_)
+                        | Cost::Waterbend { .. } => costs.push(parsed),
                     }
                 } else {
                     // Might be mana symbol
@@ -221,7 +227,13 @@ impl Cost {
         match self {
             Cost::Tap | Cost::TapAndMana(_) => true,
             Cost::Composite(costs) => costs.iter().any(|c| c.includes_tap()),
-            _ => false,
+            Cost::Untap
+            | Cost::Mana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::Waterbend { .. } => false,
         }
     }
 
@@ -230,7 +242,12 @@ impl Cost {
         match self {
             Cost::Mana(_) | Cost::TapAndMana(_) | Cost::Waterbend { .. } => true,
             Cost::Composite(costs) => costs.iter().any(|c| c.includes_mana()),
-            _ => false,
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. } => false,
         }
     }
 
@@ -239,7 +256,13 @@ impl Cost {
         match self {
             Cost::Mana(mana) | Cost::TapAndMana(mana) => Some(mana),
             Cost::Composite(costs) => costs.iter().find_map(|c| c.get_mana_cost()),
-            _ => None,
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::Waterbend { .. } => None,
         }
     }
 
@@ -248,7 +271,14 @@ impl Cost {
         match self {
             Cost::PayLife { amount } => Some(*amount),
             Cost::Composite(costs) => costs.iter().find_map(|c| c.get_life_cost()),
-            _ => None,
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::Discard { .. }
+            | Cost::Waterbend { .. } => None,
         }
     }
 
@@ -257,7 +287,13 @@ impl Cost {
         match self {
             Cost::Sacrifice { .. } | Cost::SacrificePattern { .. } => true,
             Cost::Composite(costs) => costs.iter().any(|c| c.requires_sacrifice()),
-            _ => false,
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::Waterbend { .. } => false,
         }
     }
 
@@ -266,7 +302,14 @@ impl Cost {
         match self {
             Cost::Waterbend { amount } => Some(*amount),
             Cost::Composite(costs) => costs.iter().find_map(|c| c.get_waterbend_amount()),
-            _ => None,
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. } => None,
         }
     }
 }
@@ -286,13 +329,11 @@ mod tests {
     #[test]
     fn test_parse_tap_and_mana() {
         let cost = Cost::parse("2 T").unwrap();
-        match &cost {
-            Cost::TapAndMana(mana) => {
-                assert_eq!(mana.generic, 2);
-                assert!(mana.white == 0);
-            }
-            _ => panic!("Expected TapAndMana cost"),
-        }
+        let Cost::TapAndMana(mana) = &cost else {
+            panic!("Expected TapAndMana cost, got {cost:?}");
+        };
+        assert_eq!(mana.generic, 2);
+        assert!(mana.white == 0);
         assert!(cost.includes_tap());
         assert!(cost.includes_mana());
     }
@@ -300,24 +341,20 @@ mod tests {
     #[test]
     fn test_parse_colored_mana_tap() {
         let cost = Cost::parse("1 R T").unwrap();
-        match &cost {
-            Cost::TapAndMana(mana) => {
-                assert_eq!(mana.generic, 1);
-                assert_eq!(mana.red, 1);
-            }
-            _ => panic!("Expected TapAndMana cost"),
-        }
+        let Cost::TapAndMana(mana) = &cost else {
+            panic!("Expected TapAndMana cost, got {cost:?}");
+        };
+        assert_eq!(mana.generic, 1);
+        assert_eq!(mana.red, 1);
     }
 
     #[test]
     fn test_parse_pure_mana() {
         let cost = Cost::parse("3").unwrap();
-        match &cost {
-            Cost::Mana(mana) => {
-                assert_eq!(mana.generic, 3);
-            }
-            _ => panic!("Expected Mana cost"),
-        }
+        let Cost::Mana(mana) = &cost else {
+            panic!("Expected Mana cost, got {cost:?}");
+        };
+        assert_eq!(mana.generic, 3);
         assert!(!cost.includes_tap());
         assert!(cost.includes_mana());
     }
@@ -331,38 +368,32 @@ mod tests {
     #[test]
     fn test_parse_sacrifice_land() {
         let cost = Cost::parse("Sac<1/Land>").unwrap();
-        match cost {
-            Cost::SacrificePattern { count, card_type } => {
-                assert_eq!(count, 1);
-                assert_eq!(card_type, "Land");
-            }
-            _ => panic!("Expected SacrificePattern cost"),
-        }
+        let Cost::SacrificePattern { count, card_type } = cost else {
+            panic!("Expected SacrificePattern cost, got {cost:?}");
+        };
+        assert_eq!(count, 1);
+        assert_eq!(card_type, "Land");
     }
 
     #[test]
     fn test_parse_sacrifice_creature_other() {
         let cost = Cost::parse("Sac<1/Creature.Other>").unwrap();
-        match cost {
-            Cost::SacrificePattern { count, card_type } => {
-                assert_eq!(count, 1);
-                assert_eq!(card_type, "Creature.Other");
-            }
-            _ => panic!("Expected SacrificePattern cost"),
-        }
+        let Cost::SacrificePattern { count, card_type } = cost else {
+            panic!("Expected SacrificePattern cost, got {cost:?}");
+        };
+        assert_eq!(count, 1);
+        assert_eq!(card_type, "Creature.Other");
     }
 
     #[test]
     fn test_parse_composite_tap_sac() {
         let cost = Cost::parse("T Sac<1/Creature.Other>").unwrap();
-        match cost {
-            Cost::Composite(costs) => {
-                assert_eq!(costs.len(), 2);
-                assert!(matches!(costs[0], Cost::SacrificePattern { .. }) || matches!(costs[0], Cost::Tap));
-                assert!(matches!(costs[1], Cost::SacrificePattern { .. }) || matches!(costs[1], Cost::Tap));
-            }
-            _ => panic!("Expected Composite cost, got {cost:?}"),
-        }
+        let Cost::Composite(costs) = cost else {
+            panic!("Expected Composite cost, got {cost:?}");
+        };
+        assert_eq!(costs.len(), 2);
+        assert!(matches!(costs[0], Cost::SacrificePattern { .. }) || matches!(costs[0], Cost::Tap));
+        assert!(matches!(costs[1], Cost::SacrificePattern { .. }) || matches!(costs[1], Cost::Tap));
     }
 
     #[test]
