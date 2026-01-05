@@ -276,14 +276,12 @@ pub fn network_get_pending_reveals_json() -> String {
             .drain_reveals()
             .iter()
             .map(|(owner, card, reason)| {
+                // CardReveal now only contains card_id and name
+                // The WASM client should look up full card info from its local DB
                 serde_json::json!({
                     "owner": owner.as_u32(),
                     "card_id": card.card_id.as_u32(),
                     "name": card.name,
-                    "mana_cost": card.mana_cost,
-                    "type_line": card.type_line,
-                    "text": card.text,
-                    "pt": card.pt,
                     "reason": format!("{:?}", reason),
                 })
             })

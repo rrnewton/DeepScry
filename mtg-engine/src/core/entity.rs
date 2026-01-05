@@ -191,11 +191,17 @@ where
         EntityId::new(self.entities.len() as u32)
     }
 
-    /// Insert an entity with a specific ID
+    /// Insert an entity with a specific ID (write-once)
     ///
     /// IDs can be sparse (not sequential) since they come from a global counter
     /// shared with other entity types. The Vec is extended with None entries
     /// as needed to accommodate the ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot is already occupied. EntityStore is write-once:
+    /// entities are created and never replaced. Use `contains()` to check
+    /// if a slot is occupied before inserting if needed.
     pub fn insert(&mut self, id: EntityId<T>, entity: T) {
         let idx = id.as_u32() as usize;
 
@@ -204,7 +210,35 @@ where
             self.entities.resize_with(idx + 1, || None);
         }
 
+        // Enforce write-once: slot must be empty
+        if self.entities[idx].is_some() {
+            panic!(
+                "EntityStore::insert(): slot {} is already occupied - EntityStore is write-once",
+                idx
+            );
+        }
+
         self.entities[idx] = Some(entity);
+    }
+
+    /// Insert an entity only if the slot is vacant
+    ///
+    /// Returns true if the entity was inserted, false if the slot was already occupied.
+    /// This is useful for network clients that may receive duplicate reveals.
+    pub fn insert_if_vacant(&mut self, id: EntityId<T>, entity: T) -> bool {
+        let idx = id.as_u32() as usize;
+
+        // Extend the Vec if needed
+        if idx >= self.entities.len() {
+            self.entities.resize_with(idx + 1, || None);
+        }
+
+        if self.entities[idx].is_some() {
+            false
+        } else {
+            self.entities[idx] = Some(entity);
+            true
+        }
     }
 
     /// Get an entity by ID
@@ -396,5 +430,49 @@ mod tests {
         assert_eq!(items[0].1.name, "A");
         assert_eq!(items[1].0.as_u32(), 5);
         assert_eq!(items[1].1.name, "B");
+    }
+
+    #[test]
+    #[should_panic(expected = "EntityStore::insert(): slot 0 is already occupied")]
+    fn test_entity_store_write_once_panics_on_double_insert() {
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        let id = EntityId::new(0);
+        let entity1 = TestEntity {
+            id,
+            name: "First".to_string(),
+        };
+        let entity2 = TestEntity {
+            id,
+            name: "Second".to_string(),
+        };
+
+        store.insert(id, entity1);
+        // This should panic because slot is already occupied
+        store.insert(id, entity2);
+    }
+
+    #[test]
+    fn test_entity_store_insert_if_vacant() {
+        let mut store: EntityStore<TestEntity> = EntityStore::new();
+
+        let id = EntityId::new(0);
+        let entity1 = TestEntity {
+            id,
+            name: "First".to_string(),
+        };
+        let entity2 = TestEntity {
+            id,
+            name: "Second".to_string(),
+        };
+
+        // First insert should succeed
+        assert!(store.insert_if_vacant(id, entity1));
+        assert_eq!(store.get(id).unwrap().name, "First");
+
+        // Second insert should fail but not panic
+        assert!(!store.insert_if_vacant(id, entity2));
+        // Original value should still be there
+        assert_eq!(store.get(id).unwrap().name, "First");
     }
 }

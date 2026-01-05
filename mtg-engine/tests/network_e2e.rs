@@ -236,10 +236,6 @@ mod async_tests {
             opening_hand: vec![CardReveal {
                 card_id: mtg_forge_rs::core::CardId::new(1),
                 name: "Mountain".to_string(),
-                mana_cost: "".to_string(),
-                type_line: "Basic Land - Mountain".to_string(),
-                text: "".to_string(),
-                pt: None,
             }],
             opponent_hand_count: 7,
             library_size: 53,
@@ -345,10 +341,6 @@ mod async_tests {
             card: CardReveal {
                 card_id: mtg_forge_rs::core::CardId::new(100),
                 name: "Serra Angel".to_string(),
-                mana_cost: "{3}{W}{W}".to_string(),
-                type_line: "Creature - Angel".to_string(),
-                text: "Flying, vigilance".to_string(),
-                pt: Some((4, 4)),
             },
             reason: RevealReason::Draw,
         };
@@ -358,8 +350,10 @@ mod async_tests {
 
         match decoded {
             ServerMessage::CardRevealed { card, reason, .. } => {
+                // CardReveal now only contains card_id and name
+                // Full card info is looked up from local database
                 assert_eq!(card.name, "Serra Angel");
-                assert_eq!(card.pt, Some((4, 4)));
+                assert_eq!(card.card_id.as_u32(), 100);
                 assert_eq!(reason, RevealReason::Draw);
             }
             _ => panic!("Wrong message type"),

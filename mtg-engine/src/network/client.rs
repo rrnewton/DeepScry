@@ -6,7 +6,7 @@
 //! - Processes server messages and syncs game state
 //! - Proxies choices to local PlayerController
 
-use crate::core::{CardId, CardName, CardType, Color, ManaCost, PlayerId, Subtype};
+use crate::core::{CardId, PlayerId};
 use crate::game::{GameState, PlayerController, Step, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
@@ -27,114 +27,20 @@ type RevealMsg = (PlayerId, CardReveal, RevealReason);
 // CARD REVEAL UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Parse a type line string into card types and subtypes
-/// Format: "[supertypes] <card types> - [subtypes]"
-/// Examples: "Basic Land - Forest", "Creature - Human Soldier", "Instant"
-fn parse_type_line(type_line: &str) -> (Vec<CardType>, Vec<Subtype>) {
-    let mut types = Vec::new();
-    let mut subtypes = Vec::new();
-
-    // Split on " - " to separate types from subtypes
-    let (type_part, subtype_part) = if let Some(idx) = type_line.find(" - ") {
-        (&type_line[..idx], Some(&type_line[idx + 3..]))
-    } else if let Some(idx) = type_line.find(" — ") {
-        // Also handle em-dash
-        (&type_line[..idx], Some(&type_line[idx + 4..]))
-    } else {
-        (type_line, None)
-    };
-
-    // Parse card types from the type part (skip supertypes like "Basic", "Legendary")
-    for word in type_part.split_whitespace() {
-        match word {
-            "Creature" => types.push(CardType::Creature),
-            "Instant" => types.push(CardType::Instant),
-            "Sorcery" => types.push(CardType::Sorcery),
-            "Enchantment" => types.push(CardType::Enchantment),
-            "Artifact" => types.push(CardType::Artifact),
-            "Land" => types.push(CardType::Land),
-            "Planeswalker" => types.push(CardType::Planeswalker),
-            // Skip supertypes: Basic, Legendary, Snow, World, Ongoing
-            _ => {}
-        }
-    }
-
-    // Parse subtypes
-    if let Some(subtype_str) = subtype_part {
-        for subtype in subtype_str.split_whitespace() {
-            subtypes.push(Subtype::new(subtype));
-        }
-    }
-
-    (types, subtypes)
-}
-
-/// Create a CardDefinition from CardReveal data (fallback when DB lookup fails)
-fn card_def_from_reveal(reveal: &CardReveal) -> CardDefinition {
-    // Parse mana cost
-    let mana_cost = ManaCost::from_string(&reveal.mana_cost);
-
-    // Derive colors from mana cost
-    let mut colors = Vec::new();
-    if mana_cost.white > 0 {
-        colors.push(Color::White);
-    }
-    if mana_cost.blue > 0 {
-        colors.push(Color::Blue);
-    }
-    if mana_cost.black > 0 {
-        colors.push(Color::Black);
-    }
-    if mana_cost.red > 0 {
-        colors.push(Color::Red);
-    }
-    if mana_cost.green > 0 {
-        colors.push(Color::Green);
-    }
-    if colors.is_empty() {
-        colors.push(Color::Colorless);
-    }
-
-    // Parse type line
-    let (types, subtypes) = parse_type_line(&reveal.type_line);
-
-    // Parse power/toughness
-    let (power, toughness) = match reveal.pt {
-        Some((p, t)) => (Some(p as i8), Some(t as i8)),
-        None => (None, None),
-    };
-
-    CardDefinition {
-        name: CardName::new(&reveal.name),
-        mana_cost,
-        types,
-        subtypes,
-        colors,
-        power,
-        toughness,
-        oracle: reveal.text.clone(),
-        raw_abilities: Vec::new(),
-        raw_keywords: Vec::new(),
-        svars: HashMap::new(),
-        enters_tapped: false,
-        etb_choose_color: false,
-        etb_exclude_colors: Vec::new(),
-    }
-}
-
-/// Get CardDefinition from CardReveal - tries database first, falls back to reveal data
+/// Get CardDefinition from CardReveal by looking up in the database
+///
+/// The simplified CardReveal only contains card_id and name, so we MUST
+/// look up full card info from the local database. This panics if the card
+/// is not found - the client must have all cards in the game loaded.
 fn get_card_def_from_reveal(reveal: &CardReveal, card_db: &AsyncCardDatabase) -> CardDefinition {
-    // Try to get from card database first
-    if let Ok(Some(def)) = futures_executor::block_on(card_db.get_card(&reveal.name)) {
-        return (*def).clone();
+    match futures_executor::block_on(card_db.get_card(&reveal.name)) {
+        Ok(Some(def)) => (*def).clone(),
+        Ok(None) => panic!(
+            "Card '{}' not in database - client must have all game cards loaded",
+            reveal.name
+        ),
+        Err(e) => panic!("Failed to load card '{}' from database: {}", reveal.name, e),
     }
-
-    // Fallback: Create minimal definition from reveal info
-    log::warn!(
-        "Card '{}' not in database, creating minimal definition from reveal",
-        reveal.name
-    );
-    card_def_from_reveal(reveal)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -299,11 +205,9 @@ impl ClientGameState {
         if let Some(card_def) = Self::card_from_reveal(&card, card_db) {
             self.known_cards.insert(card.card_id, card_def.clone());
 
-            // Create card instance if not already in game
-            if self.game.cards.get(card.card_id).is_err() {
-                let card_instance = card_def.instantiate(card.card_id, owner);
-                self.game.cards.insert(card.card_id, card_instance);
-            }
+            // Create card instance if not already in game (write-once)
+            let card_instance = card_def.instantiate(card.card_id, owner);
+            self.game.cards.insert_if_vacant(card.card_id, card_instance);
 
             // Handle based on reason
             match reason {
@@ -1179,7 +1083,7 @@ impl NetworkClient {
                                     // Use fallback that creates minimal definition if DB lookup fails
                                     let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
                                     let card_instance = card_def.instantiate(card_id, owner);
-                                    game.cards.insert(card_id, card_instance);
+                                    game.cards.insert(card_id, card_instance); // Safe: checked above
                                     log::debug!(
                                         "Instantiated played card for {:?}: {} ({:?})",
                                         owner,
@@ -1214,11 +1118,10 @@ impl NetworkClient {
                             }
                             RevealReason::TokenCreated => {
                                 // Token created - instantiate and add to battlefield
-                                if game.cards.get(card_id).is_err() {
-                                    // Use fallback that creates minimal definition if DB lookup fails
-                                    let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
-                                    let card_instance = card_def.instantiate(card_id, owner);
-                                    game.cards.insert(card_id, card_instance);
+                                // Use fallback that creates minimal definition if DB lookup fails
+                                let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                                let card_instance = card_def.instantiate(card_id, owner);
+                                if game.cards.insert_if_vacant(card_id, card_instance) {
                                     game.battlefield.add(card_id);
                                     log::debug!("Created token for {:?}: {} ({:?})", owner, card_reveal.name, card_id);
                                 }
@@ -1613,12 +1516,10 @@ impl NetworkClient {
                         }
                     }
                     RevealReason::Played => {
-                        if game.cards.get(card_id).is_err() {
-                            // Use the free function that includes DB fallback
-                            let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
-                            let card_instance = card_def.instantiate(card_id, owner);
-                            game.cards.insert(card_id, card_instance);
-                        }
+                        // Use the free function that includes DB fallback
+                        let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                        let card_instance = card_def.instantiate(card_id, owner);
+                        game.cards.insert_if_vacant(card_id, card_instance);
                     }
                     _ => {}
                 }

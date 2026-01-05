@@ -1419,29 +1419,9 @@ async fn handle_player_websocket(
                         {
                             let game_guard = game.lock().await;
                             if let Some(card) = game_guard.cards.try_get(card_id) {
-                                // Build type line from types and subtypes
-                                let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-                                let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
-                                let type_line = if subtypes_str.is_empty() {
-                                    types_str.join(" ")
-                                } else {
-                                    format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
-                                };
-
                                 let card_reveal = CardReveal {
                                     card_id,
                                     name: card.name.to_string(),
-                                    mana_cost: card.mana_cost.to_string(),
-                                    type_line,
-                                    text: card.text.clone(),
-                                    pt: if card.is_creature() {
-                                        match (card.base_power(), card.base_toughness()) {
-                                            (Some(p), Some(t)) => Some((p as i32, t as i32)),
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    },
                                 };
 
                                 log::debug!(
@@ -1629,29 +1609,9 @@ fn peek_opening_hand(game: &GameState, player_id: PlayerId) -> Result<Vec<CardRe
     for &card_id in lib_cards[start_idx..].iter().rev() {
         // Get card info for reveal
         if let Ok(card) = game.cards.get(card_id) {
-            // Build type line from types and subtypes
-            let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-            let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
-            let type_line = if subtypes_str.is_empty() {
-                types_str.join(" ")
-            } else {
-                format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
-            };
-
             hand.push(CardReveal {
                 card_id,
                 name: card.name.to_string(),
-                mana_cost: card.mana_cost.to_string(),
-                type_line,
-                text: card.text.clone(),
-                pt: if card.is_creature() {
-                    match (card.base_power(), card.base_toughness()) {
-                        (Some(p), Some(t)) => Some((p as i32, t as i32)),
-                        _ => None,
-                    }
-                } else {
-                    None
-                },
             });
         }
     }
@@ -1678,29 +1638,9 @@ fn compute_network_hash(game: &GameState) -> u64 {
 fn build_card_reveal(game: &GameState, info: &CardRevealInfo) -> Option<CardReveal> {
     let card = game.cards.try_get(info.card_id)?;
 
-    // Build type line from types and subtypes
-    let types_str: Vec<_> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-    let subtypes_str: Vec<_> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
-    let type_line = if subtypes_str.is_empty() {
-        types_str.join(" ")
-    } else {
-        format!("{} - {}", types_str.join(" "), subtypes_str.join(" "))
-    };
-
     Some(CardReveal {
         card_id: info.card_id,
         name: card.name.to_string(),
-        mana_cost: card.mana_cost.to_string(),
-        type_line,
-        text: card.text.clone(),
-        pt: if card.is_creature() {
-            match (card.base_power(), card.base_toughness()) {
-                (Some(p), Some(t)) => Some((p as i32, t as i32)),
-                _ => None,
-            }
-        } else {
-            None
-        },
     })
 }
 

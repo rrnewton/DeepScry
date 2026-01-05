@@ -374,23 +374,15 @@ pub enum ServerMessage {
 
 /// Information about a revealed card
 ///
-/// Contains all public information needed to instantiate a card
-/// in the client's shadow game state.
+/// Minimal structure containing only the card's server-assigned ID and name.
+/// The client uses the name to look up card properties from its local card database.
+/// This keeps network messages small while allowing crosscheck validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardReveal {
     /// The card's entity ID (must match server's ID for sync)
     pub card_id: CardId,
-    /// Card name
+    /// Card name (for DB lookup and crosscheck validation)
     pub name: String,
-    /// Mana cost string (e.g., "{2}{W}{W}")
-    pub mana_cost: String,
-    /// Type line (e.g., "Creature - Human Soldier")
-    pub type_line: String,
-    /// Oracle text / rules text
-    pub text: String,
-    /// Power/toughness for creatures (None for non-creatures)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pt: Option<(i32, i32)>,
 }
 
 /// Reason a card was revealed to a player
@@ -867,19 +859,15 @@ mod tests {
         let reveal = CardReveal {
             card_id: CardId::new(123),
             name: "Serra Angel".to_string(),
-            mana_cost: "{3}{W}{W}".to_string(),
-            type_line: "Creature - Angel".to_string(),
-            text: "Flying, vigilance".to_string(),
-            pt: Some((4, 4)),
         };
 
         let json = serde_json::to_string(&reveal).expect("serialize");
         assert!(json.contains("Serra Angel"));
-        assert!(json.contains("4,4") || json.contains("[4, 4]") || json.contains("\"pt\""));
+        assert!(json.contains("123"));
 
         let roundtrip: CardReveal = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(roundtrip.name, "Serra Angel");
-        assert_eq!(roundtrip.pt, Some((4, 4)));
+        assert_eq!(roundtrip.card_id, CardId::new(123));
     }
 
     #[test]
@@ -944,10 +932,6 @@ mod tests {
                 opening_hand: vec![CardReveal {
                     card_id,
                     name: "Mountain".to_string(),
-                    mana_cost: String::new(),
-                    type_line: "Basic Land - Mountain".to_string(),
-                    text: String::new(),
-                    pt: None,
                 }],
                 opponent_hand_count: 7,
                 library_size: 53,
@@ -973,10 +957,6 @@ mod tests {
                 card: CardReveal {
                     card_id,
                     name: "Lightning Bolt".to_string(),
-                    mana_cost: "{R}".to_string(),
-                    type_line: "Instant".to_string(),
-                    text: "Deal 3 damage to any target.".to_string(),
-                    pt: None,
                 },
                 reason: RevealReason::Draw,
             },
