@@ -1,0 +1,20 @@
+[metadata]
+Name:Ryan Avatar Test - Canyon Crawler Deathtouch
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Canyon Crawler (6/6 deathtouch) on battlefield
+p0life=20
+p0hand=Mountain
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Canyon Crawler
+p0library=Swamp; Swamp; Swamp
+
+# P1 has a big creature to block with
+p1life=20
+p1battlefield=Forest; Forest; Forest; Forest; Craw Wurm
+p1library=Forest; Forest; Forest
