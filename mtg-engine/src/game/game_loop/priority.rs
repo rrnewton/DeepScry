@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: Effect enum has 24+ variants, priority system handles
+// specific effect types (e.g., AddMana) specially and passes through others unchanged.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Priority system and spell resolution
 //!

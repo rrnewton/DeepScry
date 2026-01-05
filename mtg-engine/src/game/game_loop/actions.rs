@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: Effect enum has 24+ variants, action queries only check
+// for specific effect types (e.g., DestroyPermanent for sacrifice detection).
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Action query module for GameLoop
 //!

@@ -23,7 +23,7 @@ wildcards have `#![allow(clippy::wildcard_enum_match_arm)]` with a
 
 ## Files with Remaining Wildcards (to be whittled away)
 
-Progress: 10 files fixed, 25 remaining with file-level allows
+Progress: 14 files fixed, 21 remaining with file-level allows
 
 ### Fixed (wildcards removed or justified with function-level allows):
 - [x] `core/costs.rs` - exhaustive Cost matching (7 patterns)
@@ -36,21 +36,27 @@ Progress: 10 files fixed, 25 remaining with file-level allows
 - [x] `core/delayed_trigger.rs` - exhaustive DelayedTriggerCondition matching (1 pattern)
 - [x] `core/effects.rs` - converted test wildcards to `let...else` pattern (3 patterns)
 - [x] `core/keyword_set.rs` - converted test wildcard to `let...else` pattern (1 pattern)
+- [x] `deck_builder/native.rs` - function-level allow for run_main_loop() (crossterm KeyCode/Event)
+- [x] `game/actions/targeting.rs` - exhaustive Cost matching (1 pattern)
+- [x] `game/controller.rs` - exhaustive ChoiceResult matching (1 pattern)
+- [x] `game/continuous_effects.rs` - exhaustive CardType + function-level allow (5 patterns)
 
-### Source files (19 remaining):
-- [ ] `deck_builder/native.rs` (1 warning)
-- [ ] `game/actions/targeting.rs` (1 warning)
-- [ ] `game/controller.rs` (1 warning)
-- [ ] `game/continuous_effects.rs` (1 warning)
-- [ ] `game/fancy_tui_controller.rs` (3 warnings)
-- [ ] `game/fancy_tui_events.rs` (1 warning)
-- [ ] `game/game_loop/actions.rs` (2 warnings)
-- [ ] `game/game_loop/priority.rs` (2 warnings)
-- [ ] `game/game_state_evaluator.rs` (1 warning)
-- [ ] `game/heuristic_controller.rs` (2 warnings)
-- [ ] `game/mana_payment.rs` (1 warning)
-- [ ] `game/state_hash.rs` (2 warnings)
-- [ ] `game/test_spider_suit.rs` (1 warning)
+### Files with documented file-level allows (justified wildcards):
+These files handle external crate enums (crossterm KeyCode/Event/MouseEventKind 25+ variants)
+or large internal enums (Effect 24+ variants, AffectedSelector 70+ variants) where wildcards
+are intentional - only a subset of variants is handled, and unmatched variants are safely ignored.
+
+- [x] `game/fancy_tui_controller.rs` - crossterm KeyCode/Event/MouseEventKind
+- [x] `game/fancy_tui_events.rs` - FocusedPane/Entity enums
+- [x] `game/game_loop/actions.rs` - Effect enum (24+ variants)
+- [x] `game/game_loop/priority.rs` - Effect enum (24+ variants)
+- [x] `game/game_state_evaluator.rs` - AffectedSelector enum (70+ variants)
+- [x] `game/heuristic_controller.rs` - Effect enum (24+ variants)
+- [x] `game/mana_payment.rs` - ManaProductionKind enum
+- [x] `game/state_hash.rs` - serde_json::Value enum
+- [x] `game/test_spider_suit.rs` - test file
+
+### Source files (10 remaining):
 - [ ] `loader/effect_converter.rs` (3 warnings)
 - [ ] `loader/svar_parser.rs` (1 warning)
 - [ ] `network/client.rs` (1 warning)

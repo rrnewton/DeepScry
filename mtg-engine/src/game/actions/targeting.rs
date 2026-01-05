@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Targeting validation and target selection logic
 //!
 //! This module handles:
@@ -446,7 +444,14 @@ impl GameState {
         match cost {
             Cost::SacrificePattern { card_type, .. } => card_type.eq_ignore_ascii_case("CARDNAME"),
             Cost::Composite(costs) => costs.iter().any(Self::cost_sacrifices_self),
-            _ => false,
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::Waterbend { .. } => false,
         }
     }
 

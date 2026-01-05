@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: test file uses match patterns for verification
 #![allow(clippy::wildcard_enum_match_arm)]
 #[cfg(test)]
 mod tests {

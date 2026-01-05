@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Continuous Effects System
 //!
 //! Implements the MTG Comprehensive Rules 613 layer system for calculating
@@ -290,14 +288,24 @@ impl GameState {
                     && creature.controller == source.controller
                     && match card_type {
                         CardType::Artifact => creature.cache.is_artifact,
-                        _ => false,
+                        CardType::Creature
+                        | CardType::Instant
+                        | CardType::Sorcery
+                        | CardType::Enchantment
+                        | CardType::Land
+                        | CardType::Planeswalker => false,
                     }
             }
             AffectedSelector::CreatureCardTypeYouControl { card_type } => {
                 creature.controller == source.controller
                     && match card_type {
                         CardType::Artifact => creature.cache.is_artifact,
-                        _ => false,
+                        CardType::Creature
+                        | CardType::Instant
+                        | CardType::Sorcery
+                        | CardType::Enchantment
+                        | CardType::Land
+                        | CardType::Planeswalker => false,
                     }
             }
             AffectedSelector::LandCreaturesYouControl => creature.controller == source.controller && creature.is_land(),
@@ -735,8 +743,10 @@ impl GameState {
                                     CardType::Artifact => creature.cache.is_artifact,
                                     CardType::Land => creature.cache.is_land,
                                     CardType::Creature => creature.is_creature(),
-                                    // Enchantment and other types not cached, use direct check
-                                    _ => creature.types.contains(card_type),
+                                    // Enchantment and other types use direct check
+                                    CardType::Instant | CardType::Sorcery | CardType::Enchantment | CardType::Planeswalker => {
+                                        creature.types.contains(card_type)
+                                    }
                                 };
 
                                 if has_type {
@@ -762,7 +772,9 @@ impl GameState {
                                     CardType::Artifact => creature.cache.is_artifact,
                                     CardType::Land => creature.cache.is_land,
                                     CardType::Creature => creature.is_creature(),
-                                    _ => creature.types.contains(card_type),
+                                    CardType::Instant | CardType::Sorcery | CardType::Enchantment | CardType::Planeswalker => {
+                                        creature.types.contains(card_type)
+                                    }
                                 };
 
                                 if has_type {
@@ -1339,6 +1351,11 @@ impl GameState {
     /// ## Returns
     ///
     /// A KeywordSet containing all keywords granted to the creature by static abilities.
+    ///
+    /// Note: Wildcard is intentional for the AffectedSelector match - only a subset
+    /// of 70+ selector variants are supported for keyword grants. Unsupported selectors
+    /// correctly return false (no keyword granted).
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn get_granted_keywords(&self, creature_id: CardId) -> crate::core::KeywordSet {
         use crate::core::effects::AffectedSelector;
         use crate::core::KeywordSet;

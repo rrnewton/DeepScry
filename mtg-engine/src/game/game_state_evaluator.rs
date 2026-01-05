@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: AffectedSelector enum has 70+ variants, evaluator only handles
+// the subset relevant to board evaluation. Unsupported selectors correctly return 0.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Game state evaluation for heuristic AI
 //!

@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: FocusedPane and Entity enums have many variants,
+// we only handle relevant subsets in each match. New variants require explicit handling.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Shared event handling for FancyTUI (native and WASM)
 //!

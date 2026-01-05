@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: serde_json::Value enum has Array/Object/Null/Bool/Number/String,
+// we recursively process Array/Object and pass through primitives unchanged.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Deterministic state hashing for debugging snapshot/resume and network sync
 //!

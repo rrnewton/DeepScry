@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Native TUI implementation for deck builder
 //!
 //! This module contains the crossterm-based event loop for native platforms.
@@ -159,6 +157,10 @@ pub async fn run_deck_builder(
 }
 
 /// Main event loop
+///
+/// Note: Wildcards are intentional for KeyCode and Event matching - these are external
+/// crate enums from crossterm with 25+ variants. We only handle the keys/events we use.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &mut DeckBuilderState) -> Result<bool> {
     loop {
         // Draw UI

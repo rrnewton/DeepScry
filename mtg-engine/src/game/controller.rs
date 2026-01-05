@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Player controller interface
 //!
 //! This module defines the PlayerController trait that AI and UI implementations
@@ -972,7 +970,10 @@ impl<T> ChoiceResult<T> {
     pub fn unwrap(self) -> T {
         match self {
             ChoiceResult::Ok(value) => value,
-            _ => panic!("Called unwrap on non-Ok ChoiceResult"),
+            ChoiceResult::UndoRequest(_)
+            | ChoiceResult::ExitGame
+            | ChoiceResult::Error(_)
+            | ChoiceResult::NeedInput(_) => panic!("Called unwrap on non-Ok ChoiceResult"),
         }
     }
 

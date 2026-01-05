@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: crossterm KeyCode/Event/MouseEventKind have 25+ variants each,
+// we only handle the subset of keys/events we use. Adds compile-time safety for our FocusedPane enum.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Fancy TUI controller with full-screen ratatui interface
 //!

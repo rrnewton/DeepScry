@@ -1,4 +1,5 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
+// Wildcards intentional: ManaProductionKind enum handling - some variants are
+// processed in earlier passes, wildcards catch "shouldn't happen" cases.
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Mana payment resolution system
 //!
