@@ -4,74 +4,64 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-01-05T20:18:34.759068046+00:00
-updated_at: 2026-01-05T20:18:34.759068046+00:00
+updated_at: 2026-01-05T20:35:11.285553116+00:00
 ---
 
 # Description
 
 ## Summary
 
-Design and implement a system for per-card persistent state that:
-1. Survives zone changes (card identity, not zone presence)
-2. Integrates with undo infrastructure
-3. Supports multiple MTG mechanics requiring card-level state
+~~Design and implement a system for per-card persistent state that survives zone changes.~~
+
+**CORRECTION (2026-01-05)**: Per MTG Rule 400.7, objects that change zones become NEW objects with no memory. Zuko's mode tracking RESETS when he changes zones.
+
+This is simpler than originally described:
+1. Track mode usage per-permanent-instance (while on battlefield)
+2. State resets automatically on zone change (existing behavior)
+3. Standard undo integration (already works for card state)
+
+## Rule 400.7
+
+> "An object that moves from one zone to another becomes a new object with no memory of, or relation to, its previous existence."
+
+When Zuko uses his fourth mode (exile and return under opponent's control), the opponent gets a "fresh" Zuko with all 4 modes available again. This is the intended design.
 
 ## Affected Cards (ryan_avatar_draft)
 
-- Zuko, Conflicted: ChoiceRestriction$ ThisGame (track which modal choices used)
+- Zuko, Conflicted: Track which modal choices used THIS INSTANCE
 
-## MTG Mechanics Requiring This System
+## Implementation (Simpler Than Originally Thought)
 
-### 1. Modal History (ChoiceRestriction$ ThisGame)
-- Track which modes have been used across the game
-- Must persist when card changes zones (exile/return)
-- Example: Zuko's "choose one that hasn't been chosen"
-
-### 2. "Once Each Turn" Abilities
-- Track if a specific ability has been activated this turn
-- Reset at beginning of turn or cleanup
-- Common pattern: "Activate only once each turn"
-
-### 3. "First Time Each Turn" Triggers
-- Track if specific event has occurred this turn for this card
-- Example: "The first time a creature enters the battlefield each turn..."
-
-### 4. Sagas (Lore Counters + Chapter Tracking)
-- Counter-based but with special trigger timing
-- "When this Saga enters and after your draw step, add a lore counter"
-- Chapter abilities trigger at specific lore counter values
-
-### 5. Level Up Creatures
-- Level counters determine P/T and abilities
-- Different tiers of effects at different levels
-
-## Proposed Design
-
+Just need a field on Card to track used choices:
 ```rust
-pub struct CardPersistentState {
-    /// Modal choices used (for ChoiceRestriction$ ThisGame)
+pub struct Card {
+    // ... existing fields ...
+    
+    /// Modal choices used for "choose one that hasn't been chosen"
+    /// Resets on zone change (per rule 400.7)
     pub used_modal_choices: SmallVec<[String; 4]>,
-    
-    /// Abilities activated this turn (for "once each turn")
-    pub abilities_activated_this_turn: SmallVec<[AbilityId; 2]>,
-    
-    /// Turn-scoped event tracking (reset at turn start)
-    pub events_this_turn: SmallVec<[TriggerEvent; 4]>,
 }
 ```
 
-## Undo Integration
+No special persistence across zone changes needed - the standard zone change behavior (creating new card state) handles the reset automatically.
 
-The undo log must capture:
-1. Changes to persistent state fields
-2. Turn-boundary state resets
-3. Modal choice selections
+## Other Mechanics (Still Need Tracking)
 
-## Dependencies
+### "Once Each Turn" Abilities
+- Track if ability activated this turn
+- Reset at turn boundary
+- Per-permanent on battlefield
 
-- Existing counter system (card.counters)
-- Existing undo infrastructure (undo_log)
+### "First Time Each Turn" Triggers  
+- Track if event occurred this turn
+- Reset at turn boundary
+- Per-permanent on battlefield
+
+### Sagas
+- Use existing counter system for lore counters
+- Chapter triggers at counter thresholds
 
 ## Related Issues
 
-- mtg-ijo2m: SpellCast triggers (different but related trigger infrastructure)
+- mtg-ijo2m: SpellCast triggers
+- mtg-fsjga: Modal spells (SP$ Charm)
