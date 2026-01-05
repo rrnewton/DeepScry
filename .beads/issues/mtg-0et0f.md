@@ -23,14 +23,15 @@ wildcards have `#![allow(clippy::wildcard_enum_match_arm)]` with a
 
 ## Files with Remaining Wildcards (to be whittled away)
 
-Progress: 3 files fixed, 32 remaining with file-level allows
+Progress: 4 files fixed, 31 remaining with file-level allows
 
 ### Fixed (wildcards removed or justified with function-level allows):
 - [x] `core/costs.rs` - exhaustive Cost matching (7 patterns)
 - [x] `game/actions/mod.rs` - exhaustive patterns + function-level allows for triggers (7 patterns)
 - [x] `game/state.rs` - exhaustive Zone matching + function-level allow for undo (7 patterns)
+- [x] `loader/card.rs` - converted test wildcards to `let...else` pattern (5 patterns)
 
-### Source files (26 remaining):
+### Source files (25 remaining):
 - [ ] `core/card.rs` (5 warnings)
 - [ ] `core/delayed_trigger.rs` (2 warnings)
 - [ ] `core/effects.rs` (1 warning)
@@ -50,7 +51,6 @@ Progress: 3 files fixed, 32 remaining with file-level allows
 - [ ] `game/mana_payment.rs` (1 warning)
 - [ ] `game/state_hash.rs` (2 warnings)
 - [ ] `game/test_spider_suit.rs` (1 warning)
-- [ ] `loader/card.rs` (7 warnings)
 - [ ] `loader/effect_converter.rs` (3 warnings)
 - [ ] `loader/svar_parser.rs` (1 warning)
 - [ ] `network/client.rs` (1 warning)

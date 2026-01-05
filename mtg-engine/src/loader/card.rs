@@ -1,5 +1,3 @@
-// TODO(mtg-0et0f): Remove this file-level allow once wildcards are fixed
-#![allow(clippy::wildcard_enum_match_arm)]
 //! Card file loader (.txt format)
 //!
 //! Loads card definitions from Forge's cardsfolder format
@@ -2640,13 +2638,11 @@ Oracle:Lightning Bolt deals 3 damage to any target.
         assert_eq!(effects.len(), 1, "Lightning Bolt should have 1 effect");
 
         use crate::core::{Effect, TargetRef};
-        match &effects[0] {
-            Effect::DealDamage { target, amount } => {
-                assert_eq!(*amount, 3, "Should deal 3 damage");
-                assert!(matches!(target, TargetRef::None), "Target should be None initially");
-            }
-            _ => panic!("Expected DealDamage effect"),
-        }
+        let Effect::DealDamage { target, amount } = &effects[0] else {
+            panic!("Expected DealDamage effect, got {:?}", effects[0]);
+        };
+        assert_eq!(*amount, 3, "Should deal 3 damage");
+        assert!(matches!(target, TargetRef::None), "Target should be None initially");
     }
 
     #[test]
@@ -2728,12 +2724,10 @@ Oracle:Target player draws three cards.
         assert_eq!(effects.len(), 1, "Ancestral Recall should have 1 effect");
 
         use crate::core::Effect;
-        match &effects[0] {
-            Effect::DrawCards { player: _, count } => {
-                assert_eq!(*count, 3, "Should draw 3 cards");
-            }
-            _ => panic!("Expected DrawCards effect, got {:?}", effects[0]),
-        }
+        let Effect::DrawCards { player: _, count } = &effects[0] else {
+            panic!("Expected DrawCards effect, got {:?}", effects[0]);
+        };
+        assert_eq!(*count, 3, "Should draw 3 cards");
     }
 
     #[test]
@@ -2758,12 +2752,9 @@ Oracle:Destroy target nonartifact, nonblack creature. It can't be regenerated.
         assert_eq!(effects.len(), 1, "Terror should have 1 effect");
 
         use crate::core::Effect;
-        match &effects[0] {
-            Effect::DestroyPermanent { target: _, .. } => {
-                // Success - correct effect type
-            }
-            _ => panic!("Expected DestroyPermanent effect, got {:?}", effects[0]),
-        }
+        let Effect::DestroyPermanent { target: _, .. } = &effects[0] else {
+            panic!("Expected DestroyPermanent effect, got {:?}", effects[0]);
+        };
     }
 
     #[test]
@@ -2788,12 +2779,10 @@ Oracle:You gain 7 life.
         assert_eq!(effects.len(), 1, "Angel's Mercy should have 1 effect");
 
         use crate::core::Effect;
-        match &effects[0] {
-            Effect::GainLife { player: _, amount } => {
-                assert_eq!(*amount, 7, "Should gain 7 life");
-            }
-            _ => panic!("Expected GainLife effect, got {:?}", effects[0]),
-        }
+        let Effect::GainLife { player: _, amount } = &effects[0] else {
+            panic!("Expected GainLife effect, got {:?}", effects[0]);
+        };
+        assert_eq!(*amount, 7, "Should gain 7 life");
     }
 
     #[test]
@@ -2822,12 +2811,10 @@ Oracle:{T}: Prodigal Sorcerer deals 1 damage to any target.
         assert_eq!(ability.effects.len(), 1, "Should have 1 effect");
 
         use crate::core::Effect;
-        match &ability.effects[0] {
-            Effect::DealDamage { target: _, amount } => {
-                assert_eq!(*amount, 1, "Should deal 1 damage");
-            }
-            _ => panic!("Expected DealDamage effect, got {:?}", ability.effects[0]),
-        }
+        let Effect::DealDamage { target: _, amount } = &ability.effects[0] else {
+            panic!("Expected DealDamage effect, got {:?}", ability.effects[0]);
+        };
+        assert_eq!(*amount, 1, "Should deal 1 damage");
     }
 
     #[test]
