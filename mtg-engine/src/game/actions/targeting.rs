@@ -289,15 +289,83 @@ impl GameState {
                                     }
                                 }
                             }
-                            _ => {
-                                // Add other effect types as needed
+                            // Modal effects that don't need permanent/creature targets
+                            // (target players, self, or have targets pre-specified)
+                            Effect::DealDamage { .. }
+                            | Effect::DrawCards { .. }
+                            | Effect::GainLife { .. }
+                            | Effect::Mill { .. }
+                            | Effect::AddMana { .. }
+                            | Effect::Balance { .. }
+                            | Effect::CreateToken { .. }
+                            | Effect::SearchLibrary { .. }
+                            | Effect::Firebend { .. }
+                            | Effect::SetBasePowerToughness { .. }
+                            | Effect::CounterSpell { .. }
+                            | Effect::PumpCreature { .. }
+                            | Effect::TapPermanent { .. }
+                            | Effect::UntapPermanent { .. }
+                            | Effect::ExilePermanent { .. }
+                            | Effect::Airbend { .. }
+                            | Effect::Earthbend { .. }
+                            | Effect::GrantCantBeBlocked { .. }
+                            | Effect::RemoveCounter { .. }
+                            | Effect::PutCounter { .. }
+                            | Effect::AttachEquipment { .. }
+                            | Effect::ModalChoice { .. } => {
+                                // Non-Destroy/Copy modes in modal spells
+                                // TODO(mtg-30): Add handlers for targeting modes that need them
+                            }
+                            // Guards failed for Destroy/Copy - target already specified
+                            Effect::DestroyPermanent { .. } | Effect::CopyPermanent { .. } => {
+                                // Target already specified (guard failed: target.as_u32() != 0)
                             }
                         }
                     }
                 }
-                _ => {
-                    // Other effects either don't need targets or already have them specified
-                    // (DrawCards, GainLife, Mill, AddMana all specify player directly)
+                // ===== EXHAUSTIVE EFFECT HANDLING FOR TARGET COLLECTION =====
+                // These effects either:
+                // 1. Don't need creature/permanent targets (target players, self, or no target)
+                // 2. Already have targets specified (non-zero target field)
+                //
+                // IMPORTANT: When adding new Effect variants, the compiler will force you to
+                // handle them here. If the new effect needs targeting, add a handler above.
+                // If it doesn't need targeting, add it to this exhaustive list.
+                //
+                // Effects targeting players or with no target
+                Effect::DrawCards { .. }
+                | Effect::GainLife { .. }
+                | Effect::Mill { .. }
+                | Effect::AddMana { .. }
+                | Effect::Balance { .. }
+                | Effect::CreateToken { .. }
+                | Effect::SearchLibrary { .. }
+                | Effect::Firebend { .. }
+                | Effect::SetBasePowerToughness { .. }
+                | Effect::Earthbend { .. }
+                | Effect::AttachEquipment { .. } => {
+                    // These effects target players or have no targeting requirements
+                    // AttachEquipment targeting is handled via Equip keyword abilities
+                }
+                // Effects with already-specified targets (non-zero target field)
+                // The handlers above only match when target.as_u32() == 0
+                Effect::DealDamage { .. } => {
+                    // Either TargetRef::Player (already specified) or TargetRef::Permanent (already specified)
+                    // TargetRef::None case handled above
+                }
+                Effect::DestroyPermanent { .. }
+                | Effect::PumpCreature { .. }
+                | Effect::TapPermanent { .. }
+                | Effect::UntapPermanent { .. }
+                | Effect::CounterSpell { .. }
+                | Effect::ExilePermanent { .. }
+                | Effect::Airbend { .. }
+                | Effect::GrantCantBeBlocked { .. }
+                | Effect::RemoveCounter { .. }
+                | Effect::PutCounter { .. }
+                | Effect::CopyPermanent { .. } => {
+                    // Target already specified (guard failed: target.as_u32() != 0)
+                    // This means the effect has a concrete target already assigned
                 }
             }
         }
@@ -566,8 +634,38 @@ impl GameState {
                         }
                     }
                 }
-                _ => {
-                    // Other effects either don't need targets or already have them specified
+                // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
+                // Effects that don't need targets or have targets pre-specified
+                Effect::DrawCards { .. }
+                | Effect::GainLife { .. }
+                | Effect::Mill { .. }
+                | Effect::AddMana { .. }
+                | Effect::Balance { .. }
+                | Effect::CreateToken { .. }
+                | Effect::SearchLibrary { .. }
+                | Effect::Firebend { .. }
+                | Effect::SetBasePowerToughness { .. }
+                | Effect::Earthbend { .. }
+                | Effect::ModalChoice { .. } => {
+                    // These effects target players or have no targeting requirements
+                }
+                // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
+                Effect::DealDamage { .. } => {
+                    // TargetRef::Player/Permanent - target already specified
+                }
+                Effect::DestroyPermanent { .. }
+                | Effect::PumpCreature { .. }
+                | Effect::TapPermanent { .. }
+                | Effect::UntapPermanent { .. }
+                | Effect::CounterSpell { .. }
+                | Effect::ExilePermanent { .. }
+                | Effect::Airbend { .. }
+                | Effect::GrantCantBeBlocked { .. }
+                | Effect::RemoveCounter { .. }
+                | Effect::PutCounter { .. }
+                | Effect::CopyPermanent { .. }
+                | Effect::AttachEquipment { .. } => {
+                    // Target already specified (guard failed: target.as_u32() != 0)
                 }
             }
         }
@@ -733,9 +831,33 @@ impl GameState {
             | Effect::Mill { .. }
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
-            | Effect::CreateToken { .. } => true,
-            // For other effects, assume they have valid targets (conservative)
-            _ => true,
+            | Effect::CreateToken { .. }
+            | Effect::SearchLibrary { .. }
+            | Effect::Firebend { .. }
+            | Effect::SetBasePowerToughness { .. }
+            | Effect::Earthbend { .. }
+            | Effect::AttachEquipment { .. }
+            | Effect::ModalChoice { .. } => true,
+
+            // ===== EXHAUSTIVE EFFECT HANDLING =====
+            // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
+            // These already have targets, so they "have valid targets"
+            Effect::DealDamage { .. } => true, // TargetRef::Player/Permanent already specified
+            Effect::DestroyPermanent { .. }
+            | Effect::PumpCreature { .. }
+            | Effect::TapPermanent { .. }
+            | Effect::UntapPermanent { .. }
+            | Effect::CounterSpell { .. }
+            | Effect::ExilePermanent { .. }
+            | Effect::Airbend { .. }
+            | Effect::GrantCantBeBlocked { .. }
+            | Effect::RemoveCounter { .. }
+            | Effect::PutCounter { .. }
+            | Effect::CopyPermanent { .. } => {
+                // Target already specified (guard failed: target.as_u32() != 0)
+                // If a target was pre-assigned, we assume it's valid
+                true
+            }
         }
     }
 
