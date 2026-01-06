@@ -758,6 +758,59 @@ mod tests {
     }
 
     #[test]
+    fn test_cunning_maneuver_effects() {
+        use crate::core::PlayerId;
+        use crate::loader::card::CardLoader;
+
+        let content = r#"
+Name:Cunning Maneuver
+ManaCost:1 R
+Types:Instant
+A:SP$ Pump | ValidTgts$ Creature | NumAtt$ +3 | NumDef$ +1 | SubAbility$ DBToken | SpellDescription$ Target creature gets +3/+1 until end of turn. Create a Clue token.
+SVar:DBToken:DB$ Token | TokenScript$ c_a_clue_draw | TokenOwner$ You
+Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
+"#;
+
+        let def = CardLoader::parse(content).expect("Failed to parse Cunning Maneuver");
+        let card = def.instantiate(crate::core::CardId::new(1), PlayerId::new(0));
+
+        eprintln!("Cunning Maneuver has {} effects:", card.effects.len());
+        for (i, effect) in card.effects.iter().enumerate() {
+            eprintln!("  {}: {:?}", i, effect);
+        }
+
+        // Should have 2 effects: PumpCreature and CreateToken
+        assert_eq!(card.effects.len(), 2, "Cunning Maneuver should have 2 effects");
+
+        // First effect should be PumpCreature
+        match &card.effects[0] {
+            Effect::PumpCreature {
+                target,
+                power_bonus,
+                toughness_bonus,
+            } => {
+                assert_eq!(target.as_u32(), 0, "Target should be placeholder 0");
+                assert_eq!(*power_bonus, 3, "Power bonus should be +3");
+                assert_eq!(*toughness_bonus, 1, "Toughness bonus should be +1");
+            }
+            other => panic!("First effect should be PumpCreature, got {:?}", other),
+        }
+
+        // Second effect should be CreateToken
+        match &card.effects[1] {
+            Effect::CreateToken {
+                controller: _,
+                token_script,
+                amount,
+            } => {
+                assert_eq!(token_script, "c_a_clue_draw");
+                assert_eq!(*amount, 1);
+            }
+            other => panic!("Second effect should be CreateToken, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_convert_missing_parameter() {
         // DealDamage without NumDmg$ should return None
         let params = AbilityParams::parse("A:SP$ DealDamage").unwrap();

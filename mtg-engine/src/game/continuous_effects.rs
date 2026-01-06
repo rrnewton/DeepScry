@@ -223,6 +223,10 @@ impl GameState {
         );
         let base = (base_p, base_t);
 
+        // Get temporary pump bonuses BEFORE calling other methods that borrow self
+        // These are from pump spells like Giant Growth that set card.power_bonus/toughness_bonus
+        let temp_pump = (creature.power_bonus, creature.toughness_bonus);
+
         // Layer 7a (CR 613.4a): Characteristic-defining abilities
         // TODO: Implement for creatures like Tarmogoyf (*/* based on card types)
         let characteristic_value = None;
@@ -231,8 +235,10 @@ impl GameState {
         // TODO: Implement for effects like "becomes 0/1" or Lignify
         let setpt_value = None;
 
-        // Layer 7c (CR 613.4c): Modify P/T - continuous effects
-        let modifypt_effects = self.calculate_modifypt_effects(creature_id)?;
+        // Layer 7c (CR 613.4c): Modify P/T - continuous effects from other permanents
+        let continuous_effects = self.calculate_modifypt_effects(creature_id)?;
+        // Include temporary pump bonuses (from pump spells) in modifypt_effects
+        let modifypt_effects = (continuous_effects.0 + temp_pump.0, continuous_effects.1 + temp_pump.1);
 
         // Layer 7c (CR 613.4c): Modify P/T - counters
         let modifypt_counters = self.calculate_modifypt_counters(creature_id)?;
