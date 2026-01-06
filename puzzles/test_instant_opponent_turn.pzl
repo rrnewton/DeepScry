@@ -1,0 +1,20 @@
+[metadata]
+Name:Instant During Opponent Turn Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=2
+activeplayer=p1
+activephase=COMBAT_DECLARE_ATTACKERS
+
+# P0 has instant and mana available
+p0life=5
+p0hand=Lightning Strike
+p0battlefield=Mountain; Mountain; Typhoid Rats
+p0library=Mountain; Mountain; Mountain
+
+# P1 is about to attack and kill us
+p1life=3
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest
