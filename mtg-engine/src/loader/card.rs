@@ -1976,6 +1976,98 @@ impl CardDefinition {
 
                 triggers.push(trigger);
             }
+
+            // Parse SpellCast triggers (Mode$ SpellCast)
+            // Example: T:Mode$ SpellCast | ValidCard$ Card.nonCreature | ValidActivatingPlayer$ You | Execute$ TrigCounter
+            // This triggers when the controller casts a spell matching ValidCard$ criteria
+            if mode == Some("SpellCast") {
+                use crate::core::Effect;
+
+                let mut effects = Vec::new();
+
+                // Check ValidCard$ to determine what spells trigger this
+                // Card.nonCreature = triggers on noncreature spells (instants, sorceries, etc.)
+                let valid_card = params.get("ValidCard").map(|s| s.as_str());
+                let is_noncreature_only = valid_card == Some("Card.nonCreature");
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute").map(|s| s.to_string()) {
+                    // Look up the SVar that Execute$ references
+                    for ab in &self.raw_abilities {
+                        if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
+                            // Parse the SVar body
+                            if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+                            {
+                                // Parse DB$ PutCounter effects (common for SpellCast triggers like Boar-q-pine)
+                                if body.contains("DB$ PutCounter") {
+                                    let mut counter_num = 1u8;
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            if key.trim() == "CounterNum" {
+                                                if let Ok(n) = value.trim().parse::<u8>() {
+                                                    counter_num = n;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    effects.push(Effect::PutCounter {
+                                        target: CardId::new(0), // Placeholder - self (Defined$ Self)
+                                        counter_type: crate::core::CounterType::P1P1,
+                                        amount: counter_num,
+                                    });
+                                }
+
+                                // Parse DB$ Pump effects (for Prowess-like abilities)
+                                if body.contains("DB$ Pump") {
+                                    let mut power_bonus = 1i32;
+                                    let mut toughness_bonus = 1i32;
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+                                            if key == "NumAtt" {
+                                                if let Ok(n) = value.parse::<i32>() {
+                                                    power_bonus = n;
+                                                }
+                                            } else if key == "NumDef" {
+                                                if let Ok(n) = value.parse::<i32>() {
+                                                    toughness_bonus = n;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    effects.push(Effect::PumpCreature {
+                                        target: CardId::new(0), // Placeholder - self
+                                        power_bonus,
+                                        toughness_bonus,
+                                    });
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever you cast a noncreature spell".to_string());
+
+                // SpellCast triggers are NOT self-only (they trigger on OTHER cards being cast)
+                // Use new_any() to mark trigger_self_only = false
+                let mut trigger = Trigger::new_any(TriggerEvent::SpellCast, effects, description);
+
+                // Store noncreature-only flag in trigger for runtime filtering
+                // We'll use a naming convention in the description for now
+                if is_noncreature_only && !trigger.description.contains("noncreature") {
+                    trigger.description = format!("[noncreature] {}", trigger.description);
+                }
+
+                triggers.push(trigger);
+            }
         }
 
         triggers
