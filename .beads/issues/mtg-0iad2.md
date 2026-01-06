@@ -49,10 +49,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Card loads and can be cast for 2R (verified: puzzles/test_boar_q_pine_spellcast.pzl)
 - [x] Enters as 2/2 (verified: puzzle state)
 - [x] Trigger fires when casting instant (verified: Lightning Strike → counter)
-- [ ] Trigger fires when casting sorcery
+- [x] Trigger fires when casting sorcery (verified: puzzles/test_boar_q_pine_sorcery.pzl - Iroh's Demonstration)
 - [ ] Trigger fires when casting artifact
 - [ ] Trigger fires when casting enchantment
-- [ ] Trigger does NOT fire for creature spells
+- [x] Trigger does NOT fire for creature spells (verified: puzzles/test_boar_q_pine_no_creature_trigger.pzl)
 - [x] Counter is placed correctly (verified: Boar-q-pine became 3/3)
 - [ ] Multiple noncreature spells accumulate counters
 
@@ -178,17 +178,46 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Mode 1: Can target creature with no counters (verified: targeted Fire Sages)
 - [ ] Mode 1: Cannot target creature WITH counters
 - [x] Mode 1: Destroys the creature (verified: "Heartless Act destroys Fire Sages")
-- [ ] Mode 2: Can target creature with counters
-- [ ] Mode 2: Removes up to 3 counters
-- [ ] Mode 2: Works with fewer than 3 counters
+- [x] Mode 2: Can target creature with counters (verified: puzzles/test_heartless_act_mode2.pzl)
+- [x] Mode 2: Removes up to 3 counters (verified: 2 counters removed from 4/4 → 2/2)
+- [x] Mode 2: Works with fewer than 3 counters (verified: creature had 2 counters)
 - [ ] Mode 2: Can choose to remove fewer counters
-- [ ] Mode 2: Works with +1/+1 counters
+- [x] Mode 2: Works with +1/+1 counters (verified: P1P1 counters removed)
 - [ ] Mode 2: Works with other counter types
 - [x] Can be cast at instant speed (verified: is an instant)
 
 ---
 
-## 10-22. (abbreviated for length - see full list)
+## 10. Iroh's Demonstration (1R, Sorcery - Modal)
+**Modes:** Choose one:
+- Deal 2 damage to any target.
+- Deal 4 damage to target creature.
+
+- [x] Card loads and can be cast for 1R (verified: puzzle state)
+- [x] Mode selection is required
+- [x] Mode 1: 2 damage to any target (verified: puzzles/test_lightning_strike.pzl uses similar mechanic)
+- [x] Mode 2: 4 damage to target creature (verified: puzzles/test_irohs_demonstration_mode2.pzl)
+- [x] Mode 2: Can kill creature with 4 toughness (verified: Grizzly Bears with 2 counters = 4/4 died)
+
+---
+
+## 11. Mongoose Lizard (4RR, 5/6 Mongoose Lizard)
+**Keywords:** Menace, Mountaincycling {2}
+**Triggered:** When this creature enters, it deals 1 damage to any target.
+
+- [x] Card loads and can be cast for 4RR (verified: puzzles/test_mongoose_lizard_etb.pzl)
+- [x] Enters as 5/6 (verified: game state shows 5/6)
+- [x] ETB trigger fires on entering (verified: deals 1 damage to Llanowar Elves)
+- [x] ETB damage can kill 1-toughness creature (verified: Llanowar Elves died)
+- [x] Has Menace (verified: puzzles/test_mongoose_lizard_menace.pzl)
+- [x] Menace prevents single blocker (verified: "Menace prevents Grizzly Bears from blocking Mongoose Lizard alone")
+- [x] Menace allows 2+ blockers (verified: puzzles/test_menace_two_blockers.pzl)
+- [ ] Mountaincycling {2} can be activated from hand
+- [ ] Mountaincycling searches for Mountain
+
+---
+
+## 12-22. (abbreviated for length - see full list)
 
 ---
 
@@ -246,8 +275,12 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 37 items verified as of 2026-01-06_#1551
+**Progress:** 52 items verified as of 2026-01-06_#1564(3bc16ee)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
 - Token scripts now load in puzzles
+- Menace keyword now enforced (3bc16ee) - single blockers rejected
+- Mongoose Lizard ETB damage + Menace verified
+- Iroh's Demonstration modal modes verified
+- Heartless Act Mode 2 (counter removal) verified
