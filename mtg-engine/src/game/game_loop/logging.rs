@@ -168,6 +168,17 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
                 self.game.logger.gamelog(&message);
             }
+            Effect::Loot {
+                player,
+                discard_count,
+                draw_count,
+            } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!(
+                    "{source_name} ({source_id}) causes {player_name} to loot (discard {discard_count}, draw {draw_count})"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::GainLife { player, amount } => {
                 let player_name = self.get_player_name(*player);
                 let old_life = self.game.get_player(*player).map(|p| p.life).unwrap_or(0);

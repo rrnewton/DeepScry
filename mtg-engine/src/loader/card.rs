@@ -1501,6 +1501,49 @@ impl CardDefinition {
                                     }
                                 }
 
+                                // Parse AB$ Draw | Cost$ Discard<N/Card> effects (looting)
+                                // Example: "AB$ Draw | Cost$ Discard<1/Card>"
+                                // Used by Yuyan Archers: "you may discard a card. If you do, draw a card."
+                                if (body.contains("AB$ Draw") || body.contains("DB$ Draw"))
+                                    && body.contains("Cost$ Discard")
+                                {
+                                    // Parse NumCards$ if present, default to 1
+                                    let mut draw_count = 1u8;
+                                    // Parse discard count from Cost$ Discard<N/...>
+                                    let mut discard_count = 1u8;
+
+                                    for param in body.split('|') {
+                                        let param = param.trim();
+                                        if let Some((key, value)) = param.split_once('$') {
+                                            let key = key.trim();
+                                            let value = value.trim();
+
+                                            if key == "NumCards" {
+                                                if let Ok(n) = value.parse::<u8>() {
+                                                    draw_count = n;
+                                                }
+                                            } else if key == "Cost" && value.starts_with("Discard<") {
+                                                // Parse "Discard<1/Card>" format
+                                                if let Some(num_str) =
+                                                    value.strip_prefix("Discard<").and_then(|s| s.split('/').next())
+                                                {
+                                                    if let Ok(n) = num_str.parse::<u8>() {
+                                                        discard_count = n;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Create a Loot effect (discard N to draw N)
+                                    // We use Effect::Loot which represents optional looting
+                                    effects.push(Effect::Loot {
+                                        player: PlayerId::new(0), // Placeholder - controller
+                                        discard_count,
+                                        draw_count,
+                                    });
+                                }
+
                                 // Parse DB$ Earthbend effects
                                 // Example: "DB$ Earthbend | Num$ 2"
                                 // Used by cards like Badgermole, Avatar Kyoshi
