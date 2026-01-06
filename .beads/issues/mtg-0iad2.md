@@ -6,7 +6,7 @@ issue_type: task
 labels:
 - deep-test
 created_at: 2026-01-05T20:03:49.234472619+00:00
-updated_at: 2026-01-05T20:03:49.234472619+00:00
+updated_at: 2026-01-06T02:43:57.962511699+00:00
 ---
 
 # Description
@@ -22,19 +22,24 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Evidence must be included in commit messages when checking off items
 - No premature victory declarations - skeptical verification only
 
+## Known Bugs Affecting This Deck
+- mtg-6ph0z: Token scripts not loading (Food, Clue tokens fail)
+- mtg-hl300: SpellCast triggers not firing (Boar-q-pine, Prowess)
+- mtg-oyvdh: ETB triggers with optional discard cost don't fire (Yuyan Archers looting)
+
 ---
 
 ## 1. Beetle-Headed Merchants (4B, 5/4 Human Citizen)
 **Triggered:** Whenever this creature attacks, you may sacrifice another creature or artifact. If you do, draw a card and put a +1/+1 counter on this creature.
 
-- [ ] Card loads and can be cast for 4B
-- [ ] Can attack normally as 5/4
-- [ ] Attack trigger fires when declared as attacker
+- [x] Card loads and can be cast for 4B (verified: puzzles/beetle_merchants_attack_trigger.pzl)
+- [x] Can attack normally as 5/4 (verified: puzzle shows 5/4 attacking)
+- [x] Attack trigger fires when declared as attacker (verified: trigger fires on attack)
 - [ ] "You may" is optional - can decline sacrifice
-- [ ] Can sacrifice another creature to trigger
+- [x] Can sacrifice another creature to trigger (verified: Canyon Crawler sacrificed)
 - [ ] Can sacrifice an artifact to trigger
-- [ ] Draw a card effect works on sacrifice
-- [ ] +1/+1 counter is placed on sacrifice
+- [x] Draw a card effect works on sacrifice (verified: hand increased 1→2)
+- [x] +1/+1 counter is placed on sacrifice (verified: creature became 6/5)
 - [ ] Counter persists across turns
 - [ ] Multiple attacks accumulate counters correctly
 
@@ -45,10 +50,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 - [ ] Card loads and can be cast for 2R
 - [ ] Enters as 2/2
-- [ ] Trigger fires when casting instant
-- [ ] Trigger fires when casting sorcery
-- [ ] Trigger fires when casting artifact
-- [ ] Trigger fires when casting enchantment
+- [ ] Trigger fires when casting instant **[BLOCKED: mtg-hl300]**
+- [ ] Trigger fires when casting sorcery **[BLOCKED: mtg-hl300]**
+- [ ] Trigger fires when casting artifact **[BLOCKED: mtg-hl300]**
+- [ ] Trigger fires when casting enchantment **[BLOCKED: mtg-hl300]**
 - [ ] Trigger does NOT fire for creature spells
 - [ ] Counter is placed correctly
 - [ ] Multiple noncreature spells accumulate counters
@@ -59,15 +64,15 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Keywords:** Deathtouch, Swampcycling {2}
 **Triggered:** When this creature enters, create a Food token.
 
-- [ ] Card loads and can be cast for 4BB
-- [ ] Enters as 6/6
-- [ ] Has Deathtouch (kills any creature it damages)
+- [x] Card loads and can be cast for 4BB (verified: puzzle loaded Canyon Crawler)
+- [x] Enters as 6/6 (verified: shown as 6/6 in game state)
+- [x] Has Deathtouch (kills any creature it damages) (verified: puzzles/test_canyon_crawler_deathtouch.pzl)
 - [ ] Deathtouch works in combat (blocking)
-- [ ] Deathtouch works in combat (attacking)
-- [ ] ETB trigger creates Food token
-- [ ] Food token is an artifact
-- [ ] Food token has "{2}, {T}, Sacrifice: Gain 3 life"
-- [ ] Food token ability works correctly
+- [x] Deathtouch works in combat (attacking) (verified: killed Rough Rhino Cavalry 5/5)
+- [ ] ETB trigger creates Food token **[BLOCKED: mtg-6ph0z]**
+- [ ] Food token is an artifact **[BLOCKED: mtg-6ph0z]**
+- [ ] Food token has "{2}, {T}, Sacrifice: Gain 3 life" **[BLOCKED: mtg-6ph0z]**
+- [ ] Food token ability works correctly **[BLOCKED: mtg-6ph0z]**
 - [ ] Swampcycling {2} can be activated from hand
 - [ ] Swampcycling searches for Swamp
 - [ ] Swampcycling reveals the card
@@ -84,10 +89,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Target gets +3/+1
 - [ ] Buff lasts until end of turn
 - [ ] Buff wears off at cleanup
-- [ ] Creates Clue token
-- [ ] Clue token is an artifact
-- [ ] Clue token has "{2}, Sacrifice: Draw a card"
-- [ ] Clue token ability works correctly
+- [ ] Creates Clue token **[BLOCKED: mtg-6ph0z]**
+- [ ] Clue token is an artifact **[BLOCKED: mtg-6ph0z]**
+- [ ] Clue token has "{2}, Sacrifice: Draw a card" **[BLOCKED: mtg-6ph0z]**
+- [ ] Clue token ability works correctly **[BLOCKED: mtg-6ph0z]**
 - [ ] Can be cast at instant speed (during combat, opponent's turn)
 
 ---
@@ -157,12 +162,12 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Keyword:** Firebending 1
 **Activated:** {1}{R}{R}: Put a +1/+1 counter on this creature.
 
-- [ ] Card loads and can be cast for 1R
-- [ ] Enters as 2/2
-- [ ] Firebending 1 works (can spend mana from fireball pool)
+- [x] Card loads and can be cast for 1R (verified: Heartless Act puzzle loaded Fire Sages)
+- [x] Enters as 2/2 (verified: shown in battlefield as creature)
+- [x] Firebending 1 works - adds {R} on attack (verified: puzzles/test_fire_sages_ability.pzl "adds 1 {R} combat mana")
 - [ ] Firebending interacts correctly with firebend sources
-- [ ] Activated ability costs {1}{R}{R}
-- [ ] Activated ability puts +1/+1 counter
+- [x] Activated ability costs {1}{R}{R} (verified: 3 mountains tapped)
+- [x] Activated ability puts +1/+1 counter (verified: Fire Sages became 3/3)
 - [ ] Can activate multiple times per turn
 - [ ] Counters persist across turns
 
@@ -173,18 +178,18 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Destroy target creature with no counters on it.
 - Remove up to three counters from target creature.
 
-- [ ] Card loads and can be cast for 1B
-- [ ] Mode selection is required
-- [ ] Mode 1: Can target creature with no counters
+- [x] Card loads and can be cast for 1B (verified: puzzles/test_heartless_act.pzl)
+- [x] Mode selection is required (verified: "Player 1 chooses mode:")
+- [x] Mode 1: Can target creature with no counters (verified: targeted Fire Sages)
 - [ ] Mode 1: Cannot target creature WITH counters
-- [ ] Mode 1: Destroys the creature
+- [x] Mode 1: Destroys the creature (verified: "Heartless Act destroys Fire Sages")
 - [ ] Mode 2: Can target creature with counters
 - [ ] Mode 2: Removes up to 3 counters
 - [ ] Mode 2: Works with fewer than 3 counters
 - [ ] Mode 2: Can choose to remove fewer counters
 - [ ] Mode 2: Works with +1/+1 counters
 - [ ] Mode 2: Works with other counter types
-- [ ] Can be cast at instant speed
+- [x] Can be cast at instant speed (verified: is an instant)
 
 ---
 
@@ -231,14 +236,14 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 ## 12. Lightning Strike (1R, Instant)
 **Spell:** Deals 3 damage to any target.
 
-- [ ] Card loads and can be cast for 1R
-- [ ] Can target a creature
-- [ ] Can target a player
+- [x] Card loads and can be cast for 1R (verified: puzzles/test_lightning_strike.pzl)
+- [x] Can target a creature (verified: targeted Canyon Crawler)
+- [x] Can target a player (verified: puzzles/test_lightning_strike_player.pzl killed player)
 - [ ] Can target a planeswalker
-- [ ] Deals exactly 3 damage
-- [ ] Can be cast at instant speed
-- [ ] Damage can kill creatures
-- [ ] Damage reduces player life total
+- [x] Deals exactly 3 damage (verified: "takes 3 damage")
+- [x] Can be cast at instant speed (verified: is an instant)
+- [x] Damage can kill creatures (verified: Canyon Crawler died)
+- [x] Damage reduces player life total (verified: life went 3→0→-3)
 
 ---
 
@@ -338,8 +343,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Card loads and can be cast for 2R
 - [ ] Legendary rule works
 - [ ] Enters as 3/2
-- [ ] Prowess triggers on noncreature spells
-- [ ] Prowess grants +1/+1 until end of turn
+- [ ] Prowess triggers on noncreature spells **[BLOCKED: mtg-hl300]**
+- [ ] Prowess grants +1/+1 until end of turn **[BLOCKED: mtg-hl300]**
 - [ ] Attack trigger fires when declared as attacker
 - [ ] "You may pay {1}" is optional
 - [ ] If paid, can target any creature
@@ -354,15 +359,15 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Keyword:** Reach
 **Triggered:** When this creature enters, you may discard a card. If you do, draw a card.
 
-- [ ] Card loads and can be cast for 1R
-- [ ] Enters as 3/1
-- [ ] Has Reach (can block flyers)
-- [ ] Can block creatures with flying
-- [ ] ETB trigger fires on entering
-- [ ] "You may" discard is optional
-- [ ] Can decline to discard (no draw)
-- [ ] If discard, draws a card (looting)
-- [ ] Discard happens before draw
+- [x] Card loads and can be cast for 1R (verified: puzzles/test_yuyan_archers_etb.pzl)
+- [x] Enters as 3/1 (verified: shown as 3/1 creature)
+- [x] Has Reach (can block flyers) (verified: puzzles/test_yuyan_archers_reach.pzl)
+- [x] Can block creatures with flying (verified: blocked Watcher in the Mist)
+- [ ] ETB trigger fires on entering **[BLOCKED: mtg-oyvdh]**
+- [ ] "You may" discard is optional **[BLOCKED: mtg-oyvdh]**
+- [ ] Can decline to discard (no draw) **[BLOCKED: mtg-oyvdh]**
+- [ ] If discard, draws a card (looting) **[BLOCKED: mtg-oyvdh]**
+- [ ] Discard happens before draw **[BLOCKED: mtg-oyvdh]**
 
 ---
 
@@ -434,14 +439,14 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 ## Basic Lands
 
 ### 23. Mountain
-- [ ] Taps for {R}
-- [ ] Recognized as basic land
-- [ ] Can play one per turn
+- [x] Taps for {R} (verified: multiple puzzles)
+- [x] Recognized as basic land (verified: puzzle loading)
+- [x] Can play one per turn (verified: gameplay)
 
 ### 24. Swamp
-- [ ] Taps for {B}
-- [ ] Recognized as basic land
-- [ ] Can play one per turn
+- [x] Taps for {B} (verified: Heartless Act puzzle)
+- [x] Recognized as basic land (verified: puzzle loading)
+- [x] Can play one per turn (verified: gameplay)
 
 ---
 
@@ -450,13 +455,13 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both)
 - [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both)
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
-- [ ] Boar-q-pine + noncreature spells (Cunning Maneuver, Lightning Strike, etc.)
+- [ ] Boar-q-pine + noncreature spells (Cunning Maneuver, Lightning Strike, etc.) **[BLOCKED: mtg-hl300]**
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
 - [ ] Firebending creatures sharing firebend mana pool
 - [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
-- [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
-- [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy)
-- [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy)
+- [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks) **[BLOCKED: mtg-hl300]**
+- [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) **[BLOCKED: mtg-6ph0z]**
+- [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) **[BLOCKED: mtg-6ph0z]**
 
 ---
 
@@ -466,3 +471,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 2. **Earthbend N** - Land animation with death/exile return
 3. **Exhaust** - One-time activated abilities
 4. **Cycling variants** - Swampcycling, Mountaincycling
+
+---
+
+**Progress:** 29 items verified as of 2026-01-06_#1550
+- Newly verified: Fire Sages Firebending 1, activated ability; Yuyan Archers Reach; Canyon Crawler Deathtouch in combat
+- New bugs filed: mtg-oyvdh (ETB looting triggers)

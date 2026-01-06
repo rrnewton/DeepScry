@@ -1,0 +1,20 @@
+[metadata]
+Name:Yuyan Archers ETB Looting Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Yuyan Archers in hand and a card to discard
+p0life=20
+p0hand=Yuyan Archers; Mountain; Lightning Strike
+p0battlefield=Mountain; Mountain
+p0library=Mountain; Mountain; Mountain
+
+# P1 has nothing
+p1life=20
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest

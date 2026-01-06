@@ -1,0 +1,31 @@
+---
+title: ETB triggers with optional discard cost don't fire (Yuyan Archers)
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-01-06T02:26:56.768997064+00:00
+updated_at: 2026-01-06T02:26:56.768997064+00:00
+---
+
+# Description
+
+Yuyan Archers (and similar cards with looting ETB) don't fire their triggered ability.
+
+Card definition:
+```
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ When this creature enters, you may discard a card. If you do, draw a card.
+SVar:TrigDraw:AB$ Draw | Cost$ Discard<1/Card>
+```
+
+Evidence from `puzzles/test_yuyan_archers_etb.pzl`:
+- Hand starts: Yuyan Archers, Mountain, Lightning Strike
+- Cast Yuyan Archers
+- Expected: Trigger fires, offers to discard Mountain to draw
+- Actual: No trigger, no choice offered, no discard/draw
+
+The trigger uses `Execute$ TrigDraw` which references an SVar with `Cost$ Discard<1/Card>`. This pattern is different from Beetle-Headed Merchants (sacrifice as cost in trigger condition itself).
+
+This affects many cards including:
+- Yuyan Archers, Quicksmith Genius, Wandering Champion
+- Volatile Wanderglyph, Veronica Dissident Scribe
+- Any card using AB$ Draw | Cost$ Discard<N/Card> pattern

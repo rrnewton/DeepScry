@@ -1,0 +1,20 @@
+[metadata]
+Name:Canyon Crawler Deathtouch Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=COMBAT_BEGIN
+
+# P0 has Canyon Crawler ready to attack
+p0life=20
+p0hand=Swamp
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Canyon Crawler
+p0library=Swamp; Swamp; Swamp
+
+# P1 has a big creature to block
+p1life=20
+p1battlefield=Forest; Forest; Forest; Rough Rhino Cavalry
+p1library=Forest; Forest; Forest

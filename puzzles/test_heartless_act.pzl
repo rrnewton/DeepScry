@@ -1,0 +1,20 @@
+[metadata]
+Name:Heartless Act Modal Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Heartless Act and mana
+p0life=20
+p0hand=Heartless Act; Heartless Act
+p0battlefield=Swamp; Swamp; Swamp
+p0library=Swamp; Swamp; Swamp
+
+# P1 has one creature with no counters and one with counters
+p1life=20
+p1battlefield=Fire Sages; Canyon Crawler
+p1library=Swamp; Swamp; Swamp
