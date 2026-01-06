@@ -18,6 +18,59 @@ impl<'a> GameInitializer<'a> {
         GameInitializer { card_db }
     }
 
+    /// Initialize a two-player game with reserve-only CardIDs (for network clients)
+    ///
+    /// This creates the game structure without instantiating any cards. Instead, it:
+    /// 1. Reserves CardID slots based on DeckCardIdRanges
+    /// 2. Sets up libraries in Remote mode with correct sizes
+    /// 3. Cards will be revealed later via CardRevealed messages
+    ///
+    /// This is used by network clients in the late-binding CardID architecture
+    /// (mtg-qtqcr) where CardIDs are known upfront but card identities are hidden.
+    pub fn init_game_reserve_only(
+        &self,
+        player1_name: String,
+        player2_name: String,
+        starting_life: i32,
+        ranges: &crate::network::DeckCardIdRanges,
+    ) -> GameState {
+        let total_cards = ranges.total_cards() as usize;
+        let mut game = GameState::new_two_player_with_capacity(player1_name, player2_name, starting_life, total_cards);
+
+        // Reserve all CardID slots in EntityStore without instantiating cards
+        // This uses the Phase 1 EntityStore::reserve_range() method
+        use crate::core::CardId;
+        game.cards
+            .reserve_range(CardId::new(ranges.p1_start), ranges.p1_end - ranges.p1_start);
+        game.cards
+            .reserve_range(CardId::new(ranges.p2_start), ranges.p2_end - ranges.p2_start);
+
+        // Set up libraries in Remote mode with correct sizes
+        // We don't add CardIDs to the library - they'll be managed via pending_reveals
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let p1_lib_size = (ranges.p1_end - ranges.p1_start) as usize;
+        let p2_lib_size = (ranges.p2_end - ranges.p2_start) as usize;
+
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.library = crate::zones::CardZone::new_remote_library(p1_id, p1_lib_size);
+        }
+        if let Some(zones) = game.get_player_zones_mut(p2_id) {
+            zones.library = crate::zones::CardZone::new_remote_library(p2_id, p2_lib_size);
+        }
+
+        // Set next_entity_id past the reserved range
+        // Cards will use IDs from 0..total_cards, so next_entity_id should start after
+        game.set_next_entity_id(ranges.p2_end);
+
+        log::debug!(
+            "Reserve-only game initialized: {} total CardIDs reserved, libraries in Remote mode",
+            total_cards
+        );
+
+        game
+    }
+
     /// Initialize a two-player game from two decks
     pub async fn init_game(
         &self,
@@ -182,5 +235,89 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_init_game_reserve_only() {
+        use crate::core::CardId;
+        use crate::network::DeckCardIdRanges;
+
+        // Create ranges for two 40-card decks
+        let ranges = DeckCardIdRanges::from_deck_sizes(40, 40);
+
+        // Create an empty card database (not used for reserve-only mode)
+        let db = CardDatabase::new(PathBuf::from("cardsfolder"));
+        let initializer = GameInitializer::new(&db);
+
+        // Initialize in reserve-only mode
+        let game = initializer.init_game_reserve_only("Player1".to_string(), "Player2".to_string(), 20, &ranges);
+
+        // Verify game state
+        assert_eq!(game.players.len(), 2);
+
+        // Both libraries should be in Remote mode
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(zones.library.is_remote_library());
+            assert_eq!(zones.library.len(), 40);
+        } else {
+            panic!("P1 zones not found");
+        }
+
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(zones.library.is_remote_library());
+            assert_eq!(zones.library.len(), 40);
+        } else {
+            panic!("P2 zones not found");
+        }
+
+        // No cards should be instantiated (len() counts Some entries)
+        assert_eq!(game.cards.len(), 0);
+
+        // But all CardID slots should be reserved (can check by attempting insert)
+        // Verify slots are reserved by checking is_revealed returns false
+        assert!(!game.cards.is_revealed(CardId::new(0)));
+        assert!(!game.cards.is_revealed(CardId::new(39)));
+        assert!(!game.cards.is_revealed(CardId::new(40)));
+        assert!(!game.cards.is_revealed(CardId::new(79)));
+    }
+
+    #[test]
+    fn test_reserve_only_card_ranges() {
+        use crate::core::CardId;
+        use crate::network::DeckCardIdRanges;
+
+        // Create asymmetric deck sizes
+        let ranges = DeckCardIdRanges::from_deck_sizes(60, 40);
+
+        let db = CardDatabase::new(PathBuf::from("cardsfolder"));
+        let initializer = GameInitializer::new(&db);
+
+        let game = initializer.init_game_reserve_only("P1".to_string(), "P2".to_string(), 20, &ranges);
+
+        // Verify ranges
+        assert_eq!(ranges.p1_start, 0);
+        assert_eq!(ranges.p1_end, 60);
+        assert_eq!(ranges.p2_start, 60);
+        assert_eq!(ranges.p2_end, 100);
+
+        // Check library sizes match
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert_eq!(zones.library.len(), 60);
+        }
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert_eq!(zones.library.len(), 40);
+        }
+
+        // Verify CardID slots are reserved (not revealed but reservable)
+        // All slots from 0..99 should be unrevealed
+        for id in 0..100 {
+            assert!(!game.cards.is_revealed(CardId::new(id)));
+        }
     }
 }

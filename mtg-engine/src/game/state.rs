@@ -333,6 +333,15 @@ impl GameState {
         self.next_card_id()
     }
 
+    /// Set the next entity ID counter
+    ///
+    /// Used by network clients in reserve-only mode to set the counter
+    /// past the reserved CardID range so newly created entities (tokens)
+    /// don't collide with reserved CardIDs.
+    pub fn set_next_entity_id(&mut self, id: u32) {
+        self.next_entity_id = id;
+    }
+
     /// Get player zones for a specific player
     pub fn get_player_zones(&self, player_id: PlayerId) -> Option<&PlayerZones> {
         self.player_zones
