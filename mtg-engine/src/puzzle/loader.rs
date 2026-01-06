@@ -26,6 +26,43 @@ pub async fn load_puzzle_into_game(puzzle: &PuzzleFile, card_db: &AsyncCardDatab
     // Initialize a basic game structure with 20 life (will be overridden)
     let mut game = GameState::new_two_player(player1_name, player2_name, 20);
 
+    // Collect all unique card names from the puzzle
+    let mut unique_cards = std::collections::HashSet::new();
+    for player_state in &state_def.players {
+        for card_def in player_state
+            .hand
+            .iter()
+            .chain(player_state.battlefield.iter())
+            .chain(player_state.graveyard.iter())
+            .chain(player_state.library.iter())
+            .chain(player_state.exile.iter())
+        {
+            if !card_def.is_token() {
+                unique_cards.insert(card_def.name.clone());
+            }
+        }
+    }
+
+    // Scan all cards for token script references and preload token definitions
+    let mut token_scripts = std::collections::HashSet::new();
+    for card_name in &unique_cards {
+        if let Some(paper_card) = card_db.get_card(card_name).await? {
+            for token_script in paper_card.extract_token_scripts() {
+                token_scripts.insert(token_script);
+            }
+        }
+    }
+
+    // Load token definitions into game
+    for token_script in token_scripts {
+        if let Some(token_def) = card_db.get_token(&token_script).await? {
+            game.token_definitions
+                .insert(token_script, std::sync::Arc::new(token_def));
+        }
+    }
+
+    log::debug!("Puzzle loaded {} token definitions", game.token_definitions.len());
+
     // Set turn and phase
     game.turn.turn_number = state_def.turn;
     game.turn.current_step = state_def.active_phase;
