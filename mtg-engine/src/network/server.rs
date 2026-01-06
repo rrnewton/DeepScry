@@ -689,6 +689,16 @@ async fn run_game(
     let p1_deck_info = Some(DeckListInfo::from_submission(&p1.deck));
     let p2_deck_info = Some(DeckListInfo::from_submission(&p2.deck));
 
+    // Compute deck CardID ranges for late-binding architecture (Phase 3)
+    // P1's deck: CardIDs [0, p1_deck_size)
+    // P2's deck: CardIDs [p1_deck_size, p1_deck_size + p2_deck_size)
+    let p1_deck_size = p1.deck.main_deck_size();
+    let p2_deck_size = p2.deck.main_deck_size();
+    let deck_card_ids = Some(crate::network::protocol::DeckCardIdRanges::from_deck_sizes(
+        p1_deck_size,
+        p2_deck_size,
+    ));
+
     // Send GameStarted to both players
     let p1_lib_size = game.player_zones[0].1.library.len();
     let p2_lib_size = game.player_zones[1].1.library.len();
@@ -705,6 +715,7 @@ async fn run_game(
             starting_life: config.starting_life,
             initial_state_hash: initial_hash,
             network_debug: config.network_debug,
+            deck_card_ids: deck_card_ids.clone(),
         })
         .await?;
 
@@ -720,6 +731,7 @@ async fn run_game(
             starting_life: config.starting_life,
             initial_state_hash: initial_hash,
             network_debug: config.network_debug,
+            deck_card_ids: deck_card_ids.clone(),
         })
         .await?;
 

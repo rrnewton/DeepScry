@@ -459,6 +459,7 @@ impl NetworkClient {
             initial_state_hash,
             opponent_decklist,
             server_network_debug,
+            _deck_card_ids, // Phase 3: Will be used to reserve CardID slots
         ) = loop {
             let msg = self.receive_message().await?;
             match msg {
@@ -476,6 +477,7 @@ impl NetworkClient {
                     initial_state_hash,
                     opponent_decklist,
                     network_debug,
+                    deck_card_ids,
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(
@@ -485,6 +487,15 @@ impl NetworkClient {
                     );
                     if network_debug {
                         log::info!("Network debug mode ENABLED by server");
+                    }
+                    if let Some(ref ranges) = deck_card_ids {
+                        log::debug!(
+                            "Deck CardID ranges: P1=[{}..{}), P2=[{}..{})",
+                            ranges.p1_start,
+                            ranges.p1_end,
+                            ranges.p2_start,
+                            ranges.p2_end
+                        );
                     }
 
                     let our_hand_count = opening_hand.len();
@@ -497,6 +508,7 @@ impl NetworkClient {
                         initial_state_hash,
                         opponent_decklist,
                         network_debug,
+                        deck_card_ids,
                     );
                 }
                 ServerMessage::Error { message, fatal } => {

@@ -45,17 +45,25 @@ Major architectural change to make CardIDs **public and shared** between server 
 - [x] Add 5 unit tests for RevealCard
 - [x] Keep HiddenDraw/HiddenDiscard for backward compat initially
 
-### Phase 3: Zone Simplification
+### Phase 3: Network Protocol Updates (swapped with Zone Simplification)
+**Note:** Phase 3 and 4 were swapped because zone simplification depends on
+the network protocol being updated first. The zones use LibraryMode/hidden_card_count
+to support the current reveal-via-pending-buffer model; we need the new
+RevealCard-based protocol working before we can simplify zones.
+
+- [ ] Pre-allocate deterministic CardIDs at game start (0..N for P1, N+1..M for P2)
+- [ ] Update server to broadcast deck CardIDs to clients in GameStart
+- [ ] Update client to reserve CardID slots when receiving GameStart
+- [ ] Update CardRevealed message to include RevealCard action semantics
+- [ ] Transition client from pending_reveals buffer to direct EntityStore insert
+
+### Phase 4: Zone Simplification (moved here from Phase 3)
+**Requires:** Phase 3 network protocol complete
+
 - [ ] Remove `LibraryMode` enum entirely
 - [ ] Remove `hidden_card_count` field from CardZone
 - [ ] Simplify CardZone methods (len, draw_top, etc.)
 - [ ] Update state hashing for new model
-
-### Phase 4: Network Protocol Updates
-- [ ] Update CardRevealed message to broadcast RevealCard action
-- [ ] Remove `pending_reveals` VecDeque logic
-- [ ] Simplify network client reveal processing
-- [ ] Update server to pre-allocate CardIDs at game start
 
 ### Phase 5: Cleanup
 - [ ] Remove HiddenDraw, HiddenDiscard action variants

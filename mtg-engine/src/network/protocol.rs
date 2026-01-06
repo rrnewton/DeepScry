@@ -214,6 +214,17 @@ pub enum ServerMessage {
         /// in SubmitChoice and validate server hashes
         #[serde(default)]
         network_debug: bool,
+        /// Deterministic CardID ranges for late-binding architecture (Phase 3)
+        ///
+        /// Contains the CardID ranges for both players' decks:
+        /// - P1's deck gets CardIDs [0, p1_deck_size)
+        /// - P2's deck gets CardIDs [p1_deck_size, p1_deck_size + p2_deck_size)
+        ///
+        /// This is PUBLIC information - everyone knows which CardIDs belong
+        /// to which deck. Only the CardID ⟺ CardName binding is hidden until
+        /// a RevealCard action makes it known.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        deck_card_ids: Option<DeckCardIdRanges>,
     },
 
     /// Card reveal event (draws, tutors, plays, etc.)
@@ -371,6 +382,78 @@ pub enum ServerMessage {
 // ═══════════════════════════════════════════════════════════════════════════
 // SUPPORTING TYPES
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Deterministic CardID ranges for late-binding architecture
+///
+/// In the late-binding model, CardIDs are assigned positionally at game start:
+/// - P1's deck gets CardIDs [0, p1_deck_size)
+/// - P2's deck gets CardIDs [p1_deck_size, p1_deck_size + p2_deck_size)
+///
+/// This is PUBLIC information - all players know which CardIDs belong to which
+/// deck. Only the CardID ⟺ CardName binding remains hidden until revealed.
+///
+/// # Example
+///
+/// With P1's 40-card deck and P2's 40-card deck:
+/// - P1's deck: CardIDs 0..39 (inclusive range [0, 40))
+/// - P2's deck: CardIDs 40..79 (inclusive range [40, 80))
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeckCardIdRanges {
+    /// First CardID in P1's deck (inclusive)
+    pub p1_start: u32,
+    /// One past the last CardID in P1's deck (exclusive)
+    pub p1_end: u32,
+    /// First CardID in P2's deck (inclusive)
+    pub p2_start: u32,
+    /// One past the last CardID in P2's deck (exclusive)
+    pub p2_end: u32,
+}
+
+impl DeckCardIdRanges {
+    /// Create new ranges from deck sizes
+    ///
+    /// P1's deck gets CardIDs [0, p1_size)
+    /// P2's deck gets CardIDs [p1_size, p1_size + p2_size)
+    pub fn from_deck_sizes(p1_size: usize, p2_size: usize) -> Self {
+        let p1_start = 0u32;
+        let p1_end = p1_size as u32;
+        let p2_start = p1_end;
+        let p2_end = p2_start + p2_size as u32;
+        Self {
+            p1_start,
+            p1_end,
+            p2_start,
+            p2_end,
+        }
+    }
+
+    /// Get the CardID range for P1's deck as [start, end)
+    pub fn p1_range(&self) -> std::ops::Range<u32> {
+        self.p1_start..self.p1_end
+    }
+
+    /// Get the CardID range for P2's deck as [start, end)
+    pub fn p2_range(&self) -> std::ops::Range<u32> {
+        self.p2_start..self.p2_end
+    }
+
+    /// Get total number of CardIDs (both decks combined)
+    pub fn total_cards(&self) -> u32 {
+        self.p2_end
+    }
+
+    /// Check if a CardID belongs to P1's deck
+    pub fn is_p1_card(&self, card_id: CardId) -> bool {
+        let id = card_id.as_u32();
+        id >= self.p1_start && id < self.p1_end
+    }
+
+    /// Check if a CardID belongs to P2's deck
+    pub fn is_p2_card(&self, card_id: CardId) -> bool {
+        let id = card_id.as_u32();
+        id >= self.p2_start && id < self.p2_end
+    }
+}
 
 /// Information about a revealed card
 ///
@@ -940,6 +1023,7 @@ mod tests {
                 starting_life: 20,
                 initial_state_hash: 0x12345678,
                 network_debug: false,
+                deck_card_ids: Some(DeckCardIdRanges::from_deck_sizes(60, 60)),
             },
             ServerMessage::ChoiceRequest {
                 choice_seq: 1,
@@ -1080,5 +1164,74 @@ mod tests {
             let json2 = serde_json::to_string(&roundtrip).expect("re-serialize");
             assert_eq!(json, json2, "Round-trip failed for ChoiceType variant");
         }
+    }
+
+    #[test]
+    fn test_deck_card_id_ranges_from_deck_sizes() {
+        let ranges = DeckCardIdRanges::from_deck_sizes(40, 40);
+
+        // P1's deck: CardIDs 0..39
+        assert_eq!(ranges.p1_start, 0);
+        assert_eq!(ranges.p1_end, 40);
+
+        // P2's deck: CardIDs 40..79
+        assert_eq!(ranges.p2_start, 40);
+        assert_eq!(ranges.p2_end, 80);
+
+        assert_eq!(ranges.total_cards(), 80);
+    }
+
+    #[test]
+    fn test_deck_card_id_ranges_ranges() {
+        let ranges = DeckCardIdRanges::from_deck_sizes(60, 40);
+
+        assert_eq!(ranges.p1_range(), 0..60);
+        assert_eq!(ranges.p2_range(), 60..100);
+    }
+
+    #[test]
+    fn test_deck_card_id_ranges_ownership() {
+        let ranges = DeckCardIdRanges::from_deck_sizes(40, 40);
+
+        // P1's cards: 0..39
+        assert!(ranges.is_p1_card(CardId::new(0)));
+        assert!(ranges.is_p1_card(CardId::new(39)));
+        assert!(!ranges.is_p1_card(CardId::new(40)));
+
+        // P2's cards: 40..79
+        assert!(!ranges.is_p2_card(CardId::new(39)));
+        assert!(ranges.is_p2_card(CardId::new(40)));
+        assert!(ranges.is_p2_card(CardId::new(79)));
+        assert!(!ranges.is_p2_card(CardId::new(80)));
+    }
+
+    #[test]
+    fn test_deck_card_id_ranges_serialization() {
+        let ranges = DeckCardIdRanges::from_deck_sizes(42, 38);
+
+        let json = serde_json::to_string(&ranges).expect("serialize");
+        let roundtrip: DeckCardIdRanges = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(roundtrip.p1_start, ranges.p1_start);
+        assert_eq!(roundtrip.p1_end, ranges.p1_end);
+        assert_eq!(roundtrip.p2_start, ranges.p2_start);
+        assert_eq!(roundtrip.p2_end, ranges.p2_end);
+    }
+
+    #[test]
+    fn test_deck_card_id_ranges_asymmetric_decks() {
+        // Commander deck (100 cards) vs Limited deck (40 cards)
+        let ranges = DeckCardIdRanges::from_deck_sizes(100, 40);
+
+        assert_eq!(ranges.p1_start, 0);
+        assert_eq!(ranges.p1_end, 100);
+        assert_eq!(ranges.p2_start, 100);
+        assert_eq!(ranges.p2_end, 140);
+
+        // Boundary checks
+        assert!(ranges.is_p1_card(CardId::new(99)));
+        assert!(!ranges.is_p1_card(CardId::new(100)));
+        assert!(ranges.is_p2_card(CardId::new(100)));
+        assert!(ranges.is_p2_card(CardId::new(139)));
     }
 }

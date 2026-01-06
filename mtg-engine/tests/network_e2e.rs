@@ -244,6 +244,7 @@ mod async_tests {
             starting_life: 20,
             initial_state_hash: 0x12345678,
             network_debug: false,
+            deck_card_ids: None, // Phase 3: CardID ranges for late-binding
         };
 
         // Encode to JSON
