@@ -1,0 +1,21 @@
+[metadata]
+Name:Lifelink Gains Life on Damage
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Vampire Nighthawk (2/3 Flying + Deathtouch + Lifelink) attacks
+# Should gain 2 life when dealing damage
+p0life=10
+p0hand=
+p0battlefield=Swamp; Swamp; Swamp; Vampire Nighthawk
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+
+# Opponent at 10 life, game continues and we can see life gain
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest
