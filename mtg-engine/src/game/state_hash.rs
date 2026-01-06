@@ -93,6 +93,7 @@ pub enum HashMode {
 /// This serializes the game state to JSON, strips metadata fields,
 /// then computes a hash of the cleaned state. Two game states with
 /// the same gameplay-relevant state will produce the same hash.
+#[allow(clippy::collection_is_never_read)] // False positive: canonical is used via .hash()
 pub fn compute_state_hash(game: &GameState) -> u64 {
     // Serialize to JSON
     let json_value = match serde_json::to_value(game) {
@@ -127,6 +128,7 @@ pub fn compute_state_hash(game: &GameState) -> u64 {
 /// not gameplay state that should be identical after undo/redo.
 ///
 /// Use this in undo tests to verify that ALL gameplay state is correctly restored.
+#[allow(clippy::collection_is_never_read)] // False positive: canonical is used via .hash()
 pub fn compute_undo_test_hash(game: &GameState) -> u64 {
     // Serialize to JSON
     let json_value = match serde_json::to_value(game) {
@@ -223,6 +225,7 @@ pub fn format_hash(hash: u64) -> String {
 /// - Replay: For snapshot/resume (same as compute_state_hash)
 /// - UndoTest: For undo verification (same as compute_undo_test_hash)
 /// - Network: For network sync (excludes hidden info, keeps zone sizes)
+#[allow(clippy::collection_is_never_read)] // False positive: canonical is used via .hash()
 pub fn compute_state_hash_with_mode(game: &GameState, mode: HashMode) -> u64 {
     // Serialize to JSON
     let json_value = match serde_json::to_value(game) {

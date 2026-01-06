@@ -17,3 +17,21 @@ debug = true
 # Warn on wildcard enum match arms - these can silently fail when new variants are added
 # Use #[allow(clippy::wildcard_enum_match_arm)] with a comment for intentional exceptions
 wildcard_enum_match_arm = "warn"
+
+# Deny debug artifacts that should never be committed
+dbg_macro = "deny"
+todo = "deny"
+
+# Code quality - nursery lints
+derive_partial_eq_without_eq = "warn"
+collection_is_never_read = "warn"
+redundant_clone = "warn"
+or_fun_call = "warn"
+
+# Code quality - pedantic lints
+unnested_or_patterns = "warn"
+redundant_closure = "warn"
+cast_lossless = "warn"
+
+# Safety - restriction lints
+clone_on_ref_ptr = "warn"

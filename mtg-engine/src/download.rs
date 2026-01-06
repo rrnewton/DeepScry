@@ -237,7 +237,7 @@ impl ImageDownloader {
             tokio::time::sleep(tokio::time::Duration::from_millis(rate_limit_ms)).await;
 
             let client = self.client.clone();
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
             let output_dir = self.config.output_dir.clone();
             let pb = progress_bar.clone();
 

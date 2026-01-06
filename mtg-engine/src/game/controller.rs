@@ -99,10 +99,12 @@ pub fn format_attackers_prompt(view: &GameStateView, available_creatures: &[Card
             // Try to get power/toughness info (using effective P/T with anthem effects)
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let power = view
+                        .get_effective_power(card_id)
+                        .unwrap_or_else(|| i32::from(card.current_power()));
                     let toughness = view
                         .get_effective_toughness(card_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(card.current_toughness()));
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -131,10 +133,12 @@ pub fn format_blockers_prompt(view: &GameStateView, available_blockers: &[CardId
         let name = view.card_name(card_id).unwrap_or_else(|| format!("Card {card_id:?}"));
         if let Some(card) = view.get_card(card_id) {
             if card.is_creature() {
-                let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                let power = view
+                    .get_effective_power(card_id)
+                    .unwrap_or_else(|| i32::from(card.current_power()));
                 let toughness = view
                     .get_effective_toughness(card_id)
-                    .unwrap_or(card.current_toughness() as i32);
+                    .unwrap_or_else(|| i32::from(card.current_toughness()));
                 output.push_str(&format!("  [{}] {} {}/{}\n", idx, name, power, toughness));
             } else {
                 output.push_str(&format!("  [{}] {}\n", idx, name));
@@ -154,10 +158,12 @@ pub fn format_blockers_prompt(view: &GameStateView, available_blockers: &[CardId
 
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let power = view
+                        .get_effective_power(card_id)
+                        .unwrap_or_else(|| i32::from(card.current_power()));
                     let toughness = view
                         .get_effective_toughness(card_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(card.current_toughness()));
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));
@@ -212,10 +218,12 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
             // Try to get additional info (using effective P/T with anthem effects)
             if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let power = view
+                        .get_effective_power(card_id)
+                        .unwrap_or_else(|| i32::from(card.current_power()));
                     let toughness = view
                         .get_effective_toughness(card_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(card.current_toughness()));
                     output.push_str(&format!("  [{}] {} {}/{}{}\n", idx, name, power, toughness, tapped));
                 } else {
                     output.push_str(&format!("  [{}] {}{}\n", idx, name, tapped));

@@ -33,7 +33,7 @@ use std::collections::HashMap;
 /// A parsed SVar definition.
 ///
 /// SVars can represent different things depending on their content.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedSVar {
     /// A static ability definition (Mode$ ...)
     /// Examples: CantBlockBy, Continuous, Attacks, ChangesZone
@@ -57,7 +57,7 @@ pub enum ParsedSVar {
 ///
 /// Static abilities apply continuous effects to the game state
 /// without requiring activation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticAbilityDef {
     /// The mode/type of static ability
     pub mode: StaticAbilityMode,
@@ -145,7 +145,7 @@ impl StaticAbilityMode {
 }
 
 /// An effect definition parsed from DB$ or AB$ SVar.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectDef {
     /// Whether this is AB$ (activated) or DB$ (delayed/triggered)
     pub is_activated: bool,
@@ -163,7 +163,7 @@ pub struct EffectDef {
 /// A computed value expression.
 ///
 /// These are used for dynamic values like X costs, power references, etc.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComputedValueExpr {
     /// Sacrificed$CardPower - Power of sacrificed card
     SacrificedCardPower,

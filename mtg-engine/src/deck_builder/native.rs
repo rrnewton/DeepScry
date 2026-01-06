@@ -178,13 +178,13 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
                     // Handle exit dialog
                     if state.show_exit_dialog {
                         match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            KeyCode::Char('y' | 'Y') => {
                                 return Ok(true); // Save and exit
                             }
-                            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                            KeyCode::Char('q' | 'Q') => {
                                 return Ok(false); // Exit without saving
                             }
-                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                                 state.show_exit_dialog = false; // Cancel, go back
                             }
                             _ => {}

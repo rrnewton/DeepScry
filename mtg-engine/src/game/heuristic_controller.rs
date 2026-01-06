@@ -152,10 +152,12 @@ impl HeuristicController {
         value += 20;
 
         // Use effective P/T after all continuous effects (anthem, equipment, counters)
-        let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+        let power = view
+            .get_effective_power(card_id)
+            .unwrap_or_else(|| i32::from(card.current_power()));
         let toughness = view
             .get_effective_toughness(card_id)
-            .unwrap_or(card.current_toughness() as i32);
+            .unwrap_or_else(|| i32::from(card.current_toughness()));
 
         // Stats scoring
         if consider_pt {
@@ -167,7 +169,7 @@ impl HeuristicController {
 
         if consider_cmc {
             // Java: value += addValue(c.getCMC() * 5, "cmc");
-            let cmc = card.mana_cost.cmc() as i32;
+            let cmc = i32::from(card.mana_cost.cmc());
             value += cmc * 5;
         }
 
@@ -424,7 +426,7 @@ impl HeuristicController {
         // Java: if (c.hasKeyword("CARDNAME can't attack or block.")) { value = addValue(50 + (c.getCMC() * 5), "useless"); }
         if card.has_keyword(Keyword::CantAttackOrBlock) {
             // Reset everything - creature that can't attack or block is nearly useless
-            let cmc = card.mana_cost.cmc() as i32;
+            let cmc = i32::from(card.mana_cost.cmc());
             value = 50 + (cmc * 5);
         } else {
             // "Can't attack" - Java: if (c.hasKeyword("CARDNAME can't attack.")) { value -= power * 9 + 40; }
@@ -471,7 +473,7 @@ impl HeuristicController {
         // Simplified: flat penalty since we don't track initial counters
         if card.has_keyword(Keyword::Fading) {
             // Get current fade counters if any
-            let fade_counters = card.get_counter(crate::core::CounterType::Fade) as i32;
+            let fade_counters = i32::from(card.get_counter(crate::core::CounterType::Fade));
             if fade_counters == 0 {
                 value -= 50; // About to die
             } else if fade_counters <= 2 {
@@ -484,7 +486,7 @@ impl HeuristicController {
         // Vanishing: Similar to Fading, uses time counters
         // Java: value -= 20 * (1.0 - timeCounters/initialTimeCounters)
         if card.has_keyword(Keyword::Vanishing) {
-            let time_counters = card.get_counter(crate::core::CounterType::Time) as i32;
+            let time_counters = i32::from(card.get_counter(crate::core::CounterType::Time));
             if time_counters == 0 {
                 value -= 50; // About to die
             } else if time_counters <= 2 {
@@ -548,7 +550,7 @@ impl HeuristicController {
         };
 
         let base_value = self.evaluate_creature(view, card_id);
-        let cmc = card.mana_cost.cmc() as u32;
+        let cmc = u32::from(card.mana_cost.cmc());
 
         // Avoid division by zero - free creatures are always castable
         if cmc == 0 {
@@ -1123,8 +1125,8 @@ impl HeuristicController {
     ///
     /// Reference: ComputerUtilCombat.canDestroyBlocker()
     fn can_destroy_blocker(&self, attacker: &Card, blocker: &Card) -> bool {
-        let attacker_power = attacker.current_power() as i32;
-        let blocker_toughness = blocker.current_toughness() as i32;
+        let attacker_power = i32::from(attacker.current_power());
+        let blocker_toughness = i32::from(blocker.current_toughness());
 
         // Deathtouch kills any creature with toughness > 0
         if attacker.has_deathtouch() && blocker_toughness > 0 {
@@ -1153,8 +1155,8 @@ impl HeuristicController {
     ///
     /// Reference: ComputerUtilCombat.canDestroyAttacker()
     fn can_destroy_attacker(&self, attacker: &Card, blocker: &Card) -> bool {
-        let blocker_power = blocker.current_power() as i32;
-        let attacker_toughness = attacker.current_toughness() as i32;
+        let blocker_power = i32::from(blocker.current_power());
+        let attacker_toughness = i32::from(attacker.current_toughness());
 
         // Deathtouch kills any creature with toughness > 0
         if blocker.has_deathtouch() && attacker_toughness > 0 {
@@ -1207,7 +1209,7 @@ impl HeuristicController {
         available_creatures
             .iter()
             .filter_map(|&id| view.get_card(id))
-            .map(|c| c.current_power() as i32)
+            .map(|c| i32::from(c.current_power()))
             .sum()
     }
 
@@ -1257,7 +1259,7 @@ impl HeuristicController {
         for attacker in &attacker_cards {
             let attacker_power = view
                 .get_effective_power(attacker.id)
-                .unwrap_or(attacker.current_power() as i32);
+                .unwrap_or_else(|| i32::from(attacker.current_power()));
 
             // Check if attacker can be blocked
             if !self.can_attacker_be_blocked(attacker, &remaining_blockers) {
@@ -1281,7 +1283,7 @@ impl HeuristicController {
                         let blocker = remaining_blockers[blocker_idx];
                         let blocker_toughness = view
                             .get_effective_toughness(blocker.id)
-                            .unwrap_or(blocker.current_toughness() as i32);
+                            .unwrap_or_else(|| i32::from(blocker.current_toughness()));
                         let excess = (attacker_power - blocker_toughness).max(0);
                         predicted_damage += excess;
                     }
@@ -1336,7 +1338,7 @@ impl HeuristicController {
         }
 
         let attacker_value = self.evaluate_creature(view, attacker.id);
-        let attacker_power = attacker.current_power() as i32;
+        let attacker_power = i32::from(attacker.current_power());
 
         // Categorize blockers
         let mut best_safe_killer: Option<(usize, i32)> = None; // (index, value)
@@ -1403,7 +1405,7 @@ impl HeuristicController {
         opponent_blocker_count: usize,
         is_lethal_push: bool,
     ) -> bool {
-        let power = attacker.current_power() as i32;
+        let power = i32::from(attacker.current_power());
 
         // If we can go for lethal, attack with everything that has power
         if is_lethal_push && power > 0 {
@@ -1435,7 +1437,7 @@ impl HeuristicController {
     }
 
     fn should_attack(&self, attacker: &Card, view: &GameStateView) -> bool {
-        let power = attacker.current_power() as i32;
+        let power = i32::from(attacker.current_power());
 
         // Creatures with 0 power generally don't attack unless they have special abilities
         if power <= 0 {
@@ -1532,7 +1534,7 @@ impl HeuristicController {
             if !is_blocked {
                 // Add this attacker's damage
                 if let Some(attacker) = view.get_card(attacker_id) {
-                    let attacker_power = attacker.current_power() as i32;
+                    let attacker_power = i32::from(attacker.current_power());
                     damage += attacker_power;
 
                     // TODO: Handle trample damage (damage overflow from blocked attackers)
@@ -1599,13 +1601,13 @@ impl HeuristicController {
 
         // Can't pump if new toughness would be <= 0 (creature dies)
         // Java: if (c.getNetToughness() + toughness <= 0) { return false; }
-        let current_toughness = target.current_toughness() as i32 + target.power_bonus;
+        let current_toughness = i32::from(target.current_toughness()) + target.power_bonus;
         if current_toughness + toughness_bonus <= 0 {
             return false;
         }
 
         let current_step = view.current_step();
-        let current_power = target.current_power() as i32;
+        let current_power = i32::from(target.current_power());
 
         // Create a hypothetical pumped creature to evaluate
         let pumped_power = current_power + power_bonus;
@@ -1701,10 +1703,10 @@ impl HeuristicController {
             // Get effective stats for damage calculations
             let target_power = view
                 .get_effective_power(target.id)
-                .unwrap_or(target.current_power() as i32);
+                .unwrap_or_else(|| i32::from(target.current_power()));
             let target_toughness = view
                 .get_effective_toughness(target.id)
-                .unwrap_or(target.current_toughness() as i32);
+                .unwrap_or_else(|| i32::from(target.current_toughness()));
             let pumped_effective_power = target_power + power_bonus;
             let pumped_effective_toughness = target_toughness + toughness_bonus;
 
@@ -1727,7 +1729,7 @@ impl HeuristicController {
                             if let Some(atk_card) = view.get_card(attacker_id) {
                                 let atk_power = view
                                     .get_effective_power(attacker_id)
-                                    .unwrap_or(atk_card.current_power() as i32);
+                                    .unwrap_or_else(|| i32::from(atk_card.current_power()));
                                 total_damage += atk_power;
                             }
                         } else {
@@ -1736,14 +1738,14 @@ impl HeuristicController {
                                 if atk_card.has_trample() {
                                     let atk_power = view
                                         .get_effective_power(attacker_id)
-                                        .unwrap_or(atk_card.current_power() as i32);
+                                        .unwrap_or_else(|| i32::from(atk_card.current_power()));
                                     let blocker_toughness: i32 = combat
                                         .get_blockers(attacker_id)
                                         .iter()
                                         .filter_map(|&b| view.get_card(b))
                                         .map(|b| {
                                             view.get_effective_toughness(b.id)
-                                                .unwrap_or(b.current_toughness() as i32)
+                                                .unwrap_or_else(|| i32::from(b.current_toughness()))
                                         })
                                         .sum();
                                     let trample_damage = (atk_power - blocker_toughness).max(0);
@@ -1762,7 +1764,10 @@ impl HeuristicController {
                     let total_blocker_power: i32 = blockers
                         .iter()
                         .filter_map(|&b| view.get_card(b))
-                        .map(|b| view.get_effective_power(b.id).unwrap_or(b.current_power() as i32))
+                        .map(|b| {
+                            view.get_effective_power(b.id)
+                                .unwrap_or_else(|| i32::from(b.current_power()))
+                        })
                         .sum();
 
                     let total_blocker_toughness: i32 = blockers
@@ -1770,7 +1775,7 @@ impl HeuristicController {
                         .filter_map(|&b| view.get_card(b))
                         .map(|b| {
                             view.get_effective_toughness(b.id)
-                                .unwrap_or(b.current_toughness() as i32)
+                                .unwrap_or_else(|| i32::from(b.current_toughness()))
                         })
                         .sum();
 
@@ -1798,7 +1803,7 @@ impl HeuristicController {
                         if let Some(blocker) = view.get_card(blocker_id) {
                             let blocker_toughness = view
                                 .get_effective_toughness(blocker_id)
-                                .unwrap_or(blocker.current_toughness() as i32);
+                                .unwrap_or_else(|| i32::from(blocker.current_toughness()));
 
                             // Would this blocker die without pump?
                             let blocker_dies_without_pump =
@@ -1837,7 +1842,10 @@ impl HeuristicController {
                 let total_attacker_power: i32 = attackers_blocked
                     .iter()
                     .filter_map(|&a| view.get_card(a))
-                    .map(|a| view.get_effective_power(a.id).unwrap_or(a.current_power() as i32))
+                    .map(|a| {
+                        view.get_effective_power(a.id)
+                            .unwrap_or_else(|| i32::from(a.current_power()))
+                    })
                     .sum();
 
                 // Check for first strike (for future damage race logic)
@@ -1863,7 +1871,7 @@ impl HeuristicController {
                     if let Some(attacker) = view.get_card(attacker_id) {
                         let attacker_toughness = view
                             .get_effective_toughness(attacker_id)
-                            .unwrap_or(attacker.current_toughness() as i32);
+                            .unwrap_or_else(|| i32::from(attacker.current_toughness()));
 
                         let attacker_dies_without_pump = target_power >= attacker_toughness || target.has_deathtouch();
                         let attacker_dies_with_pump =
@@ -1924,7 +1932,7 @@ impl HeuristicController {
 
                 // If 0-power creature self-pumps to get power, it's very valuable
                 // Java: if (c.getNetPower() == 0 && c == sa.getHostCard() && power > 0) { threat *= 4; }
-                let base_power = target.current_power() as i32;
+                let base_power = i32::from(target.current_power());
                 if base_power == 0 && power_bonus > 0 {
                     chance *= 4.0;
                 }
@@ -2054,7 +2062,7 @@ impl HeuristicController {
         // 1. It has power > 0 after pump
         // 2. It's not a terrible attack based on combat factors
 
-        let pumped_power = creature.current_power() as i32 + power_bonus;
+        let pumped_power = i32::from(creature.current_power()) + power_bonus;
 
         if pumped_power <= 0 {
             return false;
@@ -2289,8 +2297,8 @@ impl HeuristicController {
 
                         // Evaluate this creature's value
                         // Use power + toughness as a simple heuristic
-                        let power = card.current_power() as i32;
-                        let toughness = card.current_toughness() as i32;
+                        let power = i32::from(card.current_power());
+                        let toughness = i32::from(card.current_toughness());
                         let value = power * 10 + toughness * 5;
 
                         // Add bonus for dangerous keywords
@@ -2386,10 +2394,10 @@ impl HeuristicController {
         // Get current effective stats
         let source_power = view
             .get_effective_power(source.id)
-            .unwrap_or(source.current_power() as i32);
+            .unwrap_or_else(|| i32::from(source.current_power()));
         let source_toughness = view
             .get_effective_toughness(source.id)
-            .unwrap_or(source.current_toughness() as i32);
+            .unwrap_or_else(|| i32::from(source.current_toughness()));
         let pumped_power = source_power + power;
         let pumped_toughness = source_toughness + toughness;
 
@@ -2420,7 +2428,7 @@ impl HeuristicController {
                         if let Some(atk_card) = view.get_card(attacker_id) {
                             let atk_power = view
                                 .get_effective_power(attacker_id)
-                                .unwrap_or(atk_card.current_power() as i32);
+                                .unwrap_or_else(|| i32::from(atk_card.current_power()));
                             total_damage += atk_power;
                         }
                     } else if let Some(atk_card) = view.get_card(attacker_id) {
@@ -2428,14 +2436,14 @@ impl HeuristicController {
                         if atk_card.has_trample() {
                             let atk_power = view
                                 .get_effective_power(attacker_id)
-                                .unwrap_or(atk_card.current_power() as i32);
+                                .unwrap_or_else(|| i32::from(atk_card.current_power()));
                             let blocker_toughness: i32 = combat
                                 .get_blockers(attacker_id)
                                 .iter()
                                 .filter_map(|&b| view.get_card(b))
                                 .map(|b| {
                                     view.get_effective_toughness(b.id)
-                                        .unwrap_or(b.current_toughness() as i32)
+                                        .unwrap_or_else(|| i32::from(b.current_toughness()))
                                 })
                                 .sum();
                             let trample_damage = (atk_power - blocker_toughness).max(0);
@@ -2453,7 +2461,10 @@ impl HeuristicController {
                 let total_blocker_power: i32 = blockers
                     .iter()
                     .filter_map(|&b| view.get_card(b))
-                    .map(|b| view.get_effective_power(b.id).unwrap_or(b.current_power() as i32))
+                    .map(|b| {
+                        view.get_effective_power(b.id)
+                            .unwrap_or_else(|| i32::from(b.current_power()))
+                    })
                     .sum();
 
                 let total_blocker_toughness: i32 = blockers
@@ -2461,7 +2472,7 @@ impl HeuristicController {
                     .filter_map(|&b| view.get_card(b))
                     .map(|b| {
                         view.get_effective_toughness(b.id)
-                            .unwrap_or(b.current_toughness() as i32)
+                            .unwrap_or_else(|| i32::from(b.current_toughness()))
                     })
                     .sum();
 
@@ -2478,7 +2489,7 @@ impl HeuristicController {
                     if let Some(blocker) = view.get_card(blocker_id) {
                         let blocker_toughness = view
                             .get_effective_toughness(blocker_id)
-                            .unwrap_or(blocker.current_toughness() as i32);
+                            .unwrap_or_else(|| i32::from(blocker.current_toughness()));
 
                         let blocker_dies_without_pump = source_power >= blocker_toughness || source.has_deathtouch();
                         let blocker_dies_with_pump = pumped_power >= blocker_toughness || source.has_deathtouch();
@@ -2512,7 +2523,10 @@ impl HeuristicController {
             let total_attacker_power: i32 = attackers_blocked
                 .iter()
                 .filter_map(|&a| view.get_card(a))
-                .map(|a| view.get_effective_power(a.id).unwrap_or(a.current_power() as i32))
+                .map(|a| {
+                    view.get_effective_power(a.id)
+                        .unwrap_or_else(|| i32::from(a.current_power()))
+                })
                 .sum();
 
             // 1. Save our blocker
@@ -2528,7 +2542,7 @@ impl HeuristicController {
                 if let Some(attacker) = view.get_card(attacker_id) {
                     let attacker_toughness = view
                         .get_effective_toughness(attacker_id)
-                        .unwrap_or(attacker.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(attacker.current_toughness()));
 
                     let attacker_dies_without_pump = source_power >= attacker_toughness || source.has_deathtouch();
                     let attacker_dies_with_pump = pumped_power >= attacker_toughness || source.has_deathtouch();
@@ -2912,7 +2926,7 @@ impl HeuristicController {
                         && !c.has_indestructible()
                         && c.current_toughness() > 0
                         && damage_amount
-                            .map(|dmg| c.current_toughness() as i32 <= dmg)
+                            .map(|dmg| i32::from(c.current_toughness()) <= dmg)
                             .unwrap_or(true)
                 } else {
                     false
@@ -2952,10 +2966,10 @@ impl HeuristicController {
         attackers: &[CardId],
         current_blocks: &[(CardId, CardId)],
     ) -> bool {
-        let blocker_power = blocker.current_power() as i32;
-        let blocker_toughness = blocker.current_toughness() as i32;
-        let attacker_power = attacker.current_power() as i32;
-        let attacker_toughness = attacker.current_toughness() as i32;
+        let blocker_power = i32::from(blocker.current_power());
+        let blocker_toughness = i32::from(blocker.current_toughness());
+        let attacker_power = i32::from(attacker.current_power());
+        let attacker_toughness = i32::from(attacker.current_toughness());
 
         // Check for special blocking keywords
         let blocker_has_first_strike = blocker.has_first_strike() || blocker.has_double_strike();
@@ -3036,7 +3050,7 @@ impl HeuristicController {
             // For simplicity, if we're checking for gang block effectiveness,
             // we count all damage that would be dealt
             if !attacker_has_first_strike || blocker_has_first_strike {
-                total += blocker.current_power() as i32;
+                total += i32::from(blocker.current_power());
             }
         }
 
@@ -3047,7 +3061,7 @@ impl HeuristicController {
     ///
     /// Reference: AiBlockController.makeGangBlocks()
     fn can_gang_kill(&self, attacker: &Card, blockers: &[&Card]) -> bool {
-        let damage_needed = attacker.current_toughness() as i32;
+        let damage_needed = i32::from(attacker.current_toughness());
         let total_damage = self.total_damage_of_blockers(blockers, attacker);
 
         // Deathtouch: any one blocker with deathtouch kills the attacker
@@ -3074,7 +3088,7 @@ impl HeuristicController {
         }
 
         let attacker_value = self.evaluate_creature(view, attacker.id);
-        let attacker_power = attacker.current_power() as i32;
+        let attacker_power = i32::from(attacker.current_power());
 
         // Try to find 2-3 blockers that can kill the attacker with minimal losses
         // Strategy: Use first strikers if attacker doesn't have first strike
@@ -3135,8 +3149,8 @@ impl HeuristicController {
                     }
 
                     // Calculate how many blockers would die
-                    let blocker1_dies = blocker1.current_toughness() as i32 <= attacker_power;
-                    let blocker2_dies = blocker2.current_toughness() as i32 <= attacker_power;
+                    let blocker1_dies = i32::from(blocker1.current_toughness()) <= attacker_power;
+                    let blocker2_dies = i32::from(blocker2.current_toughness()) <= attacker_power;
 
                     let blocker1_value = self.evaluate_creature(view, blocker1.id);
                     let blocker2_value = self.evaluate_creature(view, blocker2.id);
@@ -3170,9 +3184,9 @@ impl HeuristicController {
                             }
 
                             // Calculate survival for each blocker
-                            let blocker1_dies = blocker1.current_toughness() as i32 <= attacker_power;
-                            let blocker2_dies = blocker2.current_toughness() as i32 <= attacker_power;
-                            let blocker3_dies = blocker3.current_toughness() as i32 <= attacker_power;
+                            let blocker1_dies = i32::from(blocker1.current_toughness()) <= attacker_power;
+                            let blocker2_dies = i32::from(blocker2.current_toughness()) <= attacker_power;
+                            let blocker3_dies = i32::from(blocker3.current_toughness()) <= attacker_power;
 
                             let total_blocker_value: i32 =
                                 gang.iter().map(|b| self.evaluate_creature(view, b.id)).sum();
@@ -3293,7 +3307,6 @@ impl HeuristicController {
     ) -> Vec<(&'a Card, &'a Card)> {
         let mut assignments = Vec::new();
         let mut remaining_blockers = available_blockers.to_vec();
-        let mut blocked_attackers = Vec::new();
 
         for &attacker in attackers {
             if remaining_blockers.is_empty() {
@@ -3347,7 +3360,6 @@ impl HeuristicController {
             // Assign the chosen blocker
             if let Some(blocker) = chosen_blocker {
                 assignments.push((blocker, attacker));
-                blocked_attackers.push(attacker);
                 remaining_blockers.retain(|b| b.id != blocker.id);
             }
         }
@@ -3677,7 +3689,7 @@ impl HeuristicController {
                 None => continue,
             };
 
-            let attacker_power = attacker.current_power() as i32;
+            let attacker_power = i32::from(attacker.current_power());
 
             // Calculate current blocking damage absorption (typically 1-3 blockers per attacker)
             let current_blockers: SmallVec<[&Card; 4]> = current_blocks
@@ -3685,7 +3697,7 @@ impl HeuristicController {
                 .filter_map(|(bid, aid)| if *aid == attacker_id { view.get_card(*bid) } else { None })
                 .collect();
 
-            let current_absorption: i32 = current_blockers.iter().map(|b| b.current_toughness() as i32).sum();
+            let current_absorption: i32 = current_blockers.iter().map(|b| i32::from(b.current_toughness())).sum();
 
             // If current blockers don't absorb all damage, add more
             if attacker_power > current_absorption {
@@ -3699,7 +3711,7 @@ impl HeuristicController {
                     if let Some(blocker) = view.get_card(blocker_id) {
                         // Check if can block (basic check)
                         if self.can_block(attacker, blocker) {
-                            let blocker_toughness = blocker.current_toughness() as i32;
+                            let blocker_toughness = i32::from(blocker.current_toughness());
                             // Add this blocker to help absorb trample damage
                             if blocker_toughness > 0 {
                                 current_blocks.push((blocker_id, attacker_id));
@@ -3749,7 +3761,7 @@ impl HeuristicController {
 
             // Check if blockers kill the attacker
             let total_damage = self.total_damage_of_blockers(&blockers, attacker);
-            let attacker_toughness = attacker.current_toughness() as i32;
+            let attacker_toughness = i32::from(attacker.current_toughness());
 
             if total_damage < attacker_toughness && !attacker.has_indestructible() {
                 blocked_but_unkilled.push(attacker_id);
@@ -3764,7 +3776,7 @@ impl HeuristicController {
             };
 
             let attacker_value = self.evaluate_creature(view, attacker.id);
-            let attacker_toughness = attacker.current_toughness() as i32;
+            let attacker_toughness = i32::from(attacker.current_toughness());
 
             // Calculate current damage
             let current_blockers: Vec<&Card> = current_blocks
@@ -3786,7 +3798,7 @@ impl HeuristicController {
                         continue;
                     }
 
-                    let blocker_power = blocker.current_power() as i32;
+                    let blocker_power = i32::from(blocker.current_power());
                     let blocker_value = self.evaluate_creature(view, blocker.id);
 
                     // Add blocker if:
@@ -3825,7 +3837,8 @@ impl HeuristicController {
                 for effect in &ability.effects {
                     if let crate::core::Effect::AddMana { mana, .. } = effect {
                         // Count total mana produced
-                        score += (mana.white + mana.blue + mana.black + mana.red + mana.green + mana.colorless) as i32;
+                        score +=
+                            i32::from(mana.white + mana.blue + mana.black + mana.red + mana.green + mana.colorless);
                     }
                 }
             } else {
@@ -4243,7 +4256,7 @@ impl PlayerController for HeuristicController {
         // Get attacker's damage (using effective power after anthem effects)
         let attacker_power = view
             .get_effective_power(attacker)
-            .or_else(|| view.get_card(attacker).map(|c| c.current_power() as i32))
+            .or_else(|| view.get_card(attacker).map(|c| i32::from(c.current_power())))
             .unwrap_or(0);
 
         // Create a sorted list of blockers by evaluation (best first)
@@ -4254,7 +4267,7 @@ impl PlayerController for HeuristicController {
                     let eval = self.evaluate_creature(view, id);
                     let toughness = view
                         .get_effective_toughness(id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(card.current_toughness()));
                     (id, eval, toughness)
                 })
             })
@@ -4368,7 +4381,7 @@ impl PlayerController for HeuristicController {
                     // For spells, use a simple value heuristic
                     // Lower CMC is better (can cast sooner)
                     let cmc = card.mana_cost.cmc();
-                    100 - cmc as i32
+                    100 - i32::from(cmc)
                 };
 
                 if score > best_score {
@@ -4379,7 +4392,7 @@ impl PlayerController for HeuristicController {
         }
 
         if let Some(card_id) = best_card {
-            let card_name = view.get_card_name(card_id).unwrap_or("Unknown".to_string());
+            let card_name = view.get_card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
             view.logger().controller_choice(
                 "HEURISTIC",
                 &format!("Library search: found {} (score: {})", card_name, best_score),
@@ -4420,7 +4433,7 @@ impl PlayerController for HeuristicController {
                 } else {
                     // For other permanents, use a basic value
                     // Higher CMC = more valuable = higher score
-                    card.mana_cost.cmc() as i32 * 10
+                    i32::from(card.mana_cost.cmc()) * 10
                 };
                 Some((id, score))
             })
@@ -4679,14 +4692,14 @@ mod tests {
         assert_eq!(bears.base_toughness(), Some(2));
 
         // Calculate what would happen
-        let would_die = (bears.current_toughness() as i32) + bad_toughness <= 0;
+        let would_die = i32::from(bears.current_toughness()) + bad_toughness <= 0;
         assert!(would_die, "Creature should die with -5 toughness");
 
-        let would_live = (bears.current_toughness() as i32) + toughness_bonus > 0;
+        let would_live = i32::from(bears.current_toughness()) + toughness_bonus > 0;
         assert!(would_live, "Creature should live with +3 toughness");
 
         // Test that we can calculate pumped power
-        let pumped_power = (bears.current_power() as i32) + power_bonus;
+        let pumped_power = i32::from(bears.current_power()) + power_bonus;
         assert_eq!(pumped_power, 5, "2/2 with +3/+3 should have 5 power");
     }
 

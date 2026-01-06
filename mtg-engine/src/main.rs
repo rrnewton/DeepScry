@@ -952,7 +952,7 @@ async fn main() -> Result<()> {
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game start error: {}", e)))?;
 
             // Get our player ID from the client state
-            let our_player_id = client.our_player_id().unwrap_or(PlayerId::new(0));
+            let our_player_id = client.our_player_id().unwrap_or_else(|| PlayerId::new(0));
 
             // Create controller based on type and run the synchronized GameLoop
             let result: Option<PlayerId> = match controller_type {

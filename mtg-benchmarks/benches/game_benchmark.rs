@@ -598,6 +598,8 @@ fn bench_save_snapshot(c: &mut Criterion) {
 
     // Lazy initialization - only create game state and snapshot on first iteration
     let mut snapshot_template: Option<GameSnapshot> = None;
+    // False positive: temp_dir_holder keeps the TempDir alive via RAII so the temp directory exists
+    #[allow(clippy::collection_is_never_read)]
     let mut temp_dir_holder: Option<tempfile::TempDir> = None;
     let mut snapshot_path_holder: Option<PathBuf> = None;
 

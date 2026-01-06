@@ -180,7 +180,7 @@ impl NetworkController {
     ///
     /// This allows the reveal pusher hook to share the same tracking index.
     pub fn shared_reveal_index(&self) -> Arc<AtomicUsize> {
-        self.shared_reveal_index.clone()
+        Arc::clone(&self.shared_reveal_index)
     }
 
     /// Set the channel for sending chosen abilities back to WebSocket handler

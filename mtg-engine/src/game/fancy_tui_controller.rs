@@ -326,7 +326,7 @@ impl FancyTuiController {
                     Event::Key(key) => {
                         match key.code {
                             // Pane focus switching (H, I, Y, O, A)
-                            KeyCode::Char('h') | KeyCode::Char('H') => {
+                            KeyCode::Char('h' | 'H') => {
                                 self.renderer.state.focused_pane = FocusedPane::Hand;
                                 // Initialize selection to first card if hand not empty
                                 let hand = view.hand();
@@ -336,11 +336,11 @@ impl FancyTuiController {
                                 }
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('l') | KeyCode::Char('L') => {
+                            KeyCode::Char('l' | 'L') => {
                                 self.renderer.state.focused_pane = FocusedPane::Log;
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            KeyCode::Char('y' | 'Y') => {
                                 self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
                                 // Initialize selection to first card if battlefield not empty
                                 let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
@@ -350,7 +350,7 @@ impl FancyTuiController {
                                 }
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('o') | KeyCode::Char('O') => {
+                            KeyCode::Char('o' | 'O') => {
                                 self.renderer.state.focused_pane = FocusedPane::OpponentBattlefield;
                                 // Initialize selection to first card if battlefield not empty
                                 if let Some(opp_id) = view.opponents().next() {
@@ -362,16 +362,16 @@ impl FancyTuiController {
                                 }
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('a') | KeyCode::Char('A') => {
+                            KeyCode::Char('a' | 'A') => {
                                 self.renderer.state.focused_pane = FocusedPane::Actions;
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('s') | KeyCode::Char('S') => {
+                            KeyCode::Char('s' | 'S') => {
                                 // Stack is now part of Actions pane
                                 self.renderer.state.focused_pane = FocusedPane::Actions;
                                 return Ok(InputAction::Continue); // Redraw needed
                             }
-                            KeyCode::Char('b') | KeyCode::Char('B') => {
+                            KeyCode::Char('b' | 'B') => {
                                 // Log battlefield state
                                 let bf_text = crate::game::display::format_battlefield_for_log(view);
                                 log::info!("{}", bf_text);
@@ -714,7 +714,7 @@ impl FancyTuiController {
                                 // Shift+Z: Undo the most recent action
                                 return Ok(InputAction::Undo);
                             }
-                            KeyCode::Char('r') | KeyCode::Char('R') => {
+                            KeyCode::Char('r' | 'R') => {
                                 // R: Make a random choice
                                 return Ok(InputAction::RandomChoice);
                             }
@@ -727,7 +727,7 @@ impl FancyTuiController {
                                     }
                                 }
                             }
-                            KeyCode::Char('w') | KeyCode::Char('W') => {
+                            KeyCode::Char('w' | 'W') => {
                                 // W: Toggle line wrapping in log (only when Log pane is focused)
                                 if self.renderer.state.focused_pane == FocusedPane::Log {
                                     let logs = view.logger().logs();
@@ -763,7 +763,7 @@ impl FancyTuiController {
                                     return Ok(InputAction::Continue);
                                 }
                             }
-                            KeyCode::Char('?') | KeyCode::Char('/') => {
+                            KeyCode::Char('?' | '/') => {
                                 // Show help/keyboard shortcuts
                                 return Ok(InputAction::ShowHelp);
                             }
@@ -1037,7 +1037,7 @@ impl PlayerController for FancyTuiController {
                     self.renderer.state.valid_choices.clear();
                     return ChoiceResult::UndoRequest(usize::MAX);
                 }
-                Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => break,
+                Ok(PromptResult::Choice(Some(0) | None)) => break,
                 Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= available_creatures.len() => {
                     let card_id = available_creatures[idx - 1];
                     if !attackers.contains(&card_id) {
@@ -1115,7 +1115,7 @@ impl PlayerController for FancyTuiController {
                     self.renderer.state.valid_choices.clear();
                     return ChoiceResult::UndoRequest(usize::MAX);
                 }
-                Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => continue,
+                Ok(PromptResult::Choice(Some(0) | None)) => continue,
                 Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= attackers.len() => {
                     blocks.push((blocker_id, attackers[idx - 1]));
                 }
@@ -1223,7 +1223,7 @@ impl PlayerController for FancyTuiController {
 
         match self.prompt_for_choice(view, prompt, &choices) {
             Ok(PromptResult::Undo) => ChoiceResult::UndoRequest(usize::MAX),
-            Ok(PromptResult::Choice(Some(0))) | Ok(PromptResult::Choice(None)) => {
+            Ok(PromptResult::Choice(Some(0) | None)) => {
                 view.logger().controller_choice("TUI", "Chose to fail to find");
                 ChoiceResult::Ok(None)
             }

@@ -185,12 +185,14 @@ impl InteractiveController {
                     let controller_name = view.get_player_name_by_id(card.controller);
                     let pt = if card.is_creature() {
                         // Use effective P/T which includes continuous effects
-                        let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                        let power = view
+                            .get_effective_power(card_id)
+                            .unwrap_or_else(|| i32::from(card.current_power()));
                         let toughness = view
                             .get_effective_toughness(card_id)
-                            .unwrap_or(card.current_toughness() as i32);
-                        let base_power = card.base_power().unwrap_or(0) as i32;
-                        let base_toughness = card.base_toughness().unwrap_or(0) as i32;
+                            .unwrap_or_else(|| i32::from(card.current_toughness()));
+                        let base_power = i32::from(card.base_power().unwrap_or(0));
+                        let base_toughness = i32::from(card.base_toughness().unwrap_or(0));
 
                         if power != base_power || toughness != base_toughness {
                             format!(" {}/{} ({}/{})", power, toughness, base_power, base_toughness)
@@ -1104,8 +1106,11 @@ impl PlayerController for InteractiveController {
                     let type_str = c.types.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(" ");
 
                     if c.is_creature() {
-                        let power_str = c.base_power().map(|p| p.to_string()).unwrap_or("*".to_string());
-                        let toughness_str = c.base_toughness().map(|t| t.to_string()).unwrap_or("*".to_string());
+                        let power_str = c.base_power().map(|p| p.to_string()).unwrap_or_else(|| "*".to_string());
+                        let toughness_str = c
+                            .base_toughness()
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "*".to_string());
                         println!("  [{}] {} {} - {}/{}", i, mana_str, card_name, power_str, toughness_str);
                         println!("       Type: {}", type_str);
                     } else {

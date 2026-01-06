@@ -1,0 +1,59 @@
+---
+title: Enable high-priority clippy lints for code quality and safety
+status: closed
+priority: 1
+issue_type: task
+created_at: 2026-01-06T01:14:35.018080535+00:00
+updated_at: 2026-01-06T02:06:49.182643220+00:00
+---
+
+# Description
+
+## Description
+
+## Enable High-Priority Clippy Lints
+
+Track the enablement of additional clippy lints beyond `wildcard_enum_match_arm` for improved code quality and safety.
+
+## COMPLETED - All Lints Enabled (2026-01-06)
+
+All target lints have been enabled and issues fixed:
+
+### Restriction Lints - Debug Artifacts (deny)
+- [x] `dbg_macro` = "deny" - 0 issues
+- [x] `todo` = "deny" - Changed 4 WASM `todo!()` to `unimplemented!()`
+
+### Nursery Lints - Performance & Code Quality (warn)
+- [x] `redundant_clone` = "warn" - Fixed 12+ issues via auto-fix
+- [x] `or_fun_call` = "warn" - Fixed 49+ issues (changed unwrap_or to unwrap_or_else)
+- [x] `derive_partial_eq_without_eq` = "warn" - Fixed 5 issues (added Eq derive)
+- [x] `collection_is_never_read` = "warn" - Fixed 2, added 4 allow attrs for false positives
+
+### Safety Lints (warn)
+- [x] `clone_on_ref_ptr` = "warn" - Fixed 8+ issues (Arc::clone syntax)
+- [x] `cast_lossless` = "warn" - Fixed 106+ issues via auto-fix
+
+### Style/Convention Lints (warn)
+- [x] `redundant_closure` = "warn" - Fixed 74 issues via auto-fix
+- [x] `unnested_or_patterns` = "warn" - Fixed 17 issues via auto-fix
+
+## Final Configuration
+
+```toml
+[workspace.lints.clippy]
+wildcard_enum_match_arm = "warn"
+dbg_macro = "deny"
+todo = "deny"
+derive_partial_eq_without_eq = "warn"
+collection_is_never_read = "warn"
+redundant_clone = "warn"
+or_fun_call = "warn"
+unnested_or_patterns = "warn"
+redundant_closure = "warn"
+cast_lossless = "warn"
+clone_on_ref_ptr = "warn"
+```
+
+## Files Modified
+
+44 files across mtg-engine/ and mtg-benchmarks/ were updated.

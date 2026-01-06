@@ -278,7 +278,7 @@ pub async fn run_tourney(
                         Some(winner_id) => {
                             if winner_id == p1_id {
                                 stats.p1_wins += 1;
-                                *stats.deck_wins.entry(deck1_name.clone()).or_insert(0) += 1;
+                                *stats.deck_wins.entry(deck1_name).or_insert(0) += 1;
 
                                 // P1 won - update matchup stats
                                 let matchup = stats
@@ -296,7 +296,7 @@ pub async fn run_tourney(
                                 }
                             } else {
                                 stats.p2_wins += 1;
-                                *stats.deck_wins.entry(deck2_name.clone()).or_insert(0) += 1;
+                                *stats.deck_wins.entry(deck2_name).or_insert(0) += 1;
 
                                 // P2 won - update matchup stats
                                 let matchup = stats

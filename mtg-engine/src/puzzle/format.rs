@@ -135,7 +135,7 @@ mod tests {
 
         // For now, allow some failures as we may not support all features yet
         // But we should parse the vast majority
-        let success_rate = (parsed_count as f64) / ((parsed_count + failed_count) as f64) * 100.0;
+        let success_rate = f64::from(parsed_count) / f64::from(parsed_count + failed_count) * 100.0;
         println!("\nSuccess rate: {:.1}%", success_rate);
 
         // We should successfully parse at least 80% of puzzles

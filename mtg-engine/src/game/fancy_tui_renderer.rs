@@ -506,8 +506,8 @@ impl CardBounds {
         Self {
             min_width: min_w,
             min_height: min_h,
-            max_width_px: min_w as f32 * cell_w_px,
-            max_height_px: min_h as f32 * cell_h_px,
+            max_width_px: f32::from(min_w) * cell_w_px,
+            max_height_px: f32::from(min_h) * cell_h_px,
         }
     }
 
@@ -516,8 +516,8 @@ impl CardBounds {
     /// Expands one dimension to achieve MTG 63:88 aspect ratio.
     /// The MIN cell bounds are preserved, MAX is expanded as needed.
     pub fn for_gui(min_w: u16, min_h: u16, cell_w_px: f32, cell_h_px: f32) -> Self {
-        let min_w_px = min_w as f32 * cell_w_px;
-        let min_h_px = min_h as f32 * cell_h_px;
+        let min_w_px = f32::from(min_w) * cell_w_px;
+        let min_h_px = f32::from(min_h) * cell_h_px;
 
         // Current aspect ratio vs target (portrait: 63/88 ≈ 0.716)
         let current_ratio = min_w_px / min_h_px;
@@ -544,8 +544,8 @@ impl CardBounds {
     ///
     /// Uses MTG 88:63 aspect ratio (tapped = rotated 90°).
     pub fn for_gui_tapped(min_w: u16, min_h: u16, cell_w_px: f32, cell_h_px: f32) -> Self {
-        let min_w_px = min_w as f32 * cell_w_px;
-        let min_h_px = min_h as f32 * cell_h_px;
+        let min_w_px = f32::from(min_w) * cell_w_px;
+        let min_h_px = f32::from(min_h) * cell_h_px;
 
         // Current aspect ratio vs target (landscape: 88/63 ≈ 1.397)
         let current_ratio = min_w_px / min_h_px;
@@ -1101,10 +1101,12 @@ impl FancyTuiRenderer {
             // For creatures, include P/T in the grouping key to separate cards with different stats
             let key = if let Some(card) = view.get_card(card_id) {
                 if card.is_creature() {
-                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let power = view
+                        .get_effective_power(card_id)
+                        .unwrap_or_else(|| i32::from(card.current_power()));
                     let toughness = view
                         .get_effective_toughness(card_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(card.current_toughness()));
                     format!("{}\x00{}/{}", name, power, toughness)
                 } else {
                     name.clone()
@@ -1210,7 +1212,8 @@ impl FancyTuiRenderer {
     /// Compute card width from height while maintaining the default aspect ratio
     /// This is the centralized function for all aspect ratio calculations
     pub fn compute_width_from_height(height: u16) -> u16 {
-        ((height as f32 * Self::DEFAULT_CARD_WIDTH as f32) / Self::DEFAULT_CARD_HEIGHT as f32).round() as u16
+        ((f32::from(height) * f32::from(Self::DEFAULT_CARD_WIDTH)) / f32::from(Self::DEFAULT_CARD_HEIGHT)).round()
+            as u16
     }
 
     /// Get card dimensions based on tapped state and base size
@@ -2553,7 +2556,7 @@ impl FancyTuiRenderer {
                 }
 
                 // Calculate extra spacing per weight unit
-                let extra_per_unit = row_extra as f32 / total_gap_weight;
+                let extra_per_unit = f32::from(row_extra) / total_gap_weight;
                 if extra_per_unit < 0.5 {
                     continue; // Not enough to make a difference
                 }
@@ -3140,14 +3143,16 @@ impl FancyTuiRenderer {
 
                 // P/T for creatures
                 if card.is_creature() {
-                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let power = view
+                        .get_effective_power(card_id)
+                        .unwrap_or_else(|| i32::from(card.current_power()));
                     let toughness = view
                         .get_effective_toughness(card_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|| i32::from(card.current_toughness()));
 
                     // Get base/printed P/T to show when modified
-                    let base_power = card.base_power().unwrap_or(0) as i32;
-                    let base_toughness = card.base_toughness().unwrap_or(0) as i32;
+                    let base_power = i32::from(card.base_power().unwrap_or(0));
+                    let base_toughness = i32::from(card.base_toughness().unwrap_or(0));
 
                     let pt_display = if power != base_power || toughness != base_toughness {
                         format!("{}/{} (base {}/{})", power, toughness, base_power, base_toughness)
@@ -3559,10 +3564,10 @@ impl FancyTuiRenderer {
         // Calculate pixel-based layout area if in GUI mode
         let layout_area_px = if self.render_config.gui_mode {
             Some(LayoutAreaPx {
-                x_px: render_area.x as f32 * self.render_config.cell_width_px,
-                y_px: render_area.y as f32 * self.render_config.cell_height_px,
-                width_px: layout_w as f32 * self.render_config.cell_width_px,
-                height_px: layout_h as f32 * self.render_config.cell_height_px,
+                x_px: f32::from(render_area.x) * self.render_config.cell_width_px,
+                y_px: f32::from(render_area.y) * self.render_config.cell_height_px,
+                width_px: f32::from(layout_w) * self.render_config.cell_width_px,
+                height_px: f32::from(layout_h) * self.render_config.cell_height_px,
             })
         } else {
             None
@@ -3675,12 +3680,12 @@ impl FancyTuiRenderer {
             let mut title_spans = vec![];
             if let Some(mult) = multiplier_prefix.as_ref() {
                 title_spans.push(Span::styled(mult.clone(), Style::default().fg(Color::Cyan)));
-                title_spans.push(Span::styled(card_name_part.clone(), title_style));
+                title_spans.push(Span::styled(card_name_part, title_style));
             } else {
-                title_spans.push(Span::styled(name.clone(), title_style));
+                title_spans.push(Span::styled(name, title_style));
             }
             title_spans.push(Span::raw(" ".repeat(padding)));
-            title_spans.push(Span::raw(cost_str.clone()));
+            title_spans.push(Span::raw(cost_str));
             lines.push(Line::from(title_spans));
         } else if !cost_str.is_empty() && !name_fits_alone && have_vertical_space {
             // Name would be truncated, but we have space for cost on separate line
@@ -3695,7 +3700,7 @@ impl FancyTuiRenderer {
                     )
                 }
             } else {
-                name.clone()
+                name
             };
             if let Some(mult) = multiplier_prefix.as_ref() {
                 let card_name_truncated = if card_name_part.len() > content_width.saturating_sub(mult.len()) {
@@ -3714,7 +3719,7 @@ impl FancyTuiRenderer {
                         )
                     }
                 } else {
-                    card_name_part.clone()
+                    card_name_part
                 };
                 lines.push(Line::from(vec![
                     Span::styled(mult.clone(), Style::default().fg(Color::Cyan)),
@@ -3723,18 +3728,18 @@ impl FancyTuiRenderer {
             } else {
                 lines.push(Line::from(Span::styled(display_name, title_style)));
             }
-            lines.push(Line::from(cost_str.clone()));
+            lines.push(Line::from(cost_str));
         } else if !cost_str.is_empty() && !name_and_cost_fit && name_fits_alone && have_vertical_space {
             // Name fits, cost doesn't fit on same line, use two lines
             if let Some(mult) = multiplier_prefix.as_ref() {
                 lines.push(Line::from(vec![
                     Span::styled(mult.clone(), Style::default().fg(Color::Cyan)),
-                    Span::styled(card_name_part.clone(), title_style),
+                    Span::styled(card_name_part, title_style),
                 ]));
             } else {
-                lines.push(Line::from(Span::styled(name.clone(), title_style)));
+                lines.push(Line::from(Span::styled(name, title_style)));
             }
-            lines.push(Line::from(cost_str.clone()));
+            lines.push(Line::from(cost_str));
         } else {
             // Fallback: Single line with truncation if needed
             let display_name = if name.len() > content_width {
@@ -3747,7 +3752,7 @@ impl FancyTuiRenderer {
                     )
                 }
             } else {
-                name.clone()
+                name
             };
             if let Some(mult) = multiplier_prefix {
                 let card_name_truncated = if card_name_part.len() > content_width.saturating_sub(mult.len()) {
@@ -3795,14 +3800,16 @@ impl FancyTuiRenderer {
         let pt_str = if is_creature {
             if let Some(c) = card.as_ref() {
                 // Get effective P/T (includes all continuous effects like anthems, equipment, auras)
-                let current_power = view.get_effective_power(card_id).unwrap_or(c.current_power() as i32);
+                let current_power = view
+                    .get_effective_power(card_id)
+                    .unwrap_or_else(|| i32::from(c.current_power()));
                 let current_toughness = view
                     .get_effective_toughness(card_id)
-                    .unwrap_or(c.current_toughness() as i32);
+                    .unwrap_or_else(|| i32::from(c.current_toughness()));
 
                 // Get base/printed P/T
-                let base_power = c.base_power().unwrap_or(0) as i32;
-                let base_toughness = c.base_toughness().unwrap_or(0) as i32;
+                let base_power = i32::from(c.base_power().unwrap_or(0));
+                let base_toughness = i32::from(c.base_toughness().unwrap_or(0));
 
                 // Show both current and base if they differ
                 if current_power != base_power || current_toughness != base_toughness {

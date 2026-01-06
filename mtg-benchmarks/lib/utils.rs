@@ -260,7 +260,7 @@ pub fn print_aggregated_metrics(mode: &str, seed: u64, aggregated: &super::types
     eprintln!("  Total duration: {:?}", aggregated.duration);
     eprintln!(
         "  Avg turns/game: {:.2}",
-        aggregated.turns as f64 / iteration_count as f64
+        f64::from(aggregated.turns) / iteration_count as f64
     );
     eprintln!(
         "  Avg actions/game: {:.2}",

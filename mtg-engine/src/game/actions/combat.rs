@@ -327,7 +327,7 @@ impl GameState {
             // Use effective power (includes Equipment buffs)
             let mut remaining_power = self
                 .get_effective_power(attacker_id)
-                .unwrap_or(attacker.current_power() as i32);
+                .unwrap_or_else(|_| i32::from(attacker.current_power()));
 
             if remaining_power <= 0 {
                 continue; // 0 or negative power deals no damage
@@ -378,7 +378,7 @@ impl GameState {
                         // MTG Rules 510.1c: With trample OR multiple blockers,
                         // assign at least lethal to each before moving to next.
                         // For simplicity, we assign exactly lethal.
-                        remaining_power.min(lethal_damage as i32)
+                        remaining_power.min(i32::from(lethal_damage))
                     };
 
                     if damage_to_assign > 0 {
@@ -431,7 +431,7 @@ impl GameState {
                     // Use effective power (includes Equipment buffs)
                     let blocker_power = self
                         .get_effective_power(*blocker_id)
-                        .unwrap_or(blocker.current_power() as i32);
+                        .unwrap_or_else(|_| i32::from(blocker.current_power()));
                     if blocker_power > 0 {
                         *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
                         // Track damage for lifelink
@@ -487,7 +487,7 @@ impl GameState {
                     // Uses has_keyword_with_effects to account for granted indestructible
                     if creature.is_creature() && !self.has_keyword_with_effects(creature_id, Keyword::Indestructible) {
                         // Lethal damage: damage >= toughness
-                        if damage >= creature.current_toughness() as i32 {
+                        if damage >= i32::from(creature.current_toughness()) {
                             creatures_to_destroy.insert(creature_id);
                         }
                     }

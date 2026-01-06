@@ -83,7 +83,7 @@ fn bench_java_random_controller(c: &mut Criterion) {
     // Criterion will fit: time = startup_cost + (per_game_cost * num_games)
     // Using 1, 5, 20, 50 to get a good spread for regression
     for num_games in [1, 5, 20, 50].iter() {
-        group.throughput(Throughput::Elements(*num_games as u64));
+        group.throughput(Throughput::Elements(u64::from(*num_games)));
 
         group.bench_with_input(
             BenchmarkId::new("random_controller", num_games),

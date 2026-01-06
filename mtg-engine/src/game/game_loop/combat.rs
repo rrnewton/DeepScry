@@ -119,11 +119,11 @@ impl<'a> GameLoop<'a> {
                         let power = self
                             .game
                             .get_effective_power(*attacker_id)
-                            .unwrap_or(card.current_power() as i32);
+                            .unwrap_or_else(|_| i32::from(card.current_power()));
                         let toughness = self
                             .game
                             .get_effective_toughness(*attacker_id)
-                            .unwrap_or(card.current_toughness() as i32);
+                            .unwrap_or_else(|_| i32::from(card.current_toughness()));
                         let message = format!(
                             "{} declares {} ({}) ({}/{}) as attacker",
                             self.get_player_name(active_player),
@@ -361,7 +361,7 @@ impl<'a> GameLoop<'a> {
                 let power = self
                     .game
                     .get_effective_power(*attacker_id)
-                    .unwrap_or(attacker.current_power() as i32);
+                    .unwrap_or_else(|_| i32::from(attacker.current_power()));
                 let attacker_name = &attacker.name;
 
                 if self.game.combat.is_blocked(*attacker_id) {
@@ -384,7 +384,7 @@ impl<'a> GameLoop<'a> {
                             let blocker_power = self
                                 .game
                                 .get_effective_power(*blocker_id)
-                                .unwrap_or(blocker.current_power() as i32);
+                                .unwrap_or_else(|_| i32::from(blocker.current_power()));
                             let blocker_name = &blocker.name;
                             let message = format!(
                                 "Combat: {attacker_name} ({attacker_id}) ({power} damage) ↔ {blocker_name} ({blocker_id}) ({blocker_power} damage)"

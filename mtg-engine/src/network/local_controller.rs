@@ -348,7 +348,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let result = self.inner.choose_spell_ability_to_play(view, available);
 
         // Send choice to server using server's action_count if available
-        let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+        let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
         let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
         match &result {
             ChoiceResult::Ok(Some(ability)) => {
@@ -412,7 +412,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                     .collect()
             };
             let desc = format!("Target: {:?}", targets);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
@@ -450,7 +450,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                     .collect()
             };
             let desc = format!("Mana source: {:?}", sources);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
@@ -489,7 +489,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                     .collect()
             };
             let desc = format!("Attackers: {:?}", attackers);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
@@ -533,7 +533,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                     .collect()
             };
             let desc = format!("Blocks: {:?}", blocks);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
@@ -571,7 +571,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                     .collect()
             };
             let desc = format!("Damage order: {:?}", order);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
@@ -609,7 +609,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                     .collect()
             };
             let desc = format!("Discard: {:?}", discards);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
                 log::error!("Failed to send choice: {}", e);
@@ -638,7 +638,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 None => valid_cards.len(),
             };
             let desc = format!("From library: {:?}", card);
-            let action_count = self.server_action_count.unwrap_or(view.action_count() as u64);
+            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
             if let Err(e) = self.send_choice(
                 vec![idx],

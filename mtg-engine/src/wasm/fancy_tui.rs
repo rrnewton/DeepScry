@@ -313,10 +313,10 @@ fn export_card_positions_from_renderer(
                             // Adjust layout_area_px for offset if present
                             let adjusted_layout = entity_pos.layout_area_px.as_ref().map(|l| {
                                 crate::game::fancy_tui_renderer::LayoutAreaPx {
-                                    x_px: l.x_px + offset as f32 * cell_w_px,
-                                    y_px: l.y_px + offset as f32 * cell_h_px,
-                                    width_px: l.width_px - offset as f32 * cell_w_px,
-                                    height_px: l.height_px - offset as f32 * cell_h_px,
+                                    x_px: l.x_px + f32::from(offset) * cell_w_px,
+                                    y_px: l.y_px + f32::from(offset) * cell_h_px,
+                                    width_px: l.width_px - f32::from(offset) * cell_w_px,
+                                    height_px: l.height_px - f32::from(offset) * cell_h_px,
                                 }
                             });
 
@@ -1455,14 +1455,14 @@ pub fn launch_fancy_tui(
 
     // Set up keyboard event handling using shared event handler
     terminal.on_key_event({
-        let state = state.clone();
+        let state = Rc::clone(&state);
         move |key_event| {
             let mut state = state.borrow_mut();
 
             // Convert RatZilla KeyCode to our abstract KeyInput
             let key_input = match key_event.code {
                 KeyCode::Char(' ') => Some(KeyInput::Space),
-                KeyCode::Char('a') | KeyCode::Char('A') => {
+                KeyCode::Char('a' | 'A') => {
                     // A: toggle auto-run (WASM-specific, not shared)
                     state.auto_run = !state.auto_run;
                     state.needs_redraw = true; // UI state changed, need redraw
@@ -1473,21 +1473,21 @@ pub fn launch_fancy_tui(
                     let _ = js_sys::eval("window.toggleCardImages && window.toggleCardImages()");
                     return;
                 }
-                KeyCode::Char('q') | KeyCode::Char('Q') => Some(KeyInput::Pass),
+                KeyCode::Char('q' | 'Q') => Some(KeyInput::Pass),
                 KeyCode::Esc => Some(KeyInput::Escape),
-                KeyCode::Char('h') | KeyCode::Char('H') => Some(KeyInput::FocusHand),
+                KeyCode::Char('h' | 'H') => Some(KeyInput::FocusHand),
                 KeyCode::Char('I') => Some(KeyInput::FocusInfo), // uppercase I for Info pane
-                KeyCode::Char('y') | KeyCode::Char('Y') => Some(KeyInput::FocusYourBf),
-                KeyCode::Char('o') | KeyCode::Char('O') => Some(KeyInput::FocusOpponentBf),
-                KeyCode::Char('s') | KeyCode::Char('S') => Some(KeyInput::FocusStack),
-                KeyCode::Char('b') | KeyCode::Char('B') => Some(KeyInput::ShowBattlefield),
-                KeyCode::Char('c') | KeyCode::Char('C') => {
+                KeyCode::Char('y' | 'Y') => Some(KeyInput::FocusYourBf),
+                KeyCode::Char('o' | 'O') => Some(KeyInput::FocusOpponentBf),
+                KeyCode::Char('s' | 'S') => Some(KeyInput::FocusStack),
+                KeyCode::Char('b' | 'B') => Some(KeyInput::ShowBattlefield),
+                KeyCode::Char('c' | 'C') => {
                     // C: toggle controls panel visibility (WASM-specific)
                     let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
                     return;
                 }
                 KeyCode::Char('?') => Some(KeyInput::Help),
-                KeyCode::Char('w') | KeyCode::Char('W') => Some(KeyInput::ToggleWrap),
+                KeyCode::Char('w' | 'W') => Some(KeyInput::ToggleWrap),
                 KeyCode::Tab => Some(KeyInput::Tab),
                 KeyCode::Up => Some(KeyInput::Up),
                 KeyCode::Down => Some(KeyInput::Down),
@@ -1602,7 +1602,7 @@ pub fn launch_fancy_tui(
     // Set up mouse event handling
     // Note: RatZilla doesn't support scroll wheel events, so only handle clicks
     terminal.on_mouse_event({
-        let state = state.clone();
+        let state = Rc::clone(&state);
         move |mouse_event| {
             // Only handle left mouse button press
             if mouse_event.button != MouseButton::Left || mouse_event.event != MouseEventKind::Pressed {
@@ -1632,12 +1632,12 @@ pub fn launch_fancy_tui(
 
     // Store state in global for button callbacks
     GLOBAL_TUI_STATE.with(|s| {
-        *s.borrow_mut() = Some(state.clone());
+        *s.borrow_mut() = Some(Rc::clone(&state));
     });
 
     // Set up the render callback
     terminal.draw_web({
-        let state = state.clone();
+        let state = state;
         move |f| {
             let mut state = state.borrow_mut();
 

@@ -34,7 +34,7 @@ impl GameMetrics {
 
     /// Calculate turns per second
     pub fn turns_per_sec(&self) -> f64 {
-        self.turns as f64 / self.duration.as_secs_f64()
+        f64::from(self.turns) / self.duration.as_secs_f64()
     }
 
     /// Calculate average actions per turn
@@ -42,7 +42,7 @@ impl GameMetrics {
         if self.turns == 0 {
             0.0
         } else {
-            self.actions as f64 / self.turns as f64
+            self.actions as f64 / f64::from(self.turns)
         }
     }
 
@@ -56,7 +56,7 @@ impl GameMetrics {
         if self.turns == 0 {
             0.0
         } else {
-            self.bytes_allocated as f64 / self.turns as f64
+            self.bytes_allocated as f64 / f64::from(self.turns)
         }
     }
 

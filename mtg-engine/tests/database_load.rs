@@ -165,7 +165,7 @@ async fn test_deck_directory(
             "\nSuccess rate: {}/{} decks ({:.1}%)",
             loaded_decks,
             deck_count,
-            (loaded_decks as f64 / deck_count as f64) * 100.0
+            (f64::from(loaded_decks) / deck_count as f64) * 100.0
         );
 
         // Regression test: ensure we don't get worse than the current baseline

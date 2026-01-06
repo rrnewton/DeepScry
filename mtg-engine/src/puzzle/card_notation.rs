@@ -6,7 +6,7 @@ use crate::{core::CounterType, MtgError, Result};
 use std::collections::HashMap;
 
 /// A card modifier from pipe-delimited notation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardModifier {
     /// Card has a specific ID for referencing
     Id(u32),

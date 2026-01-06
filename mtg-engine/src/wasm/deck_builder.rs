@@ -225,7 +225,7 @@ pub fn launch_deck_builder(
 
     // Set up keyboard event handling
     terminal.on_key_event({
-        let state = state.clone();
+        let state = Rc::clone(&state);
         move |key_event| {
             let mut state = state.borrow_mut();
             let deck_state = &mut state.state;
@@ -236,17 +236,17 @@ pub fn launch_deck_builder(
             // Handle exit dialog first
             if deck_state.show_exit_dialog {
                 match key_event.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    KeyCode::Char('y' | 'Y') => {
                         // Save and exit
                         state.handle_save();
                         return;
                     }
-                    KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    KeyCode::Char('q' | 'Q') => {
                         // Exit without saving
                         state.handle_exit();
                         return;
                     }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                         // Cancel, go back
                         deck_state.show_exit_dialog = false;
                         deck_state.needs_redraw = true;
@@ -408,7 +408,7 @@ pub fn launch_deck_builder(
 
     // Set up mouse event handling
     terminal.on_mouse_event({
-        let state = state.clone();
+        let state = Rc::clone(&state);
         move |mouse_event| {
             // Only handle left mouse button press
             if mouse_event.button != MouseButton::Left || mouse_event.event != MouseEventKind::Pressed {
@@ -456,12 +456,12 @@ pub fn launch_deck_builder(
 
     // Store state in global for JavaScript callbacks
     GLOBAL_DECK_BUILDER_STATE.with(|s| {
-        *s.borrow_mut() = Some(state.clone());
+        *s.borrow_mut() = Some(Rc::clone(&state));
     });
 
     // Set up the render callback
     terminal.draw_web({
-        let state = state.clone();
+        let state = state;
         move |f| {
             let mut state = state.borrow_mut();
 

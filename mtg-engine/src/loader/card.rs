@@ -1632,7 +1632,7 @@ impl CardDefinition {
                 // Determine which phase/step this triggers on using tokenized params
                 let trigger_event = match params.get("Phase").map(|s| s.as_str()) {
                     Some("Upkeep") => Some(TriggerEvent::BeginningOfUpkeep),
-                    Some("EndOfTurn") | Some("End") => Some(TriggerEvent::BeginningOfEndStep),
+                    Some("EndOfTurn" | "End") => Some(TriggerEvent::BeginningOfEndStep),
                     Some("BeginCombat") => Some(TriggerEvent::BeginningOfCombat),
                     _ => None, // Other phases not supported yet
                 };

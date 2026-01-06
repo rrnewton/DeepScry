@@ -175,11 +175,11 @@ impl<'a> GameLoop<'a> {
                     let power = self
                         .game
                         .get_effective_power(spell_id)
-                        .unwrap_or(card.current_power() as i32);
+                        .unwrap_or_else(|_| i32::from(card.current_power()));
                     let toughness = self
                         .game
                         .get_effective_toughness(spell_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|_| i32::from(card.current_toughness()));
                     let message = format!(
                         "{} ({}) enters the battlefield as a {}/{} creature",
                         card_name, spell_id, power, toughness

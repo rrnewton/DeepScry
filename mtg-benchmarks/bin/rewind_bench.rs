@@ -435,12 +435,12 @@ fn print_results(
     println!("=== Game Metrics ===");
     println!("Total turns: {}", metrics.turns);
     println!("Total actions: {}", metrics.actions);
-    println!("Avg turns/game: {:.2}", metrics.turns as f64 / total_games as f64);
+    println!("Avg turns/game: {:.2}", f64::from(metrics.turns) / total_games as f64);
     println!("Avg actions/game: {:.2}", metrics.actions as f64 / total_games as f64);
     println!("Actions/turn: {:.2}", metrics.actions_per_turn());
     println!("Games/sec: {:.2}", total_games as f64 / duration_secs);
     println!("Actions/sec: {:.2}", metrics.actions as f64 / duration_secs);
-    println!("Turns/sec: {:.2}", metrics.turns as f64 / duration_secs);
+    println!("Turns/sec: {:.2}", f64::from(metrics.turns) / duration_secs);
     println!();
 
     println!("=== Allocation Metrics ===");

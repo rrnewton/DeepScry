@@ -787,7 +787,7 @@ pub fn card_sort_key(card: &CardDefinition) -> (u8, i16, String) {
         }
     };
     // Negative CMC for descending sort
-    let cmc = -(card.mana_cost.cmc() as i16);
+    let cmc = -i16::from(card.mana_cost.cmc());
     (color_order, cmc, card.name.to_string())
 }
 

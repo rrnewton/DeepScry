@@ -155,8 +155,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for card_id in &game.battlefield.cards {
         if let Ok(card) = game.cards.get(*card_id) {
             if card.owner == alice_id {
-                let p = card.current_power() as i32;
-                let t = card.current_toughness() as i32;
+                let p = i32::from(card.current_power());
+                let t = i32::from(card.current_toughness());
                 let pb = card.power_bonus;
                 let tb = card.toughness_bonus;
                 if pb != 0 || tb != 0 {

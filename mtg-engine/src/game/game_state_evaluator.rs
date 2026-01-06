@@ -195,7 +195,7 @@ impl GameStateEvaluator {
                     for effect in &ability.effects {
                         if let crate::core::Effect::AddMana { mana, .. } = effect {
                             // Count total mana produced
-                            let mana_amount = mana.cmc() as i32;
+                            let mana_amount = i32::from(mana.cmc());
                             total_mana_sources += mana_amount.max(1); // At least 1 per source
 
                             // Track colors available (simplified - just check if cost has color)
@@ -265,7 +265,7 @@ impl GameStateEvaluator {
         } else {
             // Other permanents (artifacts, planeswalkers, etc.)
             // Java: 50 + 30 * CMC (lines 232-236)
-            let cmc = card.mana_cost.cmc() as i32;
+            let cmc = i32::from(card.mana_cost.cmc());
             50 + 30 * cmc
         }
     }
@@ -301,7 +301,7 @@ impl GameStateEvaluator {
 
             for effect in &ability.effects {
                 if let crate::core::Effect::AddMana { mana, .. } = effect {
-                    mana_generated += mana.cmc() as i32;
+                    mana_generated += i32::from(mana.cmc());
 
                     // Track colors produced using ManaColors bitfield
                     if mana.white > 0 {
@@ -327,17 +327,17 @@ impl GameStateEvaluator {
             // Check for mana cost in activation
             match &ability.cost {
                 crate::core::Cost::Mana(cost) => {
-                    mana_cost = cost.cmc() as i32;
+                    mana_cost = i32::from(cost.cmc());
                 }
                 crate::core::Cost::TapAndMana(cost) => {
-                    mana_cost = cost.cmc() as i32;
+                    mana_cost = i32::from(cost.cmc());
                 }
                 crate::core::Cost::Composite(costs) => {
                     for c in costs {
                         if let crate::core::Cost::Mana(cost) = c {
-                            mana_cost += cost.cmc() as i32;
+                            mana_cost += i32::from(cost.cmc());
                         } else if let crate::core::Cost::TapAndMana(cost) = c {
-                            mana_cost += cost.cmc() as i32;
+                            mana_cost += i32::from(cost.cmc());
                         }
                     }
                 }
@@ -428,7 +428,7 @@ impl GameStateEvaluator {
             // Could provide value based on effects, but for now return CMC-based value
             // Java returns 0 for non-attached enchantments, but we'll be slightly generous
             // to account for global enchantments that affect the board
-            let cmc = card.mana_cost.cmc() as i32;
+            let cmc = i32::from(card.mana_cost.cmc());
             // Less value than a creature of similar cost, but not zero
             return 20 + 15 * cmc;
         };
@@ -488,7 +488,7 @@ impl GameStateEvaluator {
         // This handles auras that might not have properly parsed abilities
         if value == 0 && card.static_abilities.is_empty() {
             // Fallback: estimate based on CMC
-            let cmc = card.mana_cost.cmc() as i32;
+            let cmc = i32::from(card.mana_cost.cmc());
             // Auras are generally worth about as much as their mana cost
             value = 15 * cmc;
         }
@@ -507,8 +507,8 @@ impl GameStateEvaluator {
         use crate::core::Keyword;
 
         // Get base power/toughness (or 0 if not available)
-        let power = card.base_power().unwrap_or(0) as i32;
-        let toughness = card.base_toughness().unwrap_or(0) as i32;
+        let power = i32::from(card.base_power().unwrap_or(0));
+        let toughness = i32::from(card.base_toughness().unwrap_or(0));
 
         match keyword {
             // Evasion keywords - value scales with power

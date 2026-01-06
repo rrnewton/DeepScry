@@ -680,7 +680,7 @@ mod tests {
             delta: -3,
         };
 
-        log.log(action.clone(), 0);
+        log.log(action, 0);
         assert_eq!(log.len(), 1);
 
         let (popped, log_size) = log.pop().unwrap();

@@ -102,10 +102,12 @@ pub fn print_battlefield_state(game: &GameState, viewer: Option<PlayerId>) {
                 if card.is_creature() {
                     // Use get_effective_power/toughness to include all continuous effects
                     // (anthems, equipment, auras, counters) via CR 613 layer system
-                    let power = game.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let power = game
+                        .get_effective_power(card_id)
+                        .unwrap_or_else(|_| i32::from(card.current_power()));
                     let toughness = game
                         .get_effective_toughness(card_id)
-                        .unwrap_or(card.current_toughness() as i32);
+                        .unwrap_or_else(|_| i32::from(card.current_toughness()));
                     println!(
                         "    {} ({}) - {}/{}{}{}",
                         card.name, card_id, power, toughness, tap_status, sickness_status
@@ -185,12 +187,14 @@ fn format_player_battlefield(output: &mut String, view: &GameStateView, player_i
                 lands.push(format!("    {}{}", name, tapped));
             } else if card.is_creature() {
                 // Use effective P/T which includes continuous effects
-                let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                let power = view
+                    .get_effective_power(card_id)
+                    .unwrap_or_else(|| i32::from(card.current_power()));
                 let toughness = view
                     .get_effective_toughness(card_id)
-                    .unwrap_or(card.current_toughness() as i32);
-                let base_power = card.base_power().unwrap_or(0) as i32;
-                let base_toughness = card.base_toughness().unwrap_or(0) as i32;
+                    .unwrap_or_else(|| i32::from(card.current_toughness()));
+                let base_power = i32::from(card.base_power().unwrap_or(0));
+                let base_toughness = i32::from(card.base_toughness().unwrap_or(0));
 
                 let pt = if power != base_power || toughness != base_toughness {
                     format!(" {}/{} ({}/{})", power, toughness, base_power, base_toughness)

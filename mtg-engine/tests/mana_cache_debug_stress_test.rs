@@ -119,7 +119,7 @@ async fn test_oldschool_tourney_mana_cache_debug() -> Result<()> {
                         "  Completed {}/{} games (avg {:.1} turns/game)",
                         game_idx + 1,
                         num_games,
-                        total_turns as f64 / games_played as f64
+                        f64::from(total_turns) / f64::from(games_played)
                     );
                 }
 
@@ -149,7 +149,7 @@ async fn test_oldschool_tourney_mana_cache_debug() -> Result<()> {
 
     println!("\n=== Test Complete ===");
     println!("Total games: {}", games_played);
-    println!("Average turns: {:.1}", total_turns as f64 / games_played as f64);
+    println!("Average turns: {:.1}", f64::from(total_turns) / f64::from(games_played));
     println!("\n✅ All games passed mana cache debug verification!");
     println!("   Every mana query was verified against from-scratch computation.");
 

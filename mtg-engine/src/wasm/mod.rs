@@ -626,7 +626,7 @@ impl WasmGame {
             | WasmControllerType::Fixed
             | WasmControllerType::Network
             | WasmControllerType::Remote => {
-                todo!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_ai_game")
+                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_ai_game")
             }
         };
 
@@ -638,7 +638,7 @@ impl WasmGame {
             | WasmControllerType::Fixed
             | WasmControllerType::Network
             | WasmControllerType::Remote => {
-                todo!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_ai_game")
+                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_ai_game")
             }
         };
 
@@ -678,7 +678,7 @@ impl WasmGame {
             | WasmControllerType::Fixed
             | WasmControllerType::Network
             | WasmControllerType::Remote => {
-                todo!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_one_turn")
+                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_one_turn")
             }
         };
 
@@ -690,7 +690,7 @@ impl WasmGame {
             | WasmControllerType::Fixed
             | WasmControllerType::Network
             | WasmControllerType::Remote => {
-                todo!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_one_turn")
+                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_one_turn")
             }
         };
 

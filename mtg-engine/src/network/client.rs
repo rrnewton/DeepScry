@@ -142,7 +142,7 @@ impl ClientGameState {
             if our_player_id.as_u32() == 0 {
                 info.opponent_name.clone()
             } else {
-                our_name.clone()
+                our_name
             },
             info.starting_life,
             100, // Estimated card count
@@ -413,7 +413,7 @@ impl NetworkClient {
                 }
                 log::info!(
                     "Authenticated as player {:?}",
-                    your_player_id.unwrap_or(PlayerId::new(0))
+                    your_player_id.unwrap_or_else(|| PlayerId::new(0))
                 );
             }
             _ => {

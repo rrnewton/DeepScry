@@ -1818,9 +1818,9 @@ impl GameState {
                         // Creatures: P/T sum (prefer low P/T creatures)
                         // Non-creatures: CMC (prefer low CMC)
                         let value = if card.is_creature() {
-                            (card.current_power() as i32) + (card.current_toughness() as i32)
+                            i32::from(card.current_power()) + i32::from(card.current_toughness())
                         } else {
-                            card.mana_cost.cmc() as i32
+                            i32::from(card.mana_cost.cmc())
                         };
 
                         return Some((card_id, value));

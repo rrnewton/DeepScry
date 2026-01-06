@@ -310,7 +310,7 @@ impl PlayerController for FixedScriptController {
         }
 
         let chosen_card = valid_cards[0];
-        let card_name = view.get_card_name(chosen_card).unwrap_or("Unknown".to_string());
+        let card_name = view.get_card_name(chosen_card).unwrap_or_else(|| "Unknown".to_string());
         view.logger()
             .controller_choice("SCRIPT", &format!("Library search: chose first card ({})", card_name));
 

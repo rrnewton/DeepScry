@@ -434,8 +434,8 @@ mod tests {
             name: "Test2".to_string(),
         };
 
-        store.insert(id1, entity1.clone());
-        store.insert(id2, entity2.clone());
+        store.insert(id1, entity1);
+        store.insert(id2, entity2);
 
         assert_eq!(store.len(), 2);
         assert_eq!(store.get(id1).unwrap().name, "Test1");
@@ -460,8 +460,8 @@ mod tests {
             name: "Test5".to_string(),
         };
 
-        store.insert(id2, entity1.clone());
-        store.insert(id5, entity2.clone());
+        store.insert(id2, entity1);
+        store.insert(id5, entity2);
 
         assert_eq!(store.len(), 2); // Only 2 actual entities
         assert_eq!(store.get(id2).unwrap().name, "Test2");
@@ -628,7 +628,7 @@ mod tests {
             id,
             name: "Serra Angel".to_string(),
         };
-        store.insert(id, entity.clone());
+        store.insert(id, entity);
 
         assert!(store.is_revealed(id));
         assert_eq!(store.len(), 1);

@@ -193,7 +193,7 @@ pub fn choose_image_version(rendered_height_px: u32) -> ImageVersion {
 /// # Returns
 /// (left_px, top_px) tuple for CSS positioning
 pub fn cell_to_pixels(col: u16, row: u16) -> (f64, f64) {
-    (col as f64 * CELL_WIDTH_PX, row as f64 * CELL_HEIGHT_PX)
+    (f64::from(col) * CELL_WIDTH_PX, f64::from(row) * CELL_HEIGHT_PX)
 }
 
 /// Manager for DOM image overlays
@@ -281,7 +281,7 @@ impl ImageOverlayManager {
 
             // Add error handler that falls back to Scryfall
             let fallback = fallback_url.map(|s| s.to_string());
-            let primary_url_clone = primary_url.clone();
+            let primary_url_clone = primary_url;
             let error_callback = Closure::wrap(Box::new(move |event: web_sys::Event| {
                 if let Some(ref fallback_src) = fallback {
                     // Try fallback URL
@@ -323,8 +323,8 @@ impl ImageOverlayManager {
 
         // Update position and size
         let (left_px, top_px) = cell_to_pixels(col, row);
-        let width_px = width as f64 * CELL_WIDTH_PX;
-        let height_px = height as f64 * CELL_HEIGHT_PX;
+        let width_px = f64::from(width) * CELL_WIDTH_PX;
+        let height_px = f64::from(height) * CELL_HEIGHT_PX;
 
         // Cast to HtmlElement to access style
         let html_elem: &HtmlElement = img.as_ref();
@@ -396,8 +396,8 @@ impl ImageOverlayManager {
 
         // Update position and size
         let (left_px, top_px) = cell_to_pixels(col, row);
-        let width_px = width as f64 * CELL_WIDTH_PX;
-        let height_px = height as f64 * CELL_HEIGHT_PX;
+        let width_px = f64::from(width) * CELL_WIDTH_PX;
+        let height_px = f64::from(height) * CELL_HEIGHT_PX;
 
         // Cast to HtmlElement to access style
         let html_elem: &HtmlElement = img.as_ref();

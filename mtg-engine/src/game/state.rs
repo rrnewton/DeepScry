@@ -689,19 +689,19 @@ impl GameState {
                 if let Ok(card) = self.cards.get(card_id) {
                     // Count mana symbols in the mana cost
                     if card.mana_cost.white > 0 {
-                        *color_counts.entry(Color::White).or_insert(0) += card.mana_cost.white as u32;
+                        *color_counts.entry(Color::White).or_insert(0) += u32::from(card.mana_cost.white);
                     }
                     if card.mana_cost.blue > 0 {
-                        *color_counts.entry(Color::Blue).or_insert(0) += card.mana_cost.blue as u32;
+                        *color_counts.entry(Color::Blue).or_insert(0) += u32::from(card.mana_cost.blue);
                     }
                     if card.mana_cost.black > 0 {
-                        *color_counts.entry(Color::Black).or_insert(0) += card.mana_cost.black as u32;
+                        *color_counts.entry(Color::Black).or_insert(0) += u32::from(card.mana_cost.black);
                     }
                     if card.mana_cost.red > 0 {
-                        *color_counts.entry(Color::Red).or_insert(0) += card.mana_cost.red as u32;
+                        *color_counts.entry(Color::Red).or_insert(0) += u32::from(card.mana_cost.red);
                     }
                     if card.mana_cost.green > 0 {
-                        *color_counts.entry(Color::Green).or_insert(0) += card.mana_cost.green as u32;
+                        *color_counts.entry(Color::Green).or_insert(0) += u32::from(card.mana_cost.green);
                     }
                 }
             }
@@ -939,7 +939,7 @@ impl GameState {
 
                 // MTG CR 704.5g: Creature has lethal damage if damage >= toughness
                 let toughness = card.current_toughness();
-                let has_lethal = card.damage >= toughness as i32;
+                let has_lethal = card.damage >= i32::from(toughness);
 
                 // Debug: Log SBA check for creatures with damage or low toughness
                 if card.damage > 0 || toughness <= 0 || card.name.as_str().contains("Peter Porker") {

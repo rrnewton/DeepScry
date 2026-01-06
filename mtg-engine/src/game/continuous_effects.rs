@@ -205,11 +205,18 @@ impl GameState {
         // NOTE: Use base_power()/base_toughness() NOT current_power()/current_toughness()
         // because current_* includes counters, which we count separately in modifypt_counters.
         // Double-counting counters here would cause +1/+1 counters to give +2/+2!
-        let base_p = creature.temp_base_power().or(creature.base_power()).unwrap_or(0) as i32;
-        let base_t = creature
-            .temp_base_toughness()
-            .or(creature.base_toughness())
-            .unwrap_or(0) as i32;
+        let base_p = i32::from(
+            creature
+                .temp_base_power()
+                .or_else(|| creature.base_power())
+                .unwrap_or(0),
+        );
+        let base_t = i32::from(
+            creature
+                .temp_base_toughness()
+                .or_else(|| creature.base_toughness())
+                .unwrap_or(0),
+        );
         let base = (base_p, base_t);
 
         // Layer 7a (CR 613.4a): Characteristic-defining abilities
@@ -491,7 +498,7 @@ impl GameState {
                 creature.is_land() && creature.subtypes.contains(&crate::core::Subtype::new(land_type))
             }
             AffectedSelector::NonLandCmcLE { max_cmc } => {
-                !creature.is_land() && creature.mana_cost.cmc() as i32 <= *max_cmc
+                !creature.is_land() && i32::from(creature.mana_cost.cmc()) <= *max_cmc
             }
             AffectedSelector::CreatureWithFlyingOppCtrl => {
                 creature.is_creature()
@@ -1342,8 +1349,8 @@ impl GameState {
         let creature = self.cards.get(creature_id)?;
 
         // Count +1/+1 and -1/-1 counters
-        let plus_counters = creature.get_counter(CounterType::P1P1) as i32;
-        let minus_counters = creature.get_counter(CounterType::M1M1) as i32;
+        let plus_counters = i32::from(creature.get_counter(CounterType::P1P1));
+        let minus_counters = i32::from(creature.get_counter(CounterType::M1M1));
 
         let power_bonus = plus_counters - minus_counters;
         let toughness_bonus = plus_counters - minus_counters;

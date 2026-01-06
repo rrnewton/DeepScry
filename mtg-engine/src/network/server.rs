@@ -802,8 +802,8 @@ async fn run_game(
     let p2_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
 
     // Create NetworkControllers with shared reveal indices
-    let mut p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx, p1_reveal_index.clone());
-    let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx, p2_reveal_index.clone());
+    let mut p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx, Arc::clone(&p1_reveal_index));
+    let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx, Arc::clone(&p2_reveal_index));
     p1_controller.set_network_debug(config.network_debug);
     p2_controller.set_network_debug(config.network_debug);
     // Wire up ability channels so NetworkControllers can report chosen abilities
@@ -814,16 +814,16 @@ async fn run_game(
     let game = Arc::new(Mutex::new(game));
 
     // Spawn WebSocket handlers for each player
-    let game_clone = game.clone();
+    let game_clone = Arc::clone(&game);
     let mut p1_handler =
         tokio::spawn(async move { handle_player_websocket(p1_conn, p1_ws_rx, game_clone, PlayerId::new(1)).await });
 
-    let game_clone = game.clone();
+    let game_clone = Arc::clone(&game);
     let mut p2_handler =
         tokio::spawn(async move { handle_player_websocket(p2_conn, p2_ws_rx, game_clone, PlayerId::new(0)).await });
 
     // Run game loop in blocking thread (uses sync channels)
-    let game_clone = game.clone();
+    let game_clone = Arc::clone(&game);
     let tag_gamelogs = config.tag_gamelogs;
     let verbosity = config.verbosity;
     let reveal_config = RevealPusherConfig {
@@ -1635,7 +1635,7 @@ fn peek_opening_hand(game: &GameState, player_id: PlayerId) -> Result<Vec<CardRe
 fn compute_network_hash(game: &GameState) -> u64 {
     // FIXME-UNFINISHED: Use proper network hash from state_hash::compute_hash with HashMode::Network
     // Currently only hashes turn number and life totals, missing battlefield state etc.
-    let mut hash: u64 = game.turn.turn_number as u64;
+    let mut hash: u64 = u64::from(game.turn.turn_number);
     for player in &game.players {
         hash = hash.wrapping_mul(31).wrapping_add(player.life as u64);
     }

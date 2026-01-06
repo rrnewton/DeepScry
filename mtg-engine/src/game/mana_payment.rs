@@ -94,7 +94,7 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
     let mut available_delta: i16 = 0;
     for source in sources {
         if !source.is_tapped && !source.has_summoning_sickness {
-            available_delta += source.production.net_delta() as i16;
+            available_delta += i16::from(source.production.net_delta());
         }
     }
 
@@ -108,7 +108,7 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
         .saturating_add(cost.generic);
 
     // Can only prove "No" if the total delta is insufficient
-    if available_delta < needed as i16 {
+    if available_delta < i16::from(needed) {
         return PaymentResult::No;
     }
 
@@ -1469,7 +1469,7 @@ mod tests {
 
         // Test 3: With 1 Breeding Pool + 1 Island, can pay UG? YES
         let sources = vec![
-            breeding_pool.clone(),
+            breeding_pool,
             ManaSource {
                 card_id: CardId::new(3),
                 production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)),
