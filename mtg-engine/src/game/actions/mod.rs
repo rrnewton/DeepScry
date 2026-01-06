@@ -116,6 +116,8 @@ impl GameState {
             (card.owner, card.effects.len())
         };
 
+        log::debug!(target: "resolve_spell", "resolve_spell card_id={}, chosen_targets={:?}, effects_len={}", card_id.as_u32(), chosen_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>(), effects_len);
+
         // Find opponent ID for untargeted damage (resolve once)
         let opponent_id = self.players.iter().map(|p| p.id).find(|id| *id != card_owner);
 
@@ -144,9 +146,11 @@ impl GameState {
                 let effect = self.cards.get(card_id)?.effects.get(effect_index).cloned();
 
                 if let Some(effect) = effect {
+                    log::debug!(target: "resolve_spell", "Effect[{}] before resolve: {:?}", effect_index, effect);
                     // Resolve the effect with context, advancing target_index as needed
                     let resolved =
                         self.resolve_effect_target(&effect, chosen_targets, &mut target_index, card_owner, opponent_id);
+                    log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
                     self.execute_effect(&resolved)?;
                 }
             }
@@ -1104,8 +1108,10 @@ impl GameState {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
                     // Spell fizzles - no valid targets
+                    log::warn!(target: "pump", "PumpCreature fizzled: target is still placeholder 0");
                     return Ok(());
                 }
+                log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}", target.as_u32(), power_bonus, toughness_bonus);
                 // Capture log size before pump
                 let prior_log_size = self.logger.log_count();
 

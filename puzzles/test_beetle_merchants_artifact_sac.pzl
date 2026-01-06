@@ -1,0 +1,21 @@
+[metadata]
+Name:Beetle-Headed Merchants Artifact Sacrifice Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Beetle-Headed Merchants and a Food token to sacrifice
+# When Beetle attacks, can sacrifice artifact to draw + counter
+p0life=20
+p0hand=Canyon Crawler
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Beetle-Headed Merchants
+p0library=Swamp; Swamp; Swamp
+
+# P1 has nothing to block
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest

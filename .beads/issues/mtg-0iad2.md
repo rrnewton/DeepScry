@@ -35,11 +35,11 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Attack trigger fires when declared as attacker (verified: trigger fires on attack)
 - [ ] "You may" is optional - can decline sacrifice
 - [x] Can sacrifice another creature to trigger (verified: Canyon Crawler sacrificed)
-- [ ] Can sacrifice an artifact to trigger
+- [x] Can sacrifice an artifact to trigger (verified: test_beetle_merchants_artifact_sac.pzl - Food Token sacrificed)
 - [x] Draw a card effect works on sacrifice (verified: hand increased 1→2)
 - [x] +1/+1 counter is placed on sacrifice (verified: creature became 6/5)
 - [x] Counter persists across turns (verified: heartless_act_remove_counter_e2e.pzl - Grizzly Bears 4/4 across 3 turns)
-- [ ] Multiple attacks accumulate counters correctly
+- [x] Multiple attacks accumulate counters correctly (verified: 6/5 on T1, 7/6 on T3 after second sacrifice)
 
 ---
 
@@ -137,7 +137,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Triggered:** Whenever Fire Lord Ozai attacks, you may sacrifice another creature. If you do, add {R} equal to sacrificed creature's power.
 
 - [x] Card loads and can be cast for 3B (verified: puzzles/test_fire_lord_ozai_attack.pzl)
-- [ ] Legendary rule works (can't have two)
+- [ ] Legendary rule works (can't have two) (**NOT IMPLEMENTED** - test_legendary_rule.pzl shows both copies survived)
 - [x] Enters as 4/4 (verified: shown as 4/4 in battlefield)
 - [ ] Attack trigger fires when declared as attacker (**NOT IMPLEMENTED** - AB$ Mana effect not parsed in attack triggers)
 - [ ] "You may" sacrifice is optional
@@ -177,7 +177,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Card loads and can be cast for 1B (verified: puzzles/test_heartless_act.pzl)
 - [x] Mode selection is required (verified: "Player 1 chooses mode:")
 - [x] Mode 1: Can target creature with no counters (verified: targeted Fire Sages)
-- [ ] Mode 1: Cannot target creature WITH counters
+- [x] Mode 1: Cannot target creature WITH counters (verified: test_heartless_act_mode1_no_valid_target.pzl - forced to Mode 2)
 - [x] Mode 1: Destroys the creature (verified: "Heartless Act destroys Fire Sages")
 - [x] Mode 2: Can target creature with counters (verified: puzzles/test_heartless_act_mode2.pzl)
 - [x] Mode 2: Removes up to 3 counters (verified: 2 counters removed from 4/4 → 2/2)
@@ -300,3 +300,4 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
 - Fire Lord Ozai attack trigger (AB$ Mana effect) - attack trigger parser only handles Draw/PutCounter
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
+- Legendary rule (MTG 704.5j) - should sacrifice one when controlling two of same name

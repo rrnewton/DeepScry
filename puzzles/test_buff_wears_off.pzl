@@ -1,0 +1,20 @@
+[metadata]
+Name:Buff Wears Off At Cleanup Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Cunning Maneuver and a creature to buff
+p0life=20
+p0hand=Cunning Maneuver
+p0battlefield=Mountain; Mountain; Grizzly Bears
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# P1 has high life so game continues multiple turns
+p1life=30
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest
