@@ -6,12 +6,10 @@ issue_type: task
 labels:
 - deep-test
 created_at: 2026-01-05T20:03:49.234472619+00:00
-updated_at: 2026-01-06T02:43:57.962511699+00:00
+updated_at: 2026-01-06T15:00:12.425799649+00:00
 ---
 
 # Description
-
-## Deep Playtest: ryan_avatar_draft Deck
 
 This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draft deck is 100% functional with evidence from real gameplay.
 
@@ -22,9 +20,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Evidence must be included in commit messages when checking off items
 - No premature victory declarations - skeptical verification only
 
-## Known Bugs Affecting This Deck
+## Known Bugs Affecting This Deck (1 fixed)
 - mtg-6ph0z: Token scripts not loading (Food, Clue tokens fail)
-- mtg-hl300: SpellCast triggers not firing (Boar-q-pine, Prowess)
+- ~~mtg-hl300~~: SpellCast triggers - FIXED in 6353f9d
 - mtg-oyvdh: ETB triggers with optional discard cost don't fire (Yuyan Archers looting)
 
 ---
@@ -50,10 +48,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 - [ ] Card loads and can be cast for 2R
 - [ ] Enters as 2/2
-- [ ] Trigger fires when casting instant **[BLOCKED: mtg-hl300]**
-- [ ] Trigger fires when casting sorcery **[BLOCKED: mtg-hl300]**
-- [ ] Trigger fires when casting artifact **[BLOCKED: mtg-hl300]**
-- [ ] Trigger fires when casting enchantment **[BLOCKED: mtg-hl300]**
+- [ ] Trigger fires when casting instant ****
+- [ ] Trigger fires when casting sorcery ****
+- [ ] Trigger fires when casting artifact ****
+- [ ] Trigger fires when casting enchantment ****
 - [ ] Trigger does NOT fire for creature spells
 - [ ] Counter is placed correctly
 - [ ] Multiple noncreature spells accumulate counters
@@ -343,8 +341,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Card loads and can be cast for 2R
 - [ ] Legendary rule works
 - [ ] Enters as 3/2
-- [ ] Prowess triggers on noncreature spells **[BLOCKED: mtg-hl300]**
-- [ ] Prowess grants +1/+1 until end of turn **[BLOCKED: mtg-hl300]**
+- [ ] Prowess triggers on noncreature spells ****
+- [ ] Prowess grants +1/+1 until end of turn ****
 - [ ] Attack trigger fires when declared as attacker
 - [ ] "You may pay {1}" is optional
 - [ ] If paid, can target any creature
@@ -455,11 +453,11 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both)
 - [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both)
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
-- [ ] Boar-q-pine + noncreature spells (Cunning Maneuver, Lightning Strike, etc.) **[BLOCKED: mtg-hl300]**
+- [ ] Boar-q-pine + noncreature spells (Cunning Maneuver, Lightning Strike, etc.) ****
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
 - [ ] Firebending creatures sharing firebend mana pool
 - [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
-- [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks) **[BLOCKED: mtg-hl300]**
+- [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks) ****
 - [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) **[BLOCKED: mtg-6ph0z]**
 - [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) **[BLOCKED: mtg-6ph0z]**
 
