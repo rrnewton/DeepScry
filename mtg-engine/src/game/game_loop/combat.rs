@@ -415,10 +415,13 @@ impl<'a> GameLoop<'a> {
         Ok(())
     }
 
-    /// Validate blocker assignments for Menace (MTG Rule 702.111b)
+    /// Validate blocker assignments for blocking restrictions
     ///
-    /// A creature with menace can't be blocked except by two or more creatures.
-    /// This method removes illegal single-blocker assignments from the blocks list.
+    /// Checks for:
+    /// - Menace (MTG Rule 702.111b): Can't be blocked except by two or more creatures
+    /// - CantBeBlocked persistent effects (e.g., from Deserter's Disciple)
+    ///
+    /// This method removes illegal blocker assignments from the blocks list.
     ///
     /// Returns a filtered list of valid blocker assignments.
     fn validate_menace_blockers(
@@ -434,9 +437,27 @@ impl<'a> GameLoop<'a> {
             *blocker_counts.entry(*attacker_id).or_insert(0) += 1;
         }
 
-        // Filter out blocks where a Menace creature has exactly 1 blocker
+        // Filter out invalid blocks
         let mut validated_blocks = SmallVec::new();
         for (blocker_id, attacker_id) in blocks.iter() {
+            // Check if attacker has "can't be blocked" persistent effect
+            let cant_be_blocked = self.game.persistent_effects.is_creature_unblockable(*attacker_id);
+
+            if cant_be_blocked {
+                // Attacker can't be blocked - skip this block assignment
+                if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                    if let Ok(attacker) = self.game.cards.get(*attacker_id) {
+                        if let Ok(blocker) = self.game.cards.get(*blocker_id) {
+                            self.game.logger.verbose(&format!(
+                                "{} can't be blocked - {} can't block it",
+                                attacker.name, blocker.name
+                            ));
+                        }
+                    }
+                }
+                continue;
+            }
+
             let count = blocker_counts.get(attacker_id).copied().unwrap_or(0);
 
             // Check if attacker has Menace

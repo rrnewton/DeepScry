@@ -984,6 +984,15 @@ impl<'a> GameLoop<'a> {
                                                     target_creature: chosen_targets_vec[0],
                                                 }
                                             }
+                                            // GrantCantBeBlocked: "Target creature can't be blocked this turn"
+                                            // Used by Deserter's Disciple
+                                            crate::core::Effect::GrantCantBeBlocked { target }
+                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::GrantCantBeBlocked {
+                                                    target: chosen_targets_vec[0],
+                                                }
+                                            }
                                             // Replace placeholder targets in DealDamage effects
                                             // This is needed for ping abilities like Prodigal Sorcerer
                                             crate::core::Effect::DealDamage {

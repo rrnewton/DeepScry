@@ -1,0 +1,20 @@
+[metadata]
+Name:Deathtouch Small Blocks Big Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p1
+activephase=COMBAT_DECLARE_ATTACKERS
+
+# P0 has Typhoid Rats (1/1 Deathtouch) to block
+p0life=10
+p0hand=
+p0battlefield=Swamp; Swamp; Typhoid Rats
+p0library=Swamp; Swamp; Swamp
+
+# P1 is attacking with a huge creature
+p1life=20
+p1battlefield=Forest; Forest; Forest; Thorn Elemental
+p1library=Forest; Forest; Forest

@@ -1,0 +1,20 @@
+[metadata]
+Name:Deathtouch Blocking Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p1
+activephase=COMBAT_DECLARE_ATTACKERS
+
+# P0 has Canyon Crawler (6/6 Deathtouch) to block
+p0life=20
+p0hand=
+p0battlefield=Swamp; Swamp; Swamp; Canyon Crawler
+p0library=Swamp; Swamp; Swamp
+
+# P1 is attacking with a big creature (Serra Angel 4/4)
+p1life=20
+p1battlefield=Plains; Plains; Plains; Plains; Serra Angel
+p1library=Plains; Plains; Plains
