@@ -1653,13 +1653,13 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
 
-                crate::undo::GameAction::RevealCard { card_id, card, .. } => {
+                crate::undo::GameAction::RevealCard { card_id, name } => {
                     // Undo reveal: clear the card from EntityStore (unreveal it)
-                    // Only clear if we actually revealed a card (card was Some)
-                    if card.is_some() {
+                    // Only clear if we actually revealed a card (name was Some)
+                    if name.is_some() {
                         self.cards.clear(card_id);
                     }
-                    // If card was None, this was a dummy reveal (opponent perspective)
+                    // If name was None, this was a dummy reveal (opponent perspective)
                     // and nothing needs to be undone
                 }
             }

@@ -71,19 +71,24 @@ Server sends to P2:
 
 Both clients receive 14 reveals → same action_count → state hashes match.
 
-### The Option<Box<Card>> Field
+### Write-Once Semantics
 
-In `RevealCard` GameAction, the `card: Option<Box<Card>>` field stores the full card instance:
-- `Some(card)`: Real reveal - card data for undo (EntityStore restoration)
-- `None`: Dummy reveal - nothing to undo
+Reveals are monotonic: a CardID can only transition from unrevealed (None in EntityStore)
+to revealed (Some(Card)). The EntityStore enforces this with a panic if attempting to
+insert into an already-occupied slot. This prevents revealing CardID 33 as "Lightning Bolt"
+then later revealing it as "Mountain" - a critical invariant for game correctness.
 
-This allows proper undo semantics: a real reveal can be undone by removing the card from
-EntityStore; a dummy reveal is a no-op for undo.
+For game tree exploration (AI lookahead), undo clears the slot back to None, allowing
+a subsequent re-reveal. This is fine since each explored timeline only sees a single
+None→Some transition - the undo/redo is just exploring different possible futures.
 
-### Implementation Status (Phase 3)
+### RevealCard GameAction
 
-**Current bug**: Server sends full card names to ALL clients for opponent's cards.
-**Fix needed**: Strip opponent card names before sending (set to empty string).
+The `RevealCard` action uses `name: Option<String>` to distinguish real vs dummy reveals:
+- `Some("Lightning Bolt")`: Real reveal - caller inserts Card into EntityStore
+- `None`: Dummy reveal - no state change, just keeps action_count in sync
+
+Undo logic: if `name.is_some()`, clear the EntityStore slot; otherwise no-op.
 
 ## Module Structure
 
