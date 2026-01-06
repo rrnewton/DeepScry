@@ -659,29 +659,46 @@ impl NetworkClient {
             let msg = self.receive_message().await?;
             match msg {
                 ServerMessage::CardRevealed { owner, card, reason } => {
-                    log::debug!(
-                        "Opening hand reveal {}/{}: {} (id={:?}) for {:?}",
-                        reveals_received + 1,
-                        expected_reveals,
-                        card.name,
-                        card.card_id,
-                        owner
-                    );
+                    // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+                    // - Real reveal: name is non-empty, instantiate the card
+                    // - Dummy reveal: name is empty, opponent's hidden card - don't instantiate
+                    let is_dummy_reveal = card.name.is_empty();
 
-                    // Late-binding: instantiate the card now that we know its identity
-                    // The CardID slot was already reserved via init_game_reserve_only()
-                    let card_db = self.card_db.as_ref().expect("Card DB not loaded");
-                    let card_def = get_card_def_from_reveal(&card, card_db);
-                    let card_instance = card_def.instantiate(card.card_id, owner);
+                    if is_dummy_reveal {
+                        log::debug!(
+                            "Opening hand dummy reveal {}/{}: CardID {} for {:?} (hidden)",
+                            reveals_received + 1,
+                            expected_reveals,
+                            card.card_id.as_u32(),
+                            owner
+                        );
+                        // Dummy reveal: CardID exists but we don't know what card it is
+                        // The slot is already reserved, leave it empty (None in EntityStore)
+                    } else {
+                        log::debug!(
+                            "Opening hand reveal {}/{}: {} (id={:?}) for {:?}",
+                            reveals_received + 1,
+                            expected_reveals,
+                            card.name,
+                            card.card_id,
+                            owner
+                        );
 
-                    // Insert into the reserved slot (write-once semantics)
-                    if let Some(ref mut state) = self.state {
-                        state.game.cards.insert(card.card_id, card_instance);
-                        state.known_cards.insert(card.card_id, card_def);
+                        // Late-binding: instantiate the card now that we know its identity
+                        // The CardID slot was already reserved via init_game_reserve_only()
+                        let card_db = self.card_db.as_ref().expect("Card DB not loaded");
+                        let card_def = get_card_def_from_reveal(&card, card_db);
+                        let card_instance = card_def.instantiate(card.card_id, owner);
+
+                        // Insert into the reserved slot (write-once semantics)
+                        if let Some(ref mut state) = self.state {
+                            state.game.cards.insert(card.card_id, card_instance);
+                            state.known_cards.insert(card.card_id, card_def);
+                        }
                     }
 
                     reveals_received += 1;
-                    let _ = reason; // Reason is OpeningHand for opening hand reveals
+                    let _ = reason; // Reason is Draw for opening hand reveals
                 }
                 ServerMessage::Error { message, fatal } => {
                     if fatal {
@@ -1100,9 +1117,24 @@ impl NetworkClient {
             let drain_reveals = move |game: &mut GameState| {
                 // Helper to process a single reveal
                 // Now handles all reveal types by instantiating cards when needed
+                //
+                // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+                // - Real reveal: name is non-empty, instantiate the card
+                // - Dummy reveal: name is empty, opponent's hidden card - don't instantiate
                 let process_reveal =
                     |game: &mut GameState, owner: PlayerId, card_reveal: CardReveal, reason: RevealReason| {
                         let card_id = card_reveal.card_id;
+
+                        // Check for dummy reveal (empty name = hidden card)
+                        if card_reveal.name.is_empty() {
+                            log::debug!(
+                                "Dummy reveal: CardID {} for {:?} ({:?}) - skipping instantiation",
+                                card_id.as_u32(),
+                                owner,
+                                reason
+                            );
+                            return; // Nothing to instantiate for dummy reveals
+                        }
 
                         match reason {
                             RevealReason::Draw => {

@@ -741,44 +741,58 @@ async fn run_game(
     log::info!("Game {}: Sent GameStarted to both players", game_id);
 
     // Send CardRevealed messages for opening hands (for synchronized GameLoop mode)
-    // Each player needs to know BOTH players' opening hand card IDs so they can
-    // queue them in their shadow state before the local GameLoop draws them.
+    // ALL players receive reveals for ALL cards to keep action_count in sync.
+    // But opponent's cards are sent as "dummy reveals" with name stripped.
+    //
+    // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+    // - Own cards: real reveal with name (player can see their hand)
+    // - Opponent cards: dummy reveal with empty name (keeps count synced, reveals nothing)
 
-    // P1 needs reveals for: own hand (p1_hand) + opponent's hand (p2_hand)
+    // P1 receives: own hand (real reveals) + P2's hand (dummy reveals)
     for card in &p1_hand {
         p1_conn
             .send(&ServerMessage::CardRevealed {
                 owner: p1_id,
-                card: card.clone(),
+                card: card.clone(), // Real reveal - P1 sees own cards
                 reason: RevealReason::Draw,
             })
             .await?;
     }
     for card in &p2_hand {
+        // Dummy reveal: strip name so P1 can't see P2's hand
+        let dummy_reveal = CardReveal {
+            card_id: card.card_id,
+            name: String::new(), // Hidden - P1 doesn't know what card this is
+        };
         p1_conn
             .send(&ServerMessage::CardRevealed {
                 owner: p2_id,
-                card: card.clone(),
+                card: dummy_reveal,
                 reason: RevealReason::Draw,
             })
             .await?;
     }
 
-    // P2 needs reveals for: own hand (p2_hand) + opponent's hand (p1_hand)
-    for card in &p2_hand {
+    // P2 receives: P1's hand (dummy reveals) + own hand (real reveals)
+    for card in &p1_hand {
+        // Dummy reveal: strip name so P2 can't see P1's hand
+        let dummy_reveal = CardReveal {
+            card_id: card.card_id,
+            name: String::new(), // Hidden - P2 doesn't know what card this is
+        };
         p2_conn
             .send(&ServerMessage::CardRevealed {
-                owner: p2_id,
-                card: card.clone(),
+                owner: p1_id,
+                card: dummy_reveal,
                 reason: RevealReason::Draw,
             })
             .await?;
     }
-    for card in &p1_hand {
+    for card in &p2_hand {
         p2_conn
             .send(&ServerMessage::CardRevealed {
-                owner: p1_id,
-                card: card.clone(),
+                owner: p2_id,
+                card: card.clone(), // Real reveal - P2 sees own cards
                 reason: RevealReason::Draw,
             })
             .await?;
