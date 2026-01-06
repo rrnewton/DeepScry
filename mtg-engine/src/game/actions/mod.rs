@@ -751,8 +751,9 @@ impl GameState {
         }
 
         // Step 8: Spell becomes cast
-        // TODO: Trigger "whenever you cast a spell" abilities
-        // For now, this is complete - spell is on stack and costs are paid
+        // Trigger "whenever you cast a spell" abilities (like Boar-q-pine, Prowess)
+        // MTG Rules 601.2i: The spell becomes cast once all costs are paid
+        self.check_spellcast_triggers(card_id, player_id)?;
 
         Ok(())
     }
@@ -2386,6 +2387,150 @@ impl GameState {
             }
 
             self.execute_effect(&effect)?;
+        }
+
+        Ok(())
+    }
+
+    /// Check and execute SpellCast triggers when a spell is cast
+    ///
+    /// This handles "Whenever you cast a [noncreature] spell" triggers like:
+    /// - Boar-q-pine: Whenever you cast a noncreature spell, put a +1/+1 counter on this creature
+    /// - Prowess: Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn
+    ///
+    /// MTG Rules 601.2i: The spell becomes cast after costs are paid, triggering these abilities.
+    ///
+    /// # Parameters
+    /// - `cast_spell_id`: The spell that was just cast (used to check if it's noncreature)
+    /// - `caster_id`: The player who cast the spell (triggers only fire for spells cast by the controller)
+    pub fn check_spellcast_triggers(&mut self, cast_spell_id: CardId, caster_id: PlayerId) -> Result<()> {
+        use crate::core::Trigger;
+
+        // Check if the cast spell is a creature (for noncreature-only triggers)
+        let is_creature_spell = self.cards.get(cast_spell_id).map(|c| c.is_creature()).unwrap_or(false);
+
+        // Collect SpellCast triggers from permanents on the battlefield
+        // These triggers fire when their controller casts a spell
+        struct TriggerToExecute {
+            source_card_id: CardId,
+            source_name: String,
+            effects: Vec<Effect>,
+            description: String,
+        }
+
+        let triggers_to_execute: Vec<TriggerToExecute> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                if let Ok(card) = self.cards.get(card_id) {
+                    // Only trigger for permanents controlled by the caster
+                    if card.controller != caster_id {
+                        return None;
+                    }
+
+                    // Find SpellCast triggers on this permanent
+                    let matching_triggers: Vec<&Trigger> = card
+                        .triggers
+                        .iter()
+                        .filter(|trigger| {
+                            if trigger.event != TriggerEvent::SpellCast {
+                                return false;
+                            }
+
+                            // Check noncreature-only triggers (marked with [noncreature] in description)
+                            if trigger.description.contains("[noncreature]")
+                                || trigger.description.contains("noncreature")
+                            {
+                                // This trigger only fires on noncreature spells
+                                if is_creature_spell {
+                                    return false;
+                                }
+                            }
+
+                            true
+                        })
+                        .collect();
+
+                    if matching_triggers.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            matching_triggers
+                                .into_iter()
+                                .map(|trigger| TriggerToExecute {
+                                    source_card_id: card_id,
+                                    source_name: card.name.to_string(),
+                                    effects: trigger.effects.clone(),
+                                    description: trigger.description.clone(),
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+
+        // Execute each trigger's effects
+        for trigger in triggers_to_execute {
+            // Log the trigger
+            self.logger
+                .gamelog(&format!("Trigger: {} - {}", trigger.source_name, trigger.description));
+
+            // Execute effects with placeholder resolution
+            for effect in trigger.effects {
+                // Resolve placeholder targets (only specific effects need resolution)
+                #[allow(clippy::wildcard_enum_match_arm)]
+                let resolved_effect = match effect {
+                    Effect::PutCounter {
+                        target,
+                        counter_type,
+                        amount,
+                    } if target.as_u32() == 0 => {
+                        // Placeholder CardId 0 means "put counter on self" (the trigger source)
+                        // Log the counter addition
+                        let current_counters = self
+                            .cards
+                            .get(trigger.source_card_id)
+                            .map(|c| c.get_counter(crate::core::CounterType::P1P1))
+                            .unwrap_or(0);
+                        self.logger.normal(&format!(
+                            "{} gets a +1/+1 counter (now {} counters)",
+                            trigger.source_name,
+                            current_counters + amount
+                        ));
+
+                        Effect::PutCounter {
+                            target: trigger.source_card_id,
+                            counter_type,
+                            amount,
+                        }
+                    }
+                    Effect::PumpCreature {
+                        target,
+                        power_bonus,
+                        toughness_bonus,
+                    } if target.as_u32() == 0 => {
+                        // Placeholder CardId 0 means "pump self" (for Prowess-like effects)
+                        self.logger.normal(&format!(
+                            "{} gets +{}/+{} until end of turn",
+                            trigger.source_name, power_bonus, toughness_bonus
+                        ));
+
+                        Effect::PumpCreature {
+                            target: trigger.source_card_id,
+                            power_bonus,
+                            toughness_bonus,
+                        }
+                    }
+                    other => other,
+                };
+
+                self.execute_effect(&resolved_effect)?;
+            }
         }
 
         Ok(())
