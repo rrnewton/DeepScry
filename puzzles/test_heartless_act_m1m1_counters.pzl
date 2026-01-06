@@ -1,0 +1,24 @@
+[metadata]
+Name:Heartless Act Mode 2 with -1/-1 Counters Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Heartless Act to remove -1/-1 counters from Grizzly Bears
+# Grizzly Bears has 2 -1/-1 counters (so it's 0/0 and would die, but we test before SBA)
+# Actually let's use a bigger creature - Serra Angel is 4/4
+p0life=20
+p0hand=Heartless Act
+p0battlefield=Swamp; Swamp; Serra Angel|Counters:M1M1=2
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+
+# Serra Angel with 2 -1/-1 counters is 2/2
+# Mode 2 should be able to remove the -1/-1 counters
+
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

@@ -1,0 +1,22 @@
+[metadata]
+Name:Deserter's Disciple Power 3+ Restriction Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Deserter's Disciple and a creature with power 3+ (should NOT be targetable)
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Deserter's Disciple; Mongoose Lizard
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Mongoose Lizard is 5/6 - power 5 is > 2, so should not be valid target
+# Deserter's Disciple can only target creatures with power 2 or less
+
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

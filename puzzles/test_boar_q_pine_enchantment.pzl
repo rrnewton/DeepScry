@@ -1,0 +1,22 @@
+[metadata]
+Name:Boar-q-pine Enchantment Trigger Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Boar-q-pine and an enchantment to cast (Glorious Anthem costs 1WW)
+p0life=20
+p0hand=Glorious Anthem
+p0battlefield=Plains; Plains; Plains; Boar-q-pine
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Boar-q-pine: Whenever you cast a noncreature spell, put a +1/+1 counter
+# Glorious Anthem is an enchantment (noncreature), should trigger
+
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

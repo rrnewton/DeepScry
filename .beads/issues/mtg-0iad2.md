@@ -50,8 +50,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Enters as 2/2 (verified: puzzle state)
 - [x] Trigger fires when casting instant (verified: Lightning Strike → counter)
 - [x] Trigger fires when casting sorcery (verified: puzzles/test_boar_q_pine_sorcery.pzl - Iroh's Demonstration)
-- [ ] Trigger fires when casting artifact
-- [ ] Trigger fires when casting enchantment
+- [x] Trigger fires when casting artifact (verified: test_boar_q_pine_artifact.pzl - Sol Ring → 2/2→3/3)
+- [x] Trigger fires when casting enchantment (verified: test_boar_q_pine_enchantment.pzl - Glorious Anthem → 4/4 with anthem)
 - [x] Trigger does NOT fire for creature spells (verified: puzzles/test_boar_q_pine_no_creature_trigger.pzl)
 - [x] Counter is placed correctly (verified: Boar-q-pine became 3/3)
 - [x] Multiple noncreature spells accumulate counters (verified: test_boar_q_pine_multiple_spells.pzl - 2 spells → 2 counters)
@@ -104,7 +104,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Can target another creature you control (verified: targeted Typhoid Rats)
 - [x] Cannot target itself ("another") (verified: targeting code enforces Other)
 - [x] Target must have power 2 or less (verified: targeting code checks current_power() <= 2)
-- [ ] Cannot target creature with power 3+
+- [x] Cannot target creature with power 3+ (verified: test_deserters_disciple_power_restriction.pzl - no activation when only Mongoose Lizard 5/6 available)
 - [x] Unblockable effect applies for the turn (verified: 6d373d4 - "can't be blocked" enforced)
 - [x] Effect wears off at end of turn (verified: PersistentEffect has CleanupCondition::EndOfTurn)
 - [ ] Can use ability during declare attackers step
@@ -184,7 +184,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Mode 2: Works with fewer than 3 counters (verified: creature had 2 counters)
 - [ ] Mode 2: Can choose to remove fewer counters
 - [x] Mode 2: Works with +1/+1 counters (verified: P1P1 counters removed)
-- [ ] Mode 2: Works with other counter types
+- [ ] Mode 2: Works with other counter types (**BLOCKED** - CounterType$ Any defaults to P1P1, see TODO in effect_converter.rs:270)
 - [x] Can be cast at instant speed (verified: instants work during opponent's turn per test_instant_opponent_turn.pzl)
 
 ---
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 90 items verified as of 2026-01-06_#1571(48d8018)
+**Progress:** 93 items verified as of 2026-01-06_#1572(699ffd7)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -299,6 +299,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Beetle-Headed Merchants artifact sacrifice verified (test_beetle_merchants_artifact_sac.pzl)
 - Heartless Act Mode 1 restriction verified (test_heartless_act_mode1_no_valid_target.pzl)
 - Multiple attack counter accumulation verified (Beetle-Headed Merchants 6/5→7/6)
+- Boar-q-pine triggers on artifact spells (test_boar_q_pine_artifact.pzl - Sol Ring)
+- Boar-q-pine triggers on enchantment spells (test_boar_q_pine_enchantment.pzl - Glorious Anthem)
+- Deserter's Disciple power 2 or less restriction enforced (test_deserters_disciple_power_restriction.pzl)
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
