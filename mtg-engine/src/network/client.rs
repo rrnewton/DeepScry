@@ -196,6 +196,10 @@ impl ClientGameState {
     }
 
     /// Process a CardRevealed message
+    ///
+    /// In the late-binding architecture:
+    /// - For deck cards (Draw, OpeningHand, Played): CardID slot was pre-reserved, use insert()
+    /// - For tokens (TokenCreated): New CardID, use insert_if_vacant() as fallback
     pub fn process_card_revealed(
         &mut self,
         owner: PlayerId,
@@ -209,38 +213,41 @@ impl ClientGameState {
         if let Some(card_def) = Self::card_from_reveal(&card, card_db) {
             self.known_cards.insert(card.card_id, card_def.clone());
 
-            // Create card instance if not already in game (write-once)
+            // Create card instance
             let card_instance = card_def.instantiate(card.card_id, owner);
-            self.game.cards.insert_if_vacant(card.card_id, card_instance);
 
             // Handle based on reason
             match reason {
-                RevealReason::Draw => {
-                    // Card reveals are now handled via RevealCard action in the game engine
-                    // The library no longer has queue_reveal since cards are already in the library
-                    // Just track that the card is known
-                }
-                RevealReason::OpeningHand => {
-                    // Already handled in new()
+                RevealReason::Draw | RevealReason::OpeningHand => {
+                    // Late-binding: CardID slot was pre-reserved via init_game_reserve_only()
+                    // Insert into the reserved slot (write-once semantics)
+                    if !self.game.cards.is_revealed(card.card_id) {
+                        self.game.cards.insert(card.card_id, card_instance);
+                    }
                 }
                 RevealReason::Played => {
-                    // When opponent plays a card from their hand, just add it if not already there
-                    // The hidden_card_count mechanism is removed in the new architecture
+                    // Opponent plays a card - CardID slot was pre-reserved
+                    if !self.game.cards.is_revealed(card.card_id) {
+                        self.game.cards.insert(card.card_id, card_instance);
+                    }
+                    // Add to hand if not already there (card will be moved to stack/battlefield)
                     if let Some(zones) = self.game.get_player_zones_mut(owner) {
                         if !zones.hand.contains(card.card_id) {
                             zones.hand.add(card.card_id);
                         }
                     }
                 }
-                RevealReason::Targeting | RevealReason::Effect => {
-                    // Card is now public knowledge, already added above
-                }
-                RevealReason::Searched => {
-                    // Tutor effect - card revealed but not yet in a known zone
+                RevealReason::Targeting | RevealReason::Effect | RevealReason::Searched => {
+                    // Card is now public knowledge - insert if not already revealed
+                    if !self.game.cards.is_revealed(card.card_id) {
+                        self.game.cards.insert(card.card_id, card_instance);
+                    }
                 }
                 RevealReason::TokenCreated => {
-                    // Token created - add to battlefield (shared zone on GameState)
-                    self.game.battlefield.add(card.card_id);
+                    // Token created - new CardID not from deck, use insert_if_vacant
+                    if self.game.cards.insert_if_vacant(card.card_id, card_instance) {
+                        self.game.battlefield.add(card.card_id);
+                    }
                 }
             }
         }
@@ -559,60 +566,34 @@ impl NetworkClient {
             }
         }
 
-        // Initialize game using GameInitializer for deterministic card IDs
+        // Initialize game using GameInitializer
         let card_db = self.card_db.as_ref().expect("Card DB not loaded");
         let initializer = GameInitializer::new(card_db);
-        let mut game = initializer
-            .init_game(p1_name, p1_deck, p2_name, p2_deck, starting_life)
-            .await?;
+
+        // Late-binding architecture: use init_game_reserve_only when server provides DeckCardIdRanges
+        // This creates CardID slots upfront, with identities revealed later via CardRevealed messages
+        let game = if let Some(ref ranges) = deck_card_ids {
+            log::debug!(
+                "Using late-binding architecture: {} total CardIDs (P1: [{}..{}), P2: [{}..{}))",
+                ranges.total_cards(),
+                ranges.p1_start,
+                ranges.p1_end,
+                ranges.p2_start,
+                ranges.p2_end
+            );
+            initializer.init_game_reserve_only(p1_name, p2_name, starting_life, ranges)
+        } else {
+            // Fallback: instantiate cards locally (legacy mode, may cause ID mismatches)
+            log::warn!("Server did not provide DeckCardIdRanges - using legacy initialization");
+            initializer
+                .init_game(p1_name, p1_deck, p2_name, p2_deck, starting_life)
+                .await?
+        };
 
         // Get player IDs
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
         let opponent_id = if we_are_p1 { p2_id } else { p1_id };
-
-        // Phase 3: Validate deck_card_ids ranges match our initialized game
-        // This ensures server and client agree on CardID assignment
-        if let Some(ref ranges) = deck_card_ids {
-            let total_cards = game.cards.len() as u32;
-            let expected_total = ranges.total_cards();
-            if total_cards != expected_total {
-                log::warn!(
-                    "CardID mismatch: client has {} cards, server expects {} (P1: {}, P2: {})",
-                    total_cards,
-                    expected_total,
-                    ranges.p1_end - ranges.p1_start,
-                    ranges.p2_end - ranges.p2_start
-                );
-            } else {
-                log::debug!(
-                    "CardID ranges validated: {} total cards (P1: [{}..{}), P2: [{}..{}))",
-                    total_cards,
-                    ranges.p1_start,
-                    ranges.p1_end,
-                    ranges.p2_start,
-                    ranges.p2_end
-                );
-            }
-        }
-
-        // Convert libraries to Remote mode - we don't know the shuffle order
-        // The server has shuffled and drawn, we need to receive reveals to know card order
-        let _our_lib_size = game
-            .get_player_zones(our_player_id)
-            .map(|z| z.library.len())
-            .unwrap_or(0);
-        let _opp_lib_size = game.get_player_zones(opponent_id).map(|z| z.library.len()).unwrap_or(0);
-
-        // Clear the local libraries and set them to Remote mode
-        // TODO(mtg-qtqcr Phase 3): Use CardZone::new_library_with_cards() once server sends DeckCardIdRanges
-        // For now, just create empty libraries since we don't have CardIDs yet
-        if let Some(zones) = game.get_player_zones_mut(our_player_id) {
-            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, our_player_id);
-        }
-        if let Some(zones) = game.get_player_zones_mut(opponent_id) {
-            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, opponent_id);
-        }
 
         // Create ClientGameState with the initialized game
         self.state = Some(ClientGameState {
@@ -642,12 +623,21 @@ impl NetworkClient {
                         card.card_id,
                         owner
                     );
-                    // Card reveals are now handled via RevealCard action in the game engine
-                    // The library no longer has queue_reveal since cards are already in the library
-                    // Just track that we received the reveal
-                    log::debug!("Received opening hand reveal for card id={}", card.card_id.as_u32());
+
+                    // Late-binding: instantiate the card now that we know its identity
+                    // The CardID slot was already reserved via init_game_reserve_only()
+                    let card_db = self.card_db.as_ref().expect("Card DB not loaded");
+                    let card_def = get_card_def_from_reveal(&card, card_db);
+                    let card_instance = card_def.instantiate(card.card_id, owner);
+
+                    // Insert into the reserved slot (write-once semantics)
+                    if let Some(ref mut state) = self.state {
+                        state.game.cards.insert(card.card_id, card_instance);
+                        state.known_cards.insert(card.card_id, card_def);
+                    }
+
                     reveals_received += 1;
-                    let _ = reason; // Reason is always Draw for opening hand
+                    let _ = reason; // Reason is OpeningHand for opening hand reveals
                 }
                 ServerMessage::Error { message, fatal } => {
                     if fatal {
@@ -750,7 +740,7 @@ impl NetworkClient {
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
         use crate::network::{
-            LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteController, RemoteMessage,
+            BundledReveal, LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteController, RemoteMessage,
         };
         use std::sync::mpsc;
         use tokio::sync::mpsc as tokio_mpsc;
@@ -788,6 +778,10 @@ impl NetworkClient {
         let network_debug = self.network_debug;
 
         // Create controllers
+        // Clone reveal_tx for both controllers so they can push bundled reveals
+        let reveal_tx_for_local = reveal_tx.clone();
+        let reveal_tx_for_remote = reveal_tx.clone();
+
         let local_controller = NetworkLocalController::new(
             controller,
             // Convert tokio channel to std channel for blocking thread
@@ -812,8 +806,10 @@ impl NetworkClient {
             },
             local_msg_rx,
         )
+        .with_reveal_tx(reveal_tx_for_local)
         .with_network_debug(network_debug);
-        let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
+        let remote_controller =
+            RemoteController::new(opponent_id, remote_choice_rx).with_reveal_tx(reveal_tx_for_remote);
 
         // Get game state for the game thread
         let mut game = client_state.game;
@@ -838,11 +834,14 @@ impl NetworkClient {
             // We MUST echo this back in SubmitChoice
             let mut server_choice_seq: Option<u32> = None;
 
-            // Buffer for pending CardRevealed with RevealReason::Played
-            // The server sends CardRevealed immediately before OpponentChoice for spell plays.
-            // We buffer it here and include it in the RemoteMessage so the game thread
-            // has the card info BEFORE trying to execute the spell.
-            let mut pending_played_reveal: Option<(PlayerId, CardReveal)> = None;
+            // Buffer for ALL pending CardRevealed messages before they're bundled with actions.
+            // This unified buffer replaces the separate channels, ensuring reveals are
+            // processed IN ORDER with their corresponding actions (no race conditions).
+            //
+            // Reveals are bundled with:
+            // - ChoiceRequest: All pending reveals sent to NetworkLocalController
+            // - OpponentChoice: All pending reveals sent to RemoteController
+            let mut pending_reveals: Vec<BundledReveal> = Vec::new();
 
             loop {
                 tokio::select! {
@@ -852,54 +851,38 @@ impl NetworkClient {
                             Some(Ok(Message::Text(text))) => {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
-                                        log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
-
-                                        // Buffer Played reveals to include with OpponentChoice
-                                        // This ensures the game thread has the card info before
-                                        // trying to execute the spell cast.
-                                        if reason == RevealReason::Played {
-                                            log::debug!(
-                                                "WebSocket: Buffering Played reveal for opponent spell: {} (id={})",
-                                                card.name, card.card_id.as_u32()
-                                            );
-                                            pending_played_reveal = Some((owner, card));
-                                        } else {
-                                            // Send other reveals (Draw, etc.) directly to game thread
-                                            if let Err(e) = reveal_tx.send((owner, card, reason)) {
-                                                log::error!("Failed to send reveal to game thread: {:?}", e);
-                                            }
-                                        }
+                                        // Buffer ALL reveals to be bundled with the next action message.
+                                        // This eliminates race conditions from separate channels.
+                                        log::debug!(
+                                            "WebSocket: Buffering reveal: {} (id={}) for {:?} ({:?})",
+                                            card.name, card.card_id.as_u32(), owner, reason
+                                        );
+                                        pending_reveals.push(BundledReveal {
+                                            owner,
+                                            card_id: card.card_id,
+                                            card_name: card.name,
+                                            reason,
+                                        });
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
-                                        log::debug!("WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}, sending to RemoteController channel", description, choice_indices, spell_ability);
+                                        // Bundle ALL pending reveals with the opponent choice.
+                                        // This ensures the game thread processes reveals BEFORE
+                                        // applying the choice, eliminating race conditions.
+                                        let reveals = std::mem::take(&mut pending_reveals);
+                                        log::debug!(
+                                            "WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}, bundling {} reveals",
+                                            description, choice_indices, spell_ability, reveals.len()
+                                        );
 
-                                        // Send the opponent choice to RemoteController
-                                        // The card_reveal field is no longer used - we send Played reveals
-                                        // via reveal_tx instead so drain_reveals() can process them.
                                         match remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_indices,
                                             description: description.clone(),
                                             spell_ability,
-                                            card_reveal: None, // Not used - reveal sent via reveal_tx
+                                            card_reveal: None, // Deprecated - reveals bundled in `reveals` field
+                                            reveals,
                                         }) {
                                             Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController channel successfully"),
                                             Err(e) => log::error!("WebSocket: FAILED to send opponent choice to RemoteController channel: {:?}", e),
-                                        }
-
-                                        // CRITICAL: Send the pending Played reveal via reveal_tx AFTER sending OpponentChoice
-                                        // This way:
-                                        // 1. RemoteController.wait_for_choice() unblocks and choose_spell_ability_to_play() returns
-                                        // 2. drain_reveals() at priority.rs:343 processes the Played reveal
-                                        // 3. The card is instantiated in game.cards
-                                        // 4. Game proceeds to execute the spell
-                                        if let Some((owner, card)) = pending_played_reveal.take() {
-                                            log::debug!(
-                                                "WebSocket: Sending buffered Played reveal for {} (id={}) via reveal_tx",
-                                                card.name, card.card_id.as_u32()
-                                            );
-                                            if let Err(e) = reveal_tx.send((owner, card, RevealReason::Played)) {
-                                                log::error!("Failed to send Played reveal to game thread: {:?}", e);
-                                            }
                                         }
                                     }
                                     Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
@@ -908,11 +891,21 @@ impl NetworkClient {
                                         // before making a choice, ensuring client doesn't run ahead of server
                                         server_action_count = Some(action_count);
                                         server_choice_seq = Some(choice_seq);
-                                        log::debug!("Player {:?}: Received ChoiceRequest #{}, server action_count={}", our_player_id, choice_seq, action_count);
+
+                                        // Bundle ALL pending reveals with the ChoiceRequest.
+                                        // This ensures the game thread processes reveals BEFORE
+                                        // evaluating available options, eliminating race conditions.
+                                        let reveals = std::mem::take(&mut pending_reveals);
+                                        log::debug!(
+                                            "Player {:?}: Received ChoiceRequest #{}, server action_count={}, bundling {} reveals",
+                                            our_player_id, choice_seq, action_count, reveals.len()
+                                        );
+
                                         // Notify the local controller that server is ready for a choice
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
                                             action_count,
                                             choice_seq,
+                                            reveals,
                                         });
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count, .. }) => {
@@ -1078,9 +1071,29 @@ impl NetworkClient {
 
                         match reason {
                             RevealReason::Draw => {
-                                // Card reveals are now handled via RevealCard action in the game engine
-                                // The library no longer has queue_reveal since cards are already in the library
-                                log::debug!("Received draw reveal for {:?}: {:?}", owner, card_id);
+                                // Late-binding architecture: instantiate the card now that we know its identity
+                                // The CardID slot was reserved via init_game_reserve_only(), we need to bind
+                                // the card identity when revealed via draw.
+                                let card_already_known = game.cards.get(card_id).is_ok();
+                                log::debug!(
+                                    "RevealReason::Draw: {} (id={}) for {:?} card_already_known={}",
+                                    card_reveal.name,
+                                    card_id.as_u32(),
+                                    owner,
+                                    card_already_known
+                                );
+
+                                if !card_already_known {
+                                    let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                                    let card_instance = card_def.instantiate(card_id, owner);
+                                    game.cards.insert(card_id, card_instance);
+                                    log::debug!(
+                                        "Instantiated drawn card for {:?}: {} ({:?})",
+                                        owner,
+                                        card_reveal.name,
+                                        card_id
+                                    );
+                                }
                             }
                             RevealReason::Played => {
                                 // A card was played - this could be:
@@ -1223,7 +1236,7 @@ impl NetworkClient {
                     // We'll try again before the actual draw in draw_card.
                 }
 
-                // Also drain any additional reveals that may have arrived
+                // Non-blocking drain: get all reveals currently in the channel
                 while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
                     process_reveal(game, owner, card_reveal, reason);
                 }
@@ -1429,6 +1442,7 @@ impl NetworkClient {
                                                 description,
                                                 spell_ability,
                                                 card_reveal: None, // Not used in basic mode
+                                                reveals: Vec::new(), // No bundled reveals in basic mode
                                             });
                                         }
                                         Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
@@ -1438,6 +1452,7 @@ impl NetworkClient {
                                             let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
                                                 action_count,
                                                 choice_seq,
+                                                reveals: Vec::new(), // No bundled reveals in basic mode
                                             });
                                         }
                                         Ok(ServerMessage::ChoiceAccepted { choice_seq, .. }) => {
@@ -1524,20 +1539,38 @@ impl NetworkClient {
         }
 
         // Create drain function for reveals
+        // In late-binding architecture, CardID slots are pre-reserved, so use insert()
         let drain_reveals = move |game: &mut crate::game::GameState| {
             while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
                 let card_id = card_reveal.card_id;
                 match reason {
                     RevealReason::Draw => {
-                        // Card reveals are now handled via RevealCard action in the game engine
-                        // The library no longer has queue_reveal since cards are already in the library
-                        log::debug!("Received draw reveal for {:?}: {:?}", owner, card_id);
+                        // Late-binding: instantiate the card when revealed
+                        if !game.cards.is_revealed(card_id) {
+                            let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                            let card_instance = card_def.instantiate(card_id, owner);
+                            game.cards.insert(card_id, card_instance);
+                            log::debug!(
+                                "Instantiated draw reveal for {:?}: {} ({:?})",
+                                owner,
+                                card_reveal.name,
+                                card_id
+                            );
+                        }
                     }
                     RevealReason::Played => {
-                        // Use the free function that includes DB fallback
-                        let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
-                        let card_instance = card_def.instantiate(card_id, owner);
-                        game.cards.insert_if_vacant(card_id, card_instance);
+                        // Late-binding: instantiate the card when revealed
+                        if !game.cards.is_revealed(card_id) {
+                            let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                            let card_instance = card_def.instantiate(card_id, owner);
+                            game.cards.insert(card_id, card_instance);
+                            log::debug!(
+                                "Instantiated played reveal for {:?}: {} ({:?})",
+                                owner,
+                                card_reveal.name,
+                                card_id
+                            );
+                        }
                     }
                     _ => {}
                 }

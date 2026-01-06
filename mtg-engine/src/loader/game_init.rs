@@ -73,6 +73,150 @@ impl<'a> GameInitializer<'a> {
         game
     }
 
+    /// Initialize a two-player game with positional CardIDs (for network server)
+    ///
+    /// This is the server-side counterpart to `init_game_reserve_only`. It:
+    /// 1. Loads card definitions from the database
+    /// 2. Expands deck entries into card definition vectors
+    /// 3. Shuffles each deck using the provided RNG seed
+    /// 4. THEN assigns CardIDs positionally: P1 gets [0..P1_size), P2 gets [P1_size..total)
+    ///
+    /// This ensures CardIDs are "positional" - CardID 0 is the top card of P1's shuffled
+    /// library, CardID 1 is the second card, etc. The client's `init_game_reserve_only`
+    /// reserves the same ranges, and card identities are revealed via CardRevealed messages.
+    ///
+    /// **Important**: CardIDs start from 0, NOT from the next_entity_id counter. This
+    /// separates the CardID namespace from PlayerIDs for network synchronization.
+    pub async fn init_game_with_positional_ids(
+        &self,
+        player1_name: String,
+        player1_deck: &DeckList,
+        player2_name: String,
+        player2_deck: &DeckList,
+        starting_life: i32,
+        seed: u64,
+    ) -> Result<GameState> {
+        use crate::core::CardId;
+        use crate::loader::CardDefinition;
+        use rand::prelude::SliceRandom;
+        use rand_chacha::rand_core::SeedableRng;
+        use rand_chacha::ChaCha12Rng;
+        use std::sync::Arc;
+
+        // Calculate deck sizes
+        let p1_deck_size: usize = player1_deck.main_deck.iter().map(|e| e.count as usize).sum();
+        let p2_deck_size: usize = player2_deck.main_deck.iter().map(|e| e.count as usize).sum();
+        let total_cards = p1_deck_size + p2_deck_size;
+
+        // Create game state
+        let mut game = GameState::new_two_player_with_capacity(
+            player1_name.clone(),
+            player2_name.clone(),
+            starting_life,
+            total_cards,
+        );
+
+        let player1_id = game.players[0].id;
+        let player2_id = game.players[1].id;
+
+        // Pre-load all unique cards to ensure cache is populated
+        let mut unique_cards = std::collections::HashSet::new();
+        for entry in &player1_deck.main_deck {
+            unique_cards.insert(entry.card_name.clone());
+        }
+        for entry in &player2_deck.main_deck {
+            unique_cards.insert(entry.card_name.clone());
+        }
+
+        let mut card_names: Vec<String> = unique_cards.into_iter().collect();
+        card_names.sort();
+        if !card_names.is_empty() {
+            self.card_db.load_cards(&card_names).await?;
+        }
+
+        // Load token definitions
+        let mut token_scripts = std::collections::HashSet::new();
+        for card_name in &card_names {
+            if let Some(card_def) = self.card_db.get_card(card_name).await? {
+                for token_script in card_def.extract_token_scripts() {
+                    token_scripts.insert(token_script);
+                }
+            }
+        }
+        for token_script in token_scripts {
+            if let Some(token_def) = self.card_db.get_token(&token_script).await? {
+                game.token_definitions.insert(token_script, Arc::new(token_def));
+            }
+        }
+
+        // Expand deck entries into card definition vectors (not yet Card instances)
+        let mut p1_card_defs: Vec<Arc<CardDefinition>> = Vec::with_capacity(p1_deck_size);
+        for entry in &player1_deck.main_deck {
+            let card_def = self
+                .card_db
+                .get_card(&entry.card_name)
+                .await?
+                .ok_or_else(|| MtgError::InvalidCardFormat(format!("Card not found: {}", entry.card_name)))?;
+            for _ in 0..entry.count {
+                p1_card_defs.push(card_def.clone());
+            }
+        }
+
+        let mut p2_card_defs: Vec<Arc<CardDefinition>> = Vec::with_capacity(p2_deck_size);
+        for entry in &player2_deck.main_deck {
+            let card_def = self
+                .card_db
+                .get_card(&entry.card_name)
+                .await?
+                .ok_or_else(|| MtgError::InvalidCardFormat(format!("Card not found: {}", entry.card_name)))?;
+            for _ in 0..entry.count {
+                p2_card_defs.push(card_def.clone());
+            }
+        }
+
+        // Shuffle BEFORE assigning CardIDs
+        let mut rng = ChaCha12Rng::seed_from_u64(seed);
+        p1_card_defs.shuffle(&mut rng);
+        p2_card_defs.shuffle(&mut rng);
+
+        // Store the RNG in the game state so it continues from the same sequence
+        *game.rng.borrow_mut() = rng;
+
+        // Now assign positional CardIDs starting from 0
+        // P1's cards: [0..p1_deck_size)
+        // P2's cards: [p1_deck_size..total_cards)
+        for (i, card_def) in p1_card_defs.iter().enumerate() {
+            let card_id = CardId::new(i as u32);
+            let card = card_def.instantiate(card_id, player1_id);
+            game.cards.insert(card_id, card);
+            if let Some(zones) = game.get_player_zones_mut(player1_id) {
+                zones.library.add(card_id);
+            }
+        }
+
+        for (i, card_def) in p2_card_defs.iter().enumerate() {
+            let card_id = CardId::new((p1_deck_size + i) as u32);
+            let card = card_def.instantiate(card_id, player2_id);
+            game.cards.insert(card_id, card);
+            if let Some(zones) = game.get_player_zones_mut(player2_id) {
+                zones.library.add(card_id);
+            }
+        }
+
+        // Set next_entity_id past the card range so tokens get unique IDs
+        game.set_next_entity_id(total_cards as u32);
+
+        log::debug!(
+            "Positional-ID game initialized: P1=[0..{}), P2=[{}..{}), seed={}",
+            p1_deck_size,
+            p1_deck_size,
+            total_cards,
+            seed
+        );
+
+        Ok(game)
+    }
+
     /// Initialize a two-player game from two decks
     pub async fn init_game(
         &self,

@@ -23,6 +23,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
+use crate::network::local_controller::BundledReveal;
 use crate::network::protocol::CardReveal;
 use smallvec::SmallVec;
 use std::sync::mpsc;
@@ -48,6 +49,11 @@ pub enum RemoteMessage {
         /// When opponent casts a spell from their hand that we don't know about,
         /// this contains the card reveal info so we can instantiate it.
         card_reveal: Option<(PlayerId, CardReveal)>,
+        /// Bundled reveals that arrived before this choice from the server.
+        /// These MUST be processed before the choice is applied to ensure
+        /// cards are instantiated in time. This eliminates race conditions
+        /// from having separate reveal/choice channels.
+        reveals: Vec<BundledReveal>,
     },
     /// Signal that the game has ended normally
     ///
@@ -64,10 +70,17 @@ pub type RemoteChoice = RemoteMessage;
 /// This is used on the client side to represent the opponent. When the GameLoop
 /// asks this controller for a choice, it blocks waiting for the server to send
 /// an `OpponentChoice` message via the channel, then returns that choice.
+///
+/// RevealMsg is imported from local_controller to avoid duplicate type alias.
+use crate::network::local_controller::RevealMsg;
+
 pub struct RemoteController {
     player_id: PlayerId,
     /// Receiver for opponent choices from the WebSocket handler
     choice_rx: mpsc::Receiver<RemoteMessage>,
+    /// Channel to send bundled reveals to the game thread for processing
+    /// This is used to push reveals received with Choice messages so drain_reveals() can process them
+    reveal_tx: Option<mpsc::Sender<RevealMsg>>,
     /// Whether we've been disconnected from the server
     disconnected: bool,
     /// Whether the game has ended normally (not a disconnect)
@@ -76,6 +89,9 @@ pub struct RemoteController {
     last_spell_ability: Option<SpellAbility>,
     /// Last received card reveal (for instantiating hidden hand cards)
     last_card_reveal: Option<(PlayerId, CardReveal)>,
+    /// Bundled reveals from the last received Choice message.
+    /// These should be processed by the caller before proceeding.
+    pending_reveals: Vec<BundledReveal>,
 }
 
 impl RemoteController {
@@ -88,10 +104,51 @@ impl RemoteController {
         Self {
             player_id,
             choice_rx,
+            reveal_tx: None,
             disconnected: false,
             game_ended: false,
             last_spell_ability: None,
             last_card_reveal: None,
+            pending_reveals: Vec::new(),
+        }
+    }
+
+    /// Set the reveal channel for pushing bundled reveals to the game thread.
+    /// This channel is used to send reveals that arrive with Choice messages
+    /// so that drain_reveals() can process them before evaluating available options.
+    pub fn with_reveal_tx(mut self, reveal_tx: mpsc::Sender<RevealMsg>) -> Self {
+        self.reveal_tx = Some(reveal_tx);
+        self
+    }
+
+    /// Take and clear pending reveals that arrived with the last Choice message.
+    /// The caller should process these to instantiate cards before proceeding.
+    pub fn take_pending_reveals(&mut self) -> Vec<BundledReveal> {
+        std::mem::take(&mut self.pending_reveals)
+    }
+
+    /// Push bundled reveals to the reveal channel for processing by drain_reveals().
+    /// This is called after receiving a Choice message with bundled reveals.
+    fn push_pending_reveals(&mut self) {
+        if let Some(ref reveal_tx) = self.reveal_tx {
+            for reveal in self.pending_reveals.drain(..) {
+                let card_reveal = CardReveal {
+                    card_id: reveal.card_id,
+                    name: reveal.card_name,
+                };
+                if let Err(e) = reveal_tx.send((reveal.owner, card_reveal, reveal.reason)) {
+                    log::error!("Failed to send bundled reveal to game thread: {:?}", e);
+                }
+            }
+        } else {
+            // No reveal channel - just clear the reveals (they won't be processed)
+            if !self.pending_reveals.is_empty() {
+                log::warn!(
+                    "RemoteController: {} bundled reveals dropped (no reveal_tx channel)",
+                    self.pending_reveals.len()
+                );
+                self.pending_reveals.clear();
+            }
         }
     }
 
@@ -116,19 +173,24 @@ impl RemoteController {
                 description,
                 spell_ability,
                 card_reveal,
+                reveals,
             }) => {
                 log::debug!(
-                    "RemoteController {:?}: Opponent chose indices {:?} ({}) spell_ability={:?} card_reveal={:?}",
+                    "RemoteController {:?}: Opponent chose indices {:?} ({}) spell_ability={:?} card_reveal={:?} bundled_reveals={}",
                     self.player_id,
                     choice_indices,
                     description,
                     spell_ability,
-                    card_reveal.as_ref().map(|(owner, reveal)| (owner, &reveal.name))
+                    card_reveal.as_ref().map(|(owner, reveal)| (owner, &reveal.name)),
+                    reveals.len()
                 );
                 // Store spell_ability for choose_spell_ability_to_play to use
                 self.last_spell_ability = spell_ability;
                 // Store card_reveal for instantiating hidden hand cards
                 self.last_card_reveal = card_reveal;
+                // Store bundled reveals and push to channel for drain_reveals() to process
+                self.pending_reveals = reveals;
+                self.push_pending_reveals();
                 ChoiceResult::Ok(choice_indices)
             }
             Ok(RemoteMessage::GameEnded) => {
@@ -479,6 +541,7 @@ mod tests {
             description: "Cast Lightning Bolt".to_string(),
             spell_ability: None,
             card_reveal: None,
+            reveals: Vec::new(),
         })
         .unwrap();
 

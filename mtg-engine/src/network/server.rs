@@ -650,27 +650,30 @@ async fn run_game(
         }
     }
 
-    // Create game state using GameInitializer
+    // Seed RNG and shuffle libraries BEFORE assigning CardIDs (positional ID architecture)
+    // This ensures CardID 0 = top card of P1's shuffled library, etc.
+    let seed = config.seed.unwrap_or_else(rand::random::<u64>);
+    log::info!("Game {}: Using seed {}", game_id, seed);
+
+    // Create game state using GameInitializer with positional CardIDs
+    // This shuffles decks BEFORE assigning CardIDs so that:
+    // - P1's cards get CardIDs [0..P1_deck_size)
+    // - P2's cards get CardIDs [P1_deck_size..total)
+    // Clients use init_game_reserve_only with the same ranges
     let initializer = GameInitializer::new(&card_db);
-    let mut game = initializer
-        .init_game(
+    let game = initializer
+        .init_game_with_positional_ids(
             p1.name.clone(),
             &p1_decklist,
             p2.name.clone(),
             &p2_decklist,
             config.starting_life,
+            seed,
         )
         .await?;
 
-    // Seed RNG and shuffle libraries
-    let seed = config.seed.unwrap_or_else(rand::random::<u64>);
-    game.seed_rng(seed);
-    log::info!("Game {}: Using seed {}", game_id, seed);
-
     let p1_id = game.players[0].id;
     let p2_id = game.players[1].id;
-    game.shuffle_library(p1_id);
-    game.shuffle_library(p2_id);
 
     // Peek at opening hands WITHOUT drawing
     // We don't draw yet because that would add actions to undo_log before GameLoop starts.
