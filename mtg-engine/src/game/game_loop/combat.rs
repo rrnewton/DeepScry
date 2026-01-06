@@ -228,8 +228,12 @@ impl<'a> GameLoop<'a> {
             let replay_choice = crate::game::ReplayChoice::Blockers(blocks.clone());
             self.log_choice_point(defending_player, Some(replay_choice), prior_log_size);
 
-            // Declare each blocking assignment
-            for (blocker_id, attacker_id) in blocks.iter() {
+            // Validate Menace: count blockers per attacker and remove illegal single-blocker assignments
+            // MTG Rule 702.111b: A creature with menace can't be blocked except by two or more creatures
+            let validated_blocks = self.validate_menace_blockers(&blocks, &attackers)?;
+
+            // Declare each valid blocking assignment
+            for (blocker_id, attacker_id) in validated_blocks.iter() {
                 let mut attackers_vec = SmallVec::new();
                 attackers_vec.push(*attacker_id);
                 self.game.combat.declare_blocker(*blocker_id, attackers_vec);
@@ -409,6 +413,56 @@ impl<'a> GameLoop<'a> {
         }
 
         Ok(())
+    }
+
+    /// Validate blocker assignments for Menace (MTG Rule 702.111b)
+    ///
+    /// A creature with menace can't be blocked except by two or more creatures.
+    /// This method removes illegal single-blocker assignments from the blocks list.
+    ///
+    /// Returns a filtered list of valid blocker assignments.
+    fn validate_menace_blockers(
+        &self,
+        blocks: &SmallVec<[(crate::core::CardId, crate::core::CardId); 8]>,
+        _attackers: &SmallVec<[crate::core::CardId; 8]>,
+    ) -> Result<SmallVec<[(crate::core::CardId, crate::core::CardId); 8]>> {
+        use std::collections::HashMap;
+
+        // Count how many blockers each attacker has
+        let mut blocker_counts: HashMap<crate::core::CardId, usize> = HashMap::new();
+        for (_blocker_id, attacker_id) in blocks.iter() {
+            *blocker_counts.entry(*attacker_id).or_insert(0) += 1;
+        }
+
+        // Filter out blocks where a Menace creature has exactly 1 blocker
+        let mut validated_blocks = SmallVec::new();
+        for (blocker_id, attacker_id) in blocks.iter() {
+            let count = blocker_counts.get(attacker_id).copied().unwrap_or(0);
+
+            // Check if attacker has Menace
+            let has_menace = self
+                .game
+                .has_keyword_with_effects(*attacker_id, crate::core::Keyword::Menace);
+
+            if has_menace && count == 1 {
+                // Menace creature with exactly 1 blocker - invalid, skip this block
+                if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                    if let Ok(attacker) = self.game.cards.get(*attacker_id) {
+                        if let Ok(blocker) = self.game.cards.get(*blocker_id) {
+                            self.game.logger.verbose(&format!(
+                                "Menace prevents {} from blocking {} alone (requires 2+ blockers)",
+                                blocker.name, attacker.name
+                            ));
+                        }
+                    }
+                }
+                continue;
+            }
+
+            validated_blocks.push((*blocker_id, *attacker_id));
+        }
+
+        Ok(validated_blocks)
     }
 
     pub(super) fn end_combat_step(

@@ -1,0 +1,21 @@
+[metadata]
+Name:Boar-q-pine No Creature Trigger Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Boar-q-pine and a creature spell to cast
+# Boar-q-pine should NOT get a counter when creature is cast
+p0life=20
+p0hand=Grizzly Bears
+p0battlefield=Forest; Forest; Boar-q-pine
+p0library=Forest; Forest; Forest
+
+# P1 has nothing
+p1life=20
+p1battlefield=Mountain; Mountain; Mountain
+p1library=Mountain; Mountain; Mountain
