@@ -1,0 +1,20 @@
+[metadata]
+Name:Beetle-Headed Merchants Attack Trigger Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=COMBAT_BEGIN
+
+# P0 has Beetle-Headed Merchants and a sacrifice fodder
+p0life=20
+p0hand=Swamp
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Beetle-Headed Merchants; Canyon Crawler
+p0library=Swamp; Swamp; Swamp
+
+# P1 has no blockers
+p1life=20
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest

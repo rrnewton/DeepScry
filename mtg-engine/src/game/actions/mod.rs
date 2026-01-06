@@ -2046,15 +2046,13 @@ impl GameState {
                 // Fill in placeholder values in trigger effects
                 // Similar to resolve_spell, we need to fill in targets
                 match &mut effect {
-                    Effect::DrawCards { player, .. } if player.as_u32() == 0 => {
+                    Effect::DrawCards { player, count } if player.as_u32() == 0 => {
                         // Placeholder player ID 0 means the controller of the trigger source
                         let controller = self.cards.get(trigger_source)?.controller;
-                        if let Effect::DrawCards { player: _, count } = effect {
-                            effect = Effect::DrawCards {
-                                player: controller,
-                                count,
-                            };
-                        }
+                        effect = Effect::DrawCards {
+                            player: controller,
+                            count: *count,
+                        };
                     }
                     Effect::DealDamage {
                         target: TargetRef::Player(player_id),
