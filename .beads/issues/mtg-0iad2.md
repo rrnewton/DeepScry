@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 100 items verified as of 2026-01-06_#1578
+**Progress:** 101 items verified as of 2026-01-06_#1579
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -308,6 +308,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Trample deals excess damage to player (test_trample_excess_damage.pzl - 7/6 vs 2/2 = 5 to player)
 - Flying restriction fixed - ground creatures can't block flyers (test_flying_cant_be_blocked.pzl)
 - Reach correctly allows blocking flying creatures (test_yuyan_archers_reach.pzl)
+- Lifelink gains life when dealing combat damage (test_lifelink_damage.pzl - 10→12→14)
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
