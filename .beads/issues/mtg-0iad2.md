@@ -84,9 +84,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 - [x] Card loads and can be cast for 1R (verified: previous session - spell cast successfully)
 - [x] Requires a target creature (verified: targeting required)
-- [x] Target gets +3/+1 (verified: Grizzly Bears got +3/+1)
+- [x] Target gets +3/+1 (verified: test_buff_wears_off.pzl - Grizzly Bears 2/2→5/3, dealt 5 damage)
 - [x] Buff lasts until end of turn (verified: PersistentEffect with CleanupCondition::EndOfTurn)
-- [ ] Buff wears off at cleanup (needs multi-turn test)
+- [x] Buff wears off at cleanup (verified: test_buff_wears_off.pzl - Turn 2 shows Grizzly Bears back to 2/2)
 - [x] Creates Clue token (verified: "Created Clue Token under Player 1's control")
 - [x] Clue token is an artifact (verified: token card has Types:Artifact)
 - [x] Clue token has "{2}, Sacrifice: Draw a card" (verified: token script)
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 86 items verified as of 2026-01-06_#1568(ce392d6)
+**Progress:** 90 items verified as of 2026-01-06_#1571(48d8018)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -295,6 +295,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - +1/+1 counters persist across turns
 - Instants work during opponent's turn (Lightning Strike during P2 combat)
 - Fire Sages can activate ability multiple times per turn
+- Pump effect bug fixed (48d8018) - +3/+1 now properly affects creature stats and combat damage
+- Beetle-Headed Merchants artifact sacrifice verified (test_beetle_merchants_artifact_sac.pzl)
+- Heartless Act Mode 1 restriction verified (test_heartless_act_mode1_no_valid_target.pzl)
+- Multiple attack counter accumulation verified (Beetle-Headed Merchants 6/5→7/6)
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
