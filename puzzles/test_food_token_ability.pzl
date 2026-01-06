@@ -1,0 +1,21 @@
+[metadata]
+Name:Food Token Ability Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has a Food token and mana to activate it
+# Food: {2}, {T}, Sacrifice: Gain 3 life
+p0life=3
+p0hand=
+p0battlefield=Forest; Forest; Forest; c_a_food
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# P1 has a creature that will kill us without the life gain
+p1life=20
+p1battlefield=Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest

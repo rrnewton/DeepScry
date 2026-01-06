@@ -1,0 +1,20 @@
+[metadata]
+Name:Counter Persistence Multi-Turn Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Boar-q-pine and Lightning Strike
+p0life=20
+p0hand=Lightning Strike
+p0battlefield=Mountain; Mountain; Boar-q-pine
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# P1 has high life, so game continues. 3 damage to player first
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

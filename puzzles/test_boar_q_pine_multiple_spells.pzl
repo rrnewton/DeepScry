@@ -1,0 +1,20 @@
+[metadata]
+Name:Boar-q-pine Multiple Noncreature Spells Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Boar-q-pine and multiple noncreature spells
+p0life=20
+p0hand=Lightning Strike; Shock
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Boar-q-pine
+p0library=Mountain; Mountain; Mountain
+
+# P1 is nearly dead with blockers
+p1life=6
+p1battlefield=Forest; Grizzly Bears
+p1library=Forest; Forest; Forest
