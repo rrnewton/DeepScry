@@ -65,12 +65,12 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Card loads and can be cast for 4BB (verified: puzzle loaded Canyon Crawler)
 - [x] Enters as 6/6 (verified: shown as 6/6 in game state)
 - [x] Has Deathtouch (kills any creature it damages) (verified: puzzles/test_canyon_crawler_deathtouch.pzl)
-- [ ] Deathtouch works in combat (blocking)
+- [x] Deathtouch works in combat (blocking) (verified: puzzles/test_deathtouch_small_blocks_big.pzl - 1/1 kills 7/7)
 - [x] Deathtouch works in combat (attacking) (verified: killed Rough Rhino Cavalry 5/5)
-- [ ] ETB trigger creates Food token (tokens now working!)
-- [ ] Food token is an artifact
-- [ ] Food token has "{2}, {T}, Sacrifice: Gain 3 life"
-- [ ] Food token ability works correctly
+- [x] ETB trigger creates Food token (verified: puzzles/test_canyon_crawler_food.pzl)
+- [x] Food token is an artifact (verified: card has Types:Artifact Food)
+- [x] Food token has "{2}, {T}, Sacrifice: Gain 3 life" (verified: token script has ability)
+- [ ] Food token ability works correctly (AI doesn't use it - needs investigation)
 - [ ] Swampcycling {2} can be activated from hand
 - [ ] Swampcycling searches for Swamp
 - [ ] Swampcycling reveals the card
@@ -98,15 +98,15 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 ## 5. Deserter's Disciple (1R, 2/2 Human Rebel Ally)
 **Activated:** {T}: Another target creature you control with power 2 or less can't be blocked this turn.
 
-- [ ] Card loads and can be cast for 1R
-- [ ] Enters as 2/2
-- [ ] Activated ability requires tap
-- [ ] Can target another creature you control
-- [ ] Cannot target itself ("another")
-- [ ] Target must have power 2 or less
+- [x] Card loads and can be cast for 1R (verified: puzzles/test_deserters_disciple.pzl)
+- [x] Enters as 2/2 (verified: shown in puzzle state)
+- [x] Activated ability requires tap (verified: Deserter's Disciple tapped after use)
+- [x] Can target another creature you control (verified: targeted Typhoid Rats)
+- [x] Cannot target itself ("another") (verified: targeting code enforces Other)
+- [x] Target must have power 2 or less (verified: targeting code checks current_power() <= 2)
 - [ ] Cannot target creature with power 3+
-- [ ] Unblockable effect applies for the turn
-- [ ] Effect wears off at end of turn
+- [x] Unblockable effect applies for the turn (verified: 6d373d4 - "can't be blocked" enforced)
+- [x] Effect wears off at end of turn (verified: PersistentEffect has CleanupCondition::EndOfTurn)
 - [ ] Can use ability during declare attackers step
 
 ---
@@ -275,7 +275,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 52 items verified as of 2026-01-06_#1564(3bc16ee)
+**Progress:** 68 items verified as of 2026-01-06_#1566(6d373d4)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -284,3 +284,6 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Mongoose Lizard ETB damage + Menace verified
 - Iroh's Demonstration modal modes verified
 - Heartless Act Mode 2 (counter removal) verified
+- Deathtouch works in combat (blocking) - 1/1 kills 7/7
+- Canyon Crawler ETB creates Food token
+- Deserter's Disciple unblockable ability fixed (6d373d4)
