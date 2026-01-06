@@ -3070,3 +3070,107 @@ async fn test_modal_spell_mode_validation_heartless_act() -> Result<()> {
 
     Ok(())
 }
+
+/// Test indestructible keyword loading from card database
+///
+/// This test verifies that when cards are loaded from the card database,
+/// keywords like Indestructible are correctly parsed and attached to cards.
+/// Murder targeting an indestructible creature should NOT destroy it.
+#[tokio::test]
+async fn test_indestructible_keyword_loading() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    // Load puzzle file
+    let puzzle_path = PathBuf::from("../test_puzzles/test_indestructible_survives.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    // Create card database and load puzzle
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    // Set deterministic seed
+    game.seed_rng(42);
+
+    // Get player IDs
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // Has Darksteel Colossus (Indestructible)
+    let p1_id = players[1]; // Has Murder
+
+    // Find the Darksteel Colossus on the battlefield
+    let darksteel_id = game
+        .battlefield
+        .cards
+        .iter()
+        .find(|&&card_id| {
+            if let Ok(card) = game.cards.get(card_id) {
+                card.name.as_str() == "Darksteel Colossus"
+            } else {
+                false
+            }
+        })
+        .copied();
+
+    assert!(
+        darksteel_id.is_some(),
+        "Darksteel Colossus should be on battlefield"
+    );
+
+    let darksteel_id = darksteel_id.unwrap();
+
+    // Verify Indestructible keyword is loaded
+    let darksteel = game.cards.get(darksteel_id)?;
+    println!("Darksteel Colossus keywords: {:?}", darksteel.keywords);
+    println!(
+        "Has Indestructible: {}",
+        darksteel.has_indestructible()
+    );
+
+    assert!(
+        darksteel.has_indestructible(),
+        "Darksteel Colossus MUST have Indestructible keyword loaded from card database!"
+    );
+
+    // Now run the game with FixedScriptController to FORCE Murder cast
+    game.logger.enable_capture();
+
+    // Use FixedScriptController to force Murder to be cast
+    // Script: [1] means choose option 1 (first spell), then default to 0 (pass)
+    // The AI might not cast Murder because it knows Indestructible prevents it,
+    // but we want to verify the engine handles it correctly IF cast
+    let mut controller0 = ZeroController::new(p0_id);
+    let mut controller1 = FixedScriptController::new(p1_id, vec![1, 1, 0, 0, 0, 0]);
+
+    // Run for 1 turn
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    // Check if Darksteel Colossus is still on battlefield (should be!)
+    let darksteel_still_alive = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .any(|&card_id| {
+            if let Ok(card) = game_loop.game.cards.get(card_id) {
+                card.name.as_str() == "Darksteel Colossus"
+            } else {
+                false
+            }
+        });
+
+    let logs = game_loop.game.logger.logs();
+    println!("=== Indestructible Test Logs ===");
+    for log in logs.iter() {
+        println!("{}", log.message);
+    }
+
+    assert!(
+        darksteel_still_alive,
+        "Darksteel Colossus should SURVIVE Murder because it has Indestructible!"
+    );
+
+    println!("✓ Indestructible keyword loading test passed");
+
+    Ok(())
+}
