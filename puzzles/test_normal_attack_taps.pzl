@@ -1,0 +1,21 @@
+[metadata]
+Name:Normal Attack Taps Creature
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Grizzly Bears (no Vigilance) attacks
+# Should become tapped after attacking
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Grizzly Bears
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# Opponent at 10 life
+p1life=10
+p1battlefield=Plains; Plains
+p1library=Plains; Plains; Plains; Plains; Plains

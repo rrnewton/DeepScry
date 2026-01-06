@@ -1,0 +1,22 @@
+[metadata]
+Name:Trample Excess Damage to Player
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Carnage Tyrant (7/6 Trample) attacks
+# Grizzly Bears (2/2) blocks
+# Trample: 2 damage kills Bears, 5 excess damage goes to player
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Forest; Forest; Forest; Forest; Carnage Tyrant
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# Opponent at 10 life with 2/2 blocker
+p1life=10
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest

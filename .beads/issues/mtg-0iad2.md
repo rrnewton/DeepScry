@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 96 items verified as of 2026-01-06_#1576
+**Progress:** 100 items verified as of 2026-01-06_#1578
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -304,6 +304,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Deserter's Disciple power 2 or less restriction enforced (test_deserters_disciple_power_restriction.pzl)
 - Double Strike deals damage in both first strike and normal damage steps (test_double_strike_damage.pzl)
 - First Strike kills blocker before they deal damage back (test_first_strike_damage.pzl)
+- Vigilance prevents creature from tapping when attacking (test_vigilance.pzl)
+- Trample deals excess damage to player (test_trample_excess_damage.pzl - 7/6 vs 2/2 = 5 to player)
+- Flying restriction fixed - ground creatures can't block flyers (test_flying_cant_be_blocked.pzl)
+- Reach correctly allows blocking flying creatures (test_yuyan_archers_reach.pzl)
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand

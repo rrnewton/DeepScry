@@ -1,0 +1,21 @@
+[metadata]
+Name:Flying Cannot Be Blocked by Ground Creature
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Serra Angel (4/4 Flying) attacks
+# Grizzly Bears (2/2) cannot block because no flying/reach
+p0life=20
+p0hand=
+p0battlefield=Plains; Plains; Plains; Plains; Plains; Serra Angel
+p0library=Plains; Plains; Plains; Plains; Plains
+
+# Opponent has ground creature that can't block flyer
+p1life=4
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest
