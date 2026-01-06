@@ -1,0 +1,20 @@
+[metadata]
+Name:Fire Lord Ozai Attack Trigger Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Fire Lord Ozai and a creature to sacrifice
+p0life=20
+p0hand=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Fire Lord Ozai; Llanowar Elves
+p0library=Swamp; Swamp; Swamp
+
+# P1 is defenseless
+p1life=6
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest

@@ -1,0 +1,20 @@
+[metadata]
+Name:Counter Persistence Across Turns Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Boar-q-pine and a spell to cast at opponent
+p0life=20
+p0hand=Shock
+p0battlefield=Mountain; Mountain; Boar-q-pine
+p0library=Mountain; Mountain; Mountain
+
+# P1 is nearly dead - Shock will kill them or Boar-q-pine attacks
+p1life=2
+p1battlefield=Forest
+p1library=Forest; Forest; Forest
