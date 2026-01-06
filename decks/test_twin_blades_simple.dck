@@ -1,0 +1,14 @@
+[metadata]
+Name=Twin Blades Test
+
+[Main]
+# Equipment
+4 Twin Blades
+
+# Simple creature
+4 Grizzly Bears
+4 Llanowar Elves
+
+# Mana base
+24 Mountain
+24 Forest

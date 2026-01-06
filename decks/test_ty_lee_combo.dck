@@ -1,0 +1,11 @@
+[metadata]
+Name=Ty Lee Twin Blades Combo Test
+
+[Main]
+# The combo pieces
+4 Ty Lee, Chi Blocker
+4 Twin Blades
+
+# Mana base - Ty Lee costs 2U, Twin Blades costs 2R
+28 Island
+24 Mountain

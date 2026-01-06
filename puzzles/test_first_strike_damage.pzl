@@ -1,0 +1,24 @@
+[metadata]
+Name:First Strike Kills Before Normal Damage
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Abattoir Ghoul (3/2 First Strike) attacks
+# Grizzly Bears (2/2 no first strike) blocks
+# First Strike: Ghoul deals 3 damage to Bears, killing it
+# Normal Strike: Bears is dead, deals 0 damage back
+# Ghoul survives!
+p0life=20
+p0hand=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Abattoir Ghoul
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+
+# Opponent has Grizzly Bears to block with
+p1life=10
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest
