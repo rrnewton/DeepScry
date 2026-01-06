@@ -55,7 +55,7 @@ RevealCard-based protocol working before we can simplify zones.
 - [x] Update GameStarted message with deck_card_ids field
 - [x] Server computes and broadcasts DeckCardIdRanges to clients
 - [x] Client receives and logs DeckCardIdRanges
-- [ ] Refactor GameInitializer to support "reserve-only" mode for clients
+- [x] Refactor GameInitializer to support "reserve-only" mode for clients
 - [ ] Update client to reserve CardID slots using deck_card_ids ranges
 - [ ] Update CardRevealed message to include RevealCard action semantics
 - [ ] Transition client from pending_reveals buffer to direct EntityStore insert
