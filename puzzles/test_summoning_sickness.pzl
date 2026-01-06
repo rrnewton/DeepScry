@@ -1,0 +1,21 @@
+[metadata]
+Name:Summoning Sickness Prevents Attack
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Grizzly Bears (no Haste) in hand
+# Should NOT be able to attack the same turn it enters
+p0life=20
+p0hand=Grizzly Bears
+p0battlefield=Forest; Forest
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# Opponent at 2 life - would die if Bears could attack
+p1life=2
+p1battlefield=Plains; Plains
+p1library=Plains; Plains; Plains; Plains; Plains

@@ -1,0 +1,22 @@
+[metadata]
+Name:Hexproof vs Normal Target Selection
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p1
+activephase=MAIN1
+
+# P0 has Carnage Tyrant (Hexproof) AND Grizzly Bears (no Hexproof)
+# Lightning Bolt should only be able to target Grizzly Bears or Player 0
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Forest; Forest; Forest; Forest; Carnage Tyrant; Grizzly Bears
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# P1 casts Lightning Bolt
+p1life=10
+p1hand=Lightning Bolt
+p1battlefield=Mountain
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain

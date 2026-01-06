@@ -1,0 +1,22 @@
+[metadata]
+Name:Hexproof Prevents Targeting by Opponent
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Carnage Tyrant (7/6 Hexproof Trample)
+# P1 has Lightning Bolt - should NOT be able to target Carnage Tyrant
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Forest; Forest; Forest; Forest; Carnage Tyrant
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# Opponent has Lightning Bolt
+p1life=10
+p1hand=Lightning Bolt
+p1battlefield=Mountain
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain

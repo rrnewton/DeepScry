@@ -1,0 +1,21 @@
+[metadata]
+Name:Haste Allows Attack on Entry Turn
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Ball Lightning (6/1 Trample Haste) in hand
+# Should be able to attack the same turn it enters
+p0life=20
+p0hand=Ball Lightning
+p0battlefield=Mountain; Mountain; Mountain
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Opponent at 6 life, dies to Ball Lightning
+p1life=6
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest
