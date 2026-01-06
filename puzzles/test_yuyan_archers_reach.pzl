@@ -1,0 +1,20 @@
+[metadata]
+Name:Yuyan Archers Reach Block Flying Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p1
+activephase=COMBAT_BEGIN
+
+# P0 has Yuyan Archers ready to block
+p0life=3
+p0hand=
+p0battlefield=Mountain; Mountain; Yuyan Archers
+p0library=Mountain; Mountain; Mountain
+
+# P1 has a flying attacker
+p1life=20
+p1battlefield=Forest; Forest; Forest; Watcher in the Mist
+p1library=Forest; Forest; Forest

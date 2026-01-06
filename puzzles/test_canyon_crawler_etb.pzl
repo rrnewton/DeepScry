@@ -1,0 +1,20 @@
+[metadata]
+Name:Canyon Crawler ETB Food Token Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 can cast Canyon Crawler to get Food token
+p0life=20
+p0hand=Canyon Crawler
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0library=Swamp; Swamp; Swamp
+
+# P1 has nothing
+p1life=20
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest

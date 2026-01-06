@@ -1,0 +1,20 @@
+[metadata]
+Name:Boar-q-pine Noncreature Trigger Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Boar-q-pine on battlefield and noncreature spells in hand
+p0life=20
+p0hand=Lightning Strike; Lightning Strike
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Boar-q-pine
+p0library=Mountain; Mountain; Mountain
+
+# P1 has low life
+p1life=6
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest

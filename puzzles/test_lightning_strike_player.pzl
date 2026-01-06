@@ -1,0 +1,20 @@
+[metadata]
+Name:Lightning Strike Player Target Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Lightning Strike and mana
+p0life=20
+p0hand=Lightning Strike
+p0battlefield=Mountain; Mountain
+p0library=Mountain; Mountain; Mountain
+
+# P1 has exactly 3 life (lethal with Lightning Strike)
+p1life=3
+p1battlefield=Forest
+p1library=Swamp; Swamp; Swamp
