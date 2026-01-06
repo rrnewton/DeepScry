@@ -228,9 +228,11 @@ impl<'a> GameLoop<'a> {
             let replay_choice = crate::game::ReplayChoice::Blockers(blocks.clone());
             self.log_choice_point(defending_player, Some(replay_choice), prior_log_size);
 
-            // Validate Menace: count blockers per attacker and remove illegal single-blocker assignments
-            // MTG Rule 702.111b: A creature with menace can't be blocked except by two or more creatures
-            let validated_blocks = self.validate_menace_blockers(&blocks, &attackers)?;
+            // Validate blocking restrictions and remove illegal block assignments:
+            // - Flying (MTG 702.9b): Can only be blocked by flying/reach
+            // - Menace (MTG 702.111b): Can't be blocked except by 2+ creatures
+            // - CantBeBlocked persistent effects
+            let validated_blocks = self.validate_blocking_restrictions(&blocks, &attackers)?;
 
             // Declare each valid blocking assignment
             for (blocker_id, attacker_id) in validated_blocks.iter() {
@@ -418,13 +420,15 @@ impl<'a> GameLoop<'a> {
     /// Validate blocker assignments for blocking restrictions
     ///
     /// Checks for:
+    /// - Flying (MTG Rule 702.9b): Creatures with flying can only be blocked by
+    ///   creatures with flying or reach
     /// - Menace (MTG Rule 702.111b): Can't be blocked except by two or more creatures
     /// - CantBeBlocked persistent effects (e.g., from Deserter's Disciple)
     ///
     /// This method removes illegal blocker assignments from the blocks list.
     ///
     /// Returns a filtered list of valid blocker assignments.
-    fn validate_menace_blockers(
+    fn validate_blocking_restrictions(
         &self,
         blocks: &SmallVec<[(crate::core::CardId, crate::core::CardId); 8]>,
         _attackers: &SmallVec<[crate::core::CardId; 8]>,
@@ -456,6 +460,36 @@ impl<'a> GameLoop<'a> {
                     }
                 }
                 continue;
+            }
+
+            // Check Flying (MTG Rule 702.9b): Creatures with flying can only be blocked
+            // by creatures with flying or reach
+            let attacker_has_flying = self
+                .game
+                .has_keyword_with_effects(*attacker_id, crate::core::Keyword::Flying);
+
+            if attacker_has_flying {
+                let blocker_has_flying_or_reach = self
+                    .game
+                    .has_keyword_with_effects(*blocker_id, crate::core::Keyword::Flying)
+                    || self
+                        .game
+                        .has_keyword_with_effects(*blocker_id, crate::core::Keyword::Reach);
+
+                if !blocker_has_flying_or_reach {
+                    // Flying creature blocked by ground creature - invalid
+                    if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                        if let Ok(attacker) = self.game.cards.get(*attacker_id) {
+                            if let Ok(blocker) = self.game.cards.get(*blocker_id) {
+                                self.game.logger.verbose(&format!(
+                                    "{} has flying - {} can't block it (needs flying or reach)",
+                                    attacker.name, blocker.name
+                                ));
+                            }
+                        }
+                    }
+                    continue;
+                }
             }
 
             let count = blocker_counts.get(attacker_id).copied().unwrap_or(0);
