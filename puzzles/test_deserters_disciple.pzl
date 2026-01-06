@@ -1,0 +1,20 @@
+[metadata]
+Name:Deserter's Disciple Unblockable Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Deserter's Disciple and another small creature
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Deserter's Disciple; Typhoid Rats
+p0library=Mountain; Mountain; Mountain
+
+# P1 has blockers
+p1life=5
+p1battlefield=Forest; Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest
