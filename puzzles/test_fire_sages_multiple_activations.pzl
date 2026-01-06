@@ -1,0 +1,21 @@
+[metadata]
+Name:Fire Sages Multiple Ability Activations Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Fire Sages and lots of mana for multiple activations
+# Fire Sages: {1}{R}{R}: Put a +1/+1 counter on this creature
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Fire Sages
+p0library=Mountain; Mountain; Mountain
+
+# P1 has nothing
+p1life=5
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest

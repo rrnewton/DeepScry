@@ -91,7 +91,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Clue token is an artifact (verified: token card has Types:Artifact)
 - [x] Clue token has "{2}, Sacrifice: Draw a card" (verified: token script)
 - [x] Clue token ability works correctly (verified: "Clue Token activates ability: Draw a card")
-- [ ] Can be cast at instant speed (during combat, opponent's turn)
+- [x] Can be cast at instant speed (during combat, opponent's turn) (verified: test_instant_opponent_turn.pzl - P1 cast during P2's combat)
 
 ---
 
@@ -114,11 +114,12 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 ## 6. Fatal Fissure (1B, Instant)
 **Spell:** Choose target creature. When that creature dies this turn, you earthbend 4.
 
-- [ ] Card loads and can be cast for 1B
+- [ ] Card loads and can be cast for 1B (**NOT IMPLEMENTED** - SP$ DelayedTrigger not parsed)
 - [ ] Requires target creature
 - [ ] Creates delayed trigger for death
 - [ ] Trigger fires when creature dies this turn
 - [ ] Trigger does NOT fire if creature dies next turn
+- [x] Earthbend mechanic exists (verified: Effect::Earthbend implemented in codebase)
 - [ ] Earthbend targets a land you control
 - [ ] Land becomes a creature (0/0 base)
 - [ ] Land keeps being a land
@@ -163,8 +164,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Firebending interacts correctly with firebend sources
 - [x] Activated ability costs {1}{R}{R} (verified: 3 mountains tapped)
 - [x] Activated ability puts +1/+1 counter (verified: Fire Sages became 3/3)
-- [ ] Can activate multiple times per turn
-- [x] Counters persist across turns (verified: heartless_act_remove_counter_e2e.pzl - general counter persistence verified)
+- [x] Can activate multiple times per turn (verified: test_fire_sages_multiple_activations.pzl - 2x per turn, 4/4 on T1)
+- [x] Counters persist across turns (verified: Fire Sages 4/4 → 6/6 over turns, heartless_act_remove_counter_e2e.pzl)
 
 ---
 
@@ -184,7 +185,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Mode 2: Can choose to remove fewer counters
 - [x] Mode 2: Works with +1/+1 counters (verified: P1P1 counters removed)
 - [ ] Mode 2: Works with other counter types
-- [x] Can be cast at instant speed (verified: is an instant)
+- [x] Can be cast at instant speed (verified: instants work during opponent's turn per test_instant_opponent_turn.pzl)
 
 ---
 
@@ -275,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 83 items verified as of 2026-01-06_#1567(4c1506c)
+**Progress:** 86 items verified as of 2026-01-06_#1568(ce392d6)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -292,7 +293,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Clue token ability works ({2}, sac, draw a card)
 - Multiple noncreature spells accumulate counters on Boar-q-pine
 - +1/+1 counters persist across turns
+- Instants work during opponent's turn (Lightning Strike during P2 combat)
+- Fire Sages can activate ability multiple times per turn
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
 - Fire Lord Ozai attack trigger (AB$ Mana effect) - attack trigger parser only handles Draw/PutCounter
+- Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
