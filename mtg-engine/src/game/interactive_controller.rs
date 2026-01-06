@@ -184,7 +184,19 @@ impl InteractiveController {
                 if let Some(card) = view.get_card(card_id) {
                     let controller_name = view.get_player_name_by_id(card.controller);
                     let pt = if card.is_creature() {
-                        format!(" {}/{}", card.current_power(), card.current_toughness())
+                        // Use effective P/T which includes continuous effects
+                        let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                        let toughness = view
+                            .get_effective_toughness(card_id)
+                            .unwrap_or(card.current_toughness() as i32);
+                        let base_power = card.base_power().unwrap_or(0) as i32;
+                        let base_toughness = card.base_toughness().unwrap_or(0) as i32;
+
+                        if power != base_power || toughness != base_toughness {
+                            format!(" {}/{} ({}/{})", power, toughness, base_power, base_toughness)
+                        } else {
+                            format!(" {}/{}", power, toughness)
+                        }
                     } else {
                         String::new()
                     };

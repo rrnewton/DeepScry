@@ -184,7 +184,19 @@ fn format_player_battlefield(output: &mut String, view: &GameStateView, player_i
             if card.is_land() {
                 lands.push(format!("    {}{}", name, tapped));
             } else if card.is_creature() {
-                let pt = format!(" {}/{}", card.current_power(), card.current_toughness());
+                // Use effective P/T which includes continuous effects
+                let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                let toughness = view
+                    .get_effective_toughness(card_id)
+                    .unwrap_or(card.current_toughness() as i32);
+                let base_power = card.base_power().unwrap_or(0) as i32;
+                let base_toughness = card.base_toughness().unwrap_or(0) as i32;
+
+                let pt = if power != base_power || toughness != base_toughness {
+                    format!(" {}/{} ({}/{})", power, toughness, base_power, base_toughness)
+                } else {
+                    format!(" {}/{}", power, toughness)
+                };
                 creatures.push(format!("    {}{}{}", name, pt, tapped));
             } else {
                 other.push(format!("    {}{}", name, tapped));

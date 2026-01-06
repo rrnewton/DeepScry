@@ -1083,16 +1083,40 @@ impl FancyTuiRenderer {
 
     /// Group cards into battlefield entities
     ///
-    /// Groups cards by name, then uses a mode-specific constructor to create entities.
+    /// Groups cards by name (and P/T for creatures), then uses a mode-specific constructor
+    /// to create entities. Creatures with different power/toughness values are placed in
+    /// separate stacks even if they have the same name.
+    ///
     /// With visual_stacks=true: creates VisualStack entities with diagonal offsets
     /// With visual_stacks=false: creates separate SimpleStack entities for tapped/untapped
     pub fn group_cards_into_entities(&self, cards: &[CardId], view: &GameStateView) -> Vec<Entity> {
-        // Group cards by name only
-        let mut groups: HashMap<String, SmallVec<[CardId; 8]>> = HashMap::new();
+        // Group cards by name AND P/T (for creatures with differing stats)
+        // Key format: "CardName" for non-creatures, "CardName\x00P/T" for creatures
+        // This separates tokens/creatures that have different stats from the same source
+        let mut groups: HashMap<String, (String, SmallVec<[CardId; 8]>)> = HashMap::new();
 
         for &card_id in cards {
             let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-            groups.entry(name).or_default().push(card_id);
+
+            // For creatures, include P/T in the grouping key to separate cards with different stats
+            let key = if let Some(card) = view.get_card(card_id) {
+                if card.is_creature() {
+                    let power = view.get_effective_power(card_id).unwrap_or(card.current_power() as i32);
+                    let toughness = view
+                        .get_effective_toughness(card_id)
+                        .unwrap_or(card.current_toughness() as i32);
+                    format!("{}\x00{}/{}", name, power, toughness)
+                } else {
+                    name.clone()
+                }
+            } else {
+                name.clone()
+            };
+            groups
+                .entry(key)
+                .or_insert_with(|| (name.clone(), SmallVec::new()))
+                .1
+                .push(card_id);
         }
 
         // Closure that takes tapped/untapped portions and constructs entities
@@ -1164,9 +1188,10 @@ impl FancyTuiRenderer {
         };
 
         // Convert groups to entities using the closure
+        // The key includes P/T for creatures but we use the actual card_name for display
         let mut entities: Vec<Entity> = groups
             .into_iter()
-            .flat_map(|(card_name, card_ids)| construct_entities(card_name, card_ids))
+            .flat_map(|(_key, (card_name, card_ids))| construct_entities(card_name, card_ids))
             .collect();
 
         // Sort for consistent ordering: single cards first, then stacks
@@ -3119,9 +3144,20 @@ impl FancyTuiRenderer {
                     let toughness = view
                         .get_effective_toughness(card_id)
                         .unwrap_or(card.current_toughness() as i32);
+
+                    // Get base/printed P/T to show when modified
+                    let base_power = card.base_power().unwrap_or(0) as i32;
+                    let base_toughness = card.base_toughness().unwrap_or(0) as i32;
+
+                    let pt_display = if power != base_power || toughness != base_toughness {
+                        format!("{}/{} (base {}/{})", power, toughness, base_power, base_toughness)
+                    } else {
+                        format!("{}/{}", power, toughness)
+                    };
+
                     lines.push(Line::from(vec![
                         Span::raw("P/T: "),
-                        Span::styled(format!("{}/{}", power, toughness), Style::default().fg(Color::Green)),
+                        Span::styled(pt_display, Style::default().fg(Color::Green)),
                     ]));
                 }
 
@@ -3757,9 +3793,29 @@ impl FancyTuiRenderer {
         // Determine if we need to reserve last line for P/T
         let is_creature = card.as_ref().map(|c| c.is_creature()).unwrap_or(false);
         let pt_str = if is_creature {
-            card.as_ref()
-                .map(|c| format!("{}/{}", c.current_power(), c.current_toughness()))
-                .unwrap_or_default()
+            if let Some(c) = card.as_ref() {
+                // Get effective P/T (includes all continuous effects like anthems, equipment, auras)
+                let current_power = view.get_effective_power(card_id).unwrap_or(c.current_power() as i32);
+                let current_toughness = view
+                    .get_effective_toughness(card_id)
+                    .unwrap_or(c.current_toughness() as i32);
+
+                // Get base/printed P/T
+                let base_power = c.base_power().unwrap_or(0) as i32;
+                let base_toughness = c.base_toughness().unwrap_or(0) as i32;
+
+                // Show both current and base if they differ
+                if current_power != base_power || current_toughness != base_toughness {
+                    format!(
+                        "{}/{} ({}/{})",
+                        current_power, current_toughness, base_power, base_toughness
+                    )
+                } else {
+                    format!("{}/{}", current_power, current_toughness)
+                }
+            } else {
+                String::new()
+            }
         } else {
             String::new()
         };
