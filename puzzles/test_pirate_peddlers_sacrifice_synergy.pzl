@@ -1,0 +1,27 @@
+[metadata]
+Name:Pirate Peddlers + Beetle-Headed Merchants Sacrifice Synergy Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has both Beetle-Headed Merchants and Pirate Peddlers
+# When Beetle attacks and sacrifices a creature:
+# - Beetle gets +1/+1 counter (from its own trigger)
+# - Pirate Peddlers gets +1/+1 counter (from sacrifice trigger)
+# Plus a third creature to sacrifice
+p0life=20
+p0hand=
+p0battlefield=Swamp; Swamp; Beetle-Headed Merchants; Pirate Peddlers; Typhoid Rats
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Beetle-Headed Merchants is 5/4
+# Pirate Peddlers is 2/2 with Deathtouch
+# After sacrifice synergy, both should have +1/+1 counters
+
+p1life=10
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest
