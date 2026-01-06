@@ -1,0 +1,23 @@
+[metadata]
+Name:Deserter's Disciple Target Selection Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Deserter's Disciple, Typhoid Rats (1/1), and Mongoose Lizard (5/6)
+# Valid target: Typhoid Rats (power 1 <= 2)
+# Invalid target: Mongoose Lizard (power 5 > 2)
+# Invalid target: Deserter's Disciple itself (says "Another")
+p0life=20
+p0hand=
+p0battlefield=Mountain; Deserter's Disciple; Typhoid Rats; Mongoose Lizard
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# P1 has a blocker
+p1life=10
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest
