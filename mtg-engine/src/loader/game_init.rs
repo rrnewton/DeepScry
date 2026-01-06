@@ -158,7 +158,7 @@ impl<'a> GameInitializer<'a> {
                 .await?
                 .ok_or_else(|| MtgError::InvalidCardFormat(format!("Card not found: {}", entry.card_name)))?;
             for _ in 0..entry.count {
-                p1_card_defs.push(card_def.clone());
+                p1_card_defs.push(Arc::clone(&card_def));
             }
         }
 
@@ -170,7 +170,7 @@ impl<'a> GameInitializer<'a> {
                 .await?
                 .ok_or_else(|| MtgError::InvalidCardFormat(format!("Card not found: {}", entry.card_name)))?;
             for _ in 0..entry.count {
-                p2_card_defs.push(card_def.clone());
+                p2_card_defs.push(Arc::clone(&card_def));
             }
         }
 

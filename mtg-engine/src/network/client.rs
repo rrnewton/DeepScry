@@ -1400,11 +1400,19 @@ impl NetworkClient {
                     }
                     None => {
                         // Channel closed without sending winner - check if fatal error
-                        if let Ok(msg) = fatal_error_rx.try_recv() {
-                            log::error!("Game terminated due to fatal error: {}", msg);
-                            Err(anyhow!("Fatal server error: {}", msg))
-                        } else {
-                            Ok(None)
+                        // Wait a short time for fatal error to arrive (race condition mitigation)
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(100),
+                            fatal_error_rx.recv()
+                        ).await {
+                            Ok(Some(msg)) => {
+                                log::error!("Game terminated due to fatal error: {}", msg);
+                                Err(anyhow!("Fatal server error: {}", msg))
+                            }
+                            _ => {
+                                // No fatal error, treat as normal termination (draw)
+                                Ok(None)
+                            }
                         }
                     }
                 }
@@ -1662,7 +1670,8 @@ impl NetworkClient {
         let _ = ws_thread.join();
 
         // Check for fatal error first (highest priority)
-        if let Ok(msg) = fatal_error_rx.try_recv() {
+        // Use timeout to allow time for error to propagate
+        if let Ok(msg) = fatal_error_rx.recv_timeout(Duration::from_millis(100)) {
             log::error!("Game terminated due to fatal error: {}", msg);
             return Err(anyhow!("Fatal server error: {}", msg));
         }

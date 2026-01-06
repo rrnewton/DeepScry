@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc as tokio_mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc as tokio_mpsc, oneshot, Mutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -227,6 +227,10 @@ struct PlayerConnection {
     last_reveal_index: usize,
     /// Network debug mode - when enabled, validate client state hashes
     network_debug: bool,
+    /// Channel to receive fatal error broadcasts (for clean shutdown on desync)
+    fatal_error_rx: broadcast::Receiver<String>,
+    /// Channel to send fatal errors to all players
+    fatal_error_tx: broadcast::Sender<String>,
 }
 
 impl PlayerConnection {
@@ -588,6 +592,10 @@ async fn run_game(
     let _p1_ability_bridge = p1_ability_bridge; // Keep the handle alive
     let _p2_ability_bridge = p2_ability_bridge;
 
+    // Create broadcast channel for fatal error propagation
+    // When a desync or fatal error occurs, this broadcasts to all connected players
+    let (fatal_error_tx, _) = broadcast::channel::<String>(2);
+
     // Create PlayerConnections with tokio receivers
     // Note: last_reveal_index will be set after we determine the opening hand sizes
     let mut p1_conn = PlayerConnection {
@@ -609,6 +617,8 @@ async fn run_game(
         pending_choice: None,
         last_reveal_index: 0, // Will be set after opening hands are determined
         network_debug: config.network_debug,
+        fatal_error_rx: fatal_error_tx.subscribe(),
+        fatal_error_tx: fatal_error_tx.clone(),
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
@@ -629,6 +639,8 @@ async fn run_game(
         pending_choice: None,
         last_reveal_index: 0, // Will be set after opening hands are determined
         network_debug: config.network_debug,
+        fatal_error_rx: fatal_error_tx.subscribe(),
+        fatal_error_tx: fatal_error_tx.clone(),
     };
 
     // Convert deck submissions to DeckList format
@@ -965,6 +977,29 @@ async fn handle_player_websocket(
 ) -> Result<()> {
     loop {
         tokio::select! {
+            // Check for fatal error broadcast from other handler
+            error_msg = conn.fatal_error_rx.recv() => {
+                match error_msg {
+                    Ok(msg) => {
+                        log::error!("Player {:?}: Received fatal error broadcast: {}", conn.player_id, msg);
+                        // Send error to this client
+                        conn.send(&ServerMessage::Error {
+                            message: msg.clone(),
+                            fatal: true,
+                        }).await?;
+                        return Err(anyhow!("{}", msg));
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Missed some messages, continue
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // Channel closed, other handler already terminated
+                        log::debug!("Player {:?}: Fatal error channel closed", conn.player_id);
+                    }
+                }
+            }
+
             // Check for game end notification
             end_info = &mut conn.game_end_rx => {
                 match end_info {
@@ -1074,18 +1109,21 @@ async fn handle_player_websocket(
 
                             // Validate action_count - FATAL if mismatch
                             if pending.action_count != choice_request.action_count {
-                                log::error!(
-                                    "FATAL SYNC ERROR: Player {:?} pending choice action_count mismatch! pending={} expected={}",
-                                    conn.player_id, pending.action_count, choice_request.action_count
+                                let error_msg = format!(
+                                    "FATAL: action_count mismatch! client={} expected={}",
+                                    pending.action_count, choice_request.action_count
                                 );
+                                log::error!(
+                                    "FATAL SYNC ERROR: Player {:?} pending choice {}",
+                                    conn.player_id, error_msg
+                                );
+                                // Broadcast to all clients
+                                let _ = conn.fatal_error_tx.send(error_msg.clone());
                                 conn.send(&ServerMessage::Error {
-                                    message: format!(
-                                        "FATAL: action_count mismatch! client={} expected={}",
-                                        pending.action_count, choice_request.action_count
-                                    ),
+                                    message: error_msg.clone(),
                                     fatal: true,
                                 }).await?;
-                                break;
+                                return Err(anyhow!("{}", error_msg));
                             }
 
                             // Send response to NetworkController
@@ -1194,18 +1232,21 @@ async fn handle_player_websocket(
 
                                     // Validate action_count - FATAL if mismatch
                                     if client_action_count != expected {
-                                        log::error!(
-                                            "FATAL SYNC ERROR: Player {:?} action_count mismatch! client={} expected={}",
-                                            conn.player_id, client_action_count, expected
+                                        let error_msg = format!(
+                                            "FATAL: action_count mismatch! client={} expected={}",
+                                            client_action_count, expected
                                         );
+                                        log::error!(
+                                            "FATAL SYNC ERROR: Player {:?} {}",
+                                            conn.player_id, error_msg
+                                        );
+                                        // Broadcast to all clients
+                                        let _ = conn.fatal_error_tx.send(error_msg.clone());
                                         conn.send(&ServerMessage::Error {
-                                            message: format!(
-                                                "FATAL: action_count mismatch! client={} expected={}",
-                                                client_action_count, expected
-                                            ),
+                                            message: error_msg.clone(),
                                             fatal: true,
                                         }).await?;
-                                        break;
+                                        return Err(anyhow!("{}", error_msg));
                                     }
 
                                     // Validate state hash in network debug mode
@@ -1263,15 +1304,19 @@ async fn handle_player_websocket(
                                                     }
                                                 }
 
-                                                // Send fatal error to client and terminate game
+                                                // Broadcast fatal error to ALL clients and terminate game
+                                                let error_msg = format!(
+                                                    "FATAL: State hash mismatch! Server=0x{:016x} Client=0x{:016x} at action_count={}",
+                                                    server_hash, client_hash, expected
+                                                );
+                                                // Broadcast to all clients (including opponent)
+                                                let _ = conn.fatal_error_tx.send(error_msg.clone());
+                                                // Also send directly to this client
                                                 conn.send(&ServerMessage::Error {
-                                                    message: format!(
-                                                        "FATAL: State hash mismatch! Server=0x{:016x} Client=0x{:016x} at action_count={}",
-                                                        server_hash, client_hash, expected
-                                                    ),
+                                                    message: error_msg.clone(),
                                                     fatal: true,
                                                 }).await?;
-                                                break;
+                                                return Err(anyhow!("{}", error_msg));
                                             } else {
                                                 log::trace!(
                                                     "Player {:?}: state hash validated 0x{:016x}",
