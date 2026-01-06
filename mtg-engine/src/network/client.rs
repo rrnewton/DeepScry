@@ -459,7 +459,7 @@ impl NetworkClient {
             initial_state_hash,
             opponent_decklist,
             server_network_debug,
-            _deck_card_ids, // Phase 3: Will be used to reserve CardID slots
+            deck_card_ids, // Phase 3: CardID ranges for late-binding architecture
         ) = loop {
             let msg = self.receive_message().await?;
             match msg {
@@ -578,6 +578,31 @@ impl NetworkClient {
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
         let opponent_id = if we_are_p1 { p2_id } else { p1_id };
+
+        // Phase 3: Validate deck_card_ids ranges match our initialized game
+        // This ensures server and client agree on CardID assignment
+        if let Some(ref ranges) = deck_card_ids {
+            let total_cards = game.cards.len() as u32;
+            let expected_total = ranges.total_cards();
+            if total_cards != expected_total {
+                log::warn!(
+                    "CardID mismatch: client has {} cards, server expects {} (P1: {}, P2: {})",
+                    total_cards,
+                    expected_total,
+                    ranges.p1_end - ranges.p1_start,
+                    ranges.p2_end - ranges.p2_start
+                );
+            } else {
+                log::debug!(
+                    "CardID ranges validated: {} total cards (P1: [{}..{}), P2: [{}..{}))",
+                    total_cards,
+                    ranges.p1_start,
+                    ranges.p1_end,
+                    ranges.p2_start,
+                    ranges.p2_end
+                );
+            }
+        }
 
         // Convert libraries to Remote mode - we don't know the shuffle order
         // The server has shuffled and drawn, we need to receive reveals to know card order

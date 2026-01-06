@@ -45,15 +45,18 @@ Major architectural change to make CardIDs **public and shared** between server 
 - [x] Add 5 unit tests for RevealCard
 - [x] Keep HiddenDraw/HiddenDiscard for backward compat initially
 
-### Phase 3: Network Protocol Updates (swapped with Zone Simplification)
+### Phase 3: Network Protocol Updates (swapped with Zone Simplification) 🔄 IN PROGRESS
 **Note:** Phase 3 and 4 were swapped because zone simplification depends on
 the network protocol being updated first. The zones use LibraryMode/hidden_card_count
 to support the current reveal-via-pending-buffer model; we need the new
 RevealCard-based protocol working before we can simplify zones.
 
-- [ ] Pre-allocate deterministic CardIDs at game start (0..N for P1, N+1..M for P2)
-- [ ] Update server to broadcast deck CardIDs to clients in GameStart
-- [ ] Update client to reserve CardID slots when receiving GameStart
+- [x] Add DeckCardIdRanges struct to protocol.rs (deterministic assignment)
+- [x] Update GameStarted message with deck_card_ids field
+- [x] Server computes and broadcasts DeckCardIdRanges to clients
+- [x] Client receives and logs DeckCardIdRanges
+- [ ] Refactor GameInitializer to support "reserve-only" mode for clients
+- [ ] Update client to reserve CardID slots using deck_card_ids ranges
 - [ ] Update CardRevealed message to include RevealCard action semantics
 - [ ] Transition client from pending_reveals buffer to direct EntityStore insert
 
