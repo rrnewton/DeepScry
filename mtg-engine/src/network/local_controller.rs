@@ -106,11 +106,15 @@ pub type RevealMsg = (
 ///
 /// The flow is:
 /// 1. GameLoop calls choose_spell_ability_to_play() (or similar)
-/// 2. We drain pending messages (ChoiceRequest updates server_action_count if present)
+/// 2. We wait for ChoiceRequest (which updates server_action_count)
 /// 3. We delegate to inner controller
-/// 4. We send the choice via choice_tx using server's action_count if available
+/// 4. We send the choice via choice_tx using server's action_count
 /// 5. We wait for ChoiceAcknowledged from server
 /// 6. We return the result to GameLoop
+///
+/// SINGLE-CHANNEL ARCHITECTURE: This controller no longer handles reveals.
+/// Reveals are sent directly from WebSocket handler to drain_reveals() via reveal_tx,
+/// eliminating the race condition that existed when controllers pushed bundled reveals.
 pub struct NetworkLocalController<C: PlayerController> {
     /// The wrapped local controller
     inner: C,
@@ -118,9 +122,6 @@ pub struct NetworkLocalController<C: PlayerController> {
     choice_tx: mpsc::Sender<LocalChoice>,
     /// Channel to receive messages from the WebSocket handler
     message_rx: mpsc::Receiver<LocalControllerMessage>,
-    /// Channel to send bundled reveals to the game thread for processing
-    /// This is used to push reveals received with ChoiceRequest so drain_reveals() can process them
-    reveal_tx: Option<mpsc::Sender<RevealMsg>>,
     /// Whether we've been disconnected
     disconnected: bool,
     /// Network debug mode: include action log info in choices for sync validation
@@ -129,9 +130,6 @@ pub struct NetworkLocalController<C: PlayerController> {
     server_action_count: Option<u64>,
     /// Last received server choice sequence (from ChoiceRequest)
     server_choice_seq: Option<u32>,
-    /// Bundled reveals from the last ChoiceRequest that need processing
-    /// These are extracted when wait_for_choice_request receives a ChoiceRequest
-    pending_reveals: Vec<BundledReveal>,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -150,21 +148,11 @@ impl<C: PlayerController> NetworkLocalController<C> {
             inner,
             choice_tx,
             message_rx,
-            reveal_tx: None,
             disconnected: false,
             network_debug: false,
             server_action_count: None,
             server_choice_seq: None,
-            pending_reveals: Vec::new(),
         }
-    }
-
-    /// Set the reveal channel for pushing bundled reveals to the game thread.
-    /// This channel is used to send reveals that arrive with ChoiceRequest messages
-    /// so that drain_reveals() can process them before evaluating available options.
-    pub fn with_reveal_tx(mut self, reveal_tx: mpsc::Sender<RevealMsg>) -> Self {
-        self.reveal_tx = Some(reveal_tx);
-        self
     }
 
     /// Enable network debug mode for action log transmission
@@ -176,31 +164,6 @@ impl<C: PlayerController> NetworkLocalController<C> {
         self
     }
 
-    /// Push bundled reveals to the reveal channel for processing by drain_reveals().
-    /// This is called after receiving a ChoiceRequest with bundled reveals.
-    fn push_pending_reveals(&mut self) {
-        if let Some(ref reveal_tx) = self.reveal_tx {
-            for reveal in self.pending_reveals.drain(..) {
-                let card_reveal = super::protocol::CardReveal {
-                    card_id: reveal.card_id,
-                    name: reveal.card_name,
-                };
-                if let Err(e) = reveal_tx.send((reveal.owner, card_reveal, reveal.reason)) {
-                    log::error!("Failed to send bundled reveal to game thread: {:?}", e);
-                }
-            }
-        } else {
-            // No reveal channel - just clear the reveals (they won't be processed)
-            if !self.pending_reveals.is_empty() {
-                log::warn!(
-                    "NetworkLocalController: {} bundled reveals dropped (no reveal_tx channel)",
-                    self.pending_reveals.len()
-                );
-                self.pending_reveals.clear();
-            }
-        }
-    }
-
     /// Wait for a ChoiceRequest from the server before making a choice
     ///
     /// This blocks until the server sends a ChoiceRequest, ensuring the client
@@ -208,8 +171,9 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// this returns immediately.
     ///
     /// Returns true if we're ready to proceed, false if we're disconnected.
-    /// When true, the `pending_reveals` field is populated with any reveals
-    /// that were bundled with the ChoiceRequest.
+    ///
+    /// SINGLE-CHANNEL ARCHITECTURE: Reveals are no longer bundled with ChoiceRequest.
+    /// They go directly to drain_reveals() via reveal_tx, eliminating race conditions.
     fn wait_for_choice_request(&mut self) -> bool {
         // If we already have server state from a previous message, we're ready
         if self.server_action_count.is_some() && self.server_choice_seq.is_some() {
@@ -228,19 +192,15 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 Ok(LocalControllerMessage::ChoiceRequest {
                     action_count,
                     choice_seq,
-                    reveals,
+                    reveals: _, // Ignored - reveals sent directly to reveal_tx now
                 }) => {
                     log::trace!(
-                        "NetworkLocalController: received ChoiceRequest seq={} action_count={} with {} bundled reveals",
+                        "NetworkLocalController: received ChoiceRequest seq={} action_count={}",
                         choice_seq,
-                        action_count,
-                        reveals.len()
+                        action_count
                     );
                     self.server_action_count = Some(action_count);
                     self.server_choice_seq = Some(choice_seq);
-                    self.pending_reveals = reveals;
-                    // Push bundled reveals to the reveal channel for drain_reveals() to process
-                    self.push_pending_reveals();
                     return true;
                 }
                 Ok(LocalControllerMessage::CardRevealed { owner, card_id }) => {

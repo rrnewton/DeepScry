@@ -24,6 +24,50 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 type RevealMsg = (PlayerId, CardReveal, RevealReason);
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GAME LOOP MESSAGE (SINGLE-CHANNEL ARCHITECTURE)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// All messages from WebSocket handler to the game loop.
+///
+/// The single-channel architecture routes ALL server messages through one channel.
+/// This eliminates race conditions between reveal processing and controller messages
+/// by ensuring messages are processed in the exact order they were received from
+/// the server.
+///
+/// The game loop's `drain_messages` callback processes these sequentially:
+/// 1. CardRevealed - instantiates card in game state
+/// 2. ChoiceRequest - signals NetworkLocalController to proceed
+/// 3. OpponentChoice - signals RemoteController to proceed
+/// 4. GameEnded - signals both controllers to exit
+#[derive(Debug)]
+pub enum GameLoopMessage {
+    /// A card was revealed by the server - instantiate it in game state
+    CardRevealed {
+        owner: PlayerId,
+        card_id: CardId,
+        card_name: String,
+        reason: RevealReason,
+    },
+    /// Server is requesting a choice from us (signals NetworkLocalController)
+    ChoiceRequest { action_count: u64, choice_seq: u32 },
+    /// Server acknowledged our previous choice (signals NetworkLocalController)
+    ChoiceAcknowledged,
+    /// Opponent made a choice - apply it to shadow state (signals RemoteController)
+    OpponentChoice {
+        choice_indices: Vec<usize>,
+        description: String,
+        spell_ability: Option<crate::core::SpellAbility>,
+    },
+    /// Game has ended
+    GameEnded {
+        winner: Option<PlayerId>,
+        action_count: u64,
+    },
+    /// Server reported a fatal error
+    Error(String),
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CARD REVEAL UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -740,7 +784,7 @@ impl NetworkClient {
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
         use crate::network::{
-            BundledReveal, LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteController, RemoteMessage,
+            LocalChoice, LocalControllerMessage, NetworkLocalController, RemoteController, RemoteMessage,
         };
         use std::sync::mpsc;
         use tokio::sync::mpsc as tokio_mpsc;
@@ -778,9 +822,8 @@ impl NetworkClient {
         let network_debug = self.network_debug;
 
         // Create controllers
-        // Clone reveal_tx for both controllers so they can push bundled reveals
-        let reveal_tx_for_local = reveal_tx.clone();
-        let reveal_tx_for_remote = reveal_tx.clone();
+        // SINGLE-CHANNEL FIX: Controllers no longer need reveal_tx - reveals go directly
+        // to reveal_rx from the WebSocket handler. Controllers don't push reveals anymore.
 
         let local_controller = NetworkLocalController::new(
             controller,
@@ -806,10 +849,8 @@ impl NetworkClient {
             },
             local_msg_rx,
         )
-        .with_reveal_tx(reveal_tx_for_local)
         .with_network_debug(network_debug);
-        let remote_controller =
-            RemoteController::new(opponent_id, remote_choice_rx).with_reveal_tx(reveal_tx_for_remote);
+        let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
 
         // Get game state for the game thread
         let mut game = client_state.game;
@@ -834,14 +875,13 @@ impl NetworkClient {
             // We MUST echo this back in SubmitChoice
             let mut server_choice_seq: Option<u32> = None;
 
-            // Buffer for ALL pending CardRevealed messages before they're bundled with actions.
-            // This unified buffer replaces the separate channels, ensuring reveals are
-            // processed IN ORDER with their corresponding actions (no race conditions).
+            // SINGLE-CHANNEL ARCHITECTURE: Send reveals directly to reveal_tx immediately.
+            // This eliminates the race condition where drain_reveals() was called before
+            // controllers had a chance to push their bundled reveals.
             //
-            // Reveals are bundled with:
-            // - ChoiceRequest: All pending reveals sent to NetworkLocalController
-            // - OpponentChoice: All pending reveals sent to RemoteController
-            let mut pending_reveals: Vec<BundledReveal> = Vec::new();
+            // The fix: reveals go DIRECTLY to reveal_tx as they arrive, not via bundling.
+            // Controllers no longer need push_pending_reveals() - reveals are already
+            // in reveal_rx waiting for drain_reveals() to process them.
 
             loop {
                 tokio::select! {
@@ -851,35 +891,31 @@ impl NetworkClient {
                             Some(Ok(Message::Text(text))) => {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
-                                        // Buffer ALL reveals to be bundled with the next action message.
-                                        // This eliminates race conditions from separate channels.
+                                        // SINGLE-CHANNEL FIX: Send reveals directly to reveal_tx.
+                                        // This ensures drain_reveals() can process them in order,
+                                        // eliminating the race condition from the bundling approach.
                                         log::debug!(
-                                            "WebSocket: Buffering reveal: {} (id={}) for {:?} ({:?})",
+                                            "WebSocket: Sending reveal to game thread: {} (id={}) for {:?} ({:?})",
                                             card.name, card.card_id.as_u32(), owner, reason
                                         );
-                                        pending_reveals.push(BundledReveal {
-                                            owner,
-                                            card_id: card.card_id,
-                                            card_name: card.name,
-                                            reason,
-                                        });
+                                        if let Err(e) = reveal_tx.send((owner, card, reason)) {
+                                            log::error!("WebSocket: Failed to send reveal: {:?}", e);
+                                        }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
-                                        // Bundle ALL pending reveals with the opponent choice.
-                                        // This ensures the game thread processes reveals BEFORE
-                                        // applying the choice, eliminating race conditions.
-                                        let reveals = std::mem::take(&mut pending_reveals);
+                                        // SINGLE-CHANNEL FIX: No bundled reveals - they're already in reveal_tx.
+                                        // Just send the choice to the controller.
                                         log::debug!(
-                                            "WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}, bundling {} reveals",
-                                            description, choice_indices, spell_ability, reveals.len()
+                                            "WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}",
+                                            description, choice_indices, spell_ability
                                         );
 
                                         match remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_indices,
                                             description: description.clone(),
                                             spell_ability,
-                                            card_reveal: None, // Deprecated - reveals bundled in `reveals` field
-                                            reveals,
+                                            card_reveal: None,
+                                            reveals: Vec::new(), // Empty - reveals sent directly to reveal_tx
                                         }) {
                                             Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController channel successfully"),
                                             Err(e) => log::error!("WebSocket: FAILED to send opponent choice to RemoteController channel: {:?}", e),
@@ -892,20 +928,19 @@ impl NetworkClient {
                                         server_action_count = Some(action_count);
                                         server_choice_seq = Some(choice_seq);
 
-                                        // Bundle ALL pending reveals with the ChoiceRequest.
-                                        // This ensures the game thread processes reveals BEFORE
-                                        // evaluating available options, eliminating race conditions.
-                                        let reveals = std::mem::take(&mut pending_reveals);
+                                        // SINGLE-CHANNEL FIX: No bundled reveals - they're already in reveal_tx.
+                                        // drain_reveals() will have processed them by the time the controller
+                                        // gets this ChoiceRequest and evaluates available options.
                                         log::debug!(
-                                            "Player {:?}: Received ChoiceRequest #{}, server action_count={}, bundling {} reveals",
-                                            our_player_id, choice_seq, action_count, reveals.len()
+                                            "Player {:?}: Received ChoiceRequest #{}, server action_count={}",
+                                            our_player_id, choice_seq, action_count
                                         );
 
                                         // Notify the local controller that server is ready for a choice
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
                                             action_count,
                                             choice_seq,
-                                            reveals,
+                                            reveals: Vec::new(), // Empty - reveals sent directly to reveal_tx
                                         });
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count, .. }) => {
