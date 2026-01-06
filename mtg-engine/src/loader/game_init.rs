@@ -22,8 +22,8 @@ impl<'a> GameInitializer<'a> {
     ///
     /// This creates the game structure without instantiating any cards. Instead, it:
     /// 1. Reserves CardID slots based on DeckCardIdRanges
-    /// 2. Sets up libraries in Remote mode with correct sizes
-    /// 3. Cards will be revealed later via CardRevealed messages
+    /// 2. Sets up libraries with CardIDs (but no Card instances yet)
+    /// 3. Card identities will be revealed later via RevealCard actions
     ///
     /// This is used by network clients in the late-binding CardID architecture
     /// (mtg-qtqcr) where CardIDs are known upfront but card identities are hidden.
@@ -34,29 +34,31 @@ impl<'a> GameInitializer<'a> {
         starting_life: i32,
         ranges: &crate::network::DeckCardIdRanges,
     ) -> GameState {
+        use crate::core::CardId;
+
         let total_cards = ranges.total_cards() as usize;
         let mut game = GameState::new_two_player_with_capacity(player1_name, player2_name, starting_life, total_cards);
 
         // Reserve all CardID slots in EntityStore without instantiating cards
         // This uses the Phase 1 EntityStore::reserve_range() method
-        use crate::core::CardId;
         game.cards
             .reserve_range(CardId::new(ranges.p1_start), ranges.p1_end - ranges.p1_start);
         game.cards
             .reserve_range(CardId::new(ranges.p2_start), ranges.p2_end - ranges.p2_start);
 
-        // Set up libraries in Remote mode with correct sizes
-        // We don't add CardIDs to the library - they'll be managed via pending_reveals
+        // Create CardID vectors for each player's library
+        // CardIDs are known, but card identities will be revealed later
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
-        let p1_lib_size = (ranges.p1_end - ranges.p1_start) as usize;
-        let p2_lib_size = (ranges.p2_end - ranges.p2_start) as usize;
+
+        let p1_card_ids: Vec<CardId> = (ranges.p1_start..ranges.p1_end).map(CardId::new).collect();
+        let p2_card_ids: Vec<CardId> = (ranges.p2_start..ranges.p2_end).map(CardId::new).collect();
 
         if let Some(zones) = game.get_player_zones_mut(p1_id) {
-            zones.library = crate::zones::CardZone::new_remote_library(p1_id, p1_lib_size);
+            zones.library = crate::zones::CardZone::new_library_with_cards(p1_id, p1_card_ids);
         }
         if let Some(zones) = game.get_player_zones_mut(p2_id) {
-            zones.library = crate::zones::CardZone::new_remote_library(p2_id, p2_lib_size);
+            zones.library = crate::zones::CardZone::new_library_with_cards(p2_id, p2_card_ids);
         }
 
         // Set next_entity_id past the reserved range
@@ -64,7 +66,7 @@ impl<'a> GameInitializer<'a> {
         game.set_next_entity_id(ranges.p2_end);
 
         log::debug!(
-            "Reserve-only game initialized: {} total CardIDs reserved, libraries in Remote mode",
+            "Reserve-only game initialized: {} total CardIDs reserved, libraries have CardIDs",
             total_cards
         );
 
@@ -255,20 +257,21 @@ mod tests {
         // Verify game state
         assert_eq!(game.players.len(), 2);
 
-        // Both libraries should be in Remote mode
+        // Both libraries should have CardIDs but no Card instances yet
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
 
         if let Some(zones) = game.get_player_zones(p1_id) {
-            assert!(zones.library.is_remote_library());
             assert_eq!(zones.library.len(), 40);
+            // Library contains CardIDs
+            assert_eq!(zones.library.cards.len(), 40);
         } else {
             panic!("P1 zones not found");
         }
 
         if let Some(zones) = game.get_player_zones(p2_id) {
-            assert!(zones.library.is_remote_library());
             assert_eq!(zones.library.len(), 40);
+            assert_eq!(zones.library.cards.len(), 40);
         } else {
             panic!("P2 zones not found");
         }

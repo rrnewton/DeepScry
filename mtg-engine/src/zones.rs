@@ -1,130 +1,19 @@
 //! Game zones (Library, Hand, Graveyard, Battlefield, etc.)
 //!
-//! ## Library Modes (for networking)
+//! ## Late-Binding CardID Architecture (mtg-qtqcr)
 //!
-//! Libraries support two modes to enable networked play with hidden information:
+//! In networked play, CardIDs are shared publicly between server and clients,
+//! but the CardID ⟺ CardName binding is deferred until reveal time.
 //!
-//! - **Local**: Normal mode where all card contents are known (server-side)
-//! - **Remote**: Client-side mode where library contents are hidden; cards are
-//!   revealed via a buffer when drawn or searched
+//! All zones use a unified model:
+//! - `cards: Vec<CardId>` stores the cards in the zone
+//! - Cards in the EntityStore may be "reserved" (slot exists but no Card yet)
+//! - When revealed, the Card is inserted via `RevealCard` action
 //!
-//! In remote mode, the client doesn't know what cards are in the library (to
-//! prevent cheating). Instead, when the server reveals a card (draw, tutor),
-//! it sends the card info to the client which queues it in a pending reveals
-//! buffer. When the client's local game state reaches the draw, it pulls from
-//! this buffer.
+//! This eliminates the old `LibraryMode::Remote` and `pending_reveals` complexity.
 
 use crate::core::{CardId, PlayerId};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LIBRARY MODE (for networking)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Library mode determines how a library zone handles its contents.
-///
-/// In local mode (server-side), all card contents are known and stored directly.
-/// In remote mode (client-side), only the size is tracked and cards are revealed
-/// via a pending buffer when drawn or searched.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum LibraryMode {
-    /// Normal mode - all cards are known (server-side or local game)
-    #[default]
-    Local,
-    /// Remote mode - contents hidden, cards revealed via buffer
-    Remote {
-        /// Number of cards in the library (public information per MTG rules)
-        size: usize,
-        /// Cards revealed by server, waiting to be "drawn" by local simulation
-        pending_reveals: VecDeque<CardId>,
-    },
-}
-
-impl LibraryMode {
-    /// Create a new remote library with the given size
-    pub fn new_remote(size: usize) -> Self {
-        LibraryMode::Remote {
-            size,
-            pending_reveals: VecDeque::new(),
-        }
-    }
-
-    /// Check if this is a remote library
-    pub fn is_remote(&self) -> bool {
-        matches!(self, LibraryMode::Remote { .. })
-    }
-
-    /// Get the size for remote libraries (returns None for local)
-    pub fn remote_size(&self) -> Option<usize> {
-        match self {
-            LibraryMode::Remote { size, .. } => Some(*size),
-            LibraryMode::Local => None,
-        }
-    }
-
-    /// Queue a revealed card for later drawing (remote mode only)
-    ///
-    /// Returns false if this is a local library (no-op) or if the card is already queued.
-    /// Deduplication prevents issues when reveals are sent multiple times (e.g., from both
-    /// the immediate reveal system and NetworkController).
-    pub fn queue_reveal(&mut self, card_id: CardId) -> bool {
-        match self {
-            LibraryMode::Remote { pending_reveals, .. } => {
-                // Check if this card is already queued to prevent duplicates
-                if pending_reveals.contains(&card_id) {
-                    log::debug!(
-                        "queue_reveal: card {:?} already in pending_reveals, skipping duplicate",
-                        card_id
-                    );
-                    return false;
-                }
-                pending_reveals.push_back(card_id);
-                true
-            }
-            LibraryMode::Local => false,
-        }
-    }
-
-    /// Pop the next revealed card from the pending buffer (remote mode only)
-    ///
-    /// Returns None if local mode or if no reveals are pending.
-    pub fn pop_reveal(&mut self) -> Option<CardId> {
-        match self {
-            LibraryMode::Remote { size, pending_reveals } => {
-                let card = pending_reveals.pop_front();
-                if card.is_some() {
-                    *size = size.saturating_sub(1);
-                }
-                card
-            }
-            LibraryMode::Local => None,
-        }
-    }
-
-    /// Check if there are any pending reveals
-    pub fn has_pending_reveals(&self) -> bool {
-        match self {
-            LibraryMode::Remote { pending_reveals, .. } => !pending_reveals.is_empty(),
-            LibraryMode::Local => false,
-        }
-    }
-
-    /// Decrement remote size (e.g., when a card is milled without reveal)
-    pub fn decrement_size(&mut self) {
-        if let LibraryMode::Remote { size, .. } = self {
-            *size = size.saturating_sub(1);
-        }
-    }
-
-    /// Increment remote size (e.g., when a card is put on top of library)
-    pub fn increment_size(&mut self) {
-        if let LibraryMode::Remote { size, .. } = self {
-            *size += 1;
-        }
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ZONES
@@ -153,27 +42,9 @@ pub struct CardZone {
 
     /// Cards in this zone (order matters for Library and Graveyard)
     ///
-    /// For remote libraries, this vec is empty - use library_mode instead.
+    /// For network clients, CardIDs are known but card identities may not be.
+    /// Use EntityStore::is_revealed() to check if a card's identity is known.
     pub cards: Vec<CardId>,
-
-    /// Library mode (only used for Library zones in networked games)
-    ///
-    /// When Some(Remote), the library contents are hidden and cards
-    /// are revealed via the pending_reveals buffer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub library_mode: Option<LibraryMode>,
-
-    /// Count of hidden cards (network mode only)
-    ///
-    /// Used for opponent's hand when they draw cards we haven't received reveals for.
-    /// This allows tracking hand SIZE without knowing card IDs.
-    /// Total hand size = cards.len() + hidden_card_count
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub hidden_card_count: usize,
-}
-
-fn is_zero(n: &usize) -> bool {
-    *n == 0
 }
 
 impl CardZone {
@@ -182,39 +53,22 @@ impl CardZone {
             zone_type,
             owner,
             cards: Vec::new(),
-            library_mode: None,
-            hidden_card_count: 0,
         }
     }
 
-    /// Create a new remote library zone (for networked clients)
+    /// Create a library zone with pre-allocated CardIDs (for networked clients)
     ///
-    /// The library starts with the given size but no known contents.
-    /// Cards will be revealed via queue_reveal() as they are drawn/searched.
-    pub fn new_remote_library(owner: PlayerId, size: usize) -> Self {
+    /// In the late-binding architecture, CardIDs are known upfront but card
+    /// identities are revealed later via RevealCard actions.
+    ///
+    /// # Arguments
+    /// * `owner` - The player who owns this library
+    /// * `card_ids` - The CardIDs in the library (in order from bottom to top)
+    pub fn new_library_with_cards(owner: PlayerId, card_ids: Vec<CardId>) -> Self {
         CardZone {
             zone_type: Zone::Library,
             owner,
-            cards: Vec::new(),
-            library_mode: Some(LibraryMode::new_remote(size)),
-            hidden_card_count: 0,
-        }
-    }
-
-    /// Check if this is a remote library
-    pub fn is_remote_library(&self) -> bool {
-        self.library_mode.as_ref().is_some_and(|m| m.is_remote())
-    }
-
-    /// Queue a revealed card for drawing (remote library only)
-    ///
-    /// Call this when the server reveals a card that will be drawn.
-    /// Returns false if this is not a remote library.
-    pub fn queue_reveal(&mut self, card_id: CardId) -> bool {
-        if let Some(ref mut mode) = self.library_mode {
-            mode.queue_reveal(card_id)
-        } else {
-            false
+            cards: card_ids,
         }
     }
 
@@ -230,16 +84,6 @@ impl CardZone {
             // would break determinism tests.
             self.cards.remove(pos);
             true
-        } else if self.hidden_card_count > 0 {
-            // Card not in cards vec, but we have hidden cards (network mode)
-            // This happens when a hidden card is revealed (e.g., opponent discards a card)
-            // We "remove" it by decrementing the hidden count
-            //
-            // The card was tracked as a hidden card (drawn by opponent), and now it's
-            // being moved to a public zone (like graveyard). We decrement hidden_card_count
-            // to reflect that one hidden card is leaving.
-            self.hidden_card_count -= 1;
-            true
         } else {
             false
         }
@@ -250,129 +94,46 @@ impl CardZone {
     }
 
     /// Get the number of cards in this zone
-    ///
-    /// For remote libraries, returns the tracked size (not cards.len()).
     pub fn len(&self) -> usize {
-        if let Some(LibraryMode::Remote { size, .. }) = &self.library_mode {
-            *size
-        } else {
-            // Include hidden cards (used for opponent's hand in network mode)
-            self.cards.len() + self.hidden_card_count
-        }
+        self.cards.len()
     }
 
     /// Check if this zone is empty
-    ///
-    /// For remote libraries, checks the tracked size.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.cards.is_empty()
     }
 
     /// Draw from top (for Library)
     ///
-    /// For remote libraries, pops from the pending reveals buffer.
-    /// Returns None if empty or if no reveal is pending (remote mode).
+    /// Returns None if the library is empty.
     pub fn draw_top(&mut self) -> Option<CardId> {
-        if let Some(ref mut mode) = self.library_mode {
-            mode.pop_reveal()
-        } else {
-            self.cards.pop()
-        }
+        self.cards.pop()
     }
 
     /// Look at top card without removing it
-    ///
-    /// For remote libraries, peeks at the first pending reveal (if any).
-    /// Note: In remote mode, this only sees revealed cards, not the actual top.
     pub fn peek_top(&self) -> Option<CardId> {
-        if let Some(LibraryMode::Remote { pending_reveals, .. }) = &self.library_mode {
-            pending_reveals.front().copied()
-        } else {
-            self.cards.last().copied()
-        }
+        self.cards.last().copied()
     }
 
     /// Add to bottom (for Library)
-    ///
-    /// For remote libraries, only increments the size counter.
-    /// The actual card placement is handled by the server.
     pub fn add_to_bottom(&mut self, card_id: CardId) {
-        if let Some(ref mut mode) = self.library_mode {
-            mode.increment_size();
-            // Don't add to cards - remote library contents are hidden
-        } else {
-            self.cards.insert(0, card_id);
-        }
+        self.cards.insert(0, card_id);
     }
 
     /// Add to top (for Library - e.g., for effects that put cards on top)
-    ///
-    /// For remote libraries, only increments the size counter.
     pub fn add_to_top(&mut self, card_id: CardId) {
-        if let Some(ref mut mode) = self.library_mode {
-            mode.increment_size();
-            // Don't add to cards - remote library contents are hidden
-        } else {
-            self.cards.push(card_id);
-        }
+        self.cards.push(card_id);
     }
 
     /// Shuffle the zone (for Library)
-    ///
-    /// For remote libraries, this is a no-op - the server handles shuffling.
     pub fn shuffle(&mut self, rng: &mut impl rand::Rng) {
-        if self.library_mode.is_none() {
-            use rand::seq::SliceRandom;
-            self.cards.shuffle(rng);
-        }
-        // Remote libraries: no-op, server handles shuffling
+        use rand::seq::SliceRandom;
+        self.cards.shuffle(rng);
     }
 
     /// Clear all cards
-    ///
-    /// For remote libraries, also resets the size to 0.
     pub fn clear(&mut self) {
         self.cards.clear();
-        if let Some(LibraryMode::Remote { size, pending_reveals }) = &mut self.library_mode {
-            *size = 0;
-            pending_reveals.clear();
-        }
-    }
-
-    /// Get the number of pending reveals (remote library only)
-    ///
-    /// Returns 0 for local libraries.
-    pub fn pending_reveals_count(&self) -> usize {
-        if let Some(LibraryMode::Remote { pending_reveals, .. }) = &self.library_mode {
-            pending_reveals.len()
-        } else {
-            0
-        }
-    }
-
-    /// Decrement the remote library size by 1 (for cards already drawn server-side)
-    ///
-    /// Used for opening hand reveals where the server has already drawn the cards
-    /// and we just need to update our tracked size. No-op for local libraries.
-    pub fn decrement_size(&mut self) {
-        if let Some(ref mut mode) = self.library_mode {
-            mode.decrement_size();
-        }
-    }
-
-    /// Increment the hidden card count (for opponent's hidden draws in network mode)
-    ///
-    /// Used when opponent draws a card but we don't receive a reveal (hidden info).
-    /// This increments the hand SIZE without knowing the actual card ID.
-    pub fn increment_hidden_card_count(&mut self) {
-        self.hidden_card_count += 1;
-    }
-
-    /// Decrement the hidden card count (for undo or when card is revealed)
-    ///
-    /// Used when undoing a HiddenDraw action.
-    pub fn decrement_hidden_card_count(&mut self) {
-        self.hidden_card_count = self.hidden_card_count.saturating_sub(1);
     }
 }
 
@@ -479,141 +240,47 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // REMOTE LIBRARY TESTS
+    // LIBRARY WITH CARDS TESTS (for late-binding architecture)
     // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn test_remote_library_creation() {
+    fn test_library_with_cards() {
         let player_id = PlayerId::new(1);
-        let library = CardZone::new_remote_library(player_id, 60);
+        let card_ids = vec![CardId::new(0), CardId::new(1), CardId::new(2)];
+        let mut library = CardZone::new_library_with_cards(player_id, card_ids);
 
-        assert!(library.is_remote_library());
-        assert_eq!(library.len(), 60);
-        assert!(!library.is_empty());
         assert_eq!(library.zone_type, Zone::Library);
-        assert!(library.cards.is_empty()); // Cards vec is empty for remote
-    }
+        assert_eq!(library.len(), 3);
+        assert!(!library.is_empty());
 
-    #[test]
-    fn test_remote_library_draw_with_reveals() {
-        let player_id = PlayerId::new(1);
-        let mut library = CardZone::new_remote_library(player_id, 60);
+        // Draw from top (last element is top)
+        assert_eq!(library.draw_top(), Some(CardId::new(2)));
+        assert_eq!(library.len(), 2);
 
-        // Initially no reveals pending
-        assert_eq!(library.pending_reveals_count(), 0);
-        assert_eq!(library.draw_top(), None); // No reveal available
-
-        // Queue some reveals (simulating server sending card info)
-        let card1 = CardId::new(100);
-        let card2 = CardId::new(101);
-        let card3 = CardId::new(102);
-
-        assert!(library.queue_reveal(card1));
-        assert!(library.queue_reveal(card2));
-        assert!(library.queue_reveal(card3));
-
-        assert_eq!(library.pending_reveals_count(), 3);
-        assert_eq!(library.len(), 60); // Size unchanged until draw
-
-        // Draw the revealed cards (FIFO order)
-        assert_eq!(library.draw_top(), Some(card1));
-        assert_eq!(library.len(), 59);
-
-        assert_eq!(library.draw_top(), Some(card2));
-        assert_eq!(library.len(), 58);
-
-        assert_eq!(library.draw_top(), Some(card3));
-        assert_eq!(library.len(), 57);
-
-        // No more reveals
-        assert_eq!(library.draw_top(), None);
-        assert_eq!(library.pending_reveals_count(), 0);
-    }
-
-    #[test]
-    fn test_remote_library_peek() {
-        let player_id = PlayerId::new(1);
-        let mut library = CardZone::new_remote_library(player_id, 60);
-
-        // No reveals - peek returns None
-        assert_eq!(library.peek_top(), None);
-
-        // Queue a reveal
-        let card1 = CardId::new(100);
-        library.queue_reveal(card1);
-
-        // Peek returns the first pending reveal
-        assert_eq!(library.peek_top(), Some(card1));
-        assert_eq!(library.len(), 60); // Peek doesn't change size
-
-        // Peek again - still same card
-        assert_eq!(library.peek_top(), Some(card1));
-    }
-
-    #[test]
-    fn test_remote_library_add_to_top_and_bottom() {
-        let player_id = PlayerId::new(1);
-        let mut library = CardZone::new_remote_library(player_id, 60);
-
-        let card = CardId::new(100);
-
-        // Add to top - just increments size
-        library.add_to_top(card);
-        assert_eq!(library.len(), 61);
-        assert!(library.cards.is_empty()); // Still no cards in vec
-
-        // Add to bottom - just increments size
-        library.add_to_bottom(card);
-        assert_eq!(library.len(), 62);
-        assert!(library.cards.is_empty()); // Still no cards in vec
-    }
-
-    #[test]
-    fn test_remote_library_clear() {
-        let player_id = PlayerId::new(1);
-        let mut library = CardZone::new_remote_library(player_id, 60);
-
-        let card1 = CardId::new(100);
-        library.queue_reveal(card1);
-
-        assert_eq!(library.len(), 60);
-        assert_eq!(library.pending_reveals_count(), 1);
-
-        library.clear();
-
-        assert_eq!(library.len(), 0);
+        assert_eq!(library.draw_top(), Some(CardId::new(1)));
+        assert_eq!(library.draw_top(), Some(CardId::new(0)));
         assert!(library.is_empty());
-        assert_eq!(library.pending_reveals_count(), 0);
     }
 
     #[test]
-    fn test_local_library_queue_reveal_is_noop() {
+    fn test_library_shuffle() {
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha12Rng;
+
         let player_id = PlayerId::new(1);
         let mut library = CardZone::new(Zone::Library, player_id);
 
-        let card = CardId::new(100);
-        library.add(card);
+        for i in 0..10 {
+            library.add(CardId::new(i));
+        }
 
-        // Queue reveal on local library returns false (no-op)
-        assert!(!library.queue_reveal(CardId::new(200)));
-        assert!(!library.is_remote_library());
-    }
+        let original: Vec<CardId> = library.cards.clone();
+        let mut rng = ChaCha12Rng::seed_from_u64(12345);
+        library.shuffle(&mut rng);
 
-    #[test]
-    fn test_library_mode_serialization() {
-        // Test that LibraryMode serializes correctly
-        let local = LibraryMode::Local;
-        let json = serde_json::to_string(&local).unwrap();
-        assert!(json.contains("local"));
-
-        let remote = LibraryMode::new_remote(60);
-        let json = serde_json::to_string(&remote).unwrap();
-        assert!(json.contains("remote"));
-        assert!(json.contains("60"));
-
-        // Roundtrip
-        let roundtrip: LibraryMode = serde_json::from_str(&json).unwrap();
-        assert!(roundtrip.is_remote());
-        assert_eq!(roundtrip.remote_size(), Some(60));
+        // After shuffle with seeded RNG, order should change
+        // (With 10 cards and a random seed, very unlikely to stay same)
+        assert_ne!(library.cards, original);
+        assert_eq!(library.len(), 10);
     }
 }

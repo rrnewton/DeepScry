@@ -224,18 +224,13 @@ impl<'a> GameLoop<'a> {
             if !self.replaying {
                 let player_name = self.get_player_name(active_player);
                 if let Some(zones) = self.game.get_player_zones(active_player) {
-                    // If this player's library is remote, we're viewing an opponent's draw
-                    // from their hidden deck - don't log specific card names (they'd be wrong)
-                    let is_remote_draw = zones.library.is_remote_library();
-                    if is_remote_draw {
-                        // For opponent draws from remote library, just log "draws a card"
-                        log_gamelog!(self, "{} draws a card", player_name);
-                    } else if let Some(&card_id) = zones.hand.cards.last() {
+                    if let Some(&card_id) = zones.hand.cards.last() {
+                        // Late-binding: CardID is known, but card identity may not be
                         if let Ok(card) = self.game.cards.get(card_id) {
-                            // Use gamelog for official draw action
                             log_gamelog!(self, "{} draws {} ({})", player_name, card.name, card_id);
                         } else {
-                            log_gamelog!(self, "{} draws a card", player_name);
+                            // Card not yet revealed - just log the draw
+                            log_gamelog!(self, "{} draws a card (id={})", player_name, card_id);
                         }
                     } else {
                         log_gamelog!(self, "{} draws a card", player_name);
@@ -305,12 +300,7 @@ impl<'a> GameLoop<'a> {
 
         // Process active player first, then non-active player
         for &player_id in &[active_player, non_active_player] {
-            // Use hand.len() which includes hidden_card_count (for network mode)
-            let (hand_size, hidden_cards) = self
-                .game
-                .get_player_zones(player_id)
-                .map(|z| (z.hand.len(), z.hand.hidden_card_count))
-                .unwrap_or((0, 0));
+            let hand_size = self.game.get_player_zones(player_id).map(|z| z.hand.len()).unwrap_or(0);
 
             let max_hand_size = self.game.get_player(player_id)?.max_hand_size;
 
@@ -361,21 +351,15 @@ impl<'a> GameLoop<'a> {
                 let replay_choice = crate::game::ReplayChoice::Discard(cards_to_discard.clone());
                 self.log_choice_point(player_id, Some(replay_choice), prior_log_size);
 
-                // Handle hidden cards (network mode: opponent's hand is hidden)
-                // If controller returned fewer cards than required, the remaining
-                // must be hidden cards we don't know about
-                let known_discards = cards_to_discard.len();
-                let hidden_discards_needed = discard_count.saturating_sub(known_discards);
-
-                // Verify we can fulfill the discard requirement
-                if known_discards + hidden_cards < discard_count {
+                // Verify correct number of cards selected
+                if cards_to_discard.len() != discard_count {
                     return Err(crate::MtgError::InvalidAction(format!(
-                        "Must discard exactly {discard_count} cards, got {} known + {} hidden",
-                        known_discards, hidden_cards
+                        "Must discard exactly {discard_count} cards, got {}",
+                        cards_to_discard.len()
                     )));
                 }
 
-                // Move known cards to graveyard
+                // Move selected cards to graveyard
                 for card_id in cards_to_discard {
                     // Verify card is in hand before moving
                     if let Some(zones) = self.game.get_player_zones(player_id) {
@@ -405,17 +389,6 @@ impl<'a> GameLoop<'a> {
                             .unwrap_or("Unknown"),
                         card_id
                     );
-                }
-
-                // Handle hidden discards (network mode)
-                for _ in 0..hidden_discards_needed {
-                    if !self.game.discard_hidden(player_id) {
-                        return Err(crate::MtgError::InvalidAction(format!(
-                            "Failed to discard hidden card for player {}",
-                            player_id.as_u32()
-                        )));
-                    }
-                    log_if_verbose!(self, "{} discards a hidden card", self.get_player_name(player_id));
                 }
             }
         }

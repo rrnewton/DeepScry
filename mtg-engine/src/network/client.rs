@@ -95,9 +95,11 @@ pub struct GameStartInfo {
 /// Shadow game state maintained by the client
 ///
 /// This mirrors the server's game state but:
-/// - Libraries use LibraryMode::Remote (contents unknown until revealed)
+/// - Library card identities are unknown until revealed via RevealCard
 /// - Only sees own hand contents and public information
 /// - Syncs via choice messages, not full state transfer
+///
+/// TODO(mtg-qtqcr Phase 3): Complete late-binding architecture migration
 pub struct ClientGameState {
     /// Shadow game state
     pub game: GameState,
@@ -147,13 +149,15 @@ impl ClientGameState {
         );
 
         // Set up our library as remote (we don't know the order)
+        // TODO(mtg-qtqcr Phase 3): Use CardZone::new_library_with_cards() once server sends DeckCardIdRanges
+        // For now, just create empty libraries since we don't have CardIDs yet
         if let Some(zones) = game.get_player_zones_mut(our_player_id) {
-            zones.library = crate::zones::CardZone::new_remote_library(our_player_id, info.library_size);
+            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, our_player_id);
         }
 
         // Set up opponent's library as remote
         if let Some(zones) = game.get_player_zones_mut(opponent_id) {
-            zones.library = crate::zones::CardZone::new_remote_library(opponent_id, info.opponent_library_size);
+            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, opponent_id);
         }
 
         // Process opening hand - register cards as known but DON'T add to hand yet
@@ -212,30 +216,18 @@ impl ClientGameState {
             // Handle based on reason
             match reason {
                 RevealReason::Draw => {
-                    // Queue card in library's pending_reveals buffer
-                    if let Some(zones) = self.game.get_player_zones_mut(owner) {
-                        zones.library.queue_reveal(card.card_id);
-                    }
+                    // Card reveals are now handled via RevealCard action in the game engine
+                    // The library no longer has queue_reveal since cards are already in the library
+                    // Just track that the card is known
                 }
                 RevealReason::OpeningHand => {
                     // Already handled in new()
                 }
                 RevealReason::Played => {
-                    // When opponent plays a card from their hidden hand, we need to:
-                    // 1. Add the card to their hand (converting from hidden_card_count)
-                    // 2. The cast operation will then move it from hand to stack
+                    // When opponent plays a card from their hand, just add it if not already there
+                    // The hidden_card_count mechanism is removed in the new architecture
                     if let Some(zones) = self.game.get_player_zones_mut(owner) {
-                        if zones.hand.hidden_card_count > 0 {
-                            // Convert one hidden card into this revealed card
-                            zones.hand.decrement_hidden_card_count();
-                            zones.hand.add(card.card_id);
-                            log::debug!(
-                                "Converted hidden hand card to revealed: {} (id={})",
-                                card.name,
-                                card.card_id.as_u32()
-                            );
-                        } else if !zones.hand.contains(card.card_id) {
-                            // No hidden cards to convert - just add the card
+                        if !zones.hand.contains(card.card_id) {
                             zones.hand.add(card.card_id);
                         }
                     }
@@ -606,18 +598,20 @@ impl NetworkClient {
 
         // Convert libraries to Remote mode - we don't know the shuffle order
         // The server has shuffled and drawn, we need to receive reveals to know card order
-        let our_lib_size = game
+        let _our_lib_size = game
             .get_player_zones(our_player_id)
             .map(|z| z.library.len())
             .unwrap_or(0);
-        let opp_lib_size = game.get_player_zones(opponent_id).map(|z| z.library.len()).unwrap_or(0);
+        let _opp_lib_size = game.get_player_zones(opponent_id).map(|z| z.library.len()).unwrap_or(0);
 
         // Clear the local libraries and set them to Remote mode
+        // TODO(mtg-qtqcr Phase 3): Use CardZone::new_library_with_cards() once server sends DeckCardIdRanges
+        // For now, just create empty libraries since we don't have CardIDs yet
         if let Some(zones) = game.get_player_zones_mut(our_player_id) {
-            zones.library = crate::zones::CardZone::new_remote_library(our_player_id, our_lib_size);
+            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, our_player_id);
         }
         if let Some(zones) = game.get_player_zones_mut(opponent_id) {
-            zones.library = crate::zones::CardZone::new_remote_library(opponent_id, opp_lib_size);
+            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, opponent_id);
         }
 
         // Create ClientGameState with the initialized game
@@ -648,14 +642,10 @@ impl NetworkClient {
                         card.card_id,
                         owner
                     );
-                    // Queue the reveal in the library's pending_reveals.
-                    // The GameLoop with skip_opening_hands will drain these and draw
-                    // the cards, creating MoveCard entries that match the server's undo_log.
-                    if let Some(ref mut state) = self.state {
-                        if let Some(zones) = state.game.get_player_zones_mut(owner) {
-                            zones.library.queue_reveal(card.card_id);
-                        }
-                    }
+                    // Card reveals are now handled via RevealCard action in the game engine
+                    // The library no longer has queue_reveal since cards are already in the library
+                    // Just track that we received the reveal
+                    log::debug!("Received opening hand reveal for card id={}", card.card_id.as_u32());
                     reveals_received += 1;
                     let _ = reason; // Reason is always Draw for opening hand
                 }
@@ -1088,11 +1078,9 @@ impl NetworkClient {
 
                         match reason {
                             RevealReason::Draw => {
-                                // Queue the card_id in the library for the next draw
-                                if let Some(zones) = game.get_player_zones_mut(owner) {
-                                    zones.library.queue_reveal(card_id);
-                                    log::debug!("Queued draw reveal for {:?}: {:?}", owner, card_id);
-                                }
+                                // Card reveals are now handled via RevealCard action in the game engine
+                                // The library no longer has queue_reveal since cards are already in the library
+                                log::debug!("Received draw reveal for {:?}: {:?}", owner, card_id);
                             }
                             RevealReason::Played => {
                                 // A card was played - this could be:
@@ -1128,25 +1116,22 @@ impl NetworkClient {
                                         card_id
                                     );
 
-                                    // If we just instantiated a card and opponent has hidden cards,
-                                    // AND the card isn't in hand or on battlefield yet,
+                                    // If we just instantiated a card and it's not in hand or battlefield yet,
                                     // then we need to add it to hand for the play to work
                                     let card_in_hand =
                                         game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
                                     let card_on_battlefield = game.battlefield.cards.contains(&card_id);
 
                                     if !card_in_hand && !card_on_battlefield {
-                                        // Card not found anywhere - this is a hidden hand play
+                                        // Card not found anywhere - add it to hand
+                                        // The hidden_card_count mechanism is removed in the new architecture
                                         if let Some(zones) = game.get_player_zones_mut(owner) {
-                                            if zones.hand.hidden_card_count > 0 {
-                                                zones.hand.decrement_hidden_card_count();
-                                                zones.hand.add(card_id);
-                                                log::debug!(
-                                                    "Converted hidden hand card to revealed: {} (id={})",
-                                                    card_reveal.name,
-                                                    card_id.as_u32()
-                                                );
-                                            }
+                                            zones.hand.add(card_id);
+                                            log::debug!(
+                                                "Added revealed card to hand: {} (id={})",
+                                                card_reveal.name,
+                                                card_id.as_u32()
+                                            );
                                         }
                                     }
                                 }
@@ -1198,13 +1183,12 @@ impl NetworkClient {
                 //    (prevents blocking again in priority_round after draw_card consumed the reveal)
                 let is_our_turn = active_player == our_player_for_drain;
 
-                let library_is_remote = game
-                    .get_player_zones(active_player)
-                    .is_some_and(|z| z.library.is_remote_library());
-
-                let has_pending_reveal = game
-                    .get_player_zones(active_player)
-                    .is_some_and(|z| z.library.pending_reveals_count() > 0);
+                // TODO(mtg-qtqcr Phase 3): In late-binding architecture, we don't have
+                // remote libraries or pending reveals. Cards are always in library.cards,
+                // and their identities are revealed via RevealCard actions.
+                // For now, disable the blocking logic for draws.
+                let library_is_remote = false;
+                let has_pending_reveal = true; // Always consider reveals pending to skip blocking
 
                 let already_waited_this_turn =
                     last_draw_wait_turn.load(std::sync::atomic::Ordering::Relaxed) == turn_number;
@@ -1223,12 +1207,9 @@ impl NetworkClient {
                     // 2. The server sends draw reveals AFTER the draw, not before
                     // 3. Blocking would cause a deadlock if the server is waiting for us
                     //
-                    // Instead, we do a brief non-blocking poll to catch reveals that
-                    // arrived just before we checked. If no reveal is available, draw_card()
-                    // will do a HiddenDraw for opponent draws, or we'll desync for our own draws.
-                    //
-                    // The reveal will arrive eventually via the WebSocket handler and be
-                    // processed in a later drain_reveals call.
+                    // TODO(mtg-qtqcr Phase 3): In late-binding architecture, reveals are
+                    // handled via RevealCard GameAction, not the old HiddenDraw mechanism.
+                    // The reveal will arrive eventually via the WebSocket handler.
                     log::debug!(
                         "Turn {}: Checking for draw reveal for {:?} (remote library, no pending reveal)",
                         turn_number,
@@ -1548,9 +1529,9 @@ impl NetworkClient {
                 let card_id = card_reveal.card_id;
                 match reason {
                     RevealReason::Draw => {
-                        if let Some(zones) = game.get_player_zones_mut(owner) {
-                            zones.library.queue_reveal(card_id);
-                        }
+                        // Card reveals are now handled via RevealCard action in the game engine
+                        // The library no longer has queue_reveal since cards are already in the library
+                        log::debug!("Received draw reveal for {:?}: {:?}", owner, card_id);
                     }
                     RevealReason::Played => {
                         // Use the free function that includes DB fallback

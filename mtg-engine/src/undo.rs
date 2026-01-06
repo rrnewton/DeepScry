@@ -122,34 +122,6 @@ pub enum GameAction {
         choice: Option<crate::game::replay_controller::ReplayChoice>,
     },
 
-    /// Hidden draw (network client-side only)
-    ///
-    /// Used by clients to track when opponent draws a card but the card ID is hidden.
-    /// This logs an action to keep action_count in sync with the server while only
-    /// tracking the SIZE change (not the actual card moved).
-    ///
-    /// The server never uses this - it always uses MoveCard with the real card_id.
-    /// The network hash only checks hand/library SIZE, not contents, so this produces
-    /// the same hash as the server's MoveCard.
-    HiddenDraw {
-        /// Player who drew the card
-        player_id: PlayerId,
-    },
-
-    /// Hidden discard (network client-side only)
-    ///
-    /// Used by clients to track when opponent discards a card but the card ID is hidden.
-    /// This logs an action to keep action_count in sync with the server while only
-    /// tracking the SIZE change (not the actual card moved).
-    ///
-    /// The server never uses this - it always uses MoveCard with the real card_id.
-    /// The network hash only checks hand/graveyard SIZE, not contents, so this produces
-    /// the same hash as the server's MoveCard.
-    HiddenDiscard {
-        /// Player who discarded the card
-        player_id: PlayerId,
-    },
-
     /// Reveal a card's identity (CardID ⟺ CardName binding)
     ///
     /// Part of the late-binding CardID architecture (mtg-qtqcr). This action binds
@@ -262,12 +234,6 @@ impl fmt::Display for GameAction {
                 choice_id,
                 choice,
             } => write!(f, "Choice(P{} #{} = {:?})", player_id.as_u32(), choice_id, choice),
-            GameAction::HiddenDraw { player_id } => {
-                write!(f, "HiddenDraw(P{})", player_id.as_u32())
-            }
-            GameAction::HiddenDiscard { player_id } => {
-                write!(f, "HiddenDiscard(P{})", player_id.as_u32())
-            }
             GameAction::RevealCard { card_id, name, .. } => match name {
                 Some(n) => write!(f, "RevealCard({} = \"{}\")", card_id.as_u32(), n),
                 None => write!(f, "RevealCard({} = ???)", card_id.as_u32()),
@@ -470,26 +436,6 @@ impl GameAction {
 
             GameAction::ChoicePoint { .. } => {
                 // ChoicePoints don't modify game state, nothing to undo
-            }
-
-            GameAction::HiddenDraw { player_id } => {
-                // Undo hidden draw: decrement hand's hidden_card_count and increment library size
-                // This is only used in client shadow states, never on server
-                if let Some(zones) = game.get_player_zones_mut(*player_id) {
-                    zones.hand.decrement_hidden_card_count();
-                    if let Some(ref mut mode) = zones.library.library_mode {
-                        mode.increment_size();
-                    }
-                }
-            }
-
-            GameAction::HiddenDiscard { player_id } => {
-                // Undo hidden discard: increment hand's hidden_card_count and decrement graveyard
-                // This is only used in client shadow states, never on server
-                if let Some(zones) = game.get_player_zones_mut(*player_id) {
-                    zones.hand.increment_hidden_card_count();
-                    zones.graveyard.decrement_hidden_card_count();
-                }
             }
 
             GameAction::RevealCard { card_id, card, .. } => {

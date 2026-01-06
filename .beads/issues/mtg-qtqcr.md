@@ -45,12 +45,7 @@ Major architectural change to make CardIDs **public and shared** between server 
 - [x] Add 5 unit tests for RevealCard
 - [x] Keep HiddenDraw/HiddenDiscard for backward compat initially
 
-### Phase 3: Network Protocol Updates (swapped with Zone Simplification) 🔄 IN PROGRESS
-**Note:** Phase 3 and 4 were swapped because zone simplification depends on
-the network protocol being updated first. The zones use LibraryMode/hidden_card_count
-to support the current reveal-via-pending-buffer model; we need the new
-RevealCard-based protocol working before we can simplify zones.
-
+### Phase 3: Network Protocol Updates 🔄 PARTIAL
 - [x] Add DeckCardIdRanges struct to protocol.rs (deterministic assignment)
 - [x] Update GameStarted message with deck_card_ids field
 - [x] Server computes and broadcasts DeckCardIdRanges to clients
@@ -60,18 +55,23 @@ RevealCard-based protocol working before we can simplify zones.
 - [ ] Update CardRevealed message to include RevealCard action semantics
 - [ ] Transition client from pending_reveals buffer to direct EntityStore insert
 
-### Phase 4: Zone Simplification (moved here from Phase 3)
-**Requires:** Phase 3 network protocol complete
+**Note:** Network games temporarily broken pending Phase 3 completion.
+Client has TODO markers for the remaining network protocol migration.
 
-- [ ] Remove `LibraryMode` enum entirely
-- [ ] Remove `hidden_card_count` field from CardZone
-- [ ] Simplify CardZone methods (len, draw_top, etc.)
-- [ ] Update state hashing for new model
+### Phase 4: Zone Simplification ✅ COMPLETE
+- [x] Remove `LibraryMode` enum entirely
+- [x] Remove `hidden_card_count` field from CardZone
+- [x] Simplify CardZone methods (len, draw_top, etc.)
+- [x] Remove HiddenDraw, HiddenDiscard action variants
+- [x] Add `new_library_with_cards()` for late-binding architecture
+- [x] Cleanup all usages in client.rs with TODO markers
+- [x] All 795 tests passing
 
-### Phase 5: Cleanup
-- [ ] Remove HiddenDraw, HiddenDiscard action variants
+### Phase 5: Cleanup 🔄 IN PROGRESS
+- [x] Remove HiddenDraw, HiddenDiscard action variants (done in Phase 4)
 - [ ] Remove insert_if_vacant (no longer needed)
 - [ ] Remove backward compatibility shims
+- [ ] Complete network client migration (Phase 3 remainder)
 - [ ] Update documentation
 
 ## Key Design Decisions
