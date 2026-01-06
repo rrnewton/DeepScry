@@ -1,0 +1,20 @@
+[metadata]
+Name:Mongoose Lizard ETB Damage Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Mongoose Lizard and mana to cast (4RR = 6 mana)
+p0life=20
+p0hand=Mongoose Lizard
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0library=Mountain; Mountain; Mountain
+
+# P1 has a creature with 1 toughness to prove ETB damage
+p1life=20
+p1battlefield=Forest; Forest; Llanowar Elves
+p1library=Forest; Forest; Forest

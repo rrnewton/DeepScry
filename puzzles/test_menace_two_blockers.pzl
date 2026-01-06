@@ -1,0 +1,20 @@
+[metadata]
+Name:Menace Two Blockers Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=COMBAT_DECLARE_ATTACKERS
+
+# P0 has Mongoose Lizard ready to attack
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Mountain; Mongoose Lizard
+p0library=Mountain; Mountain; Mountain
+
+# P1 has TWO creatures - CAN block Menace together
+p1life=20
+p1battlefield=Forest; Forest; Grizzly Bears; Llanowar Elves
+p1library=Forest; Forest; Forest

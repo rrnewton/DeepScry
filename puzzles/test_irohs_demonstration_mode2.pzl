@@ -1,0 +1,20 @@
+[metadata]
+Name:Iroh's Demonstration Mode 2 Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Iroh's Demonstration and mana
+p0life=20
+p0hand=Iroh's Demonstration
+p0battlefield=Mountain; Mountain
+p0library=Mountain; Mountain; Mountain
+
+# P1 has a big creature that needs 4 damage to kill
+p1life=20
+p1battlefield=Forest; Forest; Grizzly Bears
+p1library=Forest; Forest; Forest
