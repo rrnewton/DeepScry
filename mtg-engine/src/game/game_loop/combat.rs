@@ -136,12 +136,9 @@ impl<'a> GameLoop<'a> {
                         self.game.logger.gamelog(&message);
                     }
                 }
-
-                // Check attack triggers (e.g., Firebending, "Whenever this creature attacks")
-                // MTG Rules 508.1m: Abilities that trigger on declaring attackers go on stack
-                if let Err(e) = self.game.check_attack_triggers(*attacker_id, active_player) {
-                    log::warn!(target: "trigger", "Failed to check attack triggers for {:?}: {}", attacker_id, e);
-                }
+                // NOTE: Attack triggers are already checked in declare_attacker() via check_triggers()
+                // which now handles optional triggers with sacrifice costs. No need to call
+                // check_attack_triggers() here as it would duplicate trigger execution.
             }
         }
 

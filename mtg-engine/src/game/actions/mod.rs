@@ -1766,7 +1766,77 @@ impl GameState {
         }
     }
 
-    /// Check for triggered abilities and execute them
+    /// Choose the best permanent to sacrifice for an optional trigger cost.
+    /// Returns None if no valid target exists.
+    ///
+    /// AI heuristic: pick the "lowest value" permanent matching the pattern.
+    /// For creatures, this is based on P/T sum. For non-creatures, we prefer tokens.
+    pub fn choose_sacrifice_target(
+        &self,
+        pattern: &str,
+        source_card_id: CardId,
+        player_id: PlayerId,
+    ) -> Option<CardId> {
+        // Parse the pattern - multiple options separated by semicolons
+        let patterns: Vec<&str> = pattern.split(';').collect();
+
+        // Collect all valid sacrifice targets with their "value" for AI comparison
+        let mut candidates: Vec<(CardId, i32)> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+
+                // Must be controlled by the player
+                if card.controller != player_id {
+                    return None;
+                }
+
+                // Check each pattern option (OR logic)
+                for p in &patterns {
+                    let mut matches = false;
+
+                    // Check card type
+                    if p.contains("Artifact") && card.is_artifact() {
+                        matches = true;
+                    }
+                    if p.contains("Creature") && card.is_creature() {
+                        matches = true;
+                    }
+                    if p.contains("Land") && card.is_land() {
+                        matches = true;
+                    }
+
+                    // Check "Other" modifier - can't sacrifice the source
+                    if p.contains(".Other") && card_id == source_card_id {
+                        matches = false;
+                    }
+
+                    if matches {
+                        // Calculate a "value" for this permanent (lower = better to sacrifice)
+                        // Creatures: P/T sum (prefer low P/T creatures)
+                        // Non-creatures: CMC (prefer low CMC)
+                        let value = if card.is_creature() {
+                            (card.current_power() as i32) + (card.current_toughness() as i32)
+                        } else {
+                            card.mana_cost.cmc() as i32
+                        };
+
+                        return Some((card_id, value));
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Sort by value (ascending - lowest value first)
+        candidates.sort_by_key(|(_, value)| *value);
+
+        // Return the lowest-value target
+        candidates.first().map(|(id, _)| *id)
+    }
+
     /// Check if a sacrifice pattern cost can be paid by the given player.
     /// Returns true if the player has enough valid permanents to sacrifice.
     ///
@@ -1848,12 +1918,19 @@ impl GameState {
     pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
         use crate::core::Trigger;
 
-        // Info needed to check trigger payability
+        // Info needed to check trigger payability and execute costs
         struct TriggerInfo {
             card_id: CardId,
             card_name: String,
             controller: PlayerId,
             trigger: Trigger,
+        }
+
+        // Collected trigger with cost info for execution
+        struct TriggerToExecute {
+            source_card_id: CardId,
+            effects: Vec<Effect>,
+            sacrifice_target: Option<CardId>, // Card to sacrifice for the cost
         }
 
         // Phase 1: Collect matching triggers with their metadata
@@ -1893,11 +1970,13 @@ impl GameState {
             .flatten()
             .collect();
 
-        // Phase 2: Filter by cost payability and collect effects
-        let triggered_effects: Vec<(CardId, Vec<Effect>)> = candidate_triggers
+        // Phase 2: Filter by cost payability, choose sacrifice targets, and collect effects
+        let triggered_effects: Vec<TriggerToExecute> = candidate_triggers
             .into_iter()
             .filter_map(|info| {
-                // For optional triggers with costs, check payability
+                let mut sacrifice_target: Option<CardId> = None;
+
+                // For optional triggers with costs, check payability and choose targets
                 if info.trigger.optional {
                     if let Some(ref cost) = info.trigger.cost {
                         // Check if sacrifice cost can be paid
@@ -1911,6 +1990,9 @@ impl GameState {
                                 );
                                 return None; // Auto-decline if can't pay
                             }
+
+                            // Choose which permanent to sacrifice (AI heuristic: pick lowest P/T creature or artifact)
+                            sacrifice_target = self.choose_sacrifice_target(pattern, info.card_id, info.controller);
                         }
                         // TODO: Check other cost types (mana, life, etc.)
                     }
@@ -1927,16 +2009,40 @@ impl GameState {
                     for effect in &info.trigger.effects {
                         log::debug!("  Trigger effect: {:?}", effect);
                     }
-                    Some((info.card_id, info.trigger.effects))
+                    if let Some(sac_id) = sacrifice_target {
+                        if let Ok(sac_card) = self.cards.get(sac_id) {
+                            log::debug!("  Will sacrifice: {} ({})", sac_card.name, sac_id.as_u32());
+                        }
+                    }
+                    Some(TriggerToExecute {
+                        source_card_id: info.card_id,
+                        effects: info.trigger.effects,
+                        sacrifice_target,
+                    })
                 } else {
                     None
                 }
             })
             .collect();
 
-        // Execute all triggered effects
-        for (trigger_source, effects) in triggered_effects {
-            for mut effect in effects {
+        // Phase 3: Execute sacrifices and triggered effects
+        for trigger_to_exec in triggered_effects {
+            let trigger_source = trigger_to_exec.source_card_id;
+
+            // Execute sacrifice cost first (if any)
+            if let Some(sac_target) = trigger_to_exec.sacrifice_target {
+                if let Ok(sac_card) = self.cards.get(sac_target) {
+                    let sac_name = sac_card.name.to_string();
+                    let sac_owner = sac_card.owner;
+                    log::info!("Sacrificing {} ({}) for trigger cost", sac_name, sac_target.as_u32());
+
+                    // Move from battlefield to graveyard
+                    self.move_card(sac_target, Zone::Battlefield, Zone::Graveyard, sac_owner)?;
+                }
+            }
+
+            // Now execute all trigger effects
+            for mut effect in trigger_to_exec.effects {
                 // Fill in placeholder values in trigger effects
                 // Similar to resolve_spell, we need to fill in targets
                 match &mut effect {
@@ -2009,6 +2115,19 @@ impl GameState {
                         let controller = self.cards.get(trigger_source)?.controller;
                         effect = Effect::GainLife {
                             player: controller,
+                            amount: *amount,
+                        };
+                    }
+                    Effect::PutCounter {
+                        target,
+                        counter_type,
+                        amount,
+                    } if target.as_u32() == 0 => {
+                        // Placeholder CardId 0 means "put counter on self" (the trigger source)
+                        // Used by Beetle-Headed Merchants: "put a +1/+1 counter on this creature"
+                        effect = Effect::PutCounter {
+                            target: trigger_source,
+                            counter_type: *counter_type,
                             amount: *amount,
                         };
                     }

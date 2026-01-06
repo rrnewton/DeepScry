@@ -991,6 +991,16 @@ impl Card {
         base + plus_counters - minus_counters + bonus
     }
 
+    /// Get temporary base power override if set
+    pub fn temp_base_power(&self) -> Option<i8> {
+        self.temp_base_power
+    }
+
+    /// Get temporary base toughness override if set
+    pub fn temp_base_toughness(&self) -> Option<i8> {
+        self.temp_base_toughness
+    }
+
     /// Set temporary base power override (until end of turn)
     /// Used by Animate effects like Flexible Waterbender
     pub fn set_temp_base_power(&mut self, power: i8) {

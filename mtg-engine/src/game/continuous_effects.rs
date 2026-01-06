@@ -201,8 +201,16 @@ impl GameState {
     pub fn get_pt_breakdown(&self, creature_id: CardId) -> Result<PTBreakdown> {
         let creature = self.cards.get(creature_id)?;
 
-        // Base P/T from printed card
-        let base = (creature.current_power() as i32, creature.current_toughness() as i32);
+        // Base P/T from printed card (or temp base from Animate effects)
+        // NOTE: Use base_power()/base_toughness() NOT current_power()/current_toughness()
+        // because current_* includes counters, which we count separately in modifypt_counters.
+        // Double-counting counters here would cause +1/+1 counters to give +2/+2!
+        let base_p = creature.temp_base_power().or(creature.base_power()).unwrap_or(0) as i32;
+        let base_t = creature
+            .temp_base_toughness()
+            .or(creature.base_toughness())
+            .unwrap_or(0) as i32;
+        let base = (base_p, base_t);
 
         // Layer 7a (CR 613.4a): Characteristic-defining abilities
         // TODO: Implement for creatures like Tarmogoyf (*/* based on card types)
