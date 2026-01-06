@@ -1,0 +1,26 @@
+[metadata]
+Name:Ty Lee Prowess + Twin Blades Flash Combat Trick
+Goal:Win
+Difficulty:Medium
+
+[state]
+turn=1
+activeplayer=p0
+activephase=DECLAREBLOCKERS
+
+# P0 has Ty Lee attacking (2/1 with Prowess and Flash)
+# Twin Blades in hand (Flash equipment, grants double strike on ETB)
+# When Twin Blades is cast:
+# 1. Prowess triggers (Ty Lee +1/+1 until end of turn = 3/2)
+# 2. Twin Blades ETB: attach to Ty Lee, grants double strike until end of turn
+# 3. Equipment gives +1/+1 (now 4/3)
+# Result: 4/3 with double strike = 8 damage
+p0life=20
+p0hand=Twin Blades
+p0battlefield=Mountain; Mountain; Mountain; Ty Lee, Chi Blocker|Attacking
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Opponent is at 8 life, dies to 8 damage from double strike (4+4)
+p1life=8
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

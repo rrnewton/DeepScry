@@ -1,0 +1,23 @@
+[metadata]
+Name:Prowess Trigger on Noncreature Spell
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Ty Lee starts as 2/1 with Prowess
+# Cast Divination (sorcery, noncreature spell) - Prowess triggers
+# Ty Lee becomes 3/2 until end of turn
+# Then attack for 3 damage
+p0life=20
+p0hand=Divination
+p0battlefield=Island; Island; Island; Ty Lee, Chi Blocker
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Opponent at 3 life, dies to 3 damage from Prowess-buffed Ty Lee
+p1life=3
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

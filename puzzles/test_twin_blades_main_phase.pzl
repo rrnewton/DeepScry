@@ -1,0 +1,21 @@
+[metadata]
+Name:Twin Blades Main Phase Cast Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# Test casting Twin Blades in main phase and verifying it gives double strike
+p0life=20
+p0hand=Twin Blades
+p0battlefield=Mountain; Mountain; Mountain; Grizzly Bears
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+# Opponent at 4 life, should die to 4 damage from double strike (2+2)
+# Grizzly Bears 2/2 becomes 3/3 with equipment, double strike = 6 damage
+p1life=6
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest

@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 93 items verified as of 2026-01-06_#1572(699ffd7)
+**Progress:** 96 items verified as of 2026-01-06_#1576
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -302,6 +302,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Boar-q-pine triggers on artifact spells (test_boar_q_pine_artifact.pzl - Sol Ring)
 - Boar-q-pine triggers on enchantment spells (test_boar_q_pine_enchantment.pzl - Glorious Anthem)
 - Deserter's Disciple power 2 or less restriction enforced (test_deserters_disciple_power_restriction.pzl)
+- Double Strike deals damage in both first strike and normal damage steps (test_double_strike_damage.pzl)
+- First Strike kills blocker before they deal damage back (test_first_strike_damage.pzl)
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
@@ -310,3 +312,6 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Legendary rule (MTG 704.5j) - should sacrifice one when controlling two of same name
 - Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
+- Prowess keyword - recognized but not expanded into a trigger (Ty Lee doesn't get +1/+1)
+- DB$ Attach - equipment attach effects not implemented (Twin Blades ETB doesn't attach)
+- DB$ Pump with KW$ - granting keywords like Double Strike via pump not verified

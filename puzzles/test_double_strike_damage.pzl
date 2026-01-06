@@ -1,0 +1,21 @@
+[metadata]
+Name:Double Strike Deals Damage Twice
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=DECLAREBLOCKERS
+
+# Adorned Pouncer is 1/1 with Double Strike
+# It should deal damage twice: 1 (first strike) + 1 (normal) = 2 total damage
+p0life=20
+p0hand=
+p0battlefield=Plains; Plains; Adorned Pouncer|Attacking
+p0library=Plains; Plains; Plains; Plains; Plains
+
+# Opponent at 2 life, should die to double strike (1 + 1 = 2)
+p1life=2
+p1battlefield=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest
