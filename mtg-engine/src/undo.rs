@@ -149,6 +149,39 @@ pub enum GameAction {
         /// Player who discarded the card
         player_id: PlayerId,
     },
+
+    /// Reveal a card's identity (CardID ⟺ CardName binding)
+    ///
+    /// Part of the late-binding CardID architecture (mtg-qtqcr). This action binds
+    /// a pre-allocated CardID to its actual card identity (name).
+    ///
+    /// ## Viewer-Specific Content
+    ///
+    /// This action is logged by ALL players for EVERY reveal, but with different content:
+    /// - Players who learn the identity: `name = Some("Lightning Bolt")`, `card = Some(...)`
+    /// - Players who don't learn: `name = None`, `card = None` (keeps action_count in sync)
+    ///
+    /// This keeps action_count synchronized across all clients while maintaining
+    /// information asymmetry.
+    ///
+    /// ## Forward Logic
+    ///
+    /// If `card` is Some, insert the Card into the EntityStore at `card_id`.
+    /// If `card` is None, this is a "dummy" reveal that doesn't modify state
+    /// (for opponents who don't learn the card identity).
+    ///
+    /// ## Undo Logic
+    ///
+    /// Clear the slot back to None using EntityStore::clear().
+    RevealCard {
+        /// The CardID being revealed
+        card_id: CardId,
+        /// The revealed card name, or None for players who don't learn it
+        name: Option<String>,
+        /// The full Card entity to insert, or None for dummy reveals
+        /// This is stored so that undo can restore the exact card state
+        card: Option<Box<crate::core::Card>>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -235,6 +268,10 @@ impl fmt::Display for GameAction {
             GameAction::HiddenDiscard { player_id } => {
                 write!(f, "HiddenDiscard(P{})", player_id.as_u32())
             }
+            GameAction::RevealCard { card_id, name, .. } => match name {
+                Some(n) => write!(f, "RevealCard({} = \"{}\")", card_id.as_u32(), n),
+                None => write!(f, "RevealCard({} = ???)", card_id.as_u32()),
+            },
         }
     }
 }
@@ -453,6 +490,16 @@ impl GameAction {
                     zones.hand.increment_hidden_card_count();
                     zones.graveyard.decrement_hidden_card_count();
                 }
+            }
+
+            GameAction::RevealCard { card_id, card, .. } => {
+                // Undo reveal: clear the card from EntityStore (unreveal it)
+                // Only clear if we actually revealed a card (card was Some)
+                if card.is_some() {
+                    game.cards.clear(*card_id);
+                }
+                // If card was None, this was a dummy reveal (opponent perspective)
+                // and nothing needs to be undone
             }
         }
 
@@ -913,5 +960,125 @@ mod tests {
 
         // Should return the most recent turn
         assert_eq!(log.current_turn(), Some(2));
+    }
+
+    // =========================================================================
+    // RevealCard tests (Phase 2, mtg-qtqcr)
+    // =========================================================================
+
+    #[test]
+    fn test_reveal_card_display_with_name() {
+        let action = GameAction::RevealCard {
+            card_id: CardId::new(5),
+            name: Some("Lightning Bolt".to_string()),
+            card: None, // Display doesn't need the card
+        };
+
+        let display = format!("{}", action);
+        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\")");
+    }
+
+    #[test]
+    fn test_reveal_card_display_without_name() {
+        // Opponent perspective - doesn't know the card name
+        let action = GameAction::RevealCard {
+            card_id: CardId::new(42),
+            name: None,
+            card: None,
+        };
+
+        let display = format!("{}", action);
+        assert_eq!(display, "RevealCard(42 = ???)");
+    }
+
+    #[test]
+    fn test_reveal_card_undo_with_card() {
+        use crate::core::Card;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+
+        // Reserve a slot for the card (as would be done at game start)
+        game.cards.reserve(CardId::new(100));
+        assert!(!game.cards.is_revealed(CardId::new(100)));
+
+        // Create a test card
+        let card = Card::new(CardId::new(100), "Test Card", PlayerId::new(0));
+
+        // Insert the card (simulating forward execution of RevealCard)
+        game.cards.insert(CardId::new(100), card.clone());
+        assert!(game.cards.is_revealed(CardId::new(100)));
+
+        // Create the RevealCard action (with the card for undo)
+        let action = GameAction::RevealCard {
+            card_id: CardId::new(100),
+            name: Some("Test Card".to_string()),
+            card: Some(Box::new(card)),
+        };
+
+        // Undo the reveal
+        action.undo(&mut game).unwrap();
+
+        // Card should be unrevealed (cleared)
+        assert!(!game.cards.is_revealed(CardId::new(100)));
+    }
+
+    #[test]
+    fn test_reveal_card_undo_dummy_reveal() {
+        // Dummy reveal (opponent perspective) - no card to insert/clear
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+
+        // Reserve a slot (slot stays empty for opponent)
+        game.cards.reserve(CardId::new(100));
+        assert!(!game.cards.is_revealed(CardId::new(100)));
+
+        // Create dummy RevealCard (opponent doesn't learn the card)
+        let action = GameAction::RevealCard {
+            card_id: CardId::new(100),
+            name: None,
+            card: None,
+        };
+
+        // Undo should succeed without error (no-op)
+        action.undo(&mut game).unwrap();
+
+        // Slot should still be unrevealed
+        assert!(!game.cards.is_revealed(CardId::new(100)));
+    }
+
+    #[test]
+    fn test_reveal_card_round_trip_via_undo_log() {
+        use crate::core::Card;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let mut log = UndoLog::new();
+
+        // Reserve slot
+        game.cards.reserve(CardId::new(50));
+
+        // Create and insert card
+        let card = Card::new(CardId::new(50), "Mountain", PlayerId::new(0));
+        game.cards.insert(CardId::new(50), card.clone());
+
+        // Log the reveal action
+        log.log(
+            GameAction::RevealCard {
+                card_id: CardId::new(50),
+                name: Some("Mountain".to_string()),
+                card: Some(Box::new(card)),
+            },
+            0,
+        );
+
+        // Verify card is revealed
+        assert!(game.cards.is_revealed(CardId::new(50)));
+        assert_eq!(log.len(), 1);
+
+        // Pop and undo
+        let (action, _) = log.pop().unwrap();
+        action.undo(&mut game).unwrap();
+
+        // Verify unrevealed
+        assert!(!game.cards.is_revealed(CardId::new(50)));
+        assert!(log.is_empty());
     }
 }

@@ -29,17 +29,21 @@ Major architectural change to make CardIDs **public and shared** between server 
 
 ## Implementation Phases
 
-### Phase 1: EntityStore Extensions
-- [ ] Add `reserve(id)` method - pre-allocate slot
-- [ ] Add `clear(id)` method - set slot back to None (for undo)
-- [ ] Add `is_revealed(id)` method - check if slot has entity
-- [ ] Keep existing `insert()` with write-once semantics
+### Phase 1: EntityStore Extensions ✅ COMPLETE
+- [x] Add `reserve(id)` method - pre-allocate slot
+- [x] Add `reserve_range(start, count)` method - batch reservation
+- [x] Add `clear(id)` method - set slot back to None (for undo)
+- [x] Add `is_revealed(id)` method - check if slot has entity
+- [x] Keep existing `insert()` with write-once semantics
+- [x] Add 5 comprehensive unit tests
 
-### Phase 2: RevealCard GameAction
-- [ ] Add `RevealCard { card_id, name: Option<String> }` variant
-- [ ] Implement forward logic (insert into EntityStore)
-- [ ] Implement undo logic (clear from EntityStore)
-- [ ] Keep HiddenDraw/HiddenDiscard for backward compat initially
+### Phase 2: RevealCard GameAction ✅ COMPLETE
+- [x] Add `RevealCard { card_id, name, card }` variant
+- [x] Implement undo logic in `undo.rs` (clear from EntityStore)
+- [x] Implement undo logic in `state.rs` (parallel match arm)
+- [x] Add Display impl for RevealCard
+- [x] Add 5 unit tests for RevealCard
+- [x] Keep HiddenDraw/HiddenDiscard for backward compat initially
 
 ### Phase 3: Zone Simplification
 - [ ] Remove `LibraryMode` enum entirely

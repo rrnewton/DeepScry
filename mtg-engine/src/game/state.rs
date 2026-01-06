@@ -1720,6 +1720,16 @@ impl GameState {
                         zones.graveyard.decrement_hidden_card_count();
                     }
                 }
+
+                crate::undo::GameAction::RevealCard { card_id, card, .. } => {
+                    // Undo reveal: clear the card from EntityStore (unreveal it)
+                    // Only clear if we actually revealed a card (card was Some)
+                    if card.is_some() {
+                        self.cards.clear(card_id);
+                    }
+                    // If card was None, this was a dummy reveal (opponent perspective)
+                    // and nothing needs to be undone
+                }
             }
 
             // After undo, mark all mana caches as needing rebuild
