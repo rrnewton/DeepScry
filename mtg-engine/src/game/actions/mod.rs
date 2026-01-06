@@ -952,6 +952,15 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::Loot {
+                player,
+                discard_count,
+                draw_count,
+            } if player.as_u32() == 0 => Effect::Loot {
+                player: card_owner,
+                discard_count: *discard_count,
+                draw_count: *draw_count,
+            },
             Effect::AddMana {
                 player,
                 mana,
@@ -1081,6 +1090,26 @@ impl GameState {
             },
             Effect::DrawCards { player, count } => {
                 for _ in 0..*count {
+                    self.draw_card(*player)?;
+                }
+            }
+            Effect::Loot {
+                player,
+                discard_count,
+                draw_count,
+            } => {
+                // Looting: discard first, then draw
+                // Use AI to choose what to discard
+                for _ in 0..*discard_count {
+                    let card_to_discard = self.choose_card_to_discard(*player)?;
+                    if let Some(card_id) = card_to_discard {
+                        self.discard_card(*player, card_id)?;
+                    } else {
+                        // No cards to discard, can't complete the loot
+                        break;
+                    }
+                }
+                for _ in 0..*draw_count {
                     self.draw_card(*player)?;
                 }
             }
@@ -1963,6 +1992,67 @@ impl GameState {
         valid_targets >= count as usize
     }
 
+    /// Choose a card to discard from the player's hand.
+    ///
+    /// AI heuristic: pick the "lowest value" card.
+    /// - Lands are preferred to discard (since hand is usually full of spells)
+    /// - For spells, prefer higher CMC (less likely to cast soon)
+    ///
+    /// Returns None if the player has no cards in hand.
+    pub fn choose_card_to_discard(&self, player_id: PlayerId) -> Result<Option<CardId>> {
+        let zones = self
+            .get_player_zones(player_id)
+            .ok_or_else(|| MtgError::InvalidAction("Player zones not found".to_string()))?;
+
+        if zones.hand.is_empty() {
+            return Ok(None);
+        }
+
+        // Collect cards with their "discard value" (higher = more desirable to discard)
+        let mut candidates: Vec<(CardId, i32)> = zones
+            .hand
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+
+                // Calculate discard value (higher = better to discard)
+                // Lands are most desirable to discard when looting (value 1000)
+                // Spells: prefer discarding high CMC spells (value = CMC)
+                // since we're likely to draw into something better
+                let value = if card.is_land() {
+                    1000
+                } else {
+                    i32::from(card.mana_cost.cmc())
+                };
+
+                Some((card_id, value))
+            })
+            .collect();
+
+        // Sort by value (descending - highest value first = best to discard)
+        candidates.sort_by_key(|(_, value)| -(*value));
+
+        Ok(candidates.first().map(|(id, _)| *id))
+    }
+
+    /// Discard a specific card from the player's hand.
+    ///
+    /// Moves the card from hand to graveyard and logs the action.
+    pub fn discard_card(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
+        // Get card name for logging before move
+        let card_name = self.cards.get(card_id)?.name.to_string();
+        let player_name = self.get_player(player_id)?.name.clone();
+
+        // Move card from hand to graveyard
+        self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
+
+        // Log the discard
+        self.logger.gamelog(&format!("{} discards {}", player_name, card_name));
+
+        Ok(())
+    }
+
     ///
     /// This checks all permanents on the battlefield for triggers matching the given event.
     /// When triggers are found, their effects are executed immediately (for now).
@@ -2120,6 +2210,19 @@ impl GameState {
                         effect = Effect::DrawCards {
                             player: controller,
                             count: *count,
+                        };
+                    }
+                    Effect::Loot {
+                        player,
+                        discard_count,
+                        draw_count,
+                    } if player.as_u32() == 0 => {
+                        // Placeholder player ID 0 means the controller of the trigger source
+                        let controller = self.cards.get(trigger_source)?.controller;
+                        effect = Effect::Loot {
+                            player: controller,
+                            discard_count: *discard_count,
+                            draw_count: *draw_count,
                         };
                     }
                     Effect::DealDamage {
@@ -2396,6 +2499,19 @@ impl GameState {
                     effect = Effect::DrawCards {
                         player: controller,
                         count: *count,
+                    };
+                }
+                Effect::Loot {
+                    player,
+                    discard_count,
+                    draw_count,
+                } if player.as_u32() == 0 => {
+                    // Placeholder player ID 0 means the controller of the trigger source
+                    let controller = self.cards.get(card_id)?.controller;
+                    effect = Effect::Loot {
+                        player: controller,
+                        discard_count: *discard_count,
+                        draw_count: *draw_count,
                     };
                 }
                 Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {

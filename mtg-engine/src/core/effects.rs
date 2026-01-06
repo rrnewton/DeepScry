@@ -219,6 +219,15 @@ pub enum Effect {
     /// Example: "Draw a card"
     DrawCards { player: PlayerId, count: u8 },
 
+    /// Looting effect (discard then draw)
+    /// Example: "Discard a card, then draw a card"
+    /// Corresponds to: AB$ Draw | Cost$ Discard<N/Card> (requires discarding N cards first)
+    Loot {
+        player: PlayerId,
+        discard_count: u8,
+        draw_count: u8,
+    },
+
     /// Gain life
     /// Example: "You gain 3 life"
     GainLife { player: PlayerId, amount: i32 },

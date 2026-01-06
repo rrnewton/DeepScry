@@ -1,10 +1,11 @@
 ---
 title: ETB triggers with optional discard cost don't fire (Yuyan Archers)
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-01-06T02:26:56.768997064+00:00
-updated_at: 2026-01-06T02:26:56.768997064+00:00
+updated_at: 2026-01-06T15:40:24.192842044+00:00
+closed_at: 2026-01-06T15:40:24.192841984+00:00
 ---
 
 # Description
