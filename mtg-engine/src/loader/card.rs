@@ -1280,6 +1280,7 @@ impl CardDefinition {
     ///
     /// Uses tokenized parsing (ability_parser) for safety and correctness.
     /// Replaces unsafe substring matching with proper parameter extraction.
+    /// Follows SubAbility$ chains to resolve all effects in a spell.
     fn parse_effects(&self) -> Vec<crate::core::Effect> {
         use super::ability_parser::{AbilityParams, ApiType};
         use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect};
@@ -1317,11 +1318,72 @@ impl CardDefinition {
             if let Some(effect) = effect {
                 effects.push(effect);
             }
+
+            // Follow SubAbility$ chain to parse additional effects
+            // Example: A:SP$ Pump | SubAbility$ DBToken creates both Pump and Token effects
+            self.follow_sub_ability_chain(&params, &mut effects);
             // Note: Unsupported API types are silently skipped (returns None)
             // This is intentional - we don't want to spam warnings for every unsupported ability
         }
 
         effects
+    }
+
+    /// Follow SubAbility$ chain to parse additional effects
+    ///
+    /// When a spell has SubAbility$ param pointing to an SVar, we parse that SVar
+    /// as an additional effect. This handles cards like Cunning Maneuver which has:
+    /// - A:SP$ Pump | SubAbility$ DBToken
+    /// - SVar:DBToken:DB$ Token | TokenScript$ c_a_clue_draw
+    fn follow_sub_ability_chain(
+        &self,
+        params: &super::ability_parser::AbilityParams,
+        effects: &mut Vec<crate::core::Effect>,
+    ) {
+        use super::ability_parser::AbilityParams;
+        use super::effect_converter::params_to_effect;
+
+        // Check if there's a SubAbility$ reference
+        let sub_ability_name = match params.get("SubAbility") {
+            Some(name) => name,
+            None => return,
+        };
+
+        // Look up the SVar definition
+        let svar_body = match self.svars.get(sub_ability_name) {
+            Some(body) => body,
+            None => {
+                log::debug!(
+                    target: "card_parser",
+                    "SubAbility$ {} not found in SVars",
+                    sub_ability_name
+                );
+                return;
+            }
+        };
+
+        // Parse the SVar as an ability (DB$ or AB$ prefix)
+        // Convert "DB$ Token | ..." to "A:DB$ Token | ..." for AbilityParams parsing
+        let ability_line = format!("A:{}", svar_body);
+        let sub_params = match AbilityParams::parse(&ability_line) {
+            Ok(p) => p,
+            Err(e) => {
+                log::debug!(
+                    target: "card_parser",
+                    "Failed to parse SubAbility$ {} ({}): {}",
+                    sub_ability_name, svar_body, e
+                );
+                return;
+            }
+        };
+
+        // Convert to effect
+        if let Some(effect) = params_to_effect(&sub_params) {
+            effects.push(effect);
+        }
+
+        // Recursively follow further SubAbility chains
+        self.follow_sub_ability_chain(&sub_params, effects);
     }
 
     /// Parse triggered abilities (T: lines)

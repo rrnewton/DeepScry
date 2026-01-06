@@ -472,6 +472,33 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Token => {
+            // Token creation: DB$ Token | TokenScript$ c_a_clue_draw | TokenOwner$ You
+            //
+            // Parameters:
+            // - TokenScript$: Name of the token script file (e.g., c_a_clue_draw, c_a_food_sac)
+            // - TokenOwner$: Who controls the token (You, Opponent, etc.)
+            // - TokenAmount$: Number of tokens to create (default 1)
+            //
+            // Examples:
+            // - Cunning Maneuver: creates Clue token (c_a_clue_draw)
+            // - Canyon Crawler: creates Food token (c_a_food_sac)
+            let token_script = params.get("TokenScript")?.to_string();
+            let amount = params.get_u8("TokenAmount").unwrap_or(1);
+
+            // TokenOwner$ parsing - default to controller (You)
+            let controller = match params.get("TokenOwner") {
+                Some("Opponent") => PlayerId::new(1), // Placeholder - will be resolved at runtime
+                _ => PlayerId::new(0),                // Placeholder - controller
+            };
+
+            Some(Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
