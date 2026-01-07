@@ -969,6 +969,10 @@ impl<T> ChoiceResult<T> {
     }
 
     /// Helper to unwrap the Ok value (panics if not Ok)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the result is not `Ok` (i.e., is `UndoRequest`, `ExitGame`, `Error`, or `NeedInput`).
     pub fn unwrap(self) -> T {
         match self {
             ChoiceResult::Ok(value) => value,

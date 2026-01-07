@@ -75,6 +75,10 @@ struct TournamentStats {
 }
 
 /// Run tournament mode - play multiple games in parallel and collect statistics
+///
+/// # Panics
+///
+/// Panics if a mutex lock is poisoned (indicates a panic occurred in another thread).
 pub async fn run_tourney(
     deck_paths: Vec<PathBuf>,
     games: Option<usize>,

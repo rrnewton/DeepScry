@@ -117,6 +117,10 @@ pub struct ImageDownloader {
 
 impl ImageDownloader {
     /// Create a new downloader with the given configuration
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be created (should never happen in practice).
     pub fn new(config: DownloadConfig) -> Self {
         let client = reqwest::Client::builder()
             .user_agent("mtg-forge-rs/0.1 (https://github.com/your-repo)")
@@ -167,6 +171,10 @@ impl ImageDownloader {
     }
 
     /// Download all configured card images
+    ///
+    /// # Panics
+    ///
+    /// Panics if the progress bar template is invalid (should never happen with hardcoded template).
     pub async fn download_all(&self) -> Result<DownloadStats> {
         let mut stats = DownloadStats::default();
 

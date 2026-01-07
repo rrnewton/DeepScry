@@ -359,6 +359,10 @@ where
     /// Remove an entity (not supported - entities are never removed)
     ///
     /// This method exists only for API compatibility but will panic if called.
+    ///
+    /// # Panics
+    ///
+    /// Always panics. Entities are never removed in MTG games.
     #[allow(unused_variables)]
     pub fn remove(&mut self, id: EntityId<T>) -> Option<T> {
         panic!("EntityStore::remove() is not supported - entities are never removed in MTG games")

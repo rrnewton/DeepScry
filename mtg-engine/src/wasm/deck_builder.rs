@@ -194,6 +194,10 @@ pub fn deck_builder_get_stats() -> String {
 ///
 /// Note: Wildcards are intentional - ratzilla KeyCode has 25+ variants;
 /// we handle the subset used in the deck builder.
+///
+/// # Panics
+///
+/// Panics if mutex locks are poisoned or internal state operations fail.
 #[wasm_bindgen]
 #[allow(clippy::wildcard_enum_match_arm)]
 pub fn launch_deck_builder(

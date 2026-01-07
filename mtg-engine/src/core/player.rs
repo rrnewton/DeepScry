@@ -142,13 +142,12 @@ impl Player {
         }
 
         // Fast path: no combat mana, just pay from regular pool
-        if self.combat_mana_pool.is_none() {
+        let Some(combat) = self.combat_mana_pool.as_mut() else {
             return self.mana_pool.pay_cost(cost);
-        }
+        };
 
         // Slow path: have combat mana, need to coordinate payment between pools
         // Strategy: Pay colored requirements first (from both pools), then generic
-        let combat = self.combat_mana_pool.as_mut().unwrap();
 
         // Pay colored costs - use regular pool first, then combat pool
         // White

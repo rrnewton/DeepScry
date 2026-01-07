@@ -35,3 +35,6 @@ cast_lossless = "warn"
 
 # Safety - restriction lints
 clone_on_ref_ptr = "warn"
+
+# Documentation quality - pedantic lints
+missing_panics_doc = "warn"

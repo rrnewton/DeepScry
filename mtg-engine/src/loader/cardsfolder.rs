@@ -46,6 +46,10 @@ pub fn find_cardsfolder() -> Option<PathBuf> {
 /// Find the cardsfolder directory or panic with helpful error message
 ///
 /// Use this in tests where cardsfolder is required and skipping is not acceptable
+///
+/// # Panics
+///
+/// Panics if the cardsfolder cannot be found (provides helpful error message with setup instructions).
 pub fn require_cardsfolder() -> PathBuf {
     find_cardsfolder().expect(
         "cardsfolder not found! Searched:\n\

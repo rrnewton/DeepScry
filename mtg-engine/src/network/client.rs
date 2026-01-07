@@ -503,6 +503,10 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage has 12+ variants;
     /// we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Panics
+    ///
+    /// Panics if WebSocket communication or card database operations fail unexpectedly.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn wait_for_game_start(&mut self) -> Result<()> {
         use crate::loader::GameInitializer;
@@ -807,6 +811,10 @@ impl NetworkClient {
     }
 
     /// Send a ping to keep connection alive
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system time is before the Unix epoch (should never happen).
     pub async fn send_ping(&mut self) -> Result<()> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -852,6 +860,10 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
     /// variants; we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal channel communication fails or required state is missing.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
@@ -1507,6 +1519,10 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
     /// variants; we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Panics
+    ///
+    /// Panics if tokio runtime creation fails or card database is not loaded.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn run_game_sync<C: PlayerController>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;

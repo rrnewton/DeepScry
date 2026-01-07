@@ -111,6 +111,10 @@ impl FancyTuiController {
 
     /// Save buffered logs to a temp file and print the location
     /// Call this after the game ends and terminal is restored
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system time is before the Unix epoch (should never happen).
     pub fn save_logs_on_exit(&self, view: &GameStateView) -> io::Result<()> {
         if !self.logger_memory_mode_enabled {
             return Ok(());
