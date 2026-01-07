@@ -499,6 +499,26 @@ impl CardDefinition {
             card.triggers.push(firebend_trigger);
         }
 
+        // Add Prowess trigger if the keyword is present
+        // Prowess: "Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn."
+        // MTG 702.108
+        if card.keywords.contains(Keyword::Prowess) {
+            use crate::core::{Effect, Trigger, TriggerEvent};
+
+            // Create SpellCast trigger with PumpCreature effect
+            // The [noncreature] marker tells check_spellcast_triggers to only fire for noncreature spells
+            let prowess_trigger = Trigger::new(
+                TriggerEvent::SpellCast,
+                vec![Effect::PumpCreature {
+                    target: CardId::new(0), // Placeholder - resolved at runtime to self
+                    power_bonus: 1,
+                    toughness_bonus: 1,
+                }],
+                "[noncreature] Prowess (+1/+1 until end of turn)".to_string(),
+            );
+            card.triggers.push(prowess_trigger);
+        }
+
         // Update cache AFTER all abilities are parsed (including implicit mana abilities)
         // This derives mana production from Effect::AddMana in the abilities,
         // following Java Forge's approach of using structured Produced$ data.
@@ -3624,5 +3644,73 @@ Oracle:Whenever Fire Lord Ozai attacks, you may sacrifice another creature. If y
             "Trigger should have Firebend effect with amount=254 (sacrificed creature's power). Effects: {:?}",
             trigger.effects
         );
+    }
+
+    #[test]
+    fn test_prowess_keyword_expansion() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Test Prowess keyword expansion into SpellCast trigger
+        // "Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn."
+        let content = r#"
+Name:Ty Lee, Artful Acrobat
+ManaCost:2 R
+Types:Legendary Creature Human Performer
+PT:3/2
+K:Prowess
+Oracle:Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        // Prowess keyword expansion happens in instantiate(), not parse_triggers()
+        // because it expands the keyword into a trigger after keywords are parsed
+        let card = def.instantiate(CardId::new(0), crate::core::PlayerId::new(0));
+
+        // Find the Prowess trigger (SpellCast event with PumpCreature effect)
+        let prowess_trigger = card.triggers.iter().find(|t| {
+            t.event == TriggerEvent::SpellCast
+                && t.description.contains("Prowess")
+                && t.effects.iter().any(|e| {
+                    matches!(
+                        e,
+                        Effect::PumpCreature {
+                            power_bonus: 1,
+                            toughness_bonus: 1,
+                            ..
+                        }
+                    )
+                })
+        });
+
+        assert!(
+            prowess_trigger.is_some(),
+            "Should have a Prowess SpellCast trigger with +1/+1 pump effect. Triggers: {:?}",
+            card.triggers
+        );
+
+        let trigger = prowess_trigger.unwrap();
+
+        // Verify it's marked as noncreature-only
+        assert!(
+            trigger.description.contains("noncreature"),
+            "Prowess trigger should be marked for noncreature spells only"
+        );
+
+        // Verify the pump effect targets self (CardId 0 placeholder)
+        let pump_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::PumpCreature { .. }));
+        assert!(pump_effect.is_some(), "Should have PumpCreature effect");
+        if let Some(Effect::PumpCreature {
+            target,
+            power_bonus,
+            toughness_bonus,
+        }) = pump_effect
+        {
+            assert_eq!(target.as_u32(), 0, "Target should be placeholder 0 (self)");
+            assert_eq!(*power_bonus, 1, "Power bonus should be +1");
+            assert_eq!(*toughness_bonus, 1, "Toughness bonus should be +1");
+        }
     }
 }
