@@ -1751,7 +1751,13 @@ impl NetworkClient {
                         log::error!("Game terminated due to fatal error: {}", msg);
                         return Err(anyhow!("Fatal server error: {}", msg));
                     }
-                    if let Ok((winner, _)) = game_end_rx.recv_timeout(Duration::from_millis(100)) {
+                    // Wait up to 5 seconds for the server to send the winner
+                    // This matches the async version timeout
+                    if let Ok((winner, server_action_count)) = game_end_rx.recv_timeout(Duration::from_secs(5)) {
+                        log::info!(
+                            "Game ended gracefully via ExitGame signal: winner={:?}, server_action_count={}",
+                            winner, server_action_count
+                        );
                         return Ok(winner);
                     }
                     // Check fatal error one more time after timeout
@@ -1759,6 +1765,7 @@ impl NetworkClient {
                         log::error!("Game terminated due to fatal error: {}", msg);
                         return Err(anyhow!("Fatal server error: {}", msg));
                     }
+                    log::info!("Game ended gracefully (no server signal within timeout)");
                     return Ok(None);
                 }
                 Err(anyhow!("Game error: {}", e))
