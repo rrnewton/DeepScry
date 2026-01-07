@@ -235,6 +235,7 @@ impl CardLoader {
             enters_tapped,
             etb_choose_color,
             etb_exclude_colors,
+            script_name: None, // Set by token loader
         })
     }
 }
@@ -266,6 +267,12 @@ pub struct CardDefinition {
     pub etb_choose_color: bool,
     /// Colors to exclude from the choice (from SVar:ChooseColor Exclude$ parameter)
     pub etb_exclude_colors: Vec<Color>,
+    /// Script name (for tokens only). Used to look up token definitions.
+    /// For tokens loaded from tokenscripts/, this is the filename without extension
+    /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
+    /// For regular cards, this is None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
 }
 
 impl CardDefinition {
@@ -3278,5 +3285,31 @@ Oracle:Whenever this creature attacks, it deals 1 damage to each opponent.
 
         // Verify it has no cost
         assert!(trigger.cost.is_none(), "Mandatory trigger should have no cost");
+    }
+
+    #[test]
+    fn test_extract_token_scripts_canyon_crawler() {
+        // Canyon Crawler creates a Food token via trigger
+        let content = r#"
+Name:Canyon Crawler
+ManaCost:4 B B
+Types:Creature Spider Beast
+PT:6/6
+K:Deathtouch
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigFood | TriggerDescription$ When this creature enters, create a Food token. (It's an artifact with "{2}, {T}, Sacrifice this token:You gain 3 life.")
+SVar:TrigFood:DB$ Token | TokenScript$ c_a_food_sac | TokenOwner$ You
+K:TypeCycling:Swamp:2
+Oracle:Deathtouch\nWhen this creature enters, create a Food token.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let token_scripts = def.extract_token_scripts();
+
+        assert!(
+            token_scripts.contains(&"c_a_food_sac".to_string()),
+            "Should extract c_a_food_sac token script. Got: {:?}. raw_abilities: {:?}",
+            token_scripts,
+            def.raw_abilities
+        );
     }
 }

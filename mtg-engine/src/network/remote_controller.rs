@@ -34,6 +34,7 @@ use std::sync::mpsc;
 /// that the game has ended (allowing graceful shutdown without treating
 /// channel close as a disconnect error).
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Choice is the hot path; boxing adds overhead
 pub enum RemoteMessage {
     /// An actual choice from the opponent
     Choice {

@@ -1,7 +1,7 @@
 //! Main game state structure
 
 use crate::core::{
-    Card, CardId, Color, DelayedTriggerStore, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId,
+    Card, CardId, CardName, Color, DelayedTriggerStore, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId,
 };
 use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
 use crate::undo::UndoLog;
@@ -73,6 +73,13 @@ pub struct GameState {
     /// For WASM builds, loaded from bundled deck token data.
     #[serde(skip)]
     pub token_definitions: std::collections::HashMap<String, std::sync::Arc<crate::loader::CardDefinition>>,
+
+    /// Card definitions for all cards in this game (server only)
+    /// Maps card name to its definition for network transmission.
+    /// Wrapped in Arc so that cloning GameState only bumps refcount.
+    /// Not serialized - rebuilt during game initialization.
+    #[serde(skip)]
+    pub card_definitions: std::sync::Arc<std::collections::HashMap<CardName, crate::loader::CardDefinition>>,
 
     /// Per-game bump allocator for temporary allocations
     ///
@@ -191,6 +198,7 @@ impl GameState {
             undo_log: UndoLog::new(),
             logger: GameLogger::new(),
             token_definitions: std::collections::HashMap::new(),
+            card_definitions: std::sync::Arc::new(std::collections::HashMap::new()),
             bump: Bump::new(),
             mana_state_version: 0,
             persistent_effects: PersistentEffectStore::new(),
@@ -1855,6 +1863,7 @@ impl Clone for GameState {
             undo_log: self.undo_log.clone(),
             logger: self.logger.clone(),
             token_definitions: self.token_definitions.clone(),
+            card_definitions: std::sync::Arc::clone(&self.card_definitions), // Arc clone = cheap refcount bump
             // Each clone gets a fresh empty bump allocator
             bump: Bump::new(),
             mana_state_version: self.mana_state_version,

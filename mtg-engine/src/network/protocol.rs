@@ -172,6 +172,7 @@ impl DeckSubmission {
 /// Messages sent from server to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // ChoiceRequest is the hot path; boxing adds overhead
 pub enum ServerMessage {
     /// Authentication result
     AuthResult {
@@ -225,6 +226,11 @@ pub enum ServerMessage {
         /// a RevealCard action makes it known.
         #[serde(skip_serializing_if = "Option::is_none")]
         deck_card_ids: Option<DeckCardIdRanges>,
+        /// Token definitions that may be created during this game.
+        /// Sent upfront so clients can create tokens without a local card database.
+        /// Key is the script name (e.g., "c_a_food_sac"), value is the CardDefinition.
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        token_definitions: std::collections::HashMap<String, crate::loader::CardDefinition>,
     },
 
     /// Card reveal event (draws, tutors, plays, etc.)
@@ -457,15 +463,19 @@ impl DeckCardIdRanges {
 
 /// Information about a revealed card
 ///
-/// Minimal structure containing only the card's server-assigned ID and name.
-/// The client uses the name to look up card properties from its local card database.
-/// This keeps network messages small while allowing crosscheck validation.
+/// Contains the card's server-assigned ID, name, and optionally the full card definition.
+/// When `card_def` is provided, the client can instantiate the card directly without
+/// needing a local card database. This enables lightweight/headless clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardReveal {
     /// The card's entity ID (must match server's ID for sync)
     pub card_id: CardId,
-    /// Card name (for DB lookup and crosscheck validation)
+    /// Card name (for logging and validation)
     pub name: String,
+    /// Full card definition (enables client to run without local card DB)
+    /// Server should always provide this for real reveals; omitted for dummy reveals (hidden opponent cards)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_def: Option<crate::loader::CardDefinition>,
 }
 
 /// Reason a card was revealed to a player
@@ -942,6 +952,7 @@ mod tests {
         let reveal = CardReveal {
             card_id: CardId::new(123),
             name: "Serra Angel".to_string(),
+            card_def: None, // Test without card definition
         };
 
         let json = serde_json::to_string(&reveal).expect("serialize");
@@ -1015,6 +1026,7 @@ mod tests {
                 opening_hand: vec![CardReveal {
                     card_id,
                     name: "Mountain".to_string(),
+                    card_def: None,
                 }],
                 opponent_hand_count: 7,
                 library_size: 53,
@@ -1024,6 +1036,7 @@ mod tests {
                 initial_state_hash: 0x12345678,
                 network_debug: false,
                 deck_card_ids: Some(DeckCardIdRanges::from_deck_sizes(60, 60)),
+                token_definitions: std::collections::HashMap::new(),
             },
             ServerMessage::ChoiceRequest {
                 choice_seq: 1,
@@ -1041,6 +1054,7 @@ mod tests {
                 card: CardReveal {
                     card_id,
                     name: "Lightning Bolt".to_string(),
+                    card_def: None,
                 },
                 reason: RevealReason::Draw,
             },

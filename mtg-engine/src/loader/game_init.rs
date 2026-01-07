@@ -144,10 +144,33 @@ impl<'a> GameInitializer<'a> {
             }
         }
         for token_script in token_scripts {
-            if let Some(token_def) = self.card_db.get_token(&token_script).await? {
+            if let Some(mut token_def) = self.card_db.get_token(&token_script).await? {
+                // Set the script_name so clients can rebuild token_definitions map
+                token_def.script_name = Some(token_script.clone());
                 game.token_definitions.insert(token_script, Arc::new(token_def));
             }
         }
+
+        // Build card_definitions map for network transmission
+        // Maps CardName -> CardDefinition for looking up definitions when revealing cards
+        let mut card_defs_map = std::collections::HashMap::new();
+        for card_name in &card_names {
+            if let Some(card_def) = self.card_db.get_card(card_name).await? {
+                let card_name_typed = crate::core::CardName::from(card_name.as_str());
+                // Clone the CardDefinition from the Arc
+                card_defs_map.insert(card_name_typed, (*card_def).clone());
+            }
+        }
+
+        // Also add token definitions to card_definitions (keyed by token's actual CardName)
+        // Token definitions are stored in game.token_definitions by script name (e.g., "c_a_food_sac")
+        // but when revealing a token, we look up by card.name (e.g., "Food Token")
+        for token_def in game.token_definitions.values() {
+            let token_name = crate::core::CardName::from(token_def.name.as_str());
+            card_defs_map.insert(token_name, (**token_def).clone());
+        }
+
+        game.card_definitions = Arc::new(card_defs_map);
 
         // Expand deck entries into card definition vectors (not yet Card instances)
         let mut p1_card_defs: Vec<Arc<CardDefinition>> = Vec::with_capacity(p1_deck_size);

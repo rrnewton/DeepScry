@@ -20,7 +20,6 @@ use crate::undo::GameAction;
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -85,20 +84,6 @@ struct WaitingPlayer {
     deck: DeckSubmission,
     /// WebSocket connection
     ws_stream: WebSocketStream<TcpStream>,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ACTIVE GAME
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// An active game in progress
-struct ActiveGame {
-    /// Unique game ID
-    #[allow(dead_code)]
-    game_id: u64,
-    /// Join handle for the game task
-    #[allow(dead_code)]
-    task_handle: tokio::task::JoinHandle<()>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -237,6 +222,17 @@ impl PlayerConnection {
     /// Send a server message to this player
     async fn send(&mut self, msg: &ServerMessage) -> Result<()> {
         let json = serde_json::to_string(msg)?;
+
+        // Log at DEBUG level with truncation for long messages
+        if log::log_enabled!(log::Level::Debug) {
+            let truncated = if json.len() > 500 {
+                format!("{}... ({} bytes total)", &json[..500], json.len())
+            } else {
+                json.clone()
+            };
+            log::debug!("[SERVER->P{}] {}", self.player_id, truncated);
+        }
+
         self.ws_tx.send(Message::Text(json.into())).await?;
         Ok(())
     }
@@ -246,15 +242,13 @@ impl PlayerConnection {
 // GAME SERVER
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// MTG game server
+/// MTG game server (single-game: runs one game then exits)
 pub struct GameServer {
     /// Server configuration
     config: ServerConfig,
     /// Currently waiting player (first to connect)
     waiting_player: Option<WaitingPlayer>,
-    /// Active games by ID
-    games: HashMap<u64, ActiveGame>,
-    /// Next game ID
+    /// Game ID counter (used for logging)
     next_game_id: u64,
     /// Card database (shared across games)
     card_db: Option<Arc<AsyncCardDatabase>>,
@@ -266,13 +260,15 @@ impl GameServer {
         Self {
             config,
             waiting_player: None,
-            games: HashMap::new(),
             next_game_id: 1,
             card_db: None,
         }
     }
 
     /// Run the server (blocking)
+    ///
+    /// This is a single-game server: it accepts exactly two players, runs one game,
+    /// and then exits. For a multi-game lobby server, use a different implementation.
     pub async fn run(&mut self) -> Result<()> {
         // Load card database
         log::info!("Loading card database from {:?}...", self.config.cardsfolder);
@@ -287,13 +283,27 @@ impl GameServer {
         log::info!("MTG Server listening on {}", addr);
         log::info!("Password required: {}", !self.config.password.is_empty());
 
-        // Accept connections
+        // Accept connections until we have two players and start a game
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     log::info!("New connection from {}", addr);
-                    if let Err(e) = self.handle_connection(stream).await {
-                        log::error!("Connection error: {}", e);
+                    match self.handle_connection(stream).await {
+                        Ok(Some(game_handle)) => {
+                            // Game started - wait for it to complete then exit
+                            log::info!("Game started, waiting for completion...");
+                            if let Err(e) = game_handle.await {
+                                log::error!("Game task error: {}", e);
+                            }
+                            log::info!("Game completed, server exiting");
+                            return Ok(());
+                        }
+                        Ok(None) => {
+                            // First player connected, waiting for second
+                        }
+                        Err(e) => {
+                            log::error!("Connection error: {}", e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -305,16 +315,30 @@ impl GameServer {
 
     /// Handle a new WebSocket connection
     ///
+    /// Returns `Ok(Some(handle))` when a game was started (second player connected),
+    /// or `Ok(None)` when still waiting for the second player.
+    ///
     /// Note: Wildcard is intentional - ClientMessage has 4+ variants;
     /// we expect Authenticate at connection time, others are errors.
     #[allow(clippy::wildcard_enum_match_arm)]
-    async fn handle_connection(&mut self, stream: TcpStream) -> Result<()> {
+    async fn handle_connection(&mut self, stream: TcpStream) -> Result<Option<tokio::task::JoinHandle<()>>> {
         let ws_stream = accept_async(stream).await?;
         let (ws_tx, mut ws_rx) = ws_stream.split();
 
         // Wait for authentication message
         let auth_msg = match ws_rx.next().await {
-            Some(Ok(Message::Text(text))) => serde_json::from_str::<ClientMessage>(&text)?,
+            Some(Ok(Message::Text(text))) => {
+                // Log at DEBUG level with truncation for long messages
+                if log::log_enabled!(log::Level::Debug) {
+                    let truncated = if text.len() > 500 {
+                        format!("{}... ({} bytes total)", &text[..500], text.len())
+                    } else {
+                        text.to_string()
+                    };
+                    log::debug!("[CLIENT->SERVER auth] {}", truncated);
+                }
+                serde_json::from_str::<ClientMessage>(&text)?
+            }
             Some(Ok(_)) => return Err(anyhow!("Expected text message")),
             Some(Err(e)) => return Err(e.into()),
             None => return Err(anyhow!("Connection closed before auth")),
@@ -332,19 +356,22 @@ impl GameServer {
             _ => {
                 let mut ws_stream = ws_stream;
                 send_error(&mut ws_stream, "Expected authentication message", true).await?;
-                Ok(())
+                Ok(None)
             }
         }
     }
 
     /// Handle authentication attempt
+    ///
+    /// Returns `Ok(Some(handle))` when a game was started (second player connected),
+    /// or `Ok(None)` when still waiting for the second player or auth failed.
     async fn handle_auth(
         &mut self,
         mut ws_stream: WebSocketStream<TcpStream>,
         password: String,
         player_name: String,
         deck: DeckSubmission,
-    ) -> Result<()> {
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
         // Check password
         if !self.config.password.is_empty() && password != self.config.password {
             send_message(
@@ -356,7 +383,7 @@ impl GameServer {
                 },
             )
             .await?;
-            return Ok(());
+            return Ok(None);
         }
 
         // Validate deck
@@ -370,7 +397,7 @@ impl GameServer {
                 },
             )
             .await?;
-            return Ok(());
+            return Ok(None);
         }
 
         log::info!(
@@ -395,16 +422,18 @@ impl GameServer {
             )
             .await?;
 
-            // Start the game
-            self.start_game(
-                waiting,
-                WaitingPlayer {
-                    name: player_name,
-                    deck,
-                    ws_stream,
-                },
-            )
-            .await?;
+            // Start the game and return the handle
+            let handle = self
+                .start_game(
+                    waiting,
+                    WaitingPlayer {
+                        name: player_name,
+                        deck,
+                        ws_stream,
+                    },
+                )
+                .await?;
+            Ok(Some(handle))
         } else {
             // First player - send auth success and wait
             send_message(
@@ -426,13 +455,14 @@ impl GameServer {
             });
 
             log::info!("Player waiting for opponent...");
+            Ok(None)
         }
-
-        Ok(())
     }
 
     /// Start a game between two players
-    async fn start_game(&mut self, p1: WaitingPlayer, p2: WaitingPlayer) -> Result<()> {
+    ///
+    /// Returns the task handle for the game, allowing the caller to await completion.
+    async fn start_game(&mut self, p1: WaitingPlayer, p2: WaitingPlayer) -> Result<tokio::task::JoinHandle<()>> {
         let game_id = self.next_game_id;
         self.next_game_id += 1;
 
@@ -446,9 +476,7 @@ impl GameServer {
             }
         });
 
-        self.games.insert(game_id, ActiveGame { game_id, task_handle });
-
-        Ok(())
+        Ok(task_handle)
     }
 }
 
@@ -718,6 +746,14 @@ async fn run_game(
     let p1_lib_size = game.player_zones[0].1.library.len();
     let p2_lib_size = game.player_zones[1].1.library.len();
 
+    // Build token_definitions map for network transmission
+    // Convert from HashMap<String, Arc<CardDefinition>> to HashMap<String, CardDefinition>
+    let token_definitions: std::collections::HashMap<String, crate::loader::CardDefinition> = game
+        .token_definitions
+        .iter()
+        .map(|(k, v)| (k.clone(), (**v).clone()))
+        .collect();
+
     p1_conn
         .send(&ServerMessage::GameStarted {
             your_player_id: p1_id,
@@ -731,6 +767,7 @@ async fn run_game(
             initial_state_hash: initial_hash,
             network_debug: config.network_debug,
             deck_card_ids: deck_card_ids.clone(),
+            token_definitions: token_definitions.clone(),
         })
         .await?;
 
@@ -747,6 +784,7 @@ async fn run_game(
             initial_state_hash: initial_hash,
             network_debug: config.network_debug,
             deck_card_ids: deck_card_ids.clone(),
+            token_definitions: token_definitions.clone(),
         })
         .await?;
 
@@ -775,6 +813,7 @@ async fn run_game(
         let dummy_reveal = CardReveal {
             card_id: card.card_id,
             name: String::new(), // Hidden - P1 doesn't know what card this is
+            card_def: None,      // No definition for dummy reveals
         };
         p1_conn
             .send(&ServerMessage::CardRevealed {
@@ -791,6 +830,7 @@ async fn run_game(
         let dummy_reveal = CardReveal {
             card_id: card.card_id,
             name: String::new(), // Hidden - P2 doesn't know what card this is
+            card_def: None,      // No definition for dummy reveals
         };
         p2_conn
             .send(&ServerMessage::CardRevealed {
@@ -1218,6 +1258,16 @@ async fn handle_player_websocket(
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        // Log at DEBUG level with truncation for long messages
+                        if log::log_enabled!(log::Level::Debug) {
+                            let truncated = if text.len() > 500 {
+                                format!("{}... ({} bytes total)", &text[..500], text.len())
+                            } else {
+                                text.to_string()
+                            };
+                            log::debug!("[P{}->SERVER] {}", conn.player_id, truncated);
+                        }
+
                         match serde_json::from_str::<ClientMessage>(&text) {
                             Ok(ClientMessage::SubmitChoice { choice_seq, choice_indices, action_count: client_action_count, client_state_hash, debug_info: client_debug_info, .. }) => {
                                 // Check if we've sent a ChoiceRequest yet (tracked by expected_action_count)
@@ -1268,38 +1318,83 @@ async fn handle_player_websocket(
                                                 );
 
                                                 // Log detailed diff if debug_info is available
-                                                if let Some(server_info) = conn.expected_debug_info.take() {
-                                                    log::error!("  Server state: turn={} phase={} active={:?}",
-                                                        server_info.turn, server_info.phase, server_info.active_player);
-                                                    log::error!("  Server life: P1={} P2={}",
-                                                        server_info.life_totals[0], server_info.life_totals[1]);
-                                                    log::error!("  Server zones: P1 hand={} lib={} grave={}, P2 hand={} lib={} grave={}",
-                                                        server_info.hand_sizes[0], server_info.library_sizes[0], server_info.graveyard_sizes[0],
-                                                        server_info.hand_sizes[1], server_info.library_sizes[1], server_info.graveyard_sizes[1]);
-                                                    log::error!("  Server battlefield={} stack={}",
-                                                        server_info.battlefield_count, server_info.stack_size);
-                                                    if !server_info.last_actions.is_empty() {
-                                                        log::error!("  Server last actions:");
-                                                        for action in &server_info.last_actions {
-                                                            log::error!("    {}", action);
+                                                let server_info_opt = conn.expected_debug_info.take();
+                                                if let (Some(ref server_info), Some(ref client_info)) = (&server_info_opt, &client_debug_info) {
+                                                    // Use diff() to highlight only the differences
+                                                    let diffs = server_info.diff(client_info);
+                                                    if diffs.is_empty() {
+                                                        log::error!("  State metrics match - hash diverged from non-metric fields (timestamps, card states, etc.)");
+                                                    } else {
+                                                        log::error!("  STATE DIFFERENCES (server vs client):");
+                                                        for diff in &diffs {
+                                                            log::error!("    {}", diff);
                                                         }
                                                     }
-                                                }
 
-                                                if let Some(client_info) = client_debug_info {
-                                                    log::error!("  Client state: turn={} phase={} active={:?}",
-                                                        client_info.turn, client_info.phase, client_info.active_player);
-                                                    log::error!("  Client life: P1={} P2={}",
-                                                        client_info.life_totals[0], client_info.life_totals[1]);
-                                                    log::error!("  Client zones: P1 hand={} lib={} grave={}, P2 hand={} lib={} grave={}",
-                                                        client_info.hand_sizes[0], client_info.library_sizes[0], client_info.graveyard_sizes[0],
-                                                        client_info.hand_sizes[1], client_info.library_sizes[1], client_info.graveyard_sizes[1]);
-                                                    log::error!("  Client battlefield={} stack={}",
-                                                        client_info.battlefield_count, client_info.stack_size);
-                                                    if !client_info.last_actions.is_empty() {
-                                                        log::error!("  Client last actions:");
-                                                        for action in &client_info.last_actions {
-                                                            log::error!("    {}", action);
+                                                    // Compare action logs line-by-line to find divergence point
+                                                    if !server_info.last_actions.is_empty() || !client_info.last_actions.is_empty() {
+                                                        log::error!("  ACTION LOG COMPARISON:");
+                                                        let max_len = std::cmp::max(
+                                                            server_info.last_actions.len(),
+                                                            client_info.last_actions.len()
+                                                        );
+                                                        let mut first_divergence: Option<usize> = None;
+                                                        for i in 0..max_len {
+                                                            let s_action = server_info.last_actions.get(i);
+                                                            let c_action = client_info.last_actions.get(i);
+                                                            match (s_action, c_action) {
+                                                                (Some(s), Some(c)) if s == c => {
+                                                                    // Matching - don't log every line, just track
+                                                                }
+                                                                (Some(s), Some(c)) => {
+                                                                    if first_divergence.is_none() {
+                                                                        first_divergence = Some(i);
+                                                                        log::error!("    DIVERGENCE at action[{}]:", i);
+                                                                    }
+                                                                    log::error!("      server: {}", s);
+                                                                    log::error!("      client: {}", c);
+                                                                }
+                                                                (Some(s), None) => {
+                                                                    if first_divergence.is_none() {
+                                                                        first_divergence = Some(i);
+                                                                        log::error!("    DIVERGENCE at action[{}] (server has more):", i);
+                                                                    }
+                                                                    log::error!("      server: {}", s);
+                                                                    log::error!("      client: (missing)");
+                                                                }
+                                                                (None, Some(c)) => {
+                                                                    if first_divergence.is_none() {
+                                                                        first_divergence = Some(i);
+                                                                        log::error!("    DIVERGENCE at action[{}] (client has more):", i);
+                                                                    }
+                                                                    log::error!("      server: (missing)");
+                                                                    log::error!("      client: {}", c);
+                                                                }
+                                                                (None, None) => break,
+                                                            }
+                                                        }
+                                                        if first_divergence.is_none() {
+                                                            log::error!("    Action logs match ({} actions)", server_info.last_actions.len());
+                                                        }
+                                                    }
+                                                } else {
+                                                    // Fall back to individual logging if only one side available
+                                                    if let Some(server_info) = server_info_opt {
+                                                        log::error!("  Server state: {}", server_info.summary());
+                                                        if !server_info.last_actions.is_empty() {
+                                                            log::error!("  Server last actions:");
+                                                            for action in &server_info.last_actions {
+                                                                log::error!("    {}", action);
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(client_info) = &client_debug_info {
+                                                        log::error!("  Client state: {}", client_info.summary());
+                                                        if !client_info.last_actions.is_empty() {
+                                                            log::error!("  Client last actions:");
+                                                            for action in &client_info.last_actions {
+                                                                log::error!("    {}", action);
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1493,9 +1588,11 @@ async fn handle_player_websocket(
                         {
                             let game_guard = game.lock().await;
                             if let Some(card) = game_guard.cards.try_get(card_id) {
+                                let card_def = game_guard.card_definitions.get(&card.name).cloned();
                                 let card_reveal = CardReveal {
                                     card_id,
                                     name: card.name.to_string(),
+                                    card_def,
                                 };
 
                                 log::debug!(
@@ -1683,9 +1780,11 @@ fn peek_opening_hand(game: &GameState, player_id: PlayerId) -> Result<Vec<CardRe
     for &card_id in lib_cards[start_idx..].iter().rev() {
         // Get card info for reveal
         if let Ok(card) = game.cards.get(card_id) {
+            let card_def = game.card_definitions.get(&card.name).cloned();
             hand.push(CardReveal {
                 card_id,
                 name: card.name.to_string(),
+                card_def,
             });
         }
     }
@@ -1712,9 +1811,13 @@ fn compute_network_hash(game: &GameState) -> u64 {
 fn build_card_reveal(game: &GameState, info: &CardRevealInfo) -> Option<CardReveal> {
     let card = game.cards.try_get(info.card_id)?;
 
+    // Look up CardDefinition from game.card_definitions
+    let card_def = game.card_definitions.get(&card.name).cloned();
+
     Some(CardReveal {
         card_id: info.card_id,
         name: card.name.to_string(),
+        card_def,
     })
 }
 

@@ -236,6 +236,7 @@ mod async_tests {
             opening_hand: vec![CardReveal {
                 card_id: mtg_forge_rs::core::CardId::new(1),
                 name: "Mountain".to_string(),
+                card_def: None,
             }],
             opponent_hand_count: 7,
             library_size: 53,
@@ -245,6 +246,7 @@ mod async_tests {
             initial_state_hash: 0x12345678,
             network_debug: false,
             deck_card_ids: None, // Phase 3: CardID ranges for late-binding
+            token_definitions: std::collections::HashMap::new(),
         };
 
         // Encode to JSON
@@ -342,6 +344,7 @@ mod async_tests {
             card: CardReveal {
                 card_id: mtg_forge_rs::core::CardId::new(100),
                 name: "Serra Angel".to_string(),
+                card_def: None,
             },
             reason: RevealReason::Draw,
         };

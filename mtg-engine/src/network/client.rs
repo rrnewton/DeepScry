@@ -71,16 +71,22 @@ pub enum GameLoopMessage {
 // CARD REVEAL UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Get CardDefinition from CardReveal by looking up in the database
+/// Get CardDefinition from CardReveal
 ///
-/// The simplified CardReveal only contains card_id and name, so we MUST
-/// look up full card info from the local database. This panics if the card
-/// is not found - the client must have all cards in the game loaded.
+/// Prefers using the embedded CardDefinition sent by the server (enables
+/// clients to run without a local card database). Falls back to database
+/// lookup if the server didn't include the definition.
 fn get_card_def_from_reveal(reveal: &CardReveal, card_db: &AsyncCardDatabase) -> CardDefinition {
+    // Prefer the CardDefinition sent by the server - this enables DB-free clients
+    if let Some(ref card_def) = reveal.card_def {
+        return card_def.clone();
+    }
+
+    // Fallback to local database lookup
     match futures_executor::block_on(card_db.get_card(&reveal.name)) {
         Ok(Some(def)) => (*def).clone(),
         Ok(None) => panic!(
-            "Card '{}' not in database - client must have all game cards loaded",
+            "Card '{}' not in database and server didn't provide definition",
             reveal.name
         ),
         Err(e) => panic!("Failed to load card '{}' from database: {}", reveal.name, e),
@@ -256,6 +262,17 @@ impl ClientGameState {
         // Get or create card definition
         if let Some(card_def) = Self::card_from_reveal(&card, card_db) {
             self.known_cards.insert(card.card_id, card_def.clone());
+
+            // If this is a token definition with script_name, add to token_definitions
+            // This allows the client to create tokens without local card database
+            if let Some(script_name) = &card_def.script_name {
+                if !self.game.token_definitions.contains_key(script_name) {
+                    log::debug!("Adding token definition '{}' from server", script_name);
+                    self.game
+                        .token_definitions
+                        .insert(script_name.clone(), std::sync::Arc::new(card_def.clone()));
+                }
+            }
 
             // Create card instance
             let card_instance = card_def.instantiate(card.card_id, owner);
@@ -502,7 +519,8 @@ impl NetworkClient {
             initial_state_hash,
             opponent_decklist,
             server_network_debug,
-            deck_card_ids, // Phase 3: CardID ranges for late-binding architecture
+            deck_card_ids,     // Phase 3: CardID ranges for late-binding architecture
+            token_definitions, // Token definitions for network clients without local card DB
         ) = loop {
             let msg = self.receive_message().await?;
             match msg {
@@ -521,6 +539,7 @@ impl NetworkClient {
                     opponent_decklist,
                     network_debug,
                     deck_card_ids,
+                    token_definitions,
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(
@@ -540,6 +559,9 @@ impl NetworkClient {
                             ranges.p2_end
                         );
                     }
+                    if !token_definitions.is_empty() {
+                        log::info!("Received {} token definitions from server", token_definitions.len());
+                    }
 
                     let our_hand_count = opening_hand.len();
                     break (
@@ -552,6 +574,7 @@ impl NetworkClient {
                         opponent_decklist,
                         network_debug,
                         deck_card_ids,
+                        token_definitions,
                     );
                 }
                 ServerMessage::Error { message, fatal } => {
@@ -616,7 +639,7 @@ impl NetworkClient {
 
         // Late-binding architecture: use init_game_reserve_only when server provides DeckCardIdRanges
         // This creates CardID slots upfront, with identities revealed later via CardRevealed messages
-        let game = if let Some(ref ranges) = deck_card_ids {
+        let mut game = if let Some(ref ranges) = deck_card_ids {
             log::debug!(
                 "Using late-binding architecture: {} total CardIDs (P1: [{}..{}), P2: [{}..{}))",
                 ranges.total_cards(),
@@ -638,6 +661,17 @@ impl NetworkClient {
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
         let opponent_id = if we_are_p1 { p2_id } else { p1_id };
+
+        // Populate token_definitions from server's GameStarted message
+        // This allows the client to create tokens without a local card database
+        if !token_definitions.is_empty() {
+            log::debug!("Populating {} token definitions from server", token_definitions.len());
+            for (script_name, card_def) in token_definitions {
+                log::trace!("  Token: {} -> {}", script_name, card_def.name);
+                game.token_definitions
+                    .insert(script_name, std::sync::Arc::new(card_def));
+            }
+        }
 
         // Create ClientGameState with the initialized game
         self.state = Some(ClientGameState {
@@ -720,6 +754,17 @@ impl NetworkClient {
     async fn send_message(&mut self, msg: &ClientMessage) -> Result<()> {
         let ws = self.ws.as_mut().ok_or_else(|| anyhow!("Not connected"))?;
         let json = serde_json::to_string(msg)?;
+
+        // Log at DEBUG level with truncation for long messages
+        if log::log_enabled!(log::Level::Debug) {
+            let truncated = if json.len() > 500 {
+                format!("{}... ({} bytes total)", &json[..500], json.len())
+            } else {
+                json.clone()
+            };
+            log::debug!("[CLIENT->SERVER] {}", truncated);
+        }
+
         ws.send(Message::Text(json.into())).await?;
         Ok(())
     }
@@ -731,6 +776,16 @@ impl NetworkClient {
         loop {
             match ws.next().await {
                 Some(Ok(Message::Text(text))) => {
+                    // Log at DEBUG level with truncation for long messages
+                    if log::log_enabled!(log::Level::Debug) {
+                        let truncated = if text.len() > 500 {
+                            format!("{}... ({} bytes total)", &text[..500], text.len())
+                        } else {
+                            text.to_string()
+                        };
+                        log::debug!("[SERVER->CLIENT] {}", truncated);
+                    }
+
                     let msg: ServerMessage = serde_json::from_str(&text)?;
                     return Ok(msg);
                 }
@@ -992,9 +1047,11 @@ impl NetworkClient {
                                     }
                                     Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
                                         log::info!("Game ended, winner: {:?}, action_count: {}", winner, action_count);
-                                        // Signal RemoteController to exit gracefully before we drop the channel
-                                        let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
+                                        // CRITICAL: Send winner to game_end_tx FIRST, before signaling controllers
+                                        // Otherwise the game loop might exit before we send the winner
                                         let _ = game_end_tx.send((winner, action_count)).await;
+                                        // Now signal RemoteController to exit gracefully
+                                        let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
                                         return;
                                     }
                                     Ok(ServerMessage::Error { message, fatal }) => {
@@ -1536,8 +1593,11 @@ impl NetworkClient {
                                         }
                                         Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
                                             log::info!("Game ended: winner={:?}, action_count={}", winner, action_count);
-                                            let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
+                                            // CRITICAL: Send winner to game_end_tx FIRST, before signaling controllers
+                                            // Otherwise the game loop might exit before we send the winner
                                             let _ = game_end_tx.send((winner, action_count));
+                                            // Now signal RemoteController to exit gracefully
+                                            let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
                                             return;
                                         }
                                         Ok(ServerMessage::Error { message, fatal }) => {
