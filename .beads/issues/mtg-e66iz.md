@@ -98,6 +98,47 @@ cargo build --release --features network
 - Winner signal race condition (FIXED in commit 05737b3d)
 - WebSocket shutdown handshake (separate issue)
 
+## Progress
+
+### Single-Channel Migration (commits 48682a1a, a8318aef)
+
+**Status: Partially Complete**
+
+The opponent choice channel has been migrated to a single-channel architecture:
+
+1. **PlayerChannelMessage enum** - Added to multiplex different message types through one channel
+   - `OpponentChoice(OpponentChoiceInfo)` - opponent made a choice
+   - `AbilityInfo(ChosenAbilityInfo)` - reserved for future ability channel migration
+
+2. **player_tx/player_rx channels** - Cross-wired channel pairs
+   - P1's player_tx → P2's player_rx (P1 sends opponent choices to P2)
+   - P2's player_tx → P1's player_rx (P2 sends opponent choices to P1)
+
+3. **Disabled channels** (just draining, not sending):
+   - `reveal_rx` - reveals now sent synchronously via ChoiceRequest
+   - `immediate_reveal_rx` - same as above
+   - Old `opponent_choice_tx/rx` marked as DEPRECATED
+
+4. **Remaining channels in select! block**:
+   - `fatal_error_rx` - errors (doesn't affect game state order)
+   - `game_end_rx` - one-shot (only fires once)
+   - `request_rx` - ChoiceRequests TO client (triggers client decisions)
+   - `ws_rx` - WebSocket messages FROM client (single stream, ordered)
+   - `player_rx` - single-channel messages (opponent choices, totally ordered)
+
+### Current Architecture
+
+The critical game-state-affecting messages now flow through `player_rx`, which ensures:
+- Total ordering of opponent choice messages
+- No race conditions between different message types
+- Deterministic message delivery
+
+### Next Steps
+
+1. Migrate `ability_rx` to single-channel (low priority - used synchronously with timeout)
+2. Remove dead reveal channel infrastructure entirely
+3. Extensive stress testing to verify desync is eliminated
+
 ## Priority
 
 Priority 3 - significant bug affecting network play correctness.

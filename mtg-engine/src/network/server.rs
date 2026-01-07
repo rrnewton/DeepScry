@@ -161,9 +161,6 @@ struct RevealBroadcast {
 enum PlayerChannelMessage {
     /// Opponent made a choice (for run_game mode synchronization)
     OpponentChoice(OpponentChoiceInfo),
-    /// Ability info for pending choice processing (reserved for future migration)
-    #[allow(dead_code)]
-    AbilityInfo(ChosenAbilityInfo),
 }
 
 /// Type alias for the single-channel sender (async side)
@@ -209,26 +206,16 @@ struct PlayerConnection {
     /// Channel to receive game end notification
     game_end_rx: oneshot::Receiver<GameEndInfo>,
     /// Single-channel receiver for all game sync messages (mtg-e66iz fix)
-    /// This replaces opponent_choice_rx, ability_rx, etc. to ensure message ordering.
+    /// This replaces opponent_choice_rx, etc. to ensure message ordering.
     player_rx: PlayerChannelRx,
-    /// Channel to send messages to opponent's player_rx (wraps opponent_choice_tx)
+    /// Channel to send messages to opponent's player_rx
     player_tx: PlayerChannelTx,
-    /// DEPRECATED: Channel to receive opponent's choices (for run_game mode)
-    /// Kept for backwards compatibility during migration. Will be removed.
-    #[allow(dead_code)]
-    opponent_choice_rx: tokio_mpsc::Receiver<OpponentChoiceInfo>,
     /// Channel to broadcast reveals to this player (receives from opponent's ChoiceRequest)
     reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
-    /// Channel to send reveals to the opponent (when we receive ChoiceRequest with reveals)
-    /// NOTE: Currently unused - reveals are sent synchronously via ChoiceRequest to avoid ordering issues.
-    /// Kept for potential future use when async reveal ordering is fixed.
-    #[allow(dead_code)]
-    opponent_reveal_tx: tokio_mpsc::Sender<Vec<RevealBroadcast>>,
     /// Channel to receive immediate reveals from the game thread (after automatic actions like draws)
     immediate_reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
-    /// DEPRECATED: Channel to receive chosen abilities from NetworkController (for Priority choices)
-    /// Now received via player_rx as PlayerChannelMessage::AbilityInfo
-    #[allow(dead_code)]
+    /// Channel to receive chosen abilities from NetworkController (for Priority choices)
+    /// Used synchronously with timeout during choice processing.
     ability_rx: tokio_mpsc::Receiver<ChosenAbilityInfo>,
     /// Current choice type being requested (for broadcasting)
     current_choice_type: Option<ChoiceType>,
@@ -600,12 +587,6 @@ async fn run_game(
     let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
     let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
 
-    // DEPRECATED: These opponent choice channels are no longer used.
-    // Opponent choices are now sent via the single-channel architecture (player_tx/player_rx).
-    // These are kept temporarily for backwards compatibility during migration (mtg-e66iz).
-    let (_p1_choice_tx, p1_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
-    let (_p2_choice_tx, p2_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
-
     // Create cross-player channels for reveal broadcasting
     // When P1 receives a ChoiceRequest with reveals, those reveals are sent to P2 immediately
     // (and vice versa). This ensures both clients have reveals before they need them.
@@ -673,6 +654,9 @@ async fn run_game(
 
     // Create PlayerConnections with tokio receivers
     // Note: last_reveal_index will be set after we determine the opening hand sizes
+    // Note: p1_reveal_tx and p2_reveal_tx are unused (created but not stored) - the reveal
+    // channels are only used for receiving, as reveals are now sent synchronously.
+    let _ = (p1_reveal_tx, p2_reveal_tx); // Silence unused warnings
     let mut p1_conn = PlayerConnection {
         player_id: PlayerId::new(0),
         ws_tx: p1_ws_tx,
@@ -681,11 +665,9 @@ async fn run_game(
         game_end_rx: p1_game_end_rx,
         player_rx: p1_player_rx,                // P1 receives messages from P2 via single channel
         player_tx: p1_player_tx,                // P1 sends messages to P2 via single channel
-        opponent_choice_rx: p2_choice_rx,       // DEPRECATED: P1 receives P2's choices (old path)
         reveal_rx: p2_reveal_rx,                // P1 receives reveals from P2's ChoiceRequest
-        opponent_reveal_tx: p1_reveal_tx,       // P1 sends reveals to P2 (when P1 gets ChoiceRequest)
         immediate_reveal_rx: p1_immed_async_rx, // P1 receives immediate reveals from game thread
-        ability_rx: p1_ability_async_rx,        // DEPRECATED: Now via player_rx
+        ability_rx: p1_ability_async_rx,        // Used for Priority choices
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -704,11 +686,9 @@ async fn run_game(
         game_end_rx: p2_game_end_rx,
         player_rx: p2_player_rx,                // P2 receives messages from P1 via single channel
         player_tx: p2_player_tx,                // P2 sends messages to P1 via single channel
-        opponent_choice_rx: p1_choice_rx,       // DEPRECATED: P2 receives P1's choices (old path)
         reveal_rx: p1_reveal_rx,                // P2 receives reveals from P1's ChoiceRequest
-        opponent_reveal_tx: p2_reveal_tx,       // P2 sends reveals to P1 (when P2 gets ChoiceRequest)
         immediate_reveal_rx: p2_immed_async_rx, // P2 receives immediate reveals from game thread
-        ability_rx: p2_ability_async_rx,        // DEPRECATED: Now via player_rx
+        ability_rx: p2_ability_async_rx,        // Used for Priority choices
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -1678,15 +1658,6 @@ async fn handle_player_websocket(
                                 debug_info: None,
                             }).await?;
                         }
-                        PlayerChannelMessage::AbilityInfo(ability_info) => {
-                            // AbilityInfo messages are currently not forwarded - they're
-                            // processed synchronously via conn.ability_rx in the choice handling path.
-                            // This variant exists for future use when we fully migrate ability_rx.
-                            log::debug!(
-                                "Player {:?}: Received AbilityInfo via single channel (choice_seq={})",
-                                conn.player_id, ability_info.choice_seq
-                            );
-                        }
                     }
                 }
             }
@@ -1896,80 +1867,6 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
         Zone::Library => RevealReason::Searched, // Returned to library (unusual)
         Zone::Command => RevealReason::Effect,
     }
-}
-
-/// Collect card reveals that a player should see since their last choice
-///
-/// Scans the undo log backwards until we find a `ChoicePoint` for this player
-/// or until we reach `last_reveal_index` (actions before that were already sent).
-/// Returns all `MoveCard` actions from Library that this player should see.
-///
-/// For the synchronized GameLoop mode, we need to send ALL library movements
-/// so the client's shadow state stays synchronized. This includes:
-/// - Own cards (e.g., own draws)
-/// - Public zone movements (battlefield, graveyard, stack, exile)
-/// - Opponent's draws (so client can track opponent's library/hand sizes)
-///
-/// `last_reveal_index` is the index into the undo_log where we last sent reveals.
-/// This is used to skip opening hand reveals that were already sent during handshake.
-///
-/// NOTE: Currently unused - reveals are now handled by the immediate reveal system.
-/// Kept for potential future use with non-draw reveals.
-///
-/// Note: Wildcard is intentional - GameAction has many variants;
-/// we only collect MoveCard from Library and stop at ChoicePoint.
-#[allow(dead_code)]
-#[allow(clippy::wildcard_enum_match_arm)]
-fn collect_reveals_for_player(game: &GameState, player_id: PlayerId, last_reveal_index: usize) -> Vec<CardRevealInfo> {
-    use crate::undo::GameAction;
-
-    let actions = game.undo_log.actions();
-    let mut reveals = Vec::new();
-
-    // Scan backwards from the end of the log, but stop at last_reveal_index
-    // Using enumerate to track the index
-    let total_actions = actions.len();
-    for (rev_idx, action) in actions.iter().rev().enumerate() {
-        // Convert reverse index to forward index
-        let forward_idx = total_actions.saturating_sub(rev_idx + 1);
-
-        // Stop if we've reached actions that were already handled
-        if forward_idx < last_reveal_index {
-            break;
-        }
-
-        match action {
-            // Stop when we hit this player's last choice
-            GameAction::ChoicePoint {
-                player_id: choice_player,
-                ..
-            } if *choice_player == player_id => {
-                break;
-            }
-            // Collect ALL card moves from library (needed for synchronized GameLoop mode)
-            GameAction::MoveCard {
-                card_id,
-                from_zone: Zone::Library,
-                to_zone,
-                owner,
-            } => {
-                // For synchronized mode, include ALL library movements
-                // - Own cards: player needs to know what they drew
-                // - Opponent's cards: client needs card ID for shadow state tracking
-                reveals.push(CardRevealInfo {
-                    card_id: *card_id,
-                    owner: *owner,
-                    from_zone: Zone::Library,
-                    to_zone: *to_zone,
-                });
-            }
-            _ => {}
-        }
-    }
-
-    // Reverse to get chronological order
-    reveals.reverse();
-    reveals
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
