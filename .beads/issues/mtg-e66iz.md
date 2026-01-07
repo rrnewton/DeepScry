@@ -1,56 +1,103 @@
 ---
-title: Network multiplayer infrastructure (dormant)
+title: 'Network desync debugging: nondeterministic state divergence'
 status: open
-priority: 4
+priority: 3
 issue_type: task
 created_at: 2026-01-07T15:45:56.797997299+00:00
-updated_at: 2026-01-07T15:45:56.797997299+00:00
+updated_at: 2026-01-07T16:01:05.203173122+00:00
 ---
 
 # Description
 
-## Network Multiplayer Infrastructure (Dormant)
+## Nondeterministic Network Desync
 
-The network multiplayer code exists but is currently **dormant** - not exposed via CLI commands.
+## Problem
 
-## Current State
+When running network multiplayer games (server + 2 clients), the game **occasionally desyncs** with clients reporting different game states. The desync is **nondeterministic** - the same game (same seed, same decks, same AI controllers) can desync on different action numbers across runs.
 
-- **Feature flag**: `network` cargo feature (NOT in default features)
-- **CLI commands removed**: `server` and `connect` subcommands no longer exist in the CLI
-- **Code location**: `mtg-engine/src/network/` module (client, server, controllers)
-- **Default features**: `["native", "verbose-logging"]` - network NOT included
+## Observed Symptoms
 
-## Known Issues (to address when re-enabled)
+Server logs show state hash mismatch errors like:
+```
+[ERROR mtg_forge_rs::network::server]       [ 765] Choice(P1 #361 = Some(SpellAbility(Some(CastSpell { card_id: 62 }))))
+[ERROR mtg_forge_rs::network::server]       [ 765] Choice(P1 #361 = Some(SpellAbility(Some(PlayLand { card_id: 65 }))))
+```
 
-### 1. Nondeterministic Desync (action 760)
-- **Symptom**: Clients occasionally report different state hashes around action 760
-- **Cause**: Unknown - may be related to hidden information enforcement or RNG sync
-- **To investigate**: Enable `--network-debug` flag for detailed state comparison
+Key observations:
+- Same action number (765), different card_id values (62 vs 65)
+- Not reproducible with same seed - desync point varies
+- Suggests race condition in event ordering
 
-### 2. WebSocket Shutdown Handshake
-- **Issue**: Server doesn't gracefully shutdown WebSocket connections
-- **Impact**: Clients may receive connection errors instead of clean game end signals
-- **Solution needed**: Implement proper shutdown handshake protocol
+## Suspected Root Cause: Multiple Channel Select
 
-### 3. Winner Signal Race Condition (FIXED)
-- **Fixed in commit**: 05737b3d (fix(network): Increase winner signal timeout)
-- **Was**: 100ms timeout in `run_game_sync()` caused false draws
-- **Now**: 5 second timeout matching async version
+The network code uses `tokio::select!` over multiple channels, which can introduce nondeterminism. The code already has comments acknowledging this issue:
 
-## To Re-enable Network Play
+### Server side (server.rs)
+- Line 917: Main game loop `select!` over game_loop_handle, p1_handler, p2_handler
+- Line 1019: Per-player handler `select!` over:
+  - `fatal_error_rx.recv()` - error broadcasts
+  - `game_end_rx` - game end signal
+  - `request_rx.recv()` - choice requests
+  - `ws_rx.next()` - WebSocket messages
+  - `reveal_rx.recv()` - reveal broadcasts (documented as problematic)
+  - `immediate_reveal_rx.recv()` - immediate reveals
+  - `opponent_choice_rx.recv()` - opponent choices
 
-1. Build with network feature: `cargo build --release --features network`
-2. Add CLI subcommands back to main.rs for `server` and `connect`
-3. Test with: `--network-debug` flag for detailed logging
+### Client side (client.rs)
+- Line 959, 1394, 1558: Multiple `select!` blocks in WebSocket handler
 
-## Files
+### Previous Fixes (documented in comments)
+The code contains comments noting previous attempts to fix desync:
+- Lines 1119-1127: "NOTE: We intentionally do NOT broadcast reveals to the opponent via async channels. The async broadcast can arrive out of order due to tokio::select! scheduling, causing desync."
+- Lines 1543-1555: Similar note about reveal channel ordering issues
+- Lines 1747-1750: "NOTE: We intentionally do NOT use .with_reveal_pusher() here..."
+- SINGLE-CHANNEL FIX comments in client.rs (966, 978, 1003, etc.)
 
-- `mtg-engine/src/network/mod.rs` - Module root with feature gate
-- `mtg-engine/src/network/client.rs` - Client implementation
-- `mtg-engine/src/network/server.rs` - Server implementation
-- `mtg-engine/src/network/controller.rs` - Network controller trait
-- `mtg-engine/Cargo.toml` - Feature flag definitions
+## Architecture Goal
+
+**Single channel, single event loop, totally ordered events.**
+
+The only nondeterministic aspects should be:
+- GUI/redraw timing
+- User input timing
+
+Game state progression must be fully deterministic.
+
+## Files to Audit
+
+- `mtg-engine/src/network/client.rs` - Lines 959, 1394, 1558 (`select!` usage)
+- `mtg-engine/src/network/server.rs` - Lines 917, 1019 (`select!` usage)
+- `mtg-engine/src/network/controller.rs` - NetworkController channels
+
+## Channels in Use (from audit)
+
+Server creates many channels between sync/async boundaries:
+- `request_tx/rx` - ChoiceRequest (sync -> async bridged)
+- `response_tx/rx` - ChoiceResponse
+- `game_end_tx/rx` - GameEndInfo (oneshot)
+- `opponent_choice_tx/rx` - OpponentChoiceInfo
+- `reveal_tx/rx` - RevealBroadcast batches
+- `immediate_reveal_tx/rx` - Immediate reveals
+- `ability_tx/rx` - ChosenAbilityInfo
+- `fatal_error_tx/rx` - broadcast channel for errors
+
+The reveal channels have been mostly mitigated but the core `select!` over multiple sources remains.
+
+## Debugging
+
+Build with network feature and use `--network-debug` flag:
+```bash
+cargo build --release --features network
+./target/release/mtg server --network-debug --seed=42
+./target/release/mtg connect --controller=heuristic -n P1 deck1.dck
+./target/release/mtg connect --controller=random -n P2 deck2.dck
+```
+
+## Related Issues
+
+- Winner signal race condition (FIXED in commit 05737b3d)
+- WebSocket shutdown handshake (separate issue)
 
 ## Priority
 
-This is a low priority (4) tracking issue for when network play becomes a focus again.
+Priority 3 - significant bug affecting network play correctness.

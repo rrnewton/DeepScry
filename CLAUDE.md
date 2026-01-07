@@ -8,6 +8,8 @@ NEVER run `git clean -fxd` in this repo or any submodule, that would destroy val
 
 Read the PROJECT_VISION.md document.
 
+For build instructions, feature flags, and binary entry points, see **README.md**.
+
 If you become stuck with an issue you cannot debug, you can file an issue for it and leave it to work on other topics. Of course, the tests should be always passing before each commit and achieve reasonably good code coverage as described below.
 
 References
