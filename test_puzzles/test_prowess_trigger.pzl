@@ -1,0 +1,21 @@
+[metadata]
+Name:Prowess Trigger
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=PRECOMBATMAIN
+
+# P0 has Ty Lee (3/2 with Prowess) and a spell to cast
+# Casting Lightning Bolt should give Ty Lee +1/+1 until end of turn (becoming 4/3)
+p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain; Mountain; Ty Lee, Artful Acrobat
+p0library=Mountain; Mountain; Mountain
+
+# P1 has 3 life - Bolt deals 3 damage
+p1life=3
+p1battlefield=
+p1library=Forest; Forest; Forest

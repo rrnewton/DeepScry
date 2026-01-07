@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 115 items verified as of 2026-01-07_#1579
+**Progress:** 116 items verified as of 2026-01-07_#1580
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -319,6 +319,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Fire Lord Ozai attack trigger now parses AB$ Mana using AbilityParams (test_parse_fire_lord_ozai_attack_trigger)
 - Fire Lord Ozai Sacrificed$CardPower mechanic works (sentinel 254 in Effect::Firebend)
 - check_attack_triggers now handles optional triggers with sacrifice costs
+- Prowess keyword expansion implemented (test_prowess_keyword_expansion, test_prowess_trigger.pzl)
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
@@ -327,6 +328,5 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Legendary rule (MTG 704.5j) - should sacrifice one when controlling two of same name - **mtg-z4jkk**
 - Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
-- Prowess keyword - recognized but not expanded into a trigger (Ty Lee doesn't get +1/+1)
 - DB$ Attach - equipment attach effects not implemented (Twin Blades ETB doesn't attach)
 - DB$ Pump with KW$ - granting keywords like Double Strike via pump not verified
