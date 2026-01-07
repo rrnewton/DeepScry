@@ -1,0 +1,21 @@
+[metadata]
+Name:Deserter's Disciple Combat Timing
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=DECLAREATK
+
+# P0 has Deserter's Disciple untapped and Typhoid Rats ready to attack
+# Goal: activate ability after declaring attackers
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Deserter's Disciple; Typhoid Rats
+p0library=Mountain; Mountain; Mountain
+
+# P1 has a blocker
+p1life=5
+p1battlefield=Grizzly Bears
+p1library=Forest; Forest; Forest
