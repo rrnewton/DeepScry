@@ -3111,20 +3111,14 @@ async fn test_indestructible_keyword_loading() -> Result<()> {
         })
         .copied();
 
-    assert!(
-        darksteel_id.is_some(),
-        "Darksteel Colossus should be on battlefield"
-    );
+    assert!(darksteel_id.is_some(), "Darksteel Colossus should be on battlefield");
 
     let darksteel_id = darksteel_id.unwrap();
 
     // Verify Indestructible keyword is loaded
     let darksteel = game.cards.get(darksteel_id)?;
     println!("Darksteel Colossus keywords: {:?}", darksteel.keywords);
-    println!(
-        "Has Indestructible: {}",
-        darksteel.has_indestructible()
-    );
+    println!("Has Indestructible: {}", darksteel.has_indestructible());
 
     assert!(
         darksteel.has_indestructible(),
@@ -3146,18 +3140,13 @@ async fn test_indestructible_keyword_loading() -> Result<()> {
     let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
 
     // Check if Darksteel Colossus is still on battlefield (should be!)
-    let darksteel_still_alive = game_loop
-        .game
-        .battlefield
-        .cards
-        .iter()
-        .any(|&card_id| {
-            if let Ok(card) = game_loop.game.cards.get(card_id) {
-                card.name.as_str() == "Darksteel Colossus"
-            } else {
-                false
-            }
-        });
+    let darksteel_still_alive = game_loop.game.battlefield.cards.iter().any(|&card_id| {
+        if let Ok(card) = game_loop.game.cards.get(card_id) {
+            card.name.as_str() == "Darksteel Colossus"
+        } else {
+            false
+        }
+    });
 
     let logs = game_loop.game.logger.logs();
     println!("=== Indestructible Test Logs ===");

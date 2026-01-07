@@ -1,0 +1,22 @@
+[metadata]
+Name:Fire Lord Ozai Attack Trigger
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=DECLAREATK
+
+# P0 has Fire Lord Ozai ready to attack with a sacrificable creature
+# Fire Lord Ozai: 4/4 legendary creature
+# When attacks, may sacrifice another creature -> add X {R} where X is its power
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Swamp; Swamp; Fire Lord Ozai; Grizzly Bears
+p0library=Mountain; Mountain; Mountain
+
+# P1 has low life and no blockers - if Ozai attacks and gets mana, win is possible
+p1life=4
+p1battlefield=
+p1library=Forest; Forest; Forest
