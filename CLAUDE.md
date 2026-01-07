@@ -44,6 +44,39 @@ Read OPTIMIZATION.md for more details.
 
 SAFETY! This is a safe-rust project. We will not introduce the `unsafe` keyword unless we have a VERY good reason and with significant advanced planning.
 
+### NO HACKY STRING OPERATIONS ON STRUCTURED DATA
+
+We do NOT treat structured data formats (card scripts, SVars, ability definitions) as unstructured strings. **NEVER** use substring matching like `body.contains("AB$ Mana")` or `line.contains("some keyword")` to parse structured DSL formats.
+
+**Instead:**
+1. Use proper tokenized parsing (split by delimiters like `|` and `$` FIRST)
+2. Use existing parsing infrastructure: `AbilityParams::parse()` in `ability_parser.rs`
+3. Query the structured result: `params.get("AB") == Some("Mana")`
+4. Add new parsing utilities to centralized modules if needed
+
+**Why this matters:**
+- `contains("add")` would match "Madden", "adding", etc. (false positives)
+- `contains("Damage")` would match "DealDamage", "PreventDamage", "AllDamage" (ambiguous)
+- Substring checks are O(n) per call vs O(1) map lookup after tokenized parse
+- Non-tokenized parsing is fragile and creates subtle bugs
+
+**Example - BAD:**
+```rust
+if body.contains("AB$ Mana") {  // DON'T DO THIS
+    if let Some(produced) = body.split("Produced$").nth(1) { ... }
+}
+```
+
+**Example - GOOD:**
+```rust
+let params = AbilityParams::parse(ability)?;
+if params.api_type == ApiType::Mana {
+    let produced = params.get("Produced");
+}
+```
+
+See `ai_docs/ability_parsing_comparison.md` for detailed analysis and `ai_docs/CARD_SCRIPT_SPEC.md` for the card script DSL specification.
+
 Documentation and Analysis
 ========================================
 

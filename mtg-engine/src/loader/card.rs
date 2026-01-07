@@ -2052,6 +2052,49 @@ impl CardDefinition {
                                         amount: damage_amount,
                                     });
                                 }
+
+                                // Parse AB$ Mana / DB$ Mana effects (Firebending from attack triggers)
+                                // Example: "AB$ Mana | Cost$ Sac<1/Creature.Other/another creature> | Produced$ R | Amount$ X | CombatMana$ True"
+                                // Uses AbilityParams for proper tokenized parsing (no substring matching)
+                                use crate::loader::ability_parser::{AbilityParams, ApiType};
+                                let mana_prefix = format!("A:{}", body);
+                                if let Ok(ability_params) = AbilityParams::parse(&mana_prefix) {
+                                    if ability_params.api_type == ApiType::Mana {
+                                        // Check if this is combat mana (CombatMana$ True)
+                                        let is_combat_mana = ability_params.get("CombatMana") == Some("True");
+                                        let produced = ability_params.get("Produced").unwrap_or("C");
+
+                                        // Check if amount is X (variable based on sacrificed creature's power)
+                                        // Fire Lord Ozai: "SVar:X:Sacrificed$CardPower"
+                                        let amount_str = ability_params.get("Amount").unwrap_or("1");
+                                        let amount = if amount_str == "X" {
+                                            // Check if X is defined as Sacrificed$CardPower
+                                            let x_svar = self
+                                                .raw_abilities
+                                                .iter()
+                                                .find(|ab| ab.starts_with("SVar:X:"))
+                                                .and_then(|ab| ab.strip_prefix("SVar:X:"));
+
+                                            if x_svar == Some("Sacrificed$CardPower") {
+                                                // Sentinel: 254 = use sacrificed creature's power
+                                                254u8
+                                            } else {
+                                                // X from other source - treat as creature's own power (sentinel 0)
+                                                0u8
+                                            }
+                                        } else {
+                                            amount_str.parse::<u8>().unwrap_or(1)
+                                        };
+
+                                        // Only support combat red mana for now (Firebending style)
+                                        if is_combat_mana && produced.contains('R') {
+                                            effects.push(Effect::Firebend {
+                                                controller: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                                amount,
+                                            });
+                                        }
+                                    }
+                                }
                             }
                             break;
                         }
@@ -3520,6 +3563,66 @@ Oracle:Deathtouch\nWhen this creature enters, create a Food token.
             "Should extract c_a_food_sac token script. Got: {:?}. raw_abilities: {:?}",
             token_scripts,
             def.raw_abilities
+        );
+    }
+
+    #[test]
+    fn test_parse_fire_lord_ozai_attack_trigger() {
+        use crate::core::{Cost, Effect, TriggerEvent};
+
+        // Test Fire Lord Ozai's attack trigger with AB$ Mana and Sacrificed$CardPower
+        // "Whenever Fire Lord Ozai attacks, you may sacrifice another creature.
+        //  If you do, add an amount of {R} equal to the sacrificed creature's power."
+        let content = r#"
+Name:Fire Lord Ozai
+ManaCost:3 B
+Types:Legendary Creature Human Noble
+PT:4/4
+T:Mode$ Attacks | ValidCard$ Card.Self | Execute$ TrigMana | OptionalDecider$ You | TriggerDescription$ Whenever CARDNAME attacks, you may sacrifice another creature. If you do, add an amount of {R} equal to the sacrificed creature's power. Until end of combat, you don't lose this mana as steps end.
+SVar:TrigMana:AB$ Mana | Cost$ Sac<1/Creature.Other/another creature> | Produced$ R | Amount$ X | CombatMana$ True
+SVar:X:Sacrificed$CardPower
+Oracle:Whenever Fire Lord Ozai attacks, you may sacrifice another creature. If you do, add an amount of {R} equal to the sacrificed creature's power.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the attack trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::Attacks, "Should be Attacks trigger");
+
+        // Verify it's optional (OptionalDecider$ You)
+        assert!(trigger.optional, "Trigger should be optional due to 'you may'");
+
+        // Verify it has a sacrifice cost (Creature.Other)
+        assert!(trigger.cost.is_some(), "Trigger should have a sacrifice cost");
+        if let Some(ref cost) = trigger.cost {
+            assert!(cost.requires_sacrifice(), "Cost should require sacrifice");
+            if let Cost::SacrificePattern { count, card_type } = cost {
+                assert_eq!(*count, 1, "Should sacrifice 1 creature");
+                assert!(
+                    card_type.contains("Creature"),
+                    "Card type should include Creature, got: {}",
+                    card_type
+                );
+            }
+        }
+
+        // Verify it has a Firebend effect with amount=254 (sentinel for sacrificed creature's power)
+        let has_firebend = trigger.effects.iter().any(|e| {
+            if let Effect::Firebend { amount, .. } = e {
+                // 254 is the sentinel for "use sacrificed creature's power"
+                *amount == 254
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_firebend,
+            "Trigger should have Firebend effect with amount=254 (sacrificed creature's power). Effects: {:?}",
+            trigger.effects
         );
     }
 }

@@ -2862,6 +2862,8 @@ impl GameState {
             card_name: String,
             description: String,
             effects: SmallVec<[Effect; 2]>,
+            optional: bool,
+            cost: Option<crate::core::Cost>,
         }
 
         let (controller, creature_power, triggers): (PlayerId, u8, SmallVec<[TriggerData; 1]>) = {
@@ -2875,6 +2877,8 @@ impl GameState {
                         card_name: card.name.to_string(),
                         description: trigger.description.clone(),
                         effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
+                        optional: trigger.optional,
+                        cost: trigger.cost.clone(),
                     });
                 }
             }
@@ -2884,11 +2888,62 @@ impl GameState {
 
         // Process each trigger - borrow is released, safe to call execute_effect
         for trigger_data in triggers {
+            // For optional triggers with costs, check if cost can be paid
+            let mut sacrifice_target: Option<CardId> = None;
+            let mut sacrificed_power: u8 = 0;
+
+            if trigger_data.optional {
+                if let Some(ref cost) = trigger_data.cost {
+                    // Check if sacrifice cost can be paid
+                    if let Some((count, pattern)) = cost.get_sacrifice_pattern() {
+                        if !self.can_pay_sacrifice_pattern(pattern, count, attacker_id, controller) {
+                            log::debug!(
+                                "Skipping optional attack trigger on {} - sacrifice cost not payable (need {} {})",
+                                trigger_data.card_name,
+                                count,
+                                pattern
+                            );
+                            continue; // Skip this trigger - can't pay cost
+                        }
+
+                        // Choose which permanent to sacrifice (AI heuristic: pick lowest P/T creature)
+                        sacrifice_target = self.choose_sacrifice_target(pattern, attacker_id, controller);
+
+                        // Get the power of the creature we're about to sacrifice
+                        if let Some(sac_id) = sacrifice_target {
+                            if let Ok(sac_card) = self.cards.get(sac_id) {
+                                sacrificed_power = sac_card.current_power().max(0) as u8;
+                            }
+                        }
+                    }
+                    // TODO: Check other cost types (mana, life, etc.)
+                }
+            }
+
             // Log the trigger (official game action)
             self.logger.gamelog(&format!(
                 "Trigger: {} - {}",
                 trigger_data.card_name, trigger_data.description
             ));
+
+            // Execute sacrifice cost first (if any)
+            if let Some(sac_target) = sacrifice_target {
+                if let Ok(sac_card) = self.cards.get(sac_target) {
+                    let sac_name = sac_card.name.to_string();
+                    let sac_owner = sac_card.owner;
+                    log::info!(
+                        "Sacrificing {} ({}) for attack trigger cost",
+                        sac_name,
+                        sac_target.as_u32()
+                    );
+
+                    self.logger
+                        .gamelog(&format!("Sacrifices {} for trigger cost", sac_name));
+
+                    // Move from battlefield to graveyard
+                    self.move_card(sac_target, Zone::Battlefield, Zone::Graveyard, sac_owner)?;
+                }
+            }
 
             // Execute each effect with placeholder resolution
             for mut effect in trigger_data.effects {
@@ -2900,7 +2955,12 @@ impl GameState {
                     } if ctrl.as_u32() == 0 => {
                         // Resolve placeholder controller to the actual creature controller
                         // amount=0 means "use creature's power" (Firebending X)
-                        let actual_amount = if *amount == 0 { creature_power } else { *amount };
+                        // amount=254 means "use sacrificed creature's power" (Fire Lord Ozai)
+                        let actual_amount = match *amount {
+                            0 => creature_power,
+                            254 => sacrificed_power,
+                            n => n,
+                        };
 
                         effect = Effect::Firebend {
                             controller,
@@ -2908,10 +2968,12 @@ impl GameState {
                         };
 
                         // Log the firebend trigger (using card_name already extracted)
-                        self.logger.gamelog(&format!(
-                            "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
-                            trigger_data.card_name, actual_amount, actual_amount
-                        ));
+                        if actual_amount > 0 {
+                            self.logger.gamelog(&format!(
+                                "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                                trigger_data.card_name, actual_amount, actual_amount
+                            ));
+                        }
                     }
                     _ => {}
                 }
