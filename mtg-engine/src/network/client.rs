@@ -1756,7 +1756,8 @@ impl NetworkClient {
                     if let Ok((winner, server_action_count)) = game_end_rx.recv_timeout(Duration::from_secs(5)) {
                         log::info!(
                             "Game ended gracefully via ExitGame signal: winner={:?}, server_action_count={}",
-                            winner, server_action_count
+                            winner,
+                            server_action_count
                         );
                         return Ok(winner);
                     }

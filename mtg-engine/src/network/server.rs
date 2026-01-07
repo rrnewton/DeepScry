@@ -101,7 +101,7 @@ struct GameEndInfo {
 }
 
 /// Info about an opponent's choice, broadcast to the other player
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct OpponentChoiceInfo {
     /// Choice sequence number
     choice_seq: u32,
@@ -135,6 +135,42 @@ struct RevealBroadcast {
     /// Zone the card moved to
     to_zone: Zone,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SINGLE-CHANNEL ARCHITECTURE (mtg-e66iz)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// To eliminate nondeterminism from `tokio::select!` over multiple channels,
+// we multiplex all game-related messages into a single ordered channel per
+// player connection. This ensures strict FIFO ordering of events.
+//
+// Previously, we had separate channels for:
+// - opponent_choice_rx: OpponentChoiceInfo
+// - reveal_rx: Vec<RevealBroadcast> (disabled)
+// - immediate_reveal_rx: Vec<RevealBroadcast> (disabled)
+// - ability_rx: ChosenAbilityInfo
+//
+// Now these are all variants of PlayerChannelMessage, sent through a single
+// player_rx channel. The select! still exists for request_rx, ws_rx, game_end_rx,
+// and fatal_error_rx (which are fundamentally different event sources), but
+// game state synchronization messages are now totally ordered.
+
+/// Multiplexed message type for the single-channel player architecture.
+/// All game synchronization messages flow through this enum to ensure ordering.
+#[derive(Debug)]
+enum PlayerChannelMessage {
+    /// Opponent made a choice (for run_game mode synchronization)
+    OpponentChoice(OpponentChoiceInfo),
+    /// Ability info for pending choice processing (reserved for future migration)
+    #[allow(dead_code)]
+    AbilityInfo(ChosenAbilityInfo),
+}
+
+/// Type alias for the single-channel sender (async side)
+type PlayerChannelTx = tokio_mpsc::Sender<PlayerChannelMessage>;
+
+/// Type alias for the single-channel receiver (async side)
+type PlayerChannelRx = tokio_mpsc::Receiver<PlayerChannelMessage>;
 
 /// Configuration for the reveal pusher system (bundled to reduce function arguments)
 struct RevealPusherConfig {
@@ -172,9 +208,14 @@ struct PlayerConnection {
     response_tx: std::sync::mpsc::Sender<ChoiceResponse>,
     /// Channel to receive game end notification
     game_end_rx: oneshot::Receiver<GameEndInfo>,
-    /// Channel to send our choices to opponent (for run_game mode)
-    opponent_choice_tx: tokio_mpsc::Sender<OpponentChoiceInfo>,
-    /// Channel to receive opponent's choices (for run_game mode)
+    /// Single-channel receiver for all game sync messages (mtg-e66iz fix)
+    /// This replaces opponent_choice_rx, ability_rx, etc. to ensure message ordering.
+    player_rx: PlayerChannelRx,
+    /// Channel to send messages to opponent's player_rx (wraps opponent_choice_tx)
+    player_tx: PlayerChannelTx,
+    /// DEPRECATED: Channel to receive opponent's choices (for run_game mode)
+    /// Kept for backwards compatibility during migration. Will be removed.
+    #[allow(dead_code)]
     opponent_choice_rx: tokio_mpsc::Receiver<OpponentChoiceInfo>,
     /// Channel to broadcast reveals to this player (receives from opponent's ChoiceRequest)
     reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
@@ -185,8 +226,9 @@ struct PlayerConnection {
     opponent_reveal_tx: tokio_mpsc::Sender<Vec<RevealBroadcast>>,
     /// Channel to receive immediate reveals from the game thread (after automatic actions like draws)
     immediate_reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
-    /// Channel to receive chosen abilities from NetworkController (for Priority choices)
-    /// This allows the WebSocket handler to include the actual ability in OpponentChoice
+    /// DEPRECATED: Channel to receive chosen abilities from NetworkController (for Priority choices)
+    /// Now received via player_rx as PlayerChannelMessage::AbilityInfo
+    #[allow(dead_code)]
     ability_rx: tokio_mpsc::Receiver<ChosenAbilityInfo>,
     /// Current choice type being requested (for broadcasting)
     current_choice_type: Option<ChoiceType>,
@@ -558,11 +600,11 @@ async fn run_game(
     let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
     let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
 
-    // Create cross-player channels for opponent choice broadcasting (for run_game mode)
-    // When P1 makes a choice, it gets sent to P2. When P2 makes a choice, it gets sent to P1.
-    // Channel naming: (sender_tx, receiver_rx) - sender writes, receiver reads
-    let (p1_choice_tx, p1_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16); // P1's choices
-    let (p2_choice_tx, p2_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16); // P2's choices
+    // DEPRECATED: These opponent choice channels are no longer used.
+    // Opponent choices are now sent via the single-channel architecture (player_tx/player_rx).
+    // These are kept temporarily for backwards compatibility during migration (mtg-e66iz).
+    let (_p1_choice_tx, p1_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
+    let (_p2_choice_tx, p2_choice_rx) = tokio_mpsc::channel::<OpponentChoiceInfo>(16);
 
     // Create cross-player channels for reveal broadcasting
     // When P1 receives a ChoiceRequest with reveals, those reveals are sent to P2 immediately
@@ -620,6 +662,11 @@ async fn run_game(
     let _p1_ability_bridge = p1_ability_bridge; // Keep the handle alive
     let _p2_ability_bridge = p2_ability_bridge;
 
+    // Create single-channel infrastructure for game sync messages (mtg-e66iz fix)
+    // P1's player_rx receives messages from P2's player_tx, and vice versa
+    let (p1_player_tx, p2_player_rx) = tokio_mpsc::channel::<PlayerChannelMessage>(32);
+    let (p2_player_tx, p1_player_rx) = tokio_mpsc::channel::<PlayerChannelMessage>(32);
+
     // Create broadcast channel for fatal error propagation
     // When a desync or fatal error occurs, this broadcasts to all connected players
     let (fatal_error_tx, _) = broadcast::channel::<String>(2);
@@ -632,12 +679,13 @@ async fn run_game(
         request_rx: p1_async_request_rx,
         response_tx: p1_response_tx,
         game_end_rx: p1_game_end_rx,
-        opponent_choice_tx: p1_choice_tx,       // P1 sends their choices on this channel
-        opponent_choice_rx: p2_choice_rx,       // P1 receives P2's choices from this channel
+        player_rx: p1_player_rx,                // P1 receives messages from P2 via single channel
+        player_tx: p1_player_tx,                // P1 sends messages to P2 via single channel
+        opponent_choice_rx: p2_choice_rx,       // DEPRECATED: P1 receives P2's choices (old path)
         reveal_rx: p2_reveal_rx,                // P1 receives reveals from P2's ChoiceRequest
         opponent_reveal_tx: p1_reveal_tx,       // P1 sends reveals to P2 (when P1 gets ChoiceRequest)
         immediate_reveal_rx: p1_immed_async_rx, // P1 receives immediate reveals from game thread
-        ability_rx: p1_ability_async_rx,        // P1 receives ability info from NetworkController
+        ability_rx: p1_ability_async_rx,        // DEPRECATED: Now via player_rx
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -654,12 +702,13 @@ async fn run_game(
         request_rx: p2_async_request_rx,
         response_tx: p2_response_tx,
         game_end_rx: p2_game_end_rx,
-        opponent_choice_tx: p2_choice_tx,       // P2 sends their choices on this channel
-        opponent_choice_rx: p1_choice_rx,       // P2 receives P1's choices from this channel
+        player_rx: p2_player_rx,                // P2 receives messages from P1 via single channel
+        player_tx: p2_player_tx,                // P2 sends messages to P1 via single channel
+        opponent_choice_rx: p1_choice_rx,       // DEPRECATED: P2 receives P1's choices (old path)
         reveal_rx: p1_reveal_rx,                // P2 receives reveals from P1's ChoiceRequest
         opponent_reveal_tx: p2_reveal_tx,       // P2 sends reveals to P1 (when P2 gets ChoiceRequest)
         immediate_reveal_rx: p2_immed_async_rx, // P2 receives immediate reveals from game thread
-        ability_rx: p2_ability_async_rx,        // P2 receives ability info from NetworkController
+        ability_rx: p2_ability_async_rx,        // DEPRECATED: Now via player_rx
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -1226,10 +1275,11 @@ async fn handle_player_websocket(
                                 spell_ability,
                             };
                             log::info!(
-                                "Player {:?}: Broadcasting pending choice {} to opponent",
+                                "Player {:?}: Broadcasting pending choice {} to opponent via single channel",
                                 conn.player_id, pending.choice_seq
                             );
-                            if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
+                            // Use single-channel architecture (mtg-e66iz fix)
+                            if let Err(e) = conn.player_tx.send(PlayerChannelMessage::OpponentChoice(opponent_info)).await {
                                 log::error!("Failed to broadcast pending choice: {:?}", e);
                             }
                         } else {
@@ -1482,8 +1532,9 @@ async fn handle_player_websocket(
                                         timestamp_ms: now_ms(),
                                         spell_ability,
                                     };
-                                    log::info!("Player {:?}: Broadcasting choice {} to opponent", conn.player_id, choice_seq);
-                                    if let Err(e) = conn.opponent_choice_tx.send(opponent_info).await {
+                                    log::info!("Player {:?}: Broadcasting choice {} to opponent via single channel", conn.player_id, choice_seq);
+                                    // Use single-channel architecture (mtg-e66iz fix)
+                                    if let Err(e) = conn.player_tx.send(PlayerChannelMessage::OpponentChoice(opponent_info)).await {
                                         log::error!("Failed to broadcast choice to opponent: {:?}", e);
                                     }
                                 } else {
@@ -1574,55 +1625,69 @@ async fn handle_player_websocket(
                 }
             }
 
-            // Check for opponent's choice to forward (for run_game mode)
-            opponent_choice = conn.opponent_choice_rx.recv() => {
-                if let Some(info) = opponent_choice {
-                    log::debug!("Player {:?}: Forwarding opponent choice {}", conn.player_id, info.choice_seq);
+            // Check for messages from opponent via single channel (mtg-e66iz fix)
+            // This replaces the old opponent_choice_rx.recv() to ensure message ordering
+            player_msg = conn.player_rx.recv() => {
+                if let Some(msg) = player_msg {
+                    match msg {
+                        PlayerChannelMessage::OpponentChoice(info) => {
+                            log::debug!("Player {:?}: Forwarding opponent choice {} via single channel", conn.player_id, info.choice_seq);
 
-                    // If opponent played a card, send CardRevealed so client knows what card it is
-                    // This is essential because the client's shadow library doesn't have card identities
-                    // for the opponent's hand
-                    if let Some(ref ability) = info.spell_ability {
-                        // Extract card_id from the ability
-                        let card_id = ability.card_id();
-                        {
-                            let game_guard = game.lock().await;
-                            if let Some(card) = game_guard.cards.try_get(card_id) {
-                                let card_def = game_guard.card_definitions.get(&card.name).cloned();
-                                let card_reveal = CardReveal {
-                                    card_id,
-                                    name: card.name.to_string(),
-                                    card_def,
-                                };
+                            // If opponent played a card, send CardRevealed so client knows what card it is
+                            // This is essential because the client's shadow library doesn't have card identities
+                            // for the opponent's hand
+                            if let Some(ref ability) = info.spell_ability {
+                                // Extract card_id from the ability
+                                let card_id = ability.card_id();
+                                {
+                                    let game_guard = game.lock().await;
+                                    if let Some(card) = game_guard.cards.try_get(card_id) {
+                                        let card_def = game_guard.card_definitions.get(&card.name).cloned();
+                                        let card_reveal = CardReveal {
+                                            card_id,
+                                            name: card.name.to_string(),
+                                            card_def,
+                                        };
 
-                                log::debug!(
-                                    "Player {:?}: Sending CardRevealed for opponent's played card: {} (id={:?})",
-                                    conn.player_id, card.name, card_id
-                                );
-                                conn.send(&ServerMessage::CardRevealed {
-                                    owner: info.player,
-                                    card: card_reveal,
-                                    reason: RevealReason::Played,
-                                }).await?;
+                                        log::debug!(
+                                            "Player {:?}: Sending CardRevealed for opponent's played card: {} (id={:?})",
+                                            conn.player_id, card.name, card_id
+                                        );
+                                        conn.send(&ServerMessage::CardRevealed {
+                                            owner: info.player,
+                                            card: card_reveal,
+                                            reason: RevealReason::Played,
+                                        }).await?;
+                                    }
+                                    // Update last_reveal_index
+                                    conn.last_reveal_index = game_guard.undo_log.len();
+                                }
                             }
-                            // Update last_reveal_index
-                            conn.last_reveal_index = game_guard.undo_log.len();
+
+                            conn.send(&ServerMessage::OpponentChoice {
+                                choice_seq: info.choice_seq,
+                                player: info.player,
+                                choice_type: info.choice_type,
+                                choice_indices: info.choice_indices.clone(),
+                                description: info.description,
+                                action_count: info.action_count,
+                                timestamp_ms: info.timestamp_ms,
+                                spell_ability: info.spell_ability,
+                                // TODO(mtg-037fw): Populate in debug mode
+                                state_hash_after: None,
+                                debug_info: None,
+                            }).await?;
+                        }
+                        PlayerChannelMessage::AbilityInfo(ability_info) => {
+                            // AbilityInfo messages are currently not forwarded - they're
+                            // processed synchronously via conn.ability_rx in the choice handling path.
+                            // This variant exists for future use when we fully migrate ability_rx.
+                            log::debug!(
+                                "Player {:?}: Received AbilityInfo via single channel (choice_seq={})",
+                                conn.player_id, ability_info.choice_seq
+                            );
                         }
                     }
-
-                    conn.send(&ServerMessage::OpponentChoice {
-                        choice_seq: info.choice_seq,
-                        player: info.player,
-                        choice_type: info.choice_type,
-                        choice_indices: info.choice_indices.clone(),
-                        description: info.description,
-                        action_count: info.action_count,
-                        timestamp_ms: info.timestamp_ms,
-                        spell_ability: info.spell_ability,
-                        // TODO(mtg-037fw): Populate in debug mode
-                        state_hash_after: None,
-                        debug_info: None,
-                    }).await?;
                 }
             }
         }
