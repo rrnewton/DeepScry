@@ -198,6 +198,10 @@ impl GameState {
     /// assert_eq!(breakdown.modifypt_counters, (1, 1)); // +1/+1 counter
     /// assert_eq!(breakdown.final_pt(), (5, 4));     // Total: 2+2+1 / 1+2+1
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature is not found in the card store.
     pub fn get_pt_breakdown(&self, creature_id: CardId) -> Result<PTBreakdown> {
         let creature = self.cards.get(creature_id)?;
 

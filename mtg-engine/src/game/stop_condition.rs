@@ -34,6 +34,10 @@ impl StopCondition {
     ///
     /// Format: <NUM>[:[p1|p2]]
     /// Examples: "3" (both players), "1:p1" (only p1), "5:p2" (only p2)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the choice count is not a valid number or player is invalid.
     pub fn parse(s: &str) -> Result<Self, String> {
         let parts: Vec<&str> = s.split(':').collect();
 

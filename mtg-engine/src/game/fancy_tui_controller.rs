@@ -67,6 +67,10 @@ pub struct FancyTuiController {
 
 impl FancyTuiController {
     /// Create a new fancy TUI controller
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the controller cannot be initialized.
     pub fn new(player_id: PlayerId, visual_stacks: bool) -> io::Result<Self> {
         Ok(FancyTuiController {
             player_id,
@@ -111,6 +115,10 @@ impl FancyTuiController {
 
     /// Save buffered logs to a temp file and print the location
     /// Call this after the game ends and terminal is restored
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the log file cannot be created or written.
     ///
     /// # Panics
     ///

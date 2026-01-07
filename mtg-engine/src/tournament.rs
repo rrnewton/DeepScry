@@ -76,6 +76,11 @@ struct TournamentStats {
 
 /// Run tournament mode - play multiple games in parallel and collect statistics
 ///
+/// # Errors
+///
+/// Returns an error if no decks are provided, tournament options are invalid,
+/// or deck loading fails.
+///
 /// # Panics
 ///
 /// Panics if a mutex lock is poisoned (indicates a panic occurred in another thread).

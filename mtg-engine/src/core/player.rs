@@ -125,7 +125,9 @@ impl Player {
     /// Spends from regular pool first, then combat pool for the remainder.
     /// This is used during combat when Firebending has added combat mana.
     ///
-    /// Returns Ok(()) if payment successful, Err with message if insufficient mana.
+    /// # Errors
+    ///
+    /// Returns an error message if insufficient total mana to pay the cost.
     pub fn pay_from_total_mana(&mut self, cost: &crate::core::ManaCost) -> Result<(), String> {
         let total = self.total_available_mana();
         if !total.can_pay(cost) {

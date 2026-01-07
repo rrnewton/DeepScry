@@ -169,6 +169,10 @@ pub struct ClientGameState {
 
 impl ClientGameState {
     /// Create a new client game state from GameStarted message
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card database cannot resolve opening hand cards.
     pub fn new(info: GameStartInfo, card_db: &AsyncCardDatabase) -> Result<Self> {
         let our_player_id = info.your_player_id;
 
@@ -250,6 +254,10 @@ impl ClientGameState {
     /// In the late-binding architecture:
     /// - For deck cards (Draw, OpeningHand, Played): CardID slot was pre-reserved, use insert()
     /// - For tokens (TokenCreated): New CardID, use insert_if_vacant() as fallback
+    ///
+    /// # Errors
+    ///
+    /// This function currently always succeeds, but returns Result for API consistency.
     pub fn process_card_revealed(
         &mut self,
         owner: PlayerId,
@@ -317,6 +325,10 @@ impl ClientGameState {
     }
 
     /// Process an OpponentChoice message (sync opponent's decision)
+    ///
+    /// # Errors
+    ///
+    /// This function currently always succeeds, but returns Result for API consistency.
     pub fn process_opponent_choice(
         &mut self,
         _choice_seq: u32,
@@ -439,6 +451,11 @@ impl NetworkClient {
     ///
     /// Note: Wildcard is intentional - ServerMessage has 12+ variants;
     /// we only expect AuthResult during connect, others are errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if card database loading, deck loading, WebSocket connection,
+    /// or authentication fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn connect(&mut self) -> Result<()> {
         // Load card database
@@ -503,6 +520,10 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage has 12+ variants;
     /// we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if WebSocket communication fails or game initialization fails.
     ///
     /// # Panics
     ///
@@ -812,6 +833,10 @@ impl NetworkClient {
 
     /// Send a ping to keep connection alive
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket message cannot be sent.
+    ///
     /// # Panics
     ///
     /// Panics if the system time is before the Unix epoch (should never happen).
@@ -828,6 +853,10 @@ impl NetworkClient {
     }
 
     /// Disconnect gracefully
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the disconnect message cannot be sent or WebSocket close fails.
     pub async fn disconnect(&mut self) -> Result<()> {
         self.send_message(&ClientMessage::Disconnect).await?;
         if let Some(mut ws) = self.ws.take() {
@@ -860,6 +889,10 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
     /// variants; we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not connected, game not started, or communication fails.
     ///
     /// # Panics
     ///
@@ -1520,6 +1553,10 @@ impl NetworkClient {
     /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
     /// variants; we handle specific variants and log/ignore unexpected ones.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if not connected, game not started, or communication fails.
+    ///
     /// # Panics
     ///
     /// Panics if tokio runtime creation fails or card database is not loaded.
@@ -1772,7 +1809,8 @@ impl NetworkClient {
                     if let Ok((winner, server_action_count)) = game_end_rx.recv_timeout(Duration::from_secs(5)) {
                         log::info!(
                             "Game ended gracefully via ExitGame signal: winner={:?}, server_action_count={}",
-                            winner, server_action_count
+                            winner,
+                            server_action_count
                         );
                         return Ok(winner);
                     }

@@ -15,6 +15,10 @@ pub struct PuzzleFile {
 }
 
 /// Parse a complete puzzle file from string contents
+///
+/// # Errors
+///
+/// Returns an error if the puzzle format is invalid or missing required sections.
 pub fn parse_puzzle(contents: &str) -> Result<PuzzleFile> {
     let sections = parse_sections(contents)?;
 

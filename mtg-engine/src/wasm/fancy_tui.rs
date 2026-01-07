@@ -1421,6 +1421,10 @@ impl WasmFancyTuiState {
 /// Note: Wildcards are intentional - ratzilla KeyCode has 25+ variants, KeyInput
 /// and FocusedPane have many variants; we handle the subset used in WASM TUI.
 ///
+/// # Errors
+///
+/// Returns a `JsValue` error if game creation from the database fails.
+///
 /// # Panics
 ///
 /// Panics if mutex locks are poisoned or internal channel operations fail.

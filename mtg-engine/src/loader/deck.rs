@@ -68,6 +68,10 @@ pub struct DeckLoader;
 
 impl DeckLoader {
     /// Load a deck from a .dck file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed.
     #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<DeckList> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
@@ -75,6 +79,10 @@ impl DeckLoader {
     }
 
     /// Load a deck from file with problem tracking
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read.
     #[cfg(feature = "native")]
     pub fn load_from_file_with_problems(path: &Path) -> Result<DeckParseResult> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
@@ -82,6 +90,10 @@ impl DeckLoader {
     }
 
     /// Parse a deck from its text content
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the deck is empty or cannot be parsed.
     pub fn parse(content: &str) -> Result<DeckList> {
         let result = Self::parse_with_problems(content);
         if result.deck_list.main_deck.is_empty() && result.problems.is_empty() {
@@ -259,6 +271,10 @@ impl DeckList {
     }
 
     /// Save deck to a .dck file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written.
     #[cfg(feature = "native")]
     pub fn save_to_file(&self, path: &Path, name: Option<&str>) -> Result<()> {
         let content = self.to_dck_format(name);

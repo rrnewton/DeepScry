@@ -984,6 +984,10 @@ impl<T> ChoiceResult<T> {
     }
 
     /// Convert to Result for easier handling
+    ///
+    /// # Errors
+    ///
+    /// Returns error messages for non-Ok variants (undo request, exit game, need input).
     pub fn into_result(self) -> Result<T, String> {
         match self {
             ChoiceResult::Ok(value) => Ok(value),

@@ -25,6 +25,10 @@ impl CardDefinition {
     ///
     /// Note: Wildcard is intentional - CardModifier has 24+ variants. Set/Art/Id
     /// are extracted to top-level fields; all others go to the modifiers list.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the notation is empty or contains invalid modifiers.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn parse(notation: &str) -> Result<Self> {
         let (name, modifiers) = parse_card_notation(notation)?;
@@ -102,6 +106,10 @@ pub enum PlayerRef {
 
 impl PlayerRef {
     /// Parse player reference from string (p0, p1, human, ai)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the player reference is not recognized.
     pub fn parse(s: &str) -> Result<Self> {
         match s.trim().to_lowercase().as_str() {
             "p0" | "human" => Ok(PlayerRef::Player0),
@@ -141,6 +149,10 @@ impl Default for GameStateDefinition {
 
 impl GameStateDefinition {
     /// Parse game state from lines in \[state\] section
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the state contains invalid field values or references.
     pub fn parse(lines: &[String]) -> Result<Self> {
         let mut state = GameStateDefinition::default();
 

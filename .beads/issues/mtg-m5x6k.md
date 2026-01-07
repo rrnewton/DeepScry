@@ -1,10 +1,10 @@
 ---
 title: Enable missing_panics_doc and missing_errors_doc clippy lints
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-01-07T13:58:17.352320041+00:00
-updated_at: 2026-01-07T14:36:08.548051106+00:00
+updated_at: 2026-01-07T15:35:00.000000000+00:00
 ---
 
 # Description
@@ -15,7 +15,7 @@ Enable documentation lints for functions that can panic or return errors.
 
 ## Progress
 
-### missing_panics_doc (COMPLETED)
+### missing_panics_doc (COMPLETED - commit 56acf87)
 - [x] Enabled `missing_panics_doc` = "warn" (16 issues → 0)
 - Fixed by adding `# Panics` sections or eliminating panics:
   - costs.rs: Eliminated panic by returning Option directly
@@ -31,18 +31,23 @@ Enable documentation lints for functions that can panic or return errors.
   - wasm/fancy_tui.rs: Documented launch_fancy_tui panic
   - wasm/deck_builder.rs: Documented launch_deck_builder panic
 
-### missing_errors_doc (TODO)
-- [ ] `missing_errors_doc` = "warn" (117 issues remaining)
-
-Files affected by remaining work:
-- game/state.rs (16 functions)
-- game/actions/mod.rs (20 functions)
-- network/client.rs (8 functions)
-- game/snapshot.rs (6 functions)
-- And many others...
-
-This is a significant documentation effort that should be done incrementally.
+### missing_errors_doc (COMPLETED - commit b0dea23)
+- [x] Enabled `missing_errors_doc` = "warn" (117 issues → 0)
+- Added `# Errors` documentation sections to 117+ public functions
+- Files documented:
+  - Core: entity.rs, mana.rs, player.rs
+  - Loaders: ability_parser.rs, card.rs, database_async.rs, deck.rs,
+    deck_async.rs, edition.rs, game_init.rs
+  - Puzzle: card_notation.rs, format.rs, loader.rs, metadata.rs,
+    mod.rs, state.rs
+  - Game: actions/*.rs, state.rs, game_loop/mod.rs, snapshot.rs,
+    continuous_effects.rs, controller.rs, hand_setup.rs,
+    stop_condition.rs, fancy_*_controller.rs
+  - Network: client.rs, server.rs
+  - WASM: mod.rs, fancy_tui.rs, deck_builder.rs, image_overlay.rs
+  - Misc: download.rs, tournament.rs, undo.rs, deck_builder/native.rs
 
 ## Reference
 
 Issue counts from clippy analysis on 2026-01-07.
+Both lints now enabled as "warn" in Cargo.toml [lints.clippy].

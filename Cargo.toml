@@ -38,3 +38,4 @@ clone_on_ref_ptr = "warn"
 
 # Documentation quality - pedantic lints
 missing_panics_doc = "warn"
+missing_errors_doc = "warn"
