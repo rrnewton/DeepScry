@@ -107,7 +107,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Cannot target creature with power 3+ (verified: test_deserters_disciple_power_restriction.pzl - no activation when only Mongoose Lizard 5/6 available)
 - [x] Unblockable effect applies for the turn (verified: 6d373d4 - "can't be blocked" enforced)
 - [x] Effect wears off at end of turn (verified: PersistentEffect has CleanupCondition::EndOfTurn)
-- [ ] Can use ability during declare attackers step
+- [x] Can use ability during declare attackers step (verified: combat.rs:145-147 - priority_round() after attackers declared allows activated abilities)
 
 ---
 
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 101 items verified as of 2026-01-06_#1579
+**Progress:** 108 items verified as of 2026-01-07_#1578
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -309,12 +309,19 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Flying restriction fixed - ground creatures can't block flyers (test_flying_cant_be_blocked.pzl)
 - Reach correctly allows blocking flying creatures (test_yuyan_archers_reach.pzl)
 - Lifelink gains life when dealing combat damage (test_lifelink_damage.pzl - 10→12→14)
+- Indestructible keyword loads from card database (test_indestructible_survives.pzl - 08c1e17)
+- Haste allows attacking same turn (test_haste_attack_same_turn.pzl)
+- Summoning Sickness prevents attack without Haste (test_summoning_sickness.pzl)
+- Defender prevents attacking (test_defender_cant_attack.pzl)
+- Hexproof prevents opponent targeting (test_hexproof_untargetable.pzl, test_hexproof_vs_normal.pzl)
+- Deserter's Disciple can use ability during declare attackers step (combat.rs:145-147 priority_round)
+- Legendary rule NOT implemented - filed mtg-z4jkk
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
 - Fire Lord Ozai attack trigger (AB$ Mana effect) - attack trigger parser only handles Draw/PutCounter
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
-- Legendary rule (MTG 704.5j) - should sacrifice one when controlling two of same name
+- Legendary rule (MTG 704.5j) - should sacrifice one when controlling two of same name - **mtg-z4jkk**
 - Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
 - Prowess keyword - recognized but not expanded into a trigger (Ty Lee doesn't get +1/+1)
