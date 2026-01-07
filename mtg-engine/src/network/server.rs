@@ -16,7 +16,6 @@ use crate::network::protocol::{
 use crate::network::{
     CardRevealInfo, ChoiceRequest, ChoiceResponse, ChosenAbilityInfo, NetworkController, DEFAULT_PORT,
 };
-use crate::undo::GameAction;
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -146,8 +145,6 @@ struct RevealBroadcast {
 //
 // Previously, we had separate channels for:
 // - opponent_choice_rx: OpponentChoiceInfo
-// - reveal_rx: Vec<RevealBroadcast> (disabled)
-// - immediate_reveal_rx: Vec<RevealBroadcast> (disabled)
 // - ability_rx: ChosenAbilityInfo
 //
 // Now these are all variants of PlayerChannelMessage, sent through a single
@@ -168,18 +165,6 @@ type PlayerChannelTx = tokio_mpsc::Sender<PlayerChannelMessage>;
 
 /// Type alias for the single-channel receiver (async side)
 type PlayerChannelRx = tokio_mpsc::Receiver<PlayerChannelMessage>;
-
-/// Configuration for the reveal pusher system (bundled to reduce function arguments)
-struct RevealPusherConfig {
-    /// Channel to send immediate reveals to P1
-    p1_reveal_tx: std::sync::mpsc::Sender<Vec<RevealBroadcast>>,
-    /// Channel to send immediate reveals to P2
-    p2_reveal_tx: std::sync::mpsc::Sender<Vec<RevealBroadcast>>,
-    /// Shared index tracking how many reveals P1 has processed
-    p1_reveal_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    /// Shared index tracking how many reveals P2 has processed
-    p2_reveal_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-}
 
 /// A SubmitChoice that arrived before the corresponding ChoiceRequest.
 /// This can happen in synchronized GameLoop mode due to timing differences.
@@ -210,10 +195,6 @@ struct PlayerConnection {
     player_rx: PlayerChannelRx,
     /// Channel to send messages to opponent's player_rx
     player_tx: PlayerChannelTx,
-    /// Channel to broadcast reveals to this player (receives from opponent's ChoiceRequest)
-    reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
-    /// Channel to receive immediate reveals from the game thread (after automatic actions like draws)
-    immediate_reveal_rx: tokio_mpsc::Receiver<Vec<RevealBroadcast>>,
     /// Channel to receive chosen abilities from NetworkController (for Priority choices)
     /// Used synchronously with timeout during choice processing.
     ability_rx: tokio_mpsc::Receiver<ChosenAbilityInfo>,
@@ -587,37 +568,6 @@ async fn run_game(
     let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
     let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
 
-    // Create cross-player channels for reveal broadcasting
-    // When P1 receives a ChoiceRequest with reveals, those reveals are sent to P2 immediately
-    // (and vice versa). This ensures both clients have reveals before they need them.
-    let (p1_reveal_tx, p1_reveal_rx) = tokio_mpsc::channel::<Vec<RevealBroadcast>>(32);
-    let (p2_reveal_tx, p2_reveal_rx) = tokio_mpsc::channel::<Vec<RevealBroadcast>>(32);
-
-    // Create channels for immediate reveals from the game thread (after automatic actions)
-    // These are sync channels (for the blocking game thread) bridged to tokio channels
-    let (p1_immed_sync_tx, p1_immed_sync_rx) = std::sync::mpsc::channel::<Vec<RevealBroadcast>>();
-    let (p2_immed_sync_tx, p2_immed_sync_rx) = std::sync::mpsc::channel::<Vec<RevealBroadcast>>();
-    let (p1_immed_async_tx, p1_immed_async_rx) = tokio_mpsc::channel::<Vec<RevealBroadcast>>(32);
-    let (p2_immed_async_tx, p2_immed_async_rx) = tokio_mpsc::channel::<Vec<RevealBroadcast>>(32);
-
-    // Bridge immediate reveal channels from sync to async
-    let p1_immed_bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(reveals) = p1_immed_sync_rx.recv() {
-            if p1_immed_async_tx.blocking_send(reveals).is_err() {
-                break;
-            }
-        }
-    });
-    let p2_immed_bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(reveals) = p2_immed_sync_rx.recv() {
-            if p2_immed_async_tx.blocking_send(reveals).is_err() {
-                break;
-            }
-        }
-    });
-    let _p1_immed_bridge = p1_immed_bridge; // Keep the handle alive
-    let _p2_immed_bridge = p2_immed_bridge;
-
     // Create channels for chosen abilities from NetworkController (for OpponentChoice)
     // These sync channels are used by NetworkController to send the ability after a priority choice
     let (p1_ability_sync_tx, p1_ability_sync_rx) = std::sync::mpsc::channel::<ChosenAbilityInfo>();
@@ -654,20 +604,15 @@ async fn run_game(
 
     // Create PlayerConnections with tokio receivers
     // Note: last_reveal_index will be set after we determine the opening hand sizes
-    // Note: p1_reveal_tx and p2_reveal_tx are unused (created but not stored) - the reveal
-    // channels are only used for receiving, as reveals are now sent synchronously.
-    let _ = (p1_reveal_tx, p2_reveal_tx); // Silence unused warnings
     let mut p1_conn = PlayerConnection {
         player_id: PlayerId::new(0),
         ws_tx: p1_ws_tx,
         request_rx: p1_async_request_rx,
         response_tx: p1_response_tx,
         game_end_rx: p1_game_end_rx,
-        player_rx: p1_player_rx,                // P1 receives messages from P2 via single channel
-        player_tx: p1_player_tx,                // P1 sends messages to P2 via single channel
-        reveal_rx: p2_reveal_rx,                // P1 receives reveals from P2's ChoiceRequest
-        immediate_reveal_rx: p1_immed_async_rx, // P1 receives immediate reveals from game thread
-        ability_rx: p1_ability_async_rx,        // Used for Priority choices
+        player_rx: p1_player_rx,         // P1 receives messages from P2 via single channel
+        player_tx: p1_player_tx,         // P1 sends messages to P2 via single channel
+        ability_rx: p1_ability_async_rx, // Used for Priority choices
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -684,11 +629,9 @@ async fn run_game(
         request_rx: p2_async_request_rx,
         response_tx: p2_response_tx,
         game_end_rx: p2_game_end_rx,
-        player_rx: p2_player_rx,                // P2 receives messages from P1 via single channel
-        player_tx: p2_player_tx,                // P2 sends messages to P1 via single channel
-        reveal_rx: p1_reveal_rx,                // P2 receives reveals from P1's ChoiceRequest
-        immediate_reveal_rx: p2_immed_async_rx, // P2 receives immediate reveals from game thread
-        ability_rx: p2_ability_async_rx,        // Used for Priority choices
+        player_rx: p2_player_rx,         // P2 receives messages from P1 via single channel
+        player_tx: p2_player_tx,         // P2 sends messages to P1 via single channel
+        ability_rx: p2_ability_async_rx, // Used for Priority choices
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
@@ -924,21 +867,8 @@ async fn run_game(
     let game_clone = Arc::clone(&game);
     let tag_gamelogs = config.tag_gamelogs;
     let verbosity = config.verbosity;
-    let reveal_config = RevealPusherConfig {
-        p1_reveal_tx: p1_immed_sync_tx,
-        p2_reveal_tx: p2_immed_sync_tx,
-        p1_reveal_index,
-        p2_reveal_index,
-    };
     let game_loop_handle = tokio::task::spawn_blocking(move || {
-        run_game_loop(
-            game_clone,
-            p1_controller,
-            p2_controller,
-            tag_gamelogs,
-            verbosity,
-            reveal_config,
-        )
+        run_game_loop(game_clone, p1_controller, p2_controller, tag_gamelogs, verbosity)
     });
 
     // Wait for game to complete, OR for either handler to fail with a fatal error
@@ -1570,41 +1500,6 @@ async fn handle_player_websocket(
                 }
             }
 
-            // DISABLED: Async reveal broadcast channels
-            //
-            // These channels used to forward reveals from the opponent's ChoiceRequest and
-            // from the reveal_pusher hook. However, async channels can deliver messages in
-            // any order due to tokio::select! scheduling, causing desync issues where cards
-            // get queued in the wrong order on the client.
-            //
-            // Instead, all reveals are now sent synchronously:
-            // 1. Each NetworkController collects reveals from the undo_log when making a choice
-            // 2. Reveals are bundled with the ChoiceRequest message
-            // 3. This ensures strict ordering and prevents race conditions
-            //
-            // We still need to drain these channels to prevent them from filling up
-            // (since the channel infrastructure is still in place for backwards compat).
-            reveals = conn.reveal_rx.recv() => {
-                if let Some(reveal_list) = reveals {
-                    log::trace!(
-                        "Player {:?}: Draining {} broadcast reveals (not sending - using sync path)",
-                        conn.player_id, reveal_list.len()
-                    );
-                    // Intentionally not sending - reveals come via sync ChoiceRequest path
-                }
-            }
-
-            // Drain immediate reveals from game thread (now disabled reveal_pusher)
-            immed_reveals = conn.immediate_reveal_rx.recv() => {
-                if let Some(reveal_list) = immed_reveals {
-                    log::trace!(
-                        "Player {:?}: Draining {} immediate reveals (not sending - using sync path)",
-                        conn.player_id, reveal_list.len()
-                    );
-                    // Intentionally not sending - reveals come via sync ChoiceRequest path
-                }
-            }
-
             // Check for messages from opponent via single channel (mtg-e66iz fix)
             // This replaces the old opponent_choice_rx.recv() to ensure message ordering
             player_msg = conn.player_rx.recv() => {
@@ -1674,7 +1569,6 @@ fn run_game_loop(
     mut p2_controller: NetworkController,
     tag_gamelogs: bool,
     verbosity: crate::game::VerbosityLevel,
-    reveal_config: RevealPusherConfig,
 ) -> Result<GameResult> {
     // Take ownership of game for the game loop
     let mut game = {
@@ -1693,98 +1587,12 @@ fn run_game_loop(
         game.undo_log.len()
     );
 
-    // Extract reveal config fields for use in closure
-    let p1_immed_reveal_tx = reveal_config.p1_reveal_tx;
-    let p2_immed_reveal_tx = reveal_config.p2_reveal_tx;
-    let p1_reveal_index = reveal_config.p1_reveal_index;
-    let p2_reveal_index = reveal_config.p2_reveal_index;
-
-    // Create immediate reveal pusher that sends reveals after automatic actions (spell effects, etc.)
-    // This is necessary for spell/ability effects that draw cards - clients need reveals BEFORE
-    // their shadow GameLoop tries to draw, but the ChoiceRequest won't be sent until after resolution.
-    //
-    // The pusher coordinates with NetworkControllers via shared reveal indices to prevent duplicates.
-    // Both systems read/write the same AtomicUsize, so whichever runs first "claims" the reveals.
-    let reveal_pusher = move |game_state: &GameState, _acting_player: PlayerId| {
-        let current_len = game_state.undo_log.len();
-
-        // Read current indices - get whichever is lower (less revealed so far)
-        let p1_idx = p1_reveal_index.load(std::sync::atomic::Ordering::Acquire);
-        let p2_idx = p2_reveal_index.load(std::sync::atomic::Ordering::Acquire);
-        let last_idx = p1_idx.min(p2_idx);
-
-        if current_len <= last_idx {
-            return; // No new actions since last reveal
-        }
-
-        // Collect reveals from new undo log entries
-        let mut p1_reveals = Vec::new();
-        let mut p2_reveals = Vec::new();
-
-        let actions = game_state.undo_log.actions();
-        for action in actions.iter().skip(last_idx) {
-            if let GameAction::MoveCard {
-                card_id,
-                from_zone: Zone::Library,
-                to_zone,
-                owner,
-            } = action
-            {
-                let reveal = RevealBroadcast {
-                    owner: *owner,
-                    card_id: *card_id,
-                    to_zone: *to_zone,
-                };
-
-                // Information-safe reveal rules:
-                // - Owner always sees their own cards going anywhere
-                // - Both players see cards going to public zones
-                // - Opponent NEVER sees cards going to opponent's hand (hidden info)
-                let is_public = matches!(to_zone, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
-
-                // P1 sees: their own cards OR public zone movements
-                if owner.as_u32() == 0 || is_public {
-                    p1_reveals.push(reveal.clone());
-                }
-
-                // P2 sees: their own cards OR public zone movements
-                if owner.as_u32() == 1 || is_public {
-                    p2_reveals.push(reveal);
-                }
-            }
-        }
-
-        // NOTE: We intentionally DON'T update shared indices here. The NetworkController's
-        // collect_reveals_since_last_choice will also collect these reveals and send them
-        // with the ChoiceRequest. This ensures reveals arrive WITH the ChoiceRequest (synchronously)
-        // rather than via async channel (which can be slow).
-        //
-        // The immediate reveal system is kept as a backup for spell effects where reveals
-        // need to arrive quickly, but the NetworkController is the primary delivery mechanism
-        // for draw reveals.
-        //
-        // If both systems send the same reveal, the client handles duplicates gracefully.
-
-        // Send reveals to handlers (best-effort, may arrive before or after ChoiceRequest)
-        if !p1_reveals.is_empty() {
-            log::debug!("Immediate reveal pusher: {} reveals for P1 (backup)", p1_reveals.len());
-            let _ = p1_immed_reveal_tx.send(p1_reveals);
-        }
-        if !p2_reveals.is_empty() {
-            log::debug!("Immediate reveal pusher: {} reveals for P2 (backup)", p2_reveals.len());
-            let _ = p2_immed_reveal_tx.send(p2_reveals);
-        }
-    };
-
     // Create game loop with skip_opening_hands() to match client behavior.
     // Both server and client will draw opening hands during GameLoop::setup_game(),
     // ensuring identical undo_log entries and synchronized action_counts.
     //
-    // NOTE: We intentionally do NOT use .with_reveal_pusher() here. The reveal_pusher
-    // sends reveals via async channels which can arrive out of order due to tokio::select!
-    // scheduling. Instead, all reveals are sent synchronously via ChoiceRequest messages,
+    // All reveals are sent synchronously via ChoiceRequest messages,
     // ensuring strict ordering and preventing desync issues.
-    let _ = reveal_pusher; // Silence unused warning - kept for documentation
     let mut game_loop = GameLoop::new(&mut game).skip_opening_hands();
 
     // Run until game ends
