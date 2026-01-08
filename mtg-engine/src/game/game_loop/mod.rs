@@ -295,9 +295,14 @@ impl<'a> GameLoop<'a> {
     /// In network mode (hidden info architecture), only the local player's cards are
     /// revealed. Pass the local player's ID to skip validation for opponent's cards.
     ///
-    /// Use this in network E2E tests to detect reveal ordering bugs.
-    pub fn with_reveal_validation(mut self, local_player: PlayerId) -> Self {
-        self.debug_validate_reveals = true;
+    /// This should only be enabled when `network_debug` is true - the validation adds
+    /// overhead that should be avoided in production network games.
+    ///
+    /// # Arguments
+    /// * `local_player` - The local player's ID (for skipping opponent validation)
+    /// * `enabled` - Whether to actually enable validation (typically `network_debug`)
+    pub fn with_reveal_validation(mut self, local_player: PlayerId, enabled: bool) -> Self {
+        self.debug_validate_reveals = enabled;
         self.local_player_id = Some(local_player);
         self
     }

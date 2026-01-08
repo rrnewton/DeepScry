@@ -37,17 +37,18 @@ The desync occurs during complex card interactions (Balance + Su-Chi death trigg
 
 ### Added reveal validation (actions.rs)
 - `validate_cards_revealed()` function checks all hand cards are revealed
+- Gated by `network_debug` flag - only runs when debugging is enabled
 - Skips validation for opponent's cards (hidden info architecture: mtg-qtqcr)
-- Retry mechanism: 50 retries with 20ms delay (1 second total) to wait for reveals
-- Panics with detailed error if card not revealed after retries
+- Immediate panic if card not revealed - follows linear transfer of control model
+- No retries/waiting - missing reveals indicate protocol bug, not timing issue
 
 ### Added GameLoop support for network mode (mod.rs)
 - `local_player_id` field to identify which player we are
-- `with_reveal_validation(player_id)` builder method
-- Updated client.rs to use the validation
+- `with_reveal_validation(player_id, enabled)` builder method - `enabled` should be `network_debug`
+- Updated client.rs to gate validation on `network_debug` flag
 
 ### Key findings:
-1. Test runs further with validation (Turn 31 vs Turn 7) but still times out intermittently
+1. Test times out intermittently regardless of validation
 2. Hidden info architecture confirmed working - opponent's cards show as "Unknown"
 3. Attempted "delayed OpponentMadeChoice" approach (send with reveals from next ChoiceRequest) but caused deadlocks
 4. The server's `reveal_pusher` is never configured - reveals only bundled with ChoiceRequest
@@ -55,7 +56,7 @@ The desync occurs during complex card interactions (Balance + Su-Chi death trigg
 
 ### Theories ruled out:
 - NOT caused by validation itself (times out with validation disabled too)
-- NOT caused by simple reveal timing (retry mechanism doesn't help)
+- NOT caused by timing - linear model means all reveals should be processed before needed
 
 ## Investigation Needed
 

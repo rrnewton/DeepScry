@@ -9,36 +9,30 @@ use crate::game::phase::Step;
 use smallvec::SmallVec;
 
 impl<'a> GameLoop<'a> {
-    /// Validate that all cards in hand and on battlefield are revealed
+    /// Validate that all cards in hand are revealed (network debug mode)
     ///
-    /// Called when `debug_validate_reveals` is enabled to catch missing CardRevealed
-    /// messages in network mode. In network mode with hidden info, only validates
-    /// the local player's cards (opponent's cards are intentionally hidden).
+    /// Called when `debug_validate_reveals` is enabled (gated by `network_debug` flag).
+    /// In network mode with hidden info, only validates the local player's cards
+    /// (opponent's cards are intentionally hidden per mtg-qtqcr).
     ///
-    /// When a card isn't revealed, tries draining pending reveals first, as the
-    /// reveal message may be in transit from the server.
+    /// This validation follows the linear transfer of control model: all reveals should
+    /// have been processed before we reach a point where we need the card. If a reveal
+    /// is missing, it's a protocol bug, not a timing issue.
     ///
     /// # Panics
-    /// Panics with detailed error message if an unrevealed card is found that should
-    /// be revealed (local player's hand, or any public zone) after draining reveals.
-    fn validate_cards_revealed(&mut self, player_id: PlayerId) {
-        // In network mode, only validate when it's the LOCAL player's turn
+    /// Panics immediately with detailed error if any unrevealed card is found in the
+    /// local player's hand. No retries - missing reveals indicate a protocol bug.
+    fn validate_cards_revealed(&self, player_id: PlayerId) {
+        // In network mode, only validate the LOCAL player's cards
         // Opponent's hand cards are intentionally not revealed (hidden info architecture)
         if let Some(local_id) = self.local_player_id {
             if player_id != local_id {
                 // Skip validation for opponent's turn - their cards are hidden
-                log::trace!(
-                    "Skipping reveal validation for opponent {:?} (local player is {:?})",
-                    player_id,
-                    local_id
-                );
                 return;
             }
         }
 
         // Check all cards in player's hand are revealed
-        // If any aren't, drain reveals first (message may be in transit)
-        // Extract hand cards first to avoid borrow conflicts
         let hand_cards: SmallVec<[CardId; 8]> = self
             .game
             .get_player_zones(player_id)
@@ -47,65 +41,32 @@ impl<'a> GameLoop<'a> {
 
         for card_id in &hand_cards {
             if !self.game.cards.is_revealed(*card_id) {
-                // Card not revealed - try draining pending reveals with retries
-                // The reveal message may be in transit from the server
-                // Use longer delays to handle complex effects that take time to resolve
-                const MAX_RETRIES: u32 = 50;
-                const RETRY_DELAY_MS: u64 = 20;
-
-                let mut found = false;
-                for retry in 0..MAX_RETRIES {
-                    if retry > 0 {
-                        // Wait a bit for network message to arrive
-                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
-                    }
-
-                    log::debug!(
-                        "Card {:?} not revealed (retry {}), draining pending reveals...",
-                        card_id,
-                        retry
-                    );
-                    self.drain_reveals();
-
-                    if self.game.cards.is_revealed(*card_id) {
-                        log::debug!("Card {:?} revealed after {} retries", card_id, retry);
-                        found = true;
-                        break;
-                    }
-                }
-
-                if !found {
-                    panic!(
-                        "REVEAL VALIDATION FAILED: Card {:?} in {:?}'s hand is NOT revealed!\n\
-                         This indicates a missing CardRevealed message from server.\n\
-                         Hand contents: {:?}\n\
-                         Tried {} retries with {}ms delay each",
-                        card_id, player_id, hand_cards, MAX_RETRIES, RETRY_DELAY_MS
-                    );
-                }
+                panic!(
+                    "REVEAL VALIDATION FAILED: Card {:?} in {:?}'s hand is NOT revealed!\n\
+                     This indicates a missing CardRevealed message from server.\n\
+                     All reveals should be processed before player needs to act.\n\
+                     Hand contents: {:?}",
+                    card_id, player_id, hand_cards
+                );
             }
         }
 
-        // In network mode, battlefield cards may be revealed lazily when played
-        // Only check battlefield in non-network mode (local_player_id is None)
+        // In non-network mode (local_player_id is None), also check public zones
         if self.local_player_id.is_none() {
             for &card_id in &self.game.battlefield.cards {
                 if !self.game.cards.is_revealed(card_id) {
                     panic!(
                         "REVEAL VALIDATION FAILED: Card {:?} on battlefield is NOT revealed!\n\
-                         This indicates a missing CardRevealed message from server.\n\
                          Battlefield contents: {:?}",
                         card_id, self.game.battlefield.cards
                     );
                 }
             }
 
-            // Check all cards on stack are revealed
             for &card_id in &self.game.stack.cards {
                 if !self.game.cards.is_revealed(card_id) {
                     panic!(
                         "REVEAL VALIDATION FAILED: Card {:?} on stack is NOT revealed!\n\
-                         This indicates a missing CardRevealed message from server.\n\
                          Stack contents: {:?}",
                         card_id, self.game.stack.cards
                     );

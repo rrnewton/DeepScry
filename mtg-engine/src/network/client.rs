@@ -1385,11 +1385,11 @@ impl NetworkClient {
 
             // Create game loop with reveal drainer hook
             // Skip opening hand setup since server already drew hands and sent reveals
-            // Enable reveal validation to catch missing CardRevealed messages early
+            // Enable reveal validation only when network_debug is enabled (gated by flag)
             // Pass our_player_id so validation skips opponent's hidden cards
             let mut game_loop = GameLoop::new(&mut game)
                 .with_reveal_drainer(drain_reveals)
-                .with_reveal_validation(our_player_id)
+                .with_reveal_validation(our_player_id, network_debug)
                 .skip_opening_hands();
 
             // Pass controllers in the correct order based on which player we are
@@ -1720,11 +1720,11 @@ impl NetworkClient {
         let mut local_controller = local_controller;
         let mut remote_controller = remote_controller;
 
-        // Enable reveal validation to catch missing CardRevealed messages early
+        // Enable reveal validation only when network_debug is enabled (gated by flag)
         // Pass our_player_id so validation skips opponent's hidden cards
         let mut game_loop = GameLoop::new(&mut game)
             .with_reveal_drainer(drain_reveals)
-            .with_reveal_validation(our_player_id)
+            .with_reveal_validation(our_player_id, network_debug)
             .skip_opening_hands();
 
         let result = if we_are_p1 {
