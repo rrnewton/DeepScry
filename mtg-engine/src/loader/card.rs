@@ -278,20 +278,20 @@ impl CardDefinition {
     /// - Input: `SVar:TrigToken:DB$ Token | TokenScript$ c_a_food_sac | TokenAmount$ 1`
     /// - Output: `["c_a_food_sac"]`
     pub fn extract_token_scripts(&self) -> Vec<String> {
+        use super::ability_parser::{AbilityParams, ApiType};
         let mut token_scripts = std::collections::HashSet::new();
 
         for ability in &self.raw_abilities {
-            // Look for SVar lines with DB$ Token
-            if ability.starts_with("SVar:") && ability.contains("DB$ Token") {
+            // Look for SVar lines with token-creating effects
+            if ability.starts_with("SVar:") {
                 // Parse the SVar body for TokenScript$ parameter
                 // Format: "SVar:NAME:DB$ Token | TokenScript$ script_name | ..."
                 if let Some((_prefix, body)) = ability.split_once(':').and_then(|(_, rest)| rest.split_once(':')) {
-                    // Split by | and look for TokenScript$
-                    for param in body.split('|') {
-                        let param = param.trim();
-                        if let Some((key, value)) = param.split_once('$') {
-                            if key.trim() == "TokenScript" {
-                                token_scripts.insert(value.trim().to_string());
+                    // Use tokenized parsing to check for Token API type
+                    if let Some(params) = AbilityParams::parse_svar_body(body) {
+                        if params.api_type == ApiType::Token {
+                            if let Some(script) = params.get("TokenScript") {
+                                token_scripts.insert(script.to_string());
                             }
                         }
                     }
@@ -1518,142 +1518,91 @@ impl CardDefinition {
                             // Parse the SVar body
                             if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
                             {
-                                // Parse DB$ Token effects
+                                // Parse DB$ Token effects using tokenized parsing
                                 // Example: "DB$ Token | TokenAmount$ 1 | TokenScript$ c_a_food_sac | TokenOwner$ You"
-                                if body.contains("DB$ Token") {
-                                    // Parse token parameters
-                                    let mut token_script = String::new();
-                                    let mut token_amount = 1u8;
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::Token {
+                                        let token_script = params.get("TokenScript").unwrap_or("").to_string();
+                                        let token_amount = params
+                                            .get("TokenAmount")
+                                            .and_then(|s| s.parse::<u8>().ok())
+                                            .unwrap_or(1);
 
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            let key = key.trim();
-                                            let value = value.trim();
-
-                                            match key {
-                                                "TokenScript" => {
-                                                    token_script = value.to_string();
-                                                }
-                                                "TokenAmount" => {
-                                                    if let Ok(amt) = value.parse::<u8>() {
-                                                        token_amount = amt;
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
+                                        // Only add the token effect if we found a token script
+                                        if !token_script.is_empty() {
+                                            effects.push(Effect::CreateToken {
+                                                controller: PlayerId::new(0), // Placeholder - filled at trigger time
+                                                token_script,
+                                                amount: token_amount,
+                                            });
                                         }
-                                    }
-
-                                    // Only add the token effect if we found a token script
-                                    if !token_script.is_empty() {
-                                        effects.push(Effect::CreateToken {
-                                            controller: PlayerId::new(0), // Placeholder - filled at trigger time
-                                            token_script,
-                                            amount: token_amount,
-                                        });
                                     }
                                 }
 
-                                // Parse DB$ ChangeZone effects (exile, bounce, etc.)
+                                // Parse DB$ ChangeZone effects (exile, bounce, etc.) using tokenized parsing
                                 // Example: "DB$ ChangeZone | Origin$ Battlefield | Destination$ Exile | ValidTgts$ Permanent.nonLand+OppCtrl"
                                 // This is used by cards like Web Up (Oblivion Ring-style effects)
-                                if body.contains("DB$ ChangeZone") {
-                                    let mut origin = String::new();
-                                    let mut destination = String::new();
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::ChangeZone {
+                                        let origin = params.get("Origin").unwrap_or("");
+                                        let destination = params.get("Destination").unwrap_or("");
 
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            let key = key.trim();
-                                            let value = value.trim();
+                                        // Handle exile effects: Origin$ Battlefield + Destination$ Exile
+                                        if origin == "Battlefield" && destination == "Exile" {
+                                            effects.push(Effect::ExilePermanent {
+                                                target: CardId::new(0), // Placeholder - filled at trigger time
+                                            });
+                                        }
+                                    }
+                                }
 
-                                            match key {
-                                                "Origin" => origin = value.to_string(),
-                                                "Destination" => destination = value.to_string(),
-                                                _ => {}
+                                // Parse AB$ Draw | Cost$ Discard<N/Card> effects (looting) using tokenized parsing
+                                // Example: "AB$ Draw | Cost$ Discard<1/Card>"
+                                // Used by Yuyan Archers: "you may discard a card. If you do, draw a card."
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::Draw {
+                                        if let Some(cost) = params.get("Cost") {
+                                            if cost.starts_with("Discard<") {
+                                                let draw_count = params
+                                                    .get("NumCards")
+                                                    .and_then(|s| s.parse::<u8>().ok())
+                                                    .unwrap_or(1);
+
+                                                // Parse discard count from "Discard<1/Card>" format
+                                                let discard_count = cost
+                                                    .strip_prefix("Discard<")
+                                                    .and_then(|s| s.split('/').next())
+                                                    .and_then(|n| n.parse::<u8>().ok())
+                                                    .unwrap_or(1);
+
+                                                // Create a Loot effect (discard N to draw N)
+                                                // We use Effect::Loot which represents optional looting
+                                                effects.push(Effect::Loot {
+                                                    player: PlayerId::new(0), // Placeholder - controller
+                                                    discard_count,
+                                                    draw_count,
+                                                });
                                             }
                                         }
                                     }
+                                }
 
-                                    // Handle exile effects: Origin$ Battlefield + Destination$ Exile
-                                    if origin == "Battlefield" && destination == "Exile" {
-                                        effects.push(Effect::ExilePermanent {
+                                // Parse DB$ Earthbend effects using tokenized parsing
+                                // Example: "DB$ Earthbend | Num$ 2"
+                                // Used by cards like Badgermole, Avatar Kyoshi
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::Earthbend {
+                                        let num_counters =
+                                            params.get("Num").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+
+                                        effects.push(Effect::Earthbend {
                                             target: CardId::new(0), // Placeholder - filled at trigger time
+                                            num_counters,
                                         });
                                     }
                                 }
-
-                                // Parse AB$ Draw | Cost$ Discard<N/Card> effects (looting)
-                                // Example: "AB$ Draw | Cost$ Discard<1/Card>"
-                                // Used by Yuyan Archers: "you may discard a card. If you do, draw a card."
-                                if (body.contains("AB$ Draw") || body.contains("DB$ Draw"))
-                                    && body.contains("Cost$ Discard")
-                                {
-                                    // Parse NumCards$ if present, default to 1
-                                    let mut draw_count = 1u8;
-                                    // Parse discard count from Cost$ Discard<N/...>
-                                    let mut discard_count = 1u8;
-
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            let key = key.trim();
-                                            let value = value.trim();
-
-                                            if key == "NumCards" {
-                                                if let Ok(n) = value.parse::<u8>() {
-                                                    draw_count = n;
-                                                }
-                                            } else if key == "Cost" && value.starts_with("Discard<") {
-                                                // Parse "Discard<1/Card>" format
-                                                if let Some(num_str) =
-                                                    value.strip_prefix("Discard<").and_then(|s| s.split('/').next())
-                                                {
-                                                    if let Ok(n) = num_str.parse::<u8>() {
-                                                        discard_count = n;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Create a Loot effect (discard N to draw N)
-                                    // We use Effect::Loot which represents optional looting
-                                    effects.push(Effect::Loot {
-                                        player: PlayerId::new(0), // Placeholder - controller
-                                        discard_count,
-                                        draw_count,
-                                    });
-                                }
-
-                                // Parse DB$ Earthbend effects
-                                // Example: "DB$ Earthbend | Num$ 2"
-                                // Used by cards like Badgermole, Avatar Kyoshi
-                                if body.contains("DB$ Earthbend") {
-                                    let mut num_counters = 1u8;
-
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            let key = key.trim();
-                                            let value = value.trim();
-
-                                            if key == "Num" {
-                                                if let Ok(num) = value.parse::<u8>() {
-                                                    num_counters = num;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    effects.push(Effect::Earthbend {
-                                        target: CardId::new(0), // Placeholder - filled at trigger time
-                                        num_counters,
-                                    });
-                                }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
@@ -1687,59 +1636,42 @@ impl CardDefinition {
                     // Example: Execute$ TrigAddMana looks for "SVar:TrigAddMana:..."
                     for ab in &self.raw_abilities {
                         if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
-                            // Parse the SVar body
+                            // Parse the SVar body using tokenized parsing
                             if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
                             {
                                 // Parse DB$ Mana effects (add mana when creature dies)
                                 // Example: "DB$ Mana | Produced$ C | Amount$ 4"
-                                if body.contains("DB$ Mana") {
-                                    let mut produced = String::new();
-                                    let mut amount = 1u32;
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::Mana {
+                                        let produced = params.get("Produced").unwrap_or("");
+                                        let amount =
+                                            params.get("Amount").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
 
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            let key = key.trim();
-                                            let value = value.trim();
-
-                                            match key {
-                                                "Produced" => {
-                                                    produced = value.to_string();
-                                                }
-                                                "Amount" => {
-                                                    if let Ok(amt) = value.parse::<u32>() {
-                                                        amount = amt;
-                                                    }
-                                                }
-                                                _ => {}
+                                        // Convert Produced$ value to ManaCost
+                                        // C = colorless, W/U/B/R/G = colors
+                                        if !produced.is_empty() {
+                                            let mana_str = match produced {
+                                                "C" => format!("{{{}}}", amount),
+                                                "W" => "{W}".repeat(amount as usize),
+                                                "U" => "{U}".repeat(amount as usize),
+                                                "B" => "{B}".repeat(amount as usize),
+                                                "R" => "{R}".repeat(amount as usize),
+                                                "G" => "{G}".repeat(amount as usize),
+                                                _ => format!("{{{}}}", amount), // Default to colorless
+                                            };
+                                            let mana = ManaCost::from_string(&mana_str);
+                                            if mana.cmc() > 0 {
+                                                effects.push(Effect::AddMana {
+                                                    player: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                                    mana,
+                                                    produces_chosen_color: false,
+                                                });
                                             }
                                         }
                                     }
-
-                                    // Convert Produced$ value to ManaCost
-                                    // C = colorless, W/U/B/R/G = colors
-                                    if !produced.is_empty() {
-                                        let mana_str = match produced.as_str() {
-                                            "C" => format!("{{{}}}", amount),
-                                            "W" => "{W}".repeat(amount as usize),
-                                            "U" => "{U}".repeat(amount as usize),
-                                            "B" => "{B}".repeat(amount as usize),
-                                            "R" => "{R}".repeat(amount as usize),
-                                            "G" => "{G}".repeat(amount as usize),
-                                            _ => format!("{{{}}}", amount), // Default to colorless
-                                        };
-                                        let mana = ManaCost::from_string(&mana_str);
-                                        if mana.cmc() > 0 {
-                                            effects.push(Effect::AddMana {
-                                                player: PlayerId::new(0), // Placeholder, resolved at trigger time
-                                                mana,
-                                                produces_chosen_color: false,
-                                            });
-                                        }
-                                    }
                                 }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
@@ -1785,104 +1717,54 @@ impl CardDefinition {
                         // Example: Execute$ TrigDealDamage looks for "SVar:TrigDealDamage:..."
                         for ab in &self.raw_abilities {
                             if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
-                                // Parse the SVar body
+                                // Parse the SVar body using tokenized parsing
                                 if let Some((_prefix, body)) =
                                     ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
                                 {
-                                    // Parse DB$ DealDamage effects
-                                    // Example: "DB$ DealDamage | Defined$ You | NumDmg$ 1"
-                                    if body.contains("DB$ DealDamage") {
-                                        let mut damage_amount = 1i32;
-                                        let mut target_is_controller = false;
+                                    if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                        // Parse DB$ DealDamage effects
+                                        // Example: "DB$ DealDamage | Defined$ You | NumDmg$ 1"
+                                        if params.api_type == ApiType::DealDamage {
+                                            let damage_amount =
+                                                params.get("NumDmg").and_then(|s| s.parse::<i32>().ok()).unwrap_or(1);
+                                            let target_is_controller = params.get("Defined") == Some("You");
 
-                                        for param in body.split('|') {
-                                            let param = param.trim();
-                                            if let Some((key, value)) = param.split_once('$') {
-                                                let key = key.trim();
-                                                let value = value.trim();
-
-                                                match key {
-                                                    "NumDmg" => {
-                                                        if let Ok(amt) = value.parse::<i32>() {
-                                                            damage_amount = amt;
-                                                        }
-                                                    }
-                                                    "Defined" => {
-                                                        // "You" means the controller of the card
-                                                        target_is_controller = value == "You";
-                                                    }
-                                                    _ => {}
-                                                }
+                                            // Use placeholder PlayerId(0) for controller - resolved at trigger time
+                                            if target_is_controller {
+                                                effects.push(Effect::DealDamage {
+                                                    target: TargetRef::Player(PlayerId::new(0)),
+                                                    amount: damage_amount,
+                                                });
                                             }
                                         }
+                                        // Parse DB$ GainLife effects
+                                        // Example: "DB$ GainLife | Defined$ You | LifeAmount$ 1"
+                                        if params.api_type == ApiType::GainLife {
+                                            let life_amount = params
+                                                .get("LifeAmount")
+                                                .and_then(|s| s.parse::<i32>().ok())
+                                                .unwrap_or(1);
+                                            let target_is_controller = params.get("Defined") == Some("You");
 
-                                        // Use placeholder PlayerId(0) for controller - resolved at trigger time
-                                        if target_is_controller {
-                                            effects.push(Effect::DealDamage {
-                                                target: TargetRef::Player(PlayerId::new(0)),
-                                                amount: damage_amount,
+                                            if target_is_controller {
+                                                effects.push(Effect::GainLife {
+                                                    player: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                                    amount: life_amount,
+                                                });
+                                            }
+                                        }
+                                        // Parse DB$ Earthbend effects
+                                        // Example: "DB$ Earthbend | Num$ 8"
+                                        // Used by cards like Avatar Kyoshi (begin combat trigger)
+                                        if params.api_type == ApiType::Earthbend {
+                                            let num_counters =
+                                                params.get("Num").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+
+                                            effects.push(Effect::Earthbend {
+                                                target: CardId::new(0), // Placeholder - filled at trigger time
+                                                num_counters,
                                             });
                                         }
-                                    }
-
-                                    // Parse DB$ GainLife effects
-                                    // Example: "DB$ GainLife | Defined$ You | LifeAmount$ 1"
-                                    if body.contains("DB$ GainLife") {
-                                        let mut life_amount = 1i32;
-                                        let mut target_is_controller = false;
-
-                                        for param in body.split('|') {
-                                            let param = param.trim();
-                                            if let Some((key, value)) = param.split_once('$') {
-                                                let key = key.trim();
-                                                let value = value.trim();
-
-                                                match key {
-                                                    "LifeAmount" => {
-                                                        if let Ok(amt) = value.parse::<i32>() {
-                                                            life_amount = amt;
-                                                        }
-                                                    }
-                                                    "Defined" => {
-                                                        target_is_controller = value == "You";
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
-
-                                        if target_is_controller {
-                                            effects.push(Effect::GainLife {
-                                                player: PlayerId::new(0), // Placeholder, resolved at trigger time
-                                                amount: life_amount,
-                                            });
-                                        }
-                                    }
-
-                                    // Parse DB$ Earthbend effects
-                                    // Example: "DB$ Earthbend | Num$ 8"
-                                    // Used by cards like Avatar Kyoshi (begin combat trigger)
-                                    if body.contains("DB$ Earthbend") {
-                                        let mut num_counters = 1u8;
-
-                                        for param in body.split('|') {
-                                            let param = param.trim();
-                                            if let Some((key, value)) = param.split_once('$') {
-                                                let key = key.trim();
-                                                let value = value.trim();
-
-                                                if key == "Num" {
-                                                    if let Ok(num) = value.parse::<u8>() {
-                                                        num_counters = num;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        effects.push(Effect::Earthbend {
-                                            target: CardId::new(0), // Placeholder - filled at trigger time
-                                            num_counters,
-                                        });
                                     }
                                 }
                                 break;
@@ -2105,54 +1987,32 @@ impl CardDefinition {
                     // Look up the SVar that Execute$ references
                     for ab in &self.raw_abilities {
                         if ab.starts_with(&format!("SVar:{}:", exec_ref)) {
-                            // Parse the SVar body
+                            // Parse the SVar body using tokenized parsing
                             if let Some((_prefix, body)) = ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
                             {
-                                // Parse DB$ PutCounter effects (common for SpellCast triggers like Boar-q-pine)
-                                if body.contains("DB$ PutCounter") {
-                                    let mut counter_num = 1u8;
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            if key.trim() == "CounterNum" {
-                                                if let Ok(n) = value.trim().parse::<u8>() {
-                                                    counter_num = n;
-                                                }
-                                            }
-                                        }
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    // Parse DB$ PutCounter effects (common for SpellCast triggers like Boar-q-pine)
+                                    if params.api_type == ApiType::PutCounter {
+                                        let counter_num =
+                                            params.get("CounterNum").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+                                        effects.push(Effect::PutCounter {
+                                            target: CardId::new(0), // Placeholder - self (Defined$ Self)
+                                            counter_type: crate::core::CounterType::P1P1,
+                                            amount: counter_num,
+                                        });
                                     }
-                                    effects.push(Effect::PutCounter {
-                                        target: CardId::new(0), // Placeholder - self (Defined$ Self)
-                                        counter_type: crate::core::CounterType::P1P1,
-                                        amount: counter_num,
-                                    });
-                                }
-
-                                // Parse DB$ Pump effects (for Prowess-like abilities)
-                                if body.contains("DB$ Pump") {
-                                    let mut power_bonus = 1i32;
-                                    let mut toughness_bonus = 1i32;
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            let key = key.trim();
-                                            let value = value.trim();
-                                            if key == "NumAtt" {
-                                                if let Ok(n) = value.parse::<i32>() {
-                                                    power_bonus = n;
-                                                }
-                                            } else if key == "NumDef" {
-                                                if let Ok(n) = value.parse::<i32>() {
-                                                    toughness_bonus = n;
-                                                }
-                                            }
-                                        }
+                                    // Parse DB$ Pump effects (for Prowess-like abilities)
+                                    if params.api_type == ApiType::Pump {
+                                        let power_bonus =
+                                            params.get("NumAtt").and_then(|s| s.parse::<i32>().ok()).unwrap_or(1);
+                                        let toughness_bonus =
+                                            params.get("NumDef").and_then(|s| s.parse::<i32>().ok()).unwrap_or(1);
+                                        effects.push(Effect::PumpCreature {
+                                            target: CardId::new(0), // Placeholder - self
+                                            power_bonus,
+                                            toughness_bonus,
+                                        });
                                     }
-                                    effects.push(Effect::PumpCreature {
-                                        target: CardId::new(0), // Placeholder - self
-                                        power_bonus,
-                                        toughness_bonus,
-                                    });
                                 }
                             }
                             break;
