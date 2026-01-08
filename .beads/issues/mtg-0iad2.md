@@ -137,7 +137,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Triggered:** Whenever Fire Lord Ozai attacks, you may sacrifice another creature. If you do, add {R} equal to sacrificed creature's power.
 
 - [x] Card loads and can be cast for 3B (verified: puzzles/test_fire_lord_ozai_attack.pzl)
-- [ ] Legendary rule works (can't have two) (**NOT IMPLEMENTED** - test_legendary_rule.pzl shows both copies survived) - **mtg-z4jkk**
+- [x] Legendary rule works (can't have two) (implemented: mtg-z4jkk CLOSED - e2037c3)
 - [x] Enters as 4/4 (verified: shown as 4/4 in battlefield)
 - [x] Attack trigger fires when declared as attacker (verified: AB$ Mana parsed using AbilityParams, test_parse_fire_lord_ozai_attack_trigger)
 - [x] "You may" sacrifice is optional (verified: OptionalDecider$ parsed, trigger.optional=true)
@@ -146,11 +146,11 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Mana is red {R} (verified: Produced$ R parsed, creates Effect::Firebend)
 - [x] Mana persists through combat steps (verified: CombatMana$ True, combat_mana_pool in player.rs)
 - [x] Mana empties at end of combat (verified: end_combat_step clears combat_mana_pool)
-- [ ] Activated ability costs {6}
-- [ ] Exiles top card from each opponent's library
-- [ ] Can play one of the exiled cards
-- [ ] Playing exiled card doesn't cost mana
-- [ ] Exiled card playable until end of turn
+- [x] Activated ability costs {6} (verified: AB$ Dig parses Cost$ 6 - 73af57a)
+- [x] Exiles top card from each opponent's library (verified: Effect::Dig implemented - 73af57a)
+- [ ] Can play one of the exiled cards (TODO: PersistentEffect may-play)
+- [ ] Playing exiled card doesn't cost mana (TODO: PersistentEffect may-play)
+- [ ] Exiled card playable until end of turn (TODO: PersistentEffect may-play)
 
 ---
 
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 116 items verified as of 2026-01-07_#1580
+**Progress:** 120 items verified as of 2026-01-08_#1586
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -315,17 +315,17 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Defender prevents attacking (test_defender_cant_attack.pzl)
 - Hexproof prevents opponent targeting (test_hexproof_untargetable.pzl, test_hexproof_vs_normal.pzl)
 - Deserter's Disciple can use ability during declare attackers step (combat.rs:145-147 priority_round)
-- Legendary rule NOT implemented - filed mtg-z4jkk
+- Legendary rule IMPLEMENTED (mtg-z4jkk CLOSED - e2037c3)
 - Fire Lord Ozai attack trigger now parses AB$ Mana using AbilityParams (test_parse_fire_lord_ozai_attack_trigger)
 - Fire Lord Ozai Sacrificed$CardPower mechanic works (sentinel 254 in Effect::Firebend)
 - check_attack_triggers now handles optional triggers with sacrifice costs
 - Prowess keyword expansion implemented (test_prowess_keyword_expansion, test_prowess_trigger.pzl)
+- Fire Lord Ozai {6} AB$ Dig ability IMPLEMENTED (73af57a) - exiles from opponent library, may-play TODO
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
-- Fire Lord Ozai {6} activated ability (Dig effect) - not parsed
+- Fire Lord Ozai {6} "may play one" - PersistentEffect for exiled cards not yet functional
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
-- Legendary rule (MTG 704.5j) - should sacrifice one when controlling two of same name - **mtg-z4jkk**
 - Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
 - DB$ Attach - equipment attach effects not implemented (Twin Blades ETB doesn't attach)
