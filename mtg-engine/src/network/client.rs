@@ -1403,61 +1403,14 @@ impl NetworkClient {
 
         // Wait for game to end
         // network_debug is used for action_count verification logging
+        //
+        // BIASED SELECT: Prioritize server_end over game_result to ensure we get
+        // the authoritative winner from the server. Without biased, when both are
+        // ready at the same time, select! picks pseudo-randomly, and we might
+        // take game_result's Err path and fail to receive the winner.
         tokio::select! {
-            result = game_result => {
-                ws_handler.abort();
-                match result {
-                    Ok(Ok(game_result)) => {
-                        log::info!("Client GameLoop finished: winner={:?}, action_count={}", game_result.winner, game_result.action_count);
-                        Ok(game_result.winner)
-                    }
-                    Ok(Err(e)) => {
-                        // Check if this was a legitimate game-end signal
-                        // The GameLoop returns error when RemoteController gets GameEnded and returns ExitGame
-                        // In that case, we should try to get the winner from game_end_rx
-                        let error_msg = e.to_string();
-                        if error_msg.contains("Game exit requested") {
-                            // Try to receive game end signal with longer timeout
-                            // The server might still be processing the final state
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
-                                game_end_rx.recv()
-                            ).await {
-                                Ok(Some((winner, server_action_count))) => {
-                                    log::info!(
-                                        "Game ended gracefully via ExitGame signal: winner={:?}, server_action_count={}",
-                                        winner, server_action_count
-                                    );
-                                    Ok(winner)
-                                }
-                                Ok(None) => {
-                                    // Channel closed without sending winner - check if fatal error
-                                    if let Ok(msg) = fatal_error_rx.try_recv() {
-                                        log::error!("Game terminated due to fatal error: {}", msg);
-                                        Err(anyhow!("Fatal server error: {}", msg))
-                                    } else {
-                                        log::info!("Game ended gracefully (channel closed)");
-                                        Ok(None)
-                                    }
-                                }
-                                Err(_) => {
-                                    // Timeout - no game end signal, check if fatal error
-                                    if let Ok(msg) = fatal_error_rx.try_recv() {
-                                        log::error!("Game terminated due to fatal error: {}", msg);
-                                        Err(anyhow!("Fatal server error: {}", msg))
-                                    } else {
-                                        log::info!("Game ended gracefully (no server signal within timeout)");
-                                        Ok(None)
-                                    }
-                                }
-                            }
-                        } else {
-                            Err(anyhow!("Game error: {}", e))
-                        }
-                    }
-                    Err(e) => Err(anyhow!("Game thread panic: {}", e)),
-                }
-            }
+            biased;
+
             server_end = game_end_rx.recv() => {
                 ws_handler.abort();
                 match server_end {
@@ -1484,6 +1437,42 @@ impl NetworkClient {
                             }
                         }
                     }
+                }
+            }
+            // Game loop completed (either normally or with error)
+            result = game_result => {
+                ws_handler.abort();
+                match result {
+                    Ok(Ok(game_result)) => {
+                        log::info!("Client GameLoop finished: winner={:?}, action_count={}", game_result.winner, game_result.action_count);
+                        Ok(game_result.winner)
+                    }
+                    Ok(Err(e)) => {
+                        // Check if this was a legitimate game-end signal
+                        // The GameLoop returns error when RemoteController gets GameEnded and returns ExitGame
+                        let error_msg = e.to_string();
+                        if error_msg.contains("Game exit requested") {
+                            // With biased select, server_end should normally win.
+                            // If we get here, the game_end message wasn't sent (edge case).
+                            // Try once more to receive it.
+                            match game_end_rx.try_recv() {
+                                Ok((winner, server_action_count)) => {
+                                    log::info!(
+                                        "Game ended via ExitGame fallback: winner={:?}, server_action_count={}",
+                                        winner, server_action_count
+                                    );
+                                    Ok(winner)
+                                }
+                                Err(_) => {
+                                    log::warn!("Game exited but no winner received from server (treating as draw)");
+                                    Ok(None)
+                                }
+                            }
+                        } else {
+                            Err(anyhow!("Game error: {}", e))
+                        }
+                    }
+                    Err(e) => Err(anyhow!("Game thread panic: {}", e)),
                 }
             }
             // Fatal error from WebSocket handler
