@@ -148,9 +148,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Mana empties at end of combat (verified: end_combat_step clears combat_mana_pool)
 - [x] Activated ability costs {6} (verified: AB$ Dig parses Cost$ 6 - 73af57a)
 - [x] Exiles top card from each opponent's library (verified: Effect::Dig implemented - 73af57a)
-- [ ] Can play one of the exiled cards (TODO: PersistentEffect may-play)
-- [ ] Playing exiled card doesn't cost mana (TODO: PersistentEffect may-play)
-- [ ] Exiled card playable until end of turn (TODO: PersistentEffect may-play)
+- [x] Can play one of the exiled cards (verified: MayPlayOneWithoutManaCost effect - fa27f1e)
+- [x] Playing exiled card doesn't cost mana (verified: ManaCost::new() = zero cost - fa27f1e)
+- [x] Exiled card playable until end of turn (verified: CleanupCondition::EndOfTurn - fa27f1e)
 
 ---
 
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 120 items verified as of 2026-01-08_#1586
+**Progress:** 123 items verified as of 2026-01-08_#1588
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -320,11 +320,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Fire Lord Ozai Sacrificed$CardPower mechanic works (sentinel 254 in Effect::Firebend)
 - check_attack_triggers now handles optional triggers with sacrifice costs
 - Prowess keyword expansion implemented (test_prowess_keyword_expansion, test_prowess_trigger.pzl)
-- Fire Lord Ozai {6} AB$ Dig ability IMPLEMENTED (73af57a) - exiles from opponent library, may-play TODO
+- Fire Lord Ozai {6} AB$ Dig ability COMPLETE (73af57a, fa27f1e) - exiles from opponent library + may-play-one-free
 
 **Not Yet Implemented (found during verification):**
 - Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
-- Fire Lord Ozai {6} "may play one" - PersistentEffect for exiled cards not yet functional
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
 - Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
