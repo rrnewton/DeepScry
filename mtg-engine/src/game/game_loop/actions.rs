@@ -9,6 +9,111 @@ use crate::game::phase::Step;
 use smallvec::SmallVec;
 
 impl<'a> GameLoop<'a> {
+    /// Validate that all cards in hand and on battlefield are revealed
+    ///
+    /// Called when `debug_validate_reveals` is enabled to catch missing CardRevealed
+    /// messages in network mode. In network mode with hidden info, only validates
+    /// the local player's cards (opponent's cards are intentionally hidden).
+    ///
+    /// When a card isn't revealed, tries draining pending reveals first, as the
+    /// reveal message may be in transit from the server.
+    ///
+    /// # Panics
+    /// Panics with detailed error message if an unrevealed card is found that should
+    /// be revealed (local player's hand, or any public zone) after draining reveals.
+    fn validate_cards_revealed(&mut self, player_id: PlayerId) {
+        // In network mode, only validate when it's the LOCAL player's turn
+        // Opponent's hand cards are intentionally not revealed (hidden info architecture)
+        if let Some(local_id) = self.local_player_id {
+            if player_id != local_id {
+                // Skip validation for opponent's turn - their cards are hidden
+                log::trace!(
+                    "Skipping reveal validation for opponent {:?} (local player is {:?})",
+                    player_id,
+                    local_id
+                );
+                return;
+            }
+        }
+
+        // Check all cards in player's hand are revealed
+        // If any aren't, drain reveals first (message may be in transit)
+        // Extract hand cards first to avoid borrow conflicts
+        let hand_cards: SmallVec<[CardId; 8]> = self
+            .game
+            .get_player_zones(player_id)
+            .map(|zones| zones.hand.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        for card_id in &hand_cards {
+            if !self.game.cards.is_revealed(*card_id) {
+                // Card not revealed - try draining pending reveals with retries
+                // The reveal message may be in transit from the server
+                // Use longer delays to handle complex effects that take time to resolve
+                const MAX_RETRIES: u32 = 50;
+                const RETRY_DELAY_MS: u64 = 20;
+
+                let mut found = false;
+                for retry in 0..MAX_RETRIES {
+                    if retry > 0 {
+                        // Wait a bit for network message to arrive
+                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                    }
+
+                    log::debug!(
+                        "Card {:?} not revealed (retry {}), draining pending reveals...",
+                        card_id,
+                        retry
+                    );
+                    self.drain_reveals();
+
+                    if self.game.cards.is_revealed(*card_id) {
+                        log::debug!("Card {:?} revealed after {} retries", card_id, retry);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    panic!(
+                        "REVEAL VALIDATION FAILED: Card {:?} in {:?}'s hand is NOT revealed!\n\
+                         This indicates a missing CardRevealed message from server.\n\
+                         Hand contents: {:?}\n\
+                         Tried {} retries with {}ms delay each",
+                        card_id, player_id, hand_cards, MAX_RETRIES, RETRY_DELAY_MS
+                    );
+                }
+            }
+        }
+
+        // In network mode, battlefield cards may be revealed lazily when played
+        // Only check battlefield in non-network mode (local_player_id is None)
+        if self.local_player_id.is_none() {
+            for &card_id in &self.game.battlefield.cards {
+                if !self.game.cards.is_revealed(card_id) {
+                    panic!(
+                        "REVEAL VALIDATION FAILED: Card {:?} on battlefield is NOT revealed!\n\
+                         This indicates a missing CardRevealed message from server.\n\
+                         Battlefield contents: {:?}",
+                        card_id, self.game.battlefield.cards
+                    );
+                }
+            }
+
+            // Check all cards on stack are revealed
+            for &card_id in &self.game.stack.cards {
+                if !self.game.cards.is_revealed(card_id) {
+                    panic!(
+                        "REVEAL VALIDATION FAILED: Card {:?} on stack is NOT revealed!\n\
+                         This indicates a missing CardRevealed message from server.\n\
+                         Stack contents: {:?}",
+                        card_id, self.game.stack.cards
+                    );
+                }
+            }
+        }
+    }
+
     /// Get creatures that can attack for a player (v2 interface)
     ///
     /// Results are sorted by card ID to ensure deterministic ordering for snapshot/resume.
@@ -421,6 +526,11 @@ impl<'a> GameLoop<'a> {
     /// the buffer, eliminating ~2.5% of total allocations per DHAT profiling.
     pub(super) fn get_available_spell_abilities(&mut self, player_id: PlayerId) -> &[crate::core::SpellAbility] {
         use crate::core::SpellAbility;
+
+        // Fail-fast validation for network debugging: ensure all cards are revealed
+        if self.debug_validate_reveals {
+            self.validate_cards_revealed(player_id);
+        }
 
         // Clear and reuse the buffer (retains capacity for next call)
         self.abilities_buffer.clear();

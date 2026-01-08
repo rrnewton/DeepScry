@@ -33,12 +33,37 @@ The desync occurs during complex card interactions (Balance + Su-Chi death trigg
 3. **Race conditions** - Messages crossing in the WebSocket handling
 4. **Action logging differences** - Same logic producing different undo_log entries
 
+## Debugging Work Done (2026-01-08)
+
+### Added reveal validation (actions.rs)
+- `validate_cards_revealed()` function checks all hand cards are revealed
+- Skips validation for opponent's cards (hidden info architecture: mtg-qtqcr)
+- Retry mechanism: 50 retries with 20ms delay (1 second total) to wait for reveals
+- Panics with detailed error if card not revealed after retries
+
+### Added GameLoop support for network mode (mod.rs)
+- `local_player_id` field to identify which player we are
+- `with_reveal_validation(player_id)` builder method
+- Updated client.rs to use the validation
+
+### Key findings:
+1. Test runs further with validation (Turn 31 vs Turn 7) but still times out intermittently
+2. Hidden info architecture confirmed working - opponent's cards show as "Unknown"
+3. Attempted "delayed OpponentMadeChoice" approach (send with reveals from next ChoiceRequest) but caused deadlocks
+4. The server's `reveal_pusher` is never configured - reveals only bundled with ChoiceRequest
+5. Timeout appears to happen around Library of Alexandria activations (drawing cards)
+
+### Theories ruled out:
+- NOT caused by validation itself (times out with validation disabled too)
+- NOT caused by simple reveal timing (retry mechanism doesn't help)
+
 ## Investigation Needed
 
 1. Enable network_debug mode and capture state hash comparisons
 2. Add detailed logging around reveal processing
 3. Identify which specific game action causes the 5-action gap
 4. Compare server and client undo_log entries at divergence point
+5. Consider implementing `reveal_pusher` on server to send reveals immediately after effects
 
 ## Reproducer
 

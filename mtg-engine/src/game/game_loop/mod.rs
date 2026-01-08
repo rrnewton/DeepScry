@@ -211,6 +211,18 @@ pub struct GameLoop<'a> {
     /// Network clients use this because the server has already performed setup
     /// and the client draws cards via the reveal drainer mechanism.
     skip_opening_hands: bool,
+    /// Enable fail-fast validation that all cards in hand/battlefield are revealed
+    ///
+    /// When true, panics if any card in a player's hand or on battlefield is not
+    /// revealed when building available actions. This catches missing reveals
+    /// early in network mode where desync can occur from missing CardRevealed messages.
+    debug_validate_reveals: bool,
+    /// Local player ID for network mode validation
+    ///
+    /// In network mode (hidden info architecture), only the local player's cards
+    /// are revealed. Set this to skip validation for opponent's cards.
+    /// When None, validation checks all players (local/single-player mode).
+    local_player_id: Option<PlayerId>,
 }
 
 impl<'a> GameLoop<'a> {
@@ -244,6 +256,8 @@ impl<'a> GameLoop<'a> {
             reveal_drainer: None,
             reveal_pusher: None,
             skip_opening_hands: false,
+            debug_validate_reveals: false,
+            local_player_id: None,
         }
     }
 
@@ -269,6 +283,22 @@ impl<'a> GameLoop<'a> {
     /// computation must match full recomputation.
     pub fn with_mana_debug_verification(mut self) -> Self {
         self.mana_engine = self.mana_engine.with_debug_verification();
+        self
+    }
+
+    /// Enable fail-fast reveal validation for network debugging
+    ///
+    /// When enabled, panics immediately if any card in the local player's hand is not
+    /// revealed when building available actions. This catches missing CardRevealed
+    /// messages early, before they cause desync.
+    ///
+    /// In network mode (hidden info architecture), only the local player's cards are
+    /// revealed. Pass the local player's ID to skip validation for opponent's cards.
+    ///
+    /// Use this in network E2E tests to detect reveal ordering bugs.
+    pub fn with_reveal_validation(mut self, local_player: PlayerId) -> Self {
+        self.debug_validate_reveals = true;
+        self.local_player_id = Some(local_player);
         self
     }
 
