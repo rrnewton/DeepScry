@@ -20,7 +20,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc as tokio_mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc as tokio_mpsc, oneshot, Mutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -89,7 +89,7 @@ struct WaitingPlayer {
 
 /// Connection handler for a single player
 /// Information about how a game ended, sent to WebSocket handlers
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct GameEndInfo {
     winner: Option<PlayerId>,
     reason: GameEndReason,
@@ -134,98 +134,122 @@ struct RevealBroadcast {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SINGLE-CHANNEL ARCHITECTURE (mtg-e66iz)
+// SINGLE-CHANNEL ARCHITECTURE (mtg-secqu)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// To eliminate nondeterminism from `tokio::select!` over multiple channels,
-// we multiplex all game-related messages into a single ordered channel per
-// player connection. This ensures strict FIFO ordering of events.
+// Each player handler has exactly ONE channel from the game coordinator and
+// ONE channel back. This eliminates all `tokio::select!` over multiple channels
+// and ensures completely deterministic message ordering.
 //
-// The channel architecture is now consolidated:
-// - player_rx: Single channel for cross-player messages (OpponentChoice)
-// - request_rx: ChoiceRequest from NetworkController (game loop to handler)
-// - ws_rx: WebSocket messages from client
-// - game_end_rx: One-shot game end signal
-// - fatal_error_rx: Broadcast error channel
+// Design principles:
+// 1. Linear control transfer: At any moment, exactly ONE entity has "control"
+// 2. Sequential handler loop: Waits for game_rx, then handles message
+// 3. Opponent choices flow through game coordinator: Not directly between handlers
+// 4. WebSocket I/O is naturally sequential: One message at a time
 //
-// The former ability_rx channel has been eliminated - ability info is now
-// included directly in ChoiceRequest.abilities, allowing the handler to
-// look up the chosen ability without a separate channel round-trip.
+// Architecture:
+//
+// ┌─────────────────┐     sync      ┌─────────────────┐     async     ┌─────────────────┐
+// │ NetworkController├──────────────►│   Coordinator   ├──────────────►│ PlayerHandler   │
+// │   (P1)          │◄──────────────┤   Task          │◄──────────────┤   (P1)          │
+// └─────────────────┘               │                 │               └─────────────────┘
+//                                   │                 │
+// ┌─────────────────┐     sync      │                 │     async     ┌─────────────────┐
+// │ NetworkController├──────────────►│                 ├──────────────►│ PlayerHandler   │
+// │   (P2)          │◄──────────────┤                 │◄──────────────┤   (P2)          │
+// └─────────────────┘               └─────────────────┘               └─────────────────┘
+//
+// Handler loop:
+//   loop {
+//       // Select between game messages and websocket I/O
+//       select! {
+//           msg = game_rx.recv() => handle_game_message(msg),
+//           ws_msg = ws_rx.next() => handle_ws_message(ws_msg),
+//       }
+//   }
+//
+// When ChoiceRequest arrives, handler:
+//   1. Sends ChoiceRequest to client
+//   2. Waits for SubmitChoice (or queues pending_choice if it arrived early)
+//   3. Validates action_count/state_hash
+//   4. Sends ChoiceResponse to coordinator
+//   5. Coordinator sends ChoiceAccepted + OpponentMadeChoice
 
-/// Multiplexed message type for the single-channel player architecture.
-/// All game synchronization messages flow through this enum to ensure ordering.
+/// Messages from game coordinator to player handler.
+///
+/// All game state messages flow through this single channel, ensuring
+/// total ordering and eliminating race conditions.
 #[derive(Debug)]
-enum PlayerChannelMessage {
-    /// Opponent made a choice (for run_game mode synchronization)
-    OpponentChoice(OpponentChoiceInfo),
+enum GameToHandler {
+    /// Server needs this player to make a choice.
+    /// Handler should forward to client, wait for response, send back via HandlerToGame.
+    ChoiceRequest(ChoiceRequest),
+    /// Opponent made a choice - handler should forward to client.
+    /// No response expected.
+    OpponentMadeChoice(OpponentChoiceInfo),
+    /// Acknowledge that player's choice was applied to game state.
+    /// Handler should forward to client.
+    ChoiceAccepted {
+        choice_seq: u32,
+        action_count: u64,
+        timestamp_ms: u64,
+    },
+    /// Game has ended normally.
+    /// Handler should forward to client and exit.
+    GameEnded(GameEndInfo),
+    /// Fatal error occurred (desync, disconnect, etc).
+    /// Handler should forward to client and exit.
+    FatalError(String),
 }
 
-/// Type alias for the single-channel sender (async side)
-type PlayerChannelTx = tokio_mpsc::Sender<PlayerChannelMessage>;
+/// Messages from player handler to game coordinator.
+#[derive(Debug)]
+pub enum HandlerToGame {
+    /// Player submitted their choice response.
+    ChoiceResponse {
+        response: ChoiceResponse,
+        /// Client-reported action count for validation
+        client_action_count: u64,
+        /// Client state hash (for network_debug validation)
+        client_state_hash: Option<u64>,
+        /// Debug info from client
+        client_debug_info: Option<crate::network::protocol::DebugSyncInfo>,
+    },
+    /// Client disconnected gracefully or due to error.
+    ClientDisconnected,
+    /// Client sent invalid data.
+    ClientError(String),
+}
 
-/// Type alias for the single-channel receiver (async side)
-type PlayerChannelRx = tokio_mpsc::Receiver<PlayerChannelMessage>;
-
-/// A SubmitChoice that arrived before the corresponding ChoiceRequest.
-/// This can happen in synchronized GameLoop mode due to timing differences.
-/// We store it and process it once the ChoiceRequest arrives.
+/// A choice that arrived before the corresponding ChoiceRequest.
+/// In synchronized GameLoop mode, the client may compute and submit
+/// their choice before the server's request arrives.
 #[derive(Debug)]
 struct PendingChoice {
-    /// Choice sequence number from the client
     choice_seq: u32,
-    /// Indices of the chosen options (multiple for attackers/blockers/discard)
     choice_indices: Vec<usize>,
-    /// Action count the client claims (for validation)
     action_count: u64,
+    client_state_hash: Option<u64>,
+    client_debug_info: Option<crate::network::protocol::DebugSyncInfo>,
 }
 
+/// Player connection with single-channel architecture.
+///
+/// Each handler has exactly:
+/// - One rx from game coordinator (game_rx)
+/// - One tx to game coordinator (game_tx)
+/// - WebSocket I/O (ws_tx, handled separately)
 struct PlayerConnection {
     /// Player ID in the game
     player_id: PlayerId,
     /// WebSocket sender
     ws_tx: futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
-    /// Channel to receive choice requests (bridged from sync NetworkController channel)
-    request_rx: tokio_mpsc::Receiver<ChoiceRequest>,
-    /// Channel to send choice responses to NetworkController
-    response_tx: std::sync::mpsc::Sender<ChoiceResponse>,
-    /// Channel to receive game end notification
-    game_end_rx: oneshot::Receiver<GameEndInfo>,
-    /// Single-channel receiver for all game sync messages (mtg-e66iz fix)
-    /// This replaces opponent_choice_rx, etc. to ensure message ordering.
-    player_rx: PlayerChannelRx,
-    /// Channel to send messages to opponent's player_rx
-    player_tx: PlayerChannelTx,
-    /// Current choice type being requested (for broadcasting)
-    current_choice_type: Option<ChoiceType>,
-    /// Expected action_count from the last ChoiceRequest sent to this client.
-    /// Used for sync validation when the client responds with SubmitChoice.
-    /// This is the authoritative source - NOT the shared game state (which is stale).
-    expected_action_count: Option<u64>,
-    /// Expected state_hash from the last ChoiceRequest sent to this client.
-    /// Used for sync validation in network debug mode.
-    expected_state_hash: Option<u64>,
-    /// Server's DebugSyncInfo from the last ChoiceRequest sent to this client.
-    /// Used for detailed diff logging when hashes mismatch.
-    expected_debug_info: Option<crate::network::DebugSyncInfo>,
-    /// For Priority choices, the abilities from the ChoiceRequest.
-    /// Allows looking up the chosen ability without a separate channel. (mtg-e66iz)
-    expected_abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
-    /// A choice that arrived before the corresponding ChoiceRequest.
-    /// In synchronized GameLoop mode, the client may submit a choice before
-    /// the server's NetworkController sends its ChoiceRequest due to timing.
-    /// We store it here and process it once the ChoiceRequest arrives.
+    /// SINGLE channel to receive all messages from game coordinator
+    game_rx: tokio_mpsc::Receiver<GameToHandler>,
+    /// SINGLE channel to send all messages to game coordinator
+    game_tx: tokio_mpsc::Sender<HandlerToGame>,
+    /// Current pending choice from client (arrived before ChoiceRequest)
     pending_choice: Option<PendingChoice>,
-    /// The index into the undo_log where we last sent reveals.
-    /// Initialized to the number of opening hand draw actions (14 for 7+7).
-    /// This prevents re-sending opening hand reveals that were already sent
-    /// during the GameStarted handshake phase.
-    last_reveal_index: usize,
-    /// Network debug mode - when enabled, validate client state hashes
-    network_debug: bool,
-    /// Channel to receive fatal error broadcasts (for clean shutdown on desync)
-    fatal_error_rx: broadcast::Receiver<String>,
-    /// Channel to send fatal errors to all players
-    fatal_error_tx: broadcast::Sender<String>,
 }
 
 impl PlayerConnection {
@@ -530,92 +554,50 @@ async fn run_game(
 ) -> Result<()> {
     log::info!("Game {}: Initializing {} vs {}", game_id, p1.name, p2.name);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // SINGLE-CHANNEL ARCHITECTURE (mtg-secqu)
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // The architecture has three layers:
+    // 1. NetworkControllers (sync) - run in spawn_blocking, drive game loop
+    // 2. Coordinator task (async) - bridges sync/async, routes messages
+    // 3. Player handlers (async) - handle WebSocket I/O
+    //
+    // Messages flow:
+    //   NetworkController --sync--> Coordinator --async--> Handler --WS--> Client
+    //   NetworkController <--sync-- Coordinator <--async-- Handler <--WS-- Client
+
     // Create sync channels for NetworkControllers (used by game loop in blocking thread)
     let (p1_request_tx, p1_sync_request_rx) = std::sync::mpsc::channel::<ChoiceRequest>();
     let (p1_response_tx, p1_response_rx) = std::sync::mpsc::channel::<ChoiceResponse>();
     let (p2_request_tx, p2_sync_request_rx) = std::sync::mpsc::channel::<ChoiceRequest>();
     let (p2_response_tx, p2_response_rx) = std::sync::mpsc::channel::<ChoiceResponse>();
 
-    // Create tokio channels for bridging to async WebSocket handlers
-    let (p1_async_request_tx, p1_async_request_rx) = tokio_mpsc::channel::<ChoiceRequest>(16);
-    let (p2_async_request_tx, p2_async_request_rx) = tokio_mpsc::channel::<ChoiceRequest>(16);
-
-    // Spawn bridge tasks that forward from sync to async channels
-    // Each bridge runs a blocking loop in a spawn_blocking task
-    let p1_bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(request) = p1_sync_request_rx.recv() {
-            // Use try_send to avoid blocking on the async side
-            // If the channel is full or closed, just break
-            if p1_async_request_tx.blocking_send(request).is_err() {
-                break;
-            }
-        }
-    });
-
-    let p2_bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(request) = p2_sync_request_rx.recv() {
-            if p2_async_request_tx.blocking_send(request).is_err() {
-                break;
-            }
-        }
-    });
+    // Create SINGLE async channel pairs for handler communication (mtg-secqu)
+    // Each player has exactly one rx and one tx with the coordinator
+    let (p1_to_handler_tx, p1_game_rx) = tokio_mpsc::channel::<GameToHandler>(16);
+    let (p1_from_handler_tx, p1_handler_rx) = tokio_mpsc::channel::<HandlerToGame>(16);
+    let (p2_to_handler_tx, p2_game_rx) = tokio_mpsc::channel::<GameToHandler>(16);
+    let (p2_from_handler_tx, p2_handler_rx) = tokio_mpsc::channel::<HandlerToGame>(16);
 
     // Split WebSocket streams
     let (p1_ws_tx, p1_ws_rx) = p1.ws_stream.split();
     let (p2_ws_tx, p2_ws_rx) = p2.ws_stream.split();
 
-    // Create oneshot channels to notify handlers when game ends
-    let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
-    let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
-
-    // Create single-channel infrastructure for game sync messages (mtg-e66iz fix)
-    // P1's player_rx receives messages from P2's player_tx, and vice versa
-    let (p1_player_tx, p2_player_rx) = tokio_mpsc::channel::<PlayerChannelMessage>(32);
-    let (p2_player_tx, p1_player_rx) = tokio_mpsc::channel::<PlayerChannelMessage>(32);
-
-    // Create broadcast channel for fatal error propagation
-    // When a desync or fatal error occurs, this broadcasts to all connected players
-    let (fatal_error_tx, _) = broadcast::channel::<String>(2);
-
-    // Create PlayerConnections with tokio receivers
-    // Note: last_reveal_index will be set after we determine the opening hand sizes
+    // Create PlayerConnections with single-channel architecture
     let mut p1_conn = PlayerConnection {
         player_id: PlayerId::new(0),
         ws_tx: p1_ws_tx,
-        request_rx: p1_async_request_rx,
-        response_tx: p1_response_tx,
-        game_end_rx: p1_game_end_rx,
-        player_rx: p1_player_rx, // P1 receives messages from P2 via single channel
-        player_tx: p1_player_tx, // P1 sends messages to P2 via single channel
-        current_choice_type: None,
-        expected_action_count: None,
-        expected_state_hash: None,
-        expected_debug_info: None,
-        expected_abilities: None,
+        game_rx: p1_game_rx,
+        game_tx: p1_from_handler_tx,
         pending_choice: None,
-        last_reveal_index: 0, // Will be set after opening hands are determined
-        network_debug: config.network_debug,
-        fatal_error_rx: fatal_error_tx.subscribe(),
-        fatal_error_tx: fatal_error_tx.clone(),
     };
     let mut p2_conn = PlayerConnection {
         player_id: PlayerId::new(1),
         ws_tx: p2_ws_tx,
-        request_rx: p2_async_request_rx,
-        response_tx: p2_response_tx,
-        game_end_rx: p2_game_end_rx,
-        player_rx: p2_player_rx, // P2 receives messages from P1 via single channel
-        player_tx: p2_player_tx, // P2 sends messages to P1 via single channel
-        current_choice_type: None,
-        expected_action_count: None,
-        expected_state_hash: None,
-        expected_debug_info: None,
-        expected_abilities: None,
+        game_rx: p2_game_rx,
+        game_tx: p2_from_handler_tx,
         pending_choice: None,
-        last_reveal_index: 0, // Will be set after opening hands are determined
-        network_debug: config.network_debug,
-        fatal_error_rx: fatal_error_tx.subscribe(),
-        fatal_error_tx: fatal_error_tx.clone(),
     };
 
     // Convert deck submissions to DeckList format
@@ -799,20 +781,17 @@ async fn run_game(
 
     log::info!("Game {}: Sent opening hand CardRevealed messages", game_id);
 
-    // Set the baseline reveal index to skip the opening hand draws
+    // Calculate baseline reveal index to skip the opening hand draws
     // The undo_log will have p1_hand.len() + p2_hand.len() MoveCard entries
-    // after GameLoop draws the opening hands. We've already sent these reveals,
-    // so we need to skip them when collecting reveals for the first choice.
+    // after GameLoop draws the opening hands. We've already sent these reveals.
     let opening_hand_count = p1_hand.len() + p2_hand.len();
-    p1_conn.last_reveal_index = opening_hand_count;
-    p2_conn.last_reveal_index = opening_hand_count;
     log::debug!(
-        "Game {}: Set last_reveal_index to {} for both players",
+        "Game {}: Opening hand reveal count = {} (will skip in first ChoiceRequest)",
         game_id,
         opening_hand_count
     );
 
-    // Create shared reveal indices for coordinating between NetworkControllers and reveal_pusher
+    // Create shared reveal indices for NetworkControllers
     // Initialize to opening_hand_count to skip opening hand reveals (already sent)
     let p1_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
     let p2_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
@@ -828,12 +807,33 @@ async fn run_game(
 
     // Spawn WebSocket handlers for each player
     let game_clone = Arc::clone(&game);
-    let mut p1_handler =
-        tokio::spawn(async move { handle_player_websocket(p1_conn, p1_ws_rx, game_clone, PlayerId::new(1)).await });
+    let mut p1_handler = tokio::spawn(async move { handle_player_websocket(p1_conn, p1_ws_rx, game_clone).await });
 
     let game_clone = Arc::clone(&game);
-    let mut p2_handler =
-        tokio::spawn(async move { handle_player_websocket(p2_conn, p2_ws_rx, game_clone, PlayerId::new(0)).await });
+    let mut p2_handler = tokio::spawn(async move { handle_player_websocket(p2_conn, p2_ws_rx, game_clone).await });
+
+    // Create channel for game end notification to coordinator
+    let (game_end_tx, game_end_rx) = oneshot::channel::<GameEndInfo>();
+
+    // Spawn coordinator task that bridges sync NetworkControllers to async handlers
+    // The coordinator receives ChoiceRequests from NetworkControllers (via sync channels),
+    // forwards them to handlers (via async channels), and routes responses back.
+    let coordinator_network_debug = config.network_debug;
+    let mut coordinator_handle = tokio::spawn(async move {
+        run_coordinator(
+            p1_sync_request_rx,
+            p1_response_tx,
+            p1_to_handler_tx,
+            p1_handler_rx,
+            p2_sync_request_rx,
+            p2_response_tx,
+            p2_to_handler_tx,
+            p2_handler_rx,
+            coordinator_network_debug,
+            game_end_rx,
+        )
+        .await
+    });
 
     // Run game loop in blocking thread (uses sync channels)
     let game_clone = Arc::clone(&game);
@@ -843,7 +843,7 @@ async fn run_game(
         run_game_loop(game_clone, p1_controller, p2_controller, tag_gamelogs, verbosity)
     });
 
-    // Wait for game to complete, OR for either handler to fail with a fatal error
+    // Wait for game to complete, OR for any critical task to fail
     // This prevents the server from hanging when a desync is detected
     let result: Result<GameResult> = tokio::select! {
         // Game loop completed (success or error)
@@ -852,6 +852,11 @@ async fn run_game(
                 Ok(r) => r,
                 Err(e) => Err(anyhow!("Game loop panic: {}", e)),
             }
+        }
+        // Coordinator exited (error means fatal issue)
+        coord_result = &mut coordinator_handle => {
+            log::error!("Game {}: Coordinator exited unexpectedly: {:?}", game_id, coord_result);
+            Err(anyhow!("Coordinator terminated unexpectedly"))
         }
         // P1 WebSocket handler exited (error means fatal issue like desync)
         p1_result = &mut p1_handler => {
@@ -866,14 +871,12 @@ async fn run_game(
     };
 
     // Get final state hash for the GameEnded message
-    // Note: We use final_hash from the stale mutex (for hash continuity) but
-    // action_count comes from the GameResult (which has the actual count from the game loop)
     let final_hash = {
         let game_guard = game.lock().await;
         compute_network_hash(&game_guard)
     };
 
-    // Send game end notification to both handlers
+    // Send game end notification to coordinator, which will forward to handlers
     match &result {
         Ok(game_result) => {
             log::info!(
@@ -883,11 +886,9 @@ async fn run_game(
                 game_result.action_count
             );
 
-            // Use the end_reason from GameResult, or derive from winner
+            // Derive reason from game result
             let reason = match game_result.end_reason {
-                // Use the actual reason if it's meaningful
                 GameEndReason::PlayerDeath(_) | GameEndReason::Decking(_) => game_result.end_reason.clone(),
-                // Otherwise derive from winner
                 _ => match game_result.winner {
                     Some(winner_id) => {
                         let loser_id = if winner_id == PlayerId::new(0) {
@@ -907,119 +908,364 @@ async fn run_game(
                 final_hash,
                 action_count: game_result.action_count,
             };
-
-            // Send to both players (ignore errors if handlers already closed)
-            let _ = p1_game_end_tx.send(end_info.clone());
-            let _ = p2_game_end_tx.send(end_info);
+            let _ = game_end_tx.send(end_info);
         }
         Err(e) => {
             log::error!("Game {}: Error - {}", game_id, e);
-            // Still try to notify players of the error
-            // Use 0 for action_count on error (we don't have a valid count)
             let end_info = GameEndInfo {
                 winner: None,
-                reason: GameEndReason::Draw, // Use draw for errors
+                reason: GameEndReason::Draw,
                 final_hash,
                 action_count: 0,
             };
-            let _ = p1_game_end_tx.send(end_info.clone());
-            let _ = p2_game_end_tx.send(end_info);
+            let _ = game_end_tx.send(end_info);
         }
     }
 
-    // Wait briefly for handlers to send GameEnded before aborting
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Wait for coordinator and handlers to process GameEnded
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // Cancel all handlers
+    coordinator_handle.abort();
     p1_handler.abort();
     p2_handler.abort();
-    p1_bridge.abort();
-    p2_bridge.abort();
 
-    Ok(())
+    // Return the final result
+    result.map(|_| ())
 }
 
-/// Handle WebSocket messages for a player
+// ═══════════════════════════════════════════════════════════════════════════
+// COORDINATOR TASK (mtg-secqu)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The coordinator bridges sync NetworkControllers to async WebSocket handlers.
+// It runs a blocking receiver in spawn_blocking, and routes messages to handlers.
+//
+// Key responsibilities:
+// 1. Receive ChoiceRequest from NetworkController (sync) via spawn_blocking bridge
+// 2. Forward to appropriate handler (async)
+// 3. Receive ChoiceResponse from handler (async)
+// 4. Send response to NetworkController (sync)
+// 5. Route OpponentMadeChoice to the other handler
+// 6. Send ChoiceAccepted to the originating handler
+
+/// Run the coordinator task that bridges sync NetworkControllers to async handlers.
+///
+/// This task uses spawn_blocking to receive from sync channels, then routes
+/// messages through the single async channel to each handler.
+#[allow(clippy::too_many_arguments)]
+async fn run_coordinator(
+    p1_sync_request_rx: std::sync::mpsc::Receiver<ChoiceRequest>,
+    p1_response_tx: std::sync::mpsc::Sender<ChoiceResponse>,
+    p1_to_handler_tx: tokio_mpsc::Sender<GameToHandler>,
+    mut p1_handler_rx: tokio_mpsc::Receiver<HandlerToGame>,
+    p2_sync_request_rx: std::sync::mpsc::Receiver<ChoiceRequest>,
+    p2_response_tx: std::sync::mpsc::Sender<ChoiceResponse>,
+    p2_to_handler_tx: tokio_mpsc::Sender<GameToHandler>,
+    mut p2_handler_rx: tokio_mpsc::Receiver<HandlerToGame>,
+    network_debug: bool,
+    mut game_end_rx: oneshot::Receiver<GameEndInfo>,
+) -> Result<()> {
+    // Spawn blocking bridge tasks that convert sync channel messages to async
+    let (p1_bridge_tx, mut p1_bridge_rx) = tokio_mpsc::channel::<ChoiceRequest>(4);
+    let (p2_bridge_tx, mut p2_bridge_rx) = tokio_mpsc::channel::<ChoiceRequest>(4);
+
+    let _p1_bridge = tokio::task::spawn_blocking(move || {
+        while let Ok(request) = p1_sync_request_rx.recv() {
+            if p1_bridge_tx.blocking_send(request).is_err() {
+                break;
+            }
+        }
+    });
+
+    let _p2_bridge = tokio::task::spawn_blocking(move || {
+        while let Ok(request) = p2_sync_request_rx.recv() {
+            if p2_bridge_tx.blocking_send(request).is_err() {
+                break;
+            }
+        }
+    });
+
+    log::debug!("Coordinator: Started, network_debug={}", network_debug);
+
+    // Main coordinator loop: wait for choice requests from either player OR game end
+    loop {
+        tokio::select! {
+            // Game ended - forward to both handlers and exit
+            end_info = &mut game_end_rx => {
+                match end_info {
+                    Ok(info) => {
+                        log::info!("Coordinator: Received GameEnded, winner={:?}", info.winner);
+                        // Send GameEnded to both handlers
+                        let _ = p1_to_handler_tx.send(GameToHandler::GameEnded(info.clone())).await;
+                        let _ = p2_to_handler_tx.send(GameToHandler::GameEnded(info)).await;
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        log::debug!("Coordinator: Game end channel closed unexpectedly");
+                        return Ok(());
+                    }
+                }
+            }
+
+            // P1 NetworkController sent a ChoiceRequest
+            request = p1_bridge_rx.recv() => {
+                match request {
+                    Some(choice_request) => {
+                        log::debug!(
+                            "Coordinator: P1 ChoiceRequest seq={} action_count={}",
+                            choice_request.choice_seq, choice_request.action_count
+                        );
+
+                        // Store request info for later (for OpponentMadeChoice)
+                        let choice_seq = choice_request.choice_seq;
+                        let choice_type = choice_request.choice_type.clone();
+                        let action_count = choice_request.action_count;
+                        let abilities = choice_request.abilities.clone();
+
+                        // Forward to P1 handler
+                        if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
+                            log::error!("Coordinator: Failed to send ChoiceRequest to P1 handler");
+                            return Err(anyhow!("P1 handler channel closed"));
+                        }
+
+                        // Wait for P1's response
+                        match p1_handler_rx.recv().await {
+                            Some(HandlerToGame::ChoiceResponse { response, client_action_count, client_state_hash, client_debug_info }) => {
+                                log::debug!(
+                                    "Coordinator: P1 ChoiceResponse seq={} indices={:?}",
+                                    response.choice_seq, response.choice_indices
+                                );
+
+                                // Validate action_count
+                                if client_action_count != action_count {
+                                    let error_msg = format!(
+                                        "FATAL: P1 action_count mismatch! client={} expected={}",
+                                        client_action_count, action_count
+                                    );
+                                    log::error!("Coordinator: {}", error_msg);
+                                    // Send fatal error to both handlers
+                                    let _ = p1_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                    let _ = p2_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                    return Err(anyhow!("{}", error_msg));
+                                }
+
+                                // Validate state hash in network debug mode
+                                // TODO(mtg-secqu): Add state hash validation here
+                                let _ = (network_debug, client_state_hash, client_debug_info);
+
+                                // Send response to NetworkController
+                                if p1_response_tx.send(response.clone()).is_err() {
+                                    log::error!("Coordinator: Failed to send response to P1 NetworkController");
+                                    return Err(anyhow!("P1 NetworkController channel closed"));
+                                }
+
+                                // Send ChoiceAccepted to P1
+                                let _ = p1_to_handler_tx.send(GameToHandler::ChoiceAccepted {
+                                    choice_seq,
+                                    action_count,
+                                    timestamp_ms: now_ms(),
+                                }).await;
+
+                                // Extract spell_ability for Priority choices
+                                let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
+                                    let idx = response.choice_indices.first().copied().unwrap_or(0);
+                                    abilities.as_ref()
+                                        .and_then(|abs| abs.get(idx).cloned())
+                                        .flatten()
+                                } else {
+                                    None
+                                };
+
+                                // Send OpponentMadeChoice to P2
+                                let opponent_info = OpponentChoiceInfo {
+                                    choice_seq,
+                                    player: PlayerId::new(0),
+                                    choice_type,
+                                    choice_indices: response.choice_indices,
+                                    description: format!("P1 choice #{}", choice_seq),
+                                    action_count,
+                                    timestamp_ms: now_ms(),
+                                    spell_ability,
+                                };
+                                let _ = p2_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
+                            }
+                            Some(HandlerToGame::ClientDisconnected) => {
+                                log::info!("Coordinator: P1 disconnected");
+                                let _ = p2_to_handler_tx.send(GameToHandler::FatalError("Opponent disconnected".to_string())).await;
+                                return Err(anyhow!("P1 disconnected"));
+                            }
+                            Some(HandlerToGame::ClientError(msg)) => {
+                                log::error!("Coordinator: P1 client error: {}", msg);
+                                let _ = p2_to_handler_tx.send(GameToHandler::FatalError(format!("Opponent error: {}", msg))).await;
+                                return Err(anyhow!("P1 client error: {}", msg));
+                            }
+                            None => {
+                                log::error!("Coordinator: P1 handler channel closed");
+                                return Err(anyhow!("P1 handler channel closed unexpectedly"));
+                            }
+                        }
+                    }
+                    None => {
+                        // Bridge channel closed - game loop has ended
+                        // Don't break immediately, wait for game_end_rx which will arrive shortly
+                        log::debug!("Coordinator: P1 bridge closed, waiting for game_end");
+                    }
+                }
+            }
+
+            // P2 NetworkController sent a ChoiceRequest
+            request = p2_bridge_rx.recv() => {
+                match request {
+                    Some(choice_request) => {
+                        log::debug!(
+                            "Coordinator: P2 ChoiceRequest seq={} action_count={}",
+                            choice_request.choice_seq, choice_request.action_count
+                        );
+
+                        // Store request info for later
+                        let choice_seq = choice_request.choice_seq;
+                        let choice_type = choice_request.choice_type.clone();
+                        let action_count = choice_request.action_count;
+                        let abilities = choice_request.abilities.clone();
+
+                        // Forward to P2 handler
+                        if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
+                            log::error!("Coordinator: Failed to send ChoiceRequest to P2 handler");
+                            return Err(anyhow!("P2 handler channel closed"));
+                        }
+
+                        // Wait for P2's response
+                        match p2_handler_rx.recv().await {
+                            Some(HandlerToGame::ChoiceResponse { response, client_action_count, client_state_hash, client_debug_info }) => {
+                                log::debug!(
+                                    "Coordinator: P2 ChoiceResponse seq={} indices={:?}",
+                                    response.choice_seq, response.choice_indices
+                                );
+
+                                // Validate action_count
+                                if client_action_count != action_count {
+                                    let error_msg = format!(
+                                        "FATAL: P2 action_count mismatch! client={} expected={}",
+                                        client_action_count, action_count
+                                    );
+                                    log::error!("Coordinator: {}", error_msg);
+                                    // Send fatal error to both handlers
+                                    let _ = p1_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                    let _ = p2_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                    return Err(anyhow!("{}", error_msg));
+                                }
+
+                                // Validate state hash in network debug mode
+                                let _ = (network_debug, client_state_hash, client_debug_info);
+
+                                // Send response to NetworkController
+                                if p2_response_tx.send(response.clone()).is_err() {
+                                    log::error!("Coordinator: Failed to send response to P2 NetworkController");
+                                    return Err(anyhow!("P2 NetworkController channel closed"));
+                                }
+
+                                // Send ChoiceAccepted to P2
+                                let _ = p2_to_handler_tx.send(GameToHandler::ChoiceAccepted {
+                                    choice_seq,
+                                    action_count,
+                                    timestamp_ms: now_ms(),
+                                }).await;
+
+                                // Extract spell_ability for Priority choices
+                                let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
+                                    let idx = response.choice_indices.first().copied().unwrap_or(0);
+                                    abilities.as_ref()
+                                        .and_then(|abs| abs.get(idx).cloned())
+                                        .flatten()
+                                } else {
+                                    None
+                                };
+
+                                // Send OpponentMadeChoice to P1
+                                let opponent_info = OpponentChoiceInfo {
+                                    choice_seq,
+                                    player: PlayerId::new(1),
+                                    choice_type,
+                                    choice_indices: response.choice_indices,
+                                    description: format!("P2 choice #{}", choice_seq),
+                                    action_count,
+                                    timestamp_ms: now_ms(),
+                                    spell_ability,
+                                };
+                                let _ = p1_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
+                            }
+                            Some(HandlerToGame::ClientDisconnected) => {
+                                log::info!("Coordinator: P2 disconnected");
+                                let _ = p1_to_handler_tx.send(GameToHandler::FatalError("Opponent disconnected".to_string())).await;
+                                return Err(anyhow!("P2 disconnected"));
+                            }
+                            Some(HandlerToGame::ClientError(msg)) => {
+                                log::error!("Coordinator: P2 client error: {}", msg);
+                                let _ = p1_to_handler_tx.send(GameToHandler::FatalError(format!("Opponent error: {}", msg))).await;
+                                return Err(anyhow!("P2 client error: {}", msg));
+                            }
+                            None => {
+                                log::error!("Coordinator: P2 handler channel closed");
+                                return Err(anyhow!("P2 handler channel closed unexpectedly"));
+                            }
+                        }
+                    }
+                    None => {
+                        // Bridge channel closed - game loop has ended
+                        // Don't break immediately, wait for game_end_rx which will arrive shortly
+                        log::debug!("Coordinator: P2 bridge closed, waiting for game_end");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLAYER WEBSOCKET HANDLER (mtg-secqu)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// New single-channel architecture:
+// - All game state messages come through conn.game_rx (GameToHandler)
+// - All responses go through conn.game_tx (HandlerToGame)
+// - WebSocket is just for client I/O
+// - No direct handler-to-handler communication
+
+/// Handle WebSocket messages for a player using single-channel architecture.
+///
+/// The handler loop is simple:
+/// 1. Wait for game_rx message (from coordinator) OR websocket message (from client)
+/// 2. Handle appropriately:
+///    - ChoiceRequest: forward to client, wait for response
+///    - OpponentMadeChoice: forward to client
+///    - ChoiceAccepted: forward to client
+///    - GameEnded/FatalError: forward and exit
+///    - Client messages: process or queue
 async fn handle_player_websocket(
     mut conn: PlayerConnection,
     mut ws_rx: futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
     game: Arc<Mutex<GameState>>,
-    _opponent_id: PlayerId,
 ) -> Result<()> {
+    log::debug!("Handler P{}: Started", conn.player_id);
+
+    // Track if we're currently waiting for a choice from the client
+    let mut waiting_for_choice: Option<ChoiceRequest> = None;
+
     loop {
         tokio::select! {
-            // Check for fatal error broadcast from other handler
-            error_msg = conn.fatal_error_rx.recv() => {
-                match error_msg {
-                    Ok(msg) => {
-                        log::error!("Player {:?}: Received fatal error broadcast: {}", conn.player_id, msg);
-                        // Send error to this client
-                        conn.send(&ServerMessage::Error {
-                            message: msg.clone(),
-                            fatal: true,
-                        }).await?;
-                        return Err(anyhow!("{}", msg));
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // Missed some messages, continue
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        // Channel closed, other handler already terminated
-                        log::debug!("Player {:?}: Fatal error channel closed", conn.player_id);
-                    }
-                }
-            }
+            // Messages from coordinator (game state)
+            game_msg = conn.game_rx.recv() => {
+                match game_msg {
+                    Some(GameToHandler::ChoiceRequest(choice_request)) => {
+                        log::debug!(
+                            "Handler P{}: Received ChoiceRequest seq={} action_count={}",
+                            conn.player_id, choice_request.choice_seq, choice_request.action_count
+                        );
 
-            // Check for game end notification
-            end_info = &mut conn.game_end_rx => {
-                match end_info {
-                    Ok(info) => {
-                        log::info!("Player {:?}: Sending GameEnded (action_count={})", conn.player_id, info.action_count);
-                        conn.send(&ServerMessage::GameEnded {
-                            winner: info.winner,
-                            reason: info.reason,
-                            final_state_hash: info.final_hash,
-                            action_count: info.action_count,
-                        }).await?;
-                    }
-                    Err(_) => {
-                        // Channel closed without sending - unusual but not fatal
-                        log::warn!("Player {:?}: Game end channel closed", conn.player_id);
-                    }
-                }
-                break;
-            }
-
-            // Check for choice requests from NetworkController (via bridge)
-            request = conn.request_rx.recv() => {
-                match request {
-                    Some(choice_request) => {
-                        // Send CardRevealed messages for each reveal before the choice
-                        // AND broadcast them to the opponent so they have reveals before their game loop needs them
+                        // Send CardRevealed messages for reveals in this request
                         if !choice_request.reveals.is_empty() {
-                            log::debug!(
-                                "Player {:?}: Processing {} reveals from ChoiceRequest",
-                                conn.player_id,
-                                choice_request.reveals.len()
-                            );
                             let game_guard = game.lock().await;
-
-                            // Collect reveals to broadcast to opponent
-                            // IMPORTANT: Only broadcast reveals that the OPPONENT should see
-                            // - Opponent's own cards (they already see them)
-                            // - Cards going to public zones (visible to all)
-                            // We do NOT broadcast our own draws to hand - that's hidden info!
-                            let mut reveals_to_broadcast = Vec::new();
-                            let opponent_id = PlayerId::new(1 - conn.player_id.as_u32());
-
                             for reveal_info in &choice_request.reveals {
-                                log::debug!(
-                                    "Player {:?}: Sending CardRevealed for draw: card {} to {:?}",
-                                    conn.player_id,
-                                    reveal_info.card_id.as_u32(),
-                                    reveal_info.to_zone
-                                );
                                 if let Some(card_reveal) = build_card_reveal(&game_guard, reveal_info) {
                                     let reason = zone_to_reveal_reason(reveal_info.to_zone);
                                     conn.send(&ServerMessage::CardRevealed {
@@ -1027,158 +1273,136 @@ async fn handle_player_websocket(
                                         card: card_reveal,
                                         reason,
                                     }).await?;
-
-                                    // Only broadcast to opponent if THEY should see it:
-                                    // - It's their card (they already know about it)
-                                    // - It's going to a public zone (visible to all)
-                                    let is_public_zone = matches!(
-                                        reveal_info.to_zone,
-                                        Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile
-                                    );
-                                    let is_opponents_card = reveal_info.owner == opponent_id;
-
-                                    if is_opponents_card || is_public_zone {
-                                        reveals_to_broadcast.push(RevealBroadcast {
-                                            owner: reveal_info.owner,
-                                            card_id: reveal_info.card_id,
-                                            to_zone: reveal_info.to_zone,
-                                        });
-                                    }
                                 }
                             }
-
-                            // NOTE: We intentionally do NOT broadcast reveals to the opponent via
-                            // async channels. The async broadcast can arrive out of order due to
-                            // tokio::select! scheduling, causing desync. Instead, the opponent's
-                            // NetworkController collects its own reveals synchronously from the
-                            // undo_log when it makes its next choice.
-                            //
-                            // The reveals_to_broadcast is kept for documentation of what WOULD be
-                            // sent, but we don't actually send it.
-                            let _ = reveals_to_broadcast; // Silence unused warning
                         }
 
-                        // Track the choice type for broadcasting to opponent
-                        conn.current_choice_type = Some(choice_request.choice_type.clone());
-
-                        // Track the action_count from this ChoiceRequest for validation
-                        // when the client responds with SubmitChoice.
-                        // This is the authoritative source - NOT the stale game state mutex.
-                        conn.expected_action_count = Some(choice_request.action_count);
-
-                        // Track state_hash and debug_info for network debug validation
-                        conn.expected_state_hash = Some(choice_request.state_hash);
-                        conn.expected_debug_info = choice_request.debug_info.clone();
-
-                        // Store abilities for looking up chosen ability (mtg-e66iz channel consolidation)
-                        conn.expected_abilities = choice_request.abilities.clone();
-
                         // Check if client already sent a choice (pending_choice)
-                        // This happens in synchronized GameLoop mode when client is faster
                         if let Some(pending) = conn.pending_choice.take() {
                             log::debug!(
-                                "Player {:?}: Processing pending choice {} (arrived before ChoiceRequest)",
+                                "Handler P{}: Processing pending choice {} (arrived before ChoiceRequest)",
                                 conn.player_id, pending.choice_seq
                             );
 
-                            // Validate action_count - FATAL if mismatch
-                            if pending.action_count != choice_request.action_count {
-                                let error_msg = format!(
-                                    "FATAL: action_count mismatch! client={} expected={}",
-                                    pending.action_count, choice_request.action_count
-                                );
-                                log::error!(
-                                    "FATAL SYNC ERROR: Player {:?} pending choice {}",
-                                    conn.player_id, error_msg
-                                );
-                                // Broadcast to all clients
-                                let _ = conn.fatal_error_tx.send(error_msg.clone());
-                                conn.send(&ServerMessage::Error {
-                                    message: error_msg.clone(),
-                                    fatal: true,
-                                }).await?;
-                                return Err(anyhow!("{}", error_msg));
-                            }
-
-                            // Send response to NetworkController
+                            // Send response to coordinator
                             let response = ChoiceResponse {
                                 choice_seq: pending.choice_seq,
-                                choice_indices: pending.choice_indices.clone(),
+                                choice_indices: pending.choice_indices,
                             };
-                            if conn.response_tx.send(response).is_err() {
-                                log::error!("Failed to send choice response for pending choice");
-                                break;
-                            }
-
-                            // Send acknowledgment back to client
-                            conn.send(&ServerMessage::ChoiceAccepted {
-                                choice_seq: pending.choice_seq,
-                                action_count: choice_request.action_count,
-                                timestamp_ms: now_ms(),
+                            conn.game_tx.send(HandlerToGame::ChoiceResponse {
+                                response,
+                                client_action_count: pending.action_count,
+                                client_state_hash: pending.client_state_hash,
+                                client_debug_info: pending.client_debug_info,
                             }).await?;
-
-                            // Broadcast to opponent with proper choice_type
-                            let choice_type = conn.current_choice_type.take().unwrap();
-
-                            // For Priority choices, look up the ability directly from the ChoiceRequest
-                            // This eliminates the need for a separate ability_rx channel (mtg-e66iz)
-                            let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
-                                let idx = pending.choice_indices.first().copied().unwrap_or(0);
-                                choice_request.abilities.as_ref()
-                                    .and_then(|abilities| abilities.get(idx).cloned())
-                                    .flatten()
-                            } else {
-                                None
-                            };
-
-                            let opponent_info = OpponentChoiceInfo {
-                                choice_seq: pending.choice_seq,
-                                player: conn.player_id,
-                                choice_type,
-                                choice_indices: pending.choice_indices.clone(),
-                                description: format!("Choice #{}", pending.choice_seq),
-                                action_count: choice_request.action_count,
-                                timestamp_ms: now_ms(),
-                                spell_ability,
-                            };
-                            log::info!(
-                                "Player {:?}: Broadcasting pending choice {} to opponent via single channel",
-                                conn.player_id, pending.choice_seq
-                            );
-                            // Use single-channel architecture (mtg-e66iz fix)
-                            if let Err(e) = conn.player_tx.send(PlayerChannelMessage::OpponentChoice(opponent_info)).await {
-                                log::error!("Failed to broadcast pending choice: {:?}", e);
-                            }
                         } else {
-                            // Normal case: send ChoiceRequest to client
+                            // Normal case: send ChoiceRequest to client and wait
                             conn.send(&ServerMessage::ChoiceRequest {
                                 choice_seq: choice_request.choice_seq,
                                 for_player: conn.player_id,
-                                choice_type: choice_request.choice_type,
-                                options: choice_request.options,
+                                choice_type: choice_request.choice_type.clone(),
+                                options: choice_request.options.clone(),
                                 state_hash: choice_request.state_hash,
                                 action_count: choice_request.action_count,
                                 timestamp_ms: now_ms(),
                                 context: None,
-                                debug_info: choice_request.debug_info,
+                                debug_info: choice_request.debug_info.clone(),
                             }).await?;
+
+                            // Mark that we're waiting for this choice
+                            waiting_for_choice = Some(choice_request);
                         }
                     }
+
+                    Some(GameToHandler::OpponentMadeChoice(info)) => {
+                        log::debug!(
+                            "Handler P{}: Forwarding opponent choice seq={}",
+                            conn.player_id, info.choice_seq
+                        );
+
+                        // If opponent played a card, send CardRevealed first
+                        if let Some(ref ability) = info.spell_ability {
+                            let card_id = ability.card_id();
+                            let game_guard = game.lock().await;
+                            if let Some(card) = game_guard.cards.try_get(card_id) {
+                                let card_def = game_guard.card_definitions.get(&card.name).cloned();
+                                let card_reveal = CardReveal {
+                                    card_id,
+                                    name: card.name.to_string(),
+                                    card_def,
+                                };
+                                conn.send(&ServerMessage::CardRevealed {
+                                    owner: info.player,
+                                    card: card_reveal,
+                                    reason: RevealReason::Played,
+                                }).await?;
+                            }
+                        }
+
+                        conn.send(&ServerMessage::OpponentChoice {
+                            choice_seq: info.choice_seq,
+                            player: info.player,
+                            choice_type: info.choice_type,
+                            choice_indices: info.choice_indices,
+                            description: info.description,
+                            action_count: info.action_count,
+                            timestamp_ms: info.timestamp_ms,
+                            spell_ability: info.spell_ability,
+                            state_hash_after: None,
+                            debug_info: None,
+                        }).await?;
+                    }
+
+                    Some(GameToHandler::ChoiceAccepted { choice_seq, action_count, timestamp_ms }) => {
+                        log::debug!(
+                            "Handler P{}: Forwarding ChoiceAccepted seq={}",
+                            conn.player_id, choice_seq
+                        );
+                        conn.send(&ServerMessage::ChoiceAccepted {
+                            choice_seq,
+                            action_count,
+                            timestamp_ms,
+                        }).await?;
+                    }
+
+                    Some(GameToHandler::GameEnded(info)) => {
+                        log::info!(
+                            "Handler P{}: Sending GameEnded winner={:?}",
+                            conn.player_id, info.winner
+                        );
+                        conn.send(&ServerMessage::GameEnded {
+                            winner: info.winner,
+                            reason: info.reason,
+                            final_state_hash: info.final_hash,
+                            action_count: info.action_count,
+                        }).await?;
+                        break;
+                    }
+
+                    Some(GameToHandler::FatalError(msg)) => {
+                        log::error!("Handler P{}: Fatal error: {}", conn.player_id, msg);
+                        conn.send(&ServerMessage::Error {
+                            message: msg,
+                            fatal: true,
+                        }).await?;
+                        break;
+                    }
+
                     None => {
-                        // Channel closed - game ended but we should wait for game_end_rx
-                        log::debug!("Player {:?}: Request channel closed", conn.player_id);
+                        // Coordinator channel closed
+                        log::debug!("Handler P{}: Coordinator channel closed", conn.player_id);
+                        break;
                     }
                 }
             }
 
-            // Check for WebSocket messages from client
-            msg = ws_rx.next() => {
-                match msg {
+            // Messages from client (WebSocket)
+            ws_msg = ws_rx.next() => {
+                match ws_msg {
                     Some(Ok(Message::Text(text))) => {
-                        // Log at DEBUG level with truncation for long messages
                         if log::log_enabled!(log::Level::Debug) {
                             let truncated = if text.len() > 500 {
-                                format!("{}... ({} bytes total)", &text[..500], text.len())
+                                format!("{}... ({} bytes)", &text[..500], text.len())
                             } else {
                                 text.to_string()
                             };
@@ -1186,231 +1410,64 @@ async fn handle_player_websocket(
                         }
 
                         match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::SubmitChoice { choice_seq, choice_indices, action_count: client_action_count, client_state_hash, debug_info: client_debug_info, .. }) => {
-                                // Check if we've sent a ChoiceRequest yet (tracked by expected_action_count)
-                                // If not, the client is ahead of us (synchronized GameLoop timing)
-                                // and we need to queue this choice for later processing.
-                                if let Some(expected) = conn.expected_action_count.take() {
+                            Ok(ClientMessage::SubmitChoice {
+                                choice_seq,
+                                choice_indices,
+                                action_count,
+                                client_state_hash,
+                                debug_info,
+                                ..
+                            }) => {
+                                if waiting_for_choice.take().is_some() {
                                     // Normal case: we sent ChoiceRequest and client is responding
-                                    log::trace!(
-                                        "Player {:?}: received choice {} (client_action_count={}, expected={})",
-                                        conn.player_id, choice_seq, client_action_count, expected
+                                    log::debug!(
+                                        "Handler P{}: Received choice seq={} action_count={}",
+                                        conn.player_id, choice_seq, action_count
                                     );
 
-                                    // Validate action_count - FATAL if mismatch
-                                    if client_action_count != expected {
-                                        let error_msg = format!(
-                                            "FATAL: action_count mismatch! client={} expected={}",
-                                            client_action_count, expected
-                                        );
-                                        log::error!(
-                                            "FATAL SYNC ERROR: Player {:?} {}",
-                                            conn.player_id, error_msg
-                                        );
-                                        // Broadcast to all clients
-                                        let _ = conn.fatal_error_tx.send(error_msg.clone());
-                                        conn.send(&ServerMessage::Error {
-                                            message: error_msg.clone(),
-                                            fatal: true,
-                                        }).await?;
-                                        return Err(anyhow!("{}", error_msg));
-                                    }
-
-                                    // Validate state hash in network debug mode
-                                    if conn.network_debug {
-                                        if let (Some(client_hash), Some(server_hash)) = (client_state_hash, conn.expected_state_hash.take()) {
-                                            if client_hash != server_hash {
-                                                // FATAL: State hash mismatch - game state has diverged
-                                                log::error!(
-                                                    "FATAL SYNC ERROR: Player {:?} state hash mismatch at action_count={}!",
-                                                    conn.player_id, expected
-                                                );
-                                                log::error!(
-                                                    "  Server hash: 0x{:016x}",
-                                                    server_hash
-                                                );
-                                                log::error!(
-                                                    "  Client hash: 0x{:016x}",
-                                                    client_hash
-                                                );
-
-                                                // Log detailed diff if debug_info is available
-                                                let server_info_opt = conn.expected_debug_info.take();
-                                                if let (Some(ref server_info), Some(ref client_info)) = (&server_info_opt, &client_debug_info) {
-                                                    // Use diff() to highlight only the differences
-                                                    let diffs = server_info.diff(client_info);
-                                                    if diffs.is_empty() {
-                                                        log::error!("  State metrics match - hash diverged from non-metric fields (timestamps, card states, etc.)");
-                                                    } else {
-                                                        log::error!("  STATE DIFFERENCES (server vs client):");
-                                                        for diff in &diffs {
-                                                            log::error!("    {}", diff);
-                                                        }
-                                                    }
-
-                                                    // Compare action logs line-by-line to find divergence point
-                                                    if !server_info.last_actions.is_empty() || !client_info.last_actions.is_empty() {
-                                                        log::error!("  ACTION LOG COMPARISON:");
-                                                        let max_len = std::cmp::max(
-                                                            server_info.last_actions.len(),
-                                                            client_info.last_actions.len()
-                                                        );
-                                                        let mut first_divergence: Option<usize> = None;
-                                                        for i in 0..max_len {
-                                                            let s_action = server_info.last_actions.get(i);
-                                                            let c_action = client_info.last_actions.get(i);
-                                                            match (s_action, c_action) {
-                                                                (Some(s), Some(c)) if s == c => {
-                                                                    // Matching - don't log every line, just track
-                                                                }
-                                                                (Some(s), Some(c)) => {
-                                                                    if first_divergence.is_none() {
-                                                                        first_divergence = Some(i);
-                                                                        log::error!("    DIVERGENCE at action[{}]:", i);
-                                                                    }
-                                                                    log::error!("      server: {}", s);
-                                                                    log::error!("      client: {}", c);
-                                                                }
-                                                                (Some(s), None) => {
-                                                                    if first_divergence.is_none() {
-                                                                        first_divergence = Some(i);
-                                                                        log::error!("    DIVERGENCE at action[{}] (server has more):", i);
-                                                                    }
-                                                                    log::error!("      server: {}", s);
-                                                                    log::error!("      client: (missing)");
-                                                                }
-                                                                (None, Some(c)) => {
-                                                                    if first_divergence.is_none() {
-                                                                        first_divergence = Some(i);
-                                                                        log::error!("    DIVERGENCE at action[{}] (client has more):", i);
-                                                                    }
-                                                                    log::error!("      server: (missing)");
-                                                                    log::error!("      client: {}", c);
-                                                                }
-                                                                (None, None) => break,
-                                                            }
-                                                        }
-                                                        if first_divergence.is_none() {
-                                                            log::error!("    Action logs match ({} actions)", server_info.last_actions.len());
-                                                        }
-                                                    }
-                                                } else {
-                                                    // Fall back to individual logging if only one side available
-                                                    if let Some(server_info) = server_info_opt {
-                                                        log::error!("  Server state: {}", server_info.summary());
-                                                        if !server_info.last_actions.is_empty() {
-                                                            log::error!("  Server last actions:");
-                                                            for action in &server_info.last_actions {
-                                                                log::error!("    {}", action);
-                                                            }
-                                                        }
-                                                    }
-                                                    if let Some(client_info) = &client_debug_info {
-                                                        log::error!("  Client state: {}", client_info.summary());
-                                                        if !client_info.last_actions.is_empty() {
-                                                            log::error!("  Client last actions:");
-                                                            for action in &client_info.last_actions {
-                                                                log::error!("    {}", action);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                // Broadcast fatal error to ALL clients and terminate game
-                                                let error_msg = format!(
-                                                    "FATAL: State hash mismatch! Server=0x{:016x} Client=0x{:016x} at action_count={}",
-                                                    server_hash, client_hash, expected
-                                                );
-                                                // Broadcast to all clients (including opponent)
-                                                let _ = conn.fatal_error_tx.send(error_msg.clone());
-                                                // Also send directly to this client
-                                                conn.send(&ServerMessage::Error {
-                                                    message: error_msg.clone(),
-                                                    fatal: true,
-                                                }).await?;
-                                                return Err(anyhow!("{}", error_msg));
-                                            } else {
-                                                log::trace!(
-                                                    "Player {:?}: state hash validated 0x{:016x}",
-                                                    conn.player_id, client_hash
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    // Send response to NetworkController
-                                    let response = ChoiceResponse { choice_seq, choice_indices: choice_indices.clone() };
-                                    if conn.response_tx.send(response).is_err() {
-                                        log::error!("Failed to send choice response");
-                                        break;
-                                    }
-
-                                    // Send acknowledgment back to client with SERVER's action_count
-                                    conn.send(&ServerMessage::ChoiceAccepted {
-                                        choice_seq,
-                                        action_count: expected,
-                                        timestamp_ms: now_ms(),
+                                    // Send response to coordinator
+                                    let response = ChoiceResponse { choice_seq, choice_indices };
+                                    conn.game_tx.send(HandlerToGame::ChoiceResponse {
+                                        response,
+                                        client_action_count: action_count,
+                                        client_state_hash,
+                                        client_debug_info: debug_info,
                                     }).await?;
-
-                                    // Broadcast to opponent with proper choice_type
-                                    // current_choice_type should always be set since we processed ChoiceRequest
-                                    let choice_type = conn.current_choice_type.take()
-                                        .expect("current_choice_type should be set when expected_action_count is set");
-
-                                    // For Priority choices, look up the ability directly from expected_abilities
-                                    // This eliminates the need for a separate ability_rx channel (mtg-e66iz)
-                                    let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
-                                        let idx = choice_indices.first().copied().unwrap_or(0);
-                                        conn.expected_abilities.take()
-                                            .and_then(|abilities| abilities.get(idx).cloned())
-                                            .flatten()
-                                    } else {
-                                        None
-                                    };
-
-                                    let opponent_info = OpponentChoiceInfo {
-                                        choice_seq,
-                                        player: conn.player_id,
-                                        choice_type,
-                                        choice_indices: choice_indices.clone(),
-                                        description: format!("Choice #{}", choice_seq),
-                                        action_count: expected,
-                                        timestamp_ms: now_ms(),
-                                        spell_ability,
-                                    };
-                                    log::info!("Player {:?}: Broadcasting choice {} to opponent via single channel", conn.player_id, choice_seq);
-                                    // Use single-channel architecture (mtg-e66iz fix)
-                                    if let Err(e) = conn.player_tx.send(PlayerChannelMessage::OpponentChoice(opponent_info)).await {
-                                        log::error!("Failed to broadcast choice to opponent: {:?}", e);
-                                    }
                                 } else {
-                                    // Client is ahead: queue this choice for processing when ChoiceRequest arrives
+                                    // Client is ahead: queue for later
                                     log::debug!(
-                                        "Player {:?}: Queueing early choice {} (action_count={}) - waiting for ChoiceRequest",
-                                        conn.player_id, choice_seq, client_action_count
+                                        "Handler P{}: Queueing early choice seq={} (waiting for ChoiceRequest)",
+                                        conn.player_id, choice_seq
                                     );
                                     conn.pending_choice = Some(PendingChoice {
                                         choice_seq,
                                         choice_indices,
-                                        action_count: client_action_count,
+                                        action_count,
+                                        client_state_hash,
+                                        client_debug_info: debug_info,
                                     });
                                 }
                             }
+
                             Ok(ClientMessage::Ping { timestamp_ms }) => {
                                 conn.send(&ServerMessage::Pong { timestamp_ms }).await?;
                             }
+
                             Ok(ClientMessage::Disconnect) => {
-                                log::info!("Player {:?} disconnected gracefully", conn.player_id);
+                                log::info!("Handler P{}: Client disconnected gracefully", conn.player_id);
+                                conn.game_tx.send(HandlerToGame::ClientDisconnected).await?;
                                 break;
                             }
+
                             Ok(ClientMessage::Authenticate { .. }) => {
                                 conn.send(&ServerMessage::Error {
                                     message: "Already authenticated".to_string(),
                                     fatal: false,
                                 }).await?;
                             }
+
                             Err(e) => {
-                                log::error!("Failed to parse client message: {}", e);
+                                log::error!("Handler P{}: Failed to parse: {}", conn.player_id, e);
                                 conn.send(&ServerMessage::Error {
                                     message: format!("Invalid message: {}", e),
                                     fatal: false,
@@ -1418,83 +1475,34 @@ async fn handle_player_websocket(
                             }
                         }
                     }
+
                     Some(Ok(Message::Close(_))) => {
-                        log::info!("Player {:?} closed connection", conn.player_id);
+                        log::info!("Handler P{}: WebSocket closed", conn.player_id);
+                        let _ = conn.game_tx.send(HandlerToGame::ClientDisconnected).await;
                         break;
                     }
+
                     Some(Ok(_)) => {
-                        // Ignore binary/ping/pong messages
+                        // Ignore binary/ping/pong
                     }
+
                     Some(Err(e)) => {
-                        log::error!("WebSocket error: {}", e);
+                        log::error!("Handler P{}: WebSocket error: {}", conn.player_id, e);
+                        let _ = conn.game_tx.send(HandlerToGame::ClientError(e.to_string())).await;
                         break;
                     }
+
                     None => {
-                        // Stream ended
+                        log::debug!("Handler P{}: WebSocket stream ended", conn.player_id);
+                        let _ = conn.game_tx.send(HandlerToGame::ClientDisconnected).await;
                         break;
-                    }
-                }
-            }
-
-            // Check for messages from opponent via single channel (mtg-e66iz fix)
-            // This replaces the old opponent_choice_rx.recv() to ensure message ordering
-            player_msg = conn.player_rx.recv() => {
-                if let Some(msg) = player_msg {
-                    match msg {
-                        PlayerChannelMessage::OpponentChoice(info) => {
-                            log::debug!("Player {:?}: Forwarding opponent choice {} via single channel", conn.player_id, info.choice_seq);
-
-                            // If opponent played a card, send CardRevealed so client knows what card it is
-                            // This is essential because the client's shadow library doesn't have card identities
-                            // for the opponent's hand
-                            if let Some(ref ability) = info.spell_ability {
-                                // Extract card_id from the ability
-                                let card_id = ability.card_id();
-                                {
-                                    let game_guard = game.lock().await;
-                                    if let Some(card) = game_guard.cards.try_get(card_id) {
-                                        let card_def = game_guard.card_definitions.get(&card.name).cloned();
-                                        let card_reveal = CardReveal {
-                                            card_id,
-                                            name: card.name.to_string(),
-                                            card_def,
-                                        };
-
-                                        log::debug!(
-                                            "Player {:?}: Sending CardRevealed for opponent's played card: {} (id={:?})",
-                                            conn.player_id, card.name, card_id
-                                        );
-                                        conn.send(&ServerMessage::CardRevealed {
-                                            owner: info.player,
-                                            card: card_reveal,
-                                            reason: RevealReason::Played,
-                                        }).await?;
-                                    }
-                                    // Update last_reveal_index
-                                    conn.last_reveal_index = game_guard.undo_log.len();
-                                }
-                            }
-
-                            conn.send(&ServerMessage::OpponentChoice {
-                                choice_seq: info.choice_seq,
-                                player: info.player,
-                                choice_type: info.choice_type,
-                                choice_indices: info.choice_indices.clone(),
-                                description: info.description,
-                                action_count: info.action_count,
-                                timestamp_ms: info.timestamp_ms,
-                                spell_ability: info.spell_ability,
-                                // TODO(mtg-037fw): Populate in debug mode
-                                state_hash_after: None,
-                                debug_info: None,
-                            }).await?;
-                        }
                     }
                 }
             }
         }
     }
 
+    log::debug!("Handler P{}: Exiting", conn.player_id);
     Ok(())
 }
 
