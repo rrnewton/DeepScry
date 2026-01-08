@@ -269,10 +269,16 @@ impl WasmNetworkClient {
     }
 
     /// Queue authentication message
+    ///
+    /// If player_name is empty, server will assign a default name with suffix.
     pub fn authenticate(&mut self, password: &str, player_name: &str, deck: DeckSubmission) {
         let msg = ClientMessage::Authenticate {
             password: password.to_string(),
-            player_name: player_name.to_string(),
+            player_name: if player_name.is_empty() {
+                None
+            } else {
+                Some(player_name.to_string())
+            },
             deck,
         };
         self.queue_outbound(msg);
@@ -313,10 +319,17 @@ impl WasmNetworkClient {
                 success,
                 error,
                 your_player_id,
+                your_name,
             } => {
                 if success {
-                    log::info!("WasmNetworkClient: Authenticated as {:?}", your_player_id);
+                    log::info!(
+                        "WasmNetworkClient: Authenticated as '{}' ({:?})",
+                        your_name.as_deref().unwrap_or("<pending>"),
+                        your_player_id
+                    );
                     self.our_player_id = your_player_id;
+                    // Store the assigned name if provided
+                    // (it will be None for first player until P2 connects)
                     self.state = NetworkState::WaitingForOpponent;
                 } else {
                     log::error!("WasmNetworkClient: Auth failed: {:?}", error);

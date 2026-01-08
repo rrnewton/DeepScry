@@ -270,7 +270,7 @@ mod async_tests {
 
         let msg = ClientMessage::Authenticate {
             password: "secret".to_string(),
-            player_name: "TestPlayer".to_string(),
+            player_name: Some("TestPlayer".to_string()),
             deck,
         };
 
@@ -486,7 +486,7 @@ mod websocket_integration {
         // Send authentication
         let auth_msg = ClientMessage::Authenticate {
             password: password.to_string(),
-            player_name: "Alice".to_string(),
+            player_name: Some("Alice".to_string()),
             deck: simple_deck(),
         };
         send_message(&mut ws1, &auth_msg).await.expect("Failed to send auth");
@@ -560,7 +560,7 @@ mod websocket_integration {
             &mut ws1,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Alice".to_string(),
+                player_name: Some("Alice".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -579,7 +579,7 @@ mod websocket_integration {
             &mut ws2,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Bob".to_string(),
+                player_name: Some("Bob".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -671,7 +671,7 @@ mod websocket_integration {
             &mut ws,
             &ClientMessage::Authenticate {
                 password: "wrong_password".to_string(),
-                player_name: "Hacker".to_string(),
+                player_name: Some("Hacker".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -731,7 +731,7 @@ mod websocket_integration {
             &mut ws1,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "PassBot1".to_string(),
+                player_name: Some("PassBot1".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -749,7 +749,7 @@ mod websocket_integration {
             &mut ws2,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "PassBot2".to_string(),
+                player_name: Some("PassBot2".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -916,7 +916,7 @@ mod websocket_integration {
             &mut ws1,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Alice".to_string(),
+                player_name: Some("Alice".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -938,7 +938,7 @@ mod websocket_integration {
             &mut ws2,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Bob".to_string(),
+                player_name: Some("Bob".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -1028,7 +1028,7 @@ mod websocket_integration {
             &mut ws1,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Visible1".to_string(),
+                player_name: Some("Visible1".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -1045,7 +1045,7 @@ mod websocket_integration {
             &mut ws2,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Visible2".to_string(),
+                player_name: Some("Visible2".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -1129,7 +1129,7 @@ mod websocket_integration {
             &mut ws1,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Hidden1".to_string(),
+                player_name: Some("Hidden1".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -1146,7 +1146,7 @@ mod websocket_integration {
             &mut ws2,
             &ClientMessage::Authenticate {
                 password: password.to_string(),
-                player_name: "Hidden2".to_string(),
+                player_name: Some("Hidden2".to_string()),
                 deck: simple_deck(),
             },
         )
@@ -1272,7 +1272,7 @@ mod websocket_integration {
         let mut client1_config = ClientConfig::new(
             format!("localhost:{}", port),
             password.to_string(),
-            "RandomBot1".to_string(),
+            Some("RandomBot1".to_string()),
             deck_path.clone(),
         );
         client1_config.cardsfolder = cardsfolder_path_buf.clone();
@@ -1280,7 +1280,7 @@ mod websocket_integration {
         let mut client2_config = ClientConfig::new(
             format!("localhost:{}", port),
             password.to_string(),
-            "RandomBot2".to_string(),
+            Some("RandomBot2".to_string()),
             deck_path.clone(),
         );
         client2_config.cardsfolder = cardsfolder_path_buf;

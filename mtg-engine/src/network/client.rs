@@ -104,8 +104,8 @@ pub struct ClientConfig {
     pub server: String,
     /// Server password (empty if no password)
     pub password: String,
-    /// Player name
-    pub player_name: String,
+    /// Player name (None = let server assign default with suffix)
+    pub player_name: Option<String>,
     /// Deck file path
     pub deck_path: PathBuf,
     /// Path to cardsfolder for loading cards
@@ -114,7 +114,7 @@ pub struct ClientConfig {
 
 impl ClientConfig {
     /// Create a new client config
-    pub fn new(server: String, password: String, player_name: String, deck_path: PathBuf) -> Self {
+    pub fn new(server: String, password: String, player_name: Option<String>, deck_path: PathBuf) -> Self {
         Self {
             server,
             password,
@@ -475,14 +475,25 @@ impl NetworkClient {
                 success,
                 error,
                 your_player_id,
+                your_name,
             } => {
                 if !success {
                     return Err(anyhow!("Authentication failed: {}", error.unwrap_or_default()));
                 }
-                log::info!(
-                    "Authenticated as player {:?}",
-                    your_player_id.unwrap_or_else(|| PlayerId::new(0))
-                );
+                // Update player_name with server-assigned name if we didn't provide one
+                if let Some(assigned_name) = your_name {
+                    self.config.player_name = Some(assigned_name.clone());
+                    log::info!(
+                        "Authenticated as '{}' (player {:?})",
+                        assigned_name,
+                        your_player_id.unwrap_or_else(|| PlayerId::new(0))
+                    );
+                } else {
+                    log::info!(
+                        "Authenticated as player {:?}",
+                        your_player_id.unwrap_or_else(|| PlayerId::new(0))
+                    );
+                }
             }
             _ => {
                 return Err(anyhow!("Unexpected response: expected AuthResult"));
@@ -610,7 +621,8 @@ impl NetworkClient {
 
         // Determine player order - GameInitializer expects P1's deck first, then P2's
         let we_are_p1 = our_player_id.as_u32() == 0;
-        let our_name = self.config.player_name.clone();
+        // Use server-assigned name (should be populated from AuthResult)
+        let our_name = self.config.player_name.clone().unwrap_or_else(|| "Player".to_string());
         let (p1_deck, p2_deck, p1_name, p2_name) = if we_are_p1 {
             (our_deck, opponent_deck, our_name, opponent_name.clone())
         } else {
@@ -1801,13 +1813,13 @@ mod tests {
         let config = ClientConfig::new(
             "localhost:17771".to_string(),
             "secret".to_string(),
-            "Alice".to_string(),
+            Some("Alice".to_string()),
             PathBuf::from("deck.dck"),
         );
 
         assert_eq!(config.server, "localhost:17771");
         assert_eq!(config.password, "secret");
-        assert_eq!(config.player_name, "Alice");
+        assert_eq!(config.player_name, Some("Alice".to_string()));
     }
 
     #[test]

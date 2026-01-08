@@ -94,8 +94,9 @@ pub enum ClientMessage {
     Authenticate {
         /// Server password
         password: String,
-        /// Player's display name
-        player_name: String,
+        /// Player's display name (None = let server assign a default name with suffix)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        player_name: Option<String>,
         /// Deck to use for the game
         deck: DeckSubmission,
     },
@@ -184,6 +185,9 @@ pub enum ServerMessage {
         /// Assigned player ID if successful
         #[serde(skip_serializing_if = "Option::is_none")]
         your_player_id: Option<PlayerId>,
+        /// Assigned player name (includes suffix if server-generated)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        your_name: Option<String>,
     },
 
     /// Waiting for opponent to connect
@@ -885,7 +889,7 @@ mod tests {
     fn test_client_message_serialization() {
         let msg = ClientMessage::Authenticate {
             password: "secret".to_string(),
-            player_name: "Alice".to_string(),
+            player_name: Some("Alice".to_string()),
             deck: DeckSubmission::new(
                 vec![("Lightning Bolt".to_string(), 4), ("Mountain".to_string(), 20)],
                 vec![("Pyroclasm".to_string(), 2)],
@@ -902,7 +906,41 @@ mod tests {
                 deck,
             } => {
                 assert_eq!(password, "secret");
-                assert_eq!(player_name, "Alice");
+                assert_eq!(player_name, Some("Alice".to_string()));
+                assert_eq!(deck.main_deck_size(), 24);
+                assert_eq!(deck.sideboard_size(), 2);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
+    fn test_client_message_serialization_no_name() {
+        // Test with None player_name (server should assign default)
+        let msg = ClientMessage::Authenticate {
+            password: "secret".to_string(),
+            player_name: None,
+            deck: DeckSubmission::new(
+                vec![("Lightning Bolt".to_string(), 4), ("Mountain".to_string(), 20)],
+                vec![("Pyroclasm".to_string(), 2)],
+            ),
+        };
+
+        let json = serde_json::to_string(&msg).expect("serialize");
+        // Verify player_name is not in JSON when None
+        assert!(!json.contains("player_name"));
+
+        let roundtrip: ClientMessage = serde_json::from_str(&json).expect("deserialize");
+
+        match roundtrip {
+            ClientMessage::Authenticate {
+                password,
+                player_name,
+                deck,
+            } => {
+                assert_eq!(password, "secret");
+                assert_eq!(player_name, None);
                 assert_eq!(deck.main_deck_size(), 24);
                 assert_eq!(deck.sideboard_size(), 2);
             }
@@ -1013,11 +1051,13 @@ mod tests {
                 success: true,
                 error: None,
                 your_player_id: Some(player_id),
+                your_name: Some("Player1".to_string()),
             },
             ServerMessage::AuthResult {
                 success: false,
                 error: Some("Invalid password".to_string()),
                 your_player_id: None,
+                your_name: None,
             },
             ServerMessage::WaitingForOpponent,
             ServerMessage::GameStarted {
@@ -1106,7 +1146,7 @@ mod tests {
         let messages: Vec<ClientMessage> = vec![
             ClientMessage::Authenticate {
                 password: "secret123".to_string(),
-                player_name: "Alice".to_string(),
+                player_name: Some("Alice".to_string()),
                 deck: DeckSubmission::new(
                     vec![("Forest".to_string(), 20), ("Grizzly Bears".to_string(), 4)],
                     vec![],

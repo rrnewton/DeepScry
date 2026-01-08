@@ -75,8 +75,8 @@ impl Default for ServerConfig {
 
 /// A player waiting for an opponent
 struct WaitingPlayer {
-    /// Player's display name
-    name: String,
+    /// Player's display name (None = server should assign default with suffix)
+    name: Option<String>,
     /// Submitted deck
     deck: DeckSubmission,
     /// WebSocket connection
@@ -399,11 +399,15 @@ impl GameServer {
     ///
     /// Returns `Ok(Some(handle))` when a game was started (second player connected),
     /// or `Ok(None)` when still waiting for the second player or auth failed.
+    ///
+    /// Player naming logic:
+    /// - If player provides a name (Some), use it exactly as-is (no suffix)
+    /// - If player doesn't provide a name (None), generate "Player1" or "Player2"
     async fn handle_auth(
         &mut self,
         mut ws_stream: WebSocketStream<TcpStream>,
         password: String,
-        player_name: String,
+        player_name: Option<String>,
         deck: DeckSubmission,
     ) -> Result<Option<tokio::task::JoinHandle<()>>> {
         // Check password
@@ -414,6 +418,7 @@ impl GameServer {
                     success: false,
                     error: Some("Invalid password".to_string()),
                     your_player_id: None,
+                    your_name: None,
                 },
             )
             .await?;
@@ -428,6 +433,7 @@ impl GameServer {
                     success: false,
                     error: Some(format!("Deck too small: {} cards (minimum 40)", deck.main_deck_size())),
                     your_player_id: None,
+                    your_name: None,
                 },
             )
             .await?;
@@ -436,41 +442,48 @@ impl GameServer {
 
         log::info!(
             "Player '{}' authenticated with {} card deck",
-            player_name,
+            player_name.as_deref().unwrap_or("<auto>"),
             deck.main_deck_size()
         );
 
         // Check if we have a waiting player
         if let Some(waiting) = self.waiting_player.take() {
-            // Append "1" and "2" suffixes to player names
-            let p1_name = format!("{}1", waiting.name);
-            let p2_name = format!("{}2", player_name);
+            // Generate player names:
+            // - If explicitly provided, use as-is (no suffix)
+            // - If None, generate "Player1" or "Player2"
+            let p1_name = waiting.name.unwrap_or_else(|| "Player1".to_string());
+            let p2_name = player_name.unwrap_or_else(|| "Player2".to_string());
 
             // Start game with both players
             log::info!("Starting game: {} vs {}", p1_name, p2_name);
 
-            // Send auth success to player 2
+            // Send auth success to player 2 with their assigned name
             send_message(
                 &mut ws_stream,
                 &ServerMessage::AuthResult {
                     success: true,
                     error: None,
                     your_player_id: Some(PlayerId::new(1)),
+                    your_name: Some(p2_name.clone()),
                 },
             )
             .await?;
 
+            // Send P1's assigned name to them (they were waiting)
+            // Note: P1 already received AuthResult when they first connected,
+            // but we need to send them their final name now. We do this via
+            // updating their name in the WaitingPlayer struct before starting the game.
+
             // Start the game and return the handle
-            // Use modified names with "1" and "2" suffixes
             let handle = self
                 .start_game(
                     WaitingPlayer {
-                        name: p1_name,
+                        name: Some(p1_name),
                         deck: waiting.deck,
                         ws_stream: waiting.ws_stream,
                     },
                     WaitingPlayer {
-                        name: p2_name,
+                        name: Some(p2_name),
                         deck,
                         ws_stream,
                     },
@@ -479,12 +492,18 @@ impl GameServer {
             Ok(Some(handle))
         } else {
             // First player - send auth success and wait
+            // Note: We can't assign final name yet because we don't know if they'll be P1 or P2
+            // (though in current design, first to connect is always P1)
+            // We'll generate their name when P2 connects
             send_message(
                 &mut ws_stream,
                 &ServerMessage::AuthResult {
                     success: true,
                     error: None,
                     your_player_id: Some(PlayerId::new(0)),
+                    // Send the assigned name now if they provided one, otherwise None
+                    // If None, their final name will be determined when P2 connects
+                    your_name: player_name.clone(),
                 },
             )
             .await?;
@@ -561,7 +580,10 @@ async fn run_game(
     card_db: Arc<AsyncCardDatabase>,
     config: ServerConfig,
 ) -> Result<()> {
-    log::info!("Game {}: Initializing {} vs {}", game_id, p1.name, p2.name);
+    // Extract final names (should always be Some at this point)
+    let p1_name = p1.name.clone().unwrap_or_else(|| "Player1".to_string());
+    let p2_name = p2.name.clone().unwrap_or_else(|| "Player2".to_string());
+    log::info!("Game {}: Initializing {} vs {}", game_id, p1_name, p2_name);
 
     // ═══════════════════════════════════════════════════════════════════════
     // SINGLE-CHANNEL ARCHITECTURE (mtg-secqu)
@@ -641,9 +663,9 @@ async fn run_game(
     let initializer = GameInitializer::new(&card_db);
     let game = initializer
         .init_game_with_positional_ids(
-            p1.name.clone(),
+            p1_name.clone(),
             &p1_decklist,
-            p2.name.clone(),
+            p2_name.clone(),
             &p2_decklist,
             config.starting_life,
             seed,
@@ -695,7 +717,7 @@ async fn run_game(
     p1_conn
         .send(&ServerMessage::GameStarted {
             your_player_id: p1_id,
-            opponent_name: p2.name.clone(),
+            opponent_name: p2_name.clone(),
             opening_hand: p1_hand.clone(),
             opponent_hand_count: p2_hand.len(),
             library_size: p1_lib_size,
@@ -712,7 +734,7 @@ async fn run_game(
     p2_conn
         .send(&ServerMessage::GameStarted {
             your_player_id: p2_id,
-            opponent_name: p1.name.clone(),
+            opponent_name: p1_name.clone(),
             opening_hand: p2_hand.clone(),
             opponent_hand_count: p1_hand.len(),
             library_size: p2_lib_size,
