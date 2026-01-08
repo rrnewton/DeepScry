@@ -326,6 +326,7 @@ impl GameState {
                             | Effect::AddMana { .. }
                             | Effect::Balance { .. }
                             | Effect::CreateToken { .. }
+                            | Effect::Dig { .. }
                             | Effect::SearchLibrary { .. }
                             | Effect::Firebend { .. }
                             | Effect::SetBasePowerToughness { .. }
@@ -368,6 +369,7 @@ impl GameState {
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
+                | Effect::Dig { .. }
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
@@ -683,6 +685,7 @@ impl GameState {
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
+                | Effect::Dig { .. }
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
@@ -886,6 +889,7 @@ impl GameState {
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }
+            | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }
             | Effect::SetBasePowerToughness { .. }

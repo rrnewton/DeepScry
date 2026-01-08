@@ -475,6 +475,34 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Dig {
+                dig_count,
+                destination,
+                may_play,
+                may_play_without_mana_cost,
+                ..
+            } => {
+                let dest_name = match destination {
+                    crate::zones::Zone::Exile => "exile",
+                    crate::zones::Zone::Graveyard => "graveyard",
+                    crate::zones::Zone::Hand => "hand",
+                    _ => "exile",
+                };
+                let may_play_text = if *may_play {
+                    if *may_play_without_mana_cost {
+                        ", may play without paying mana cost"
+                    } else {
+                        ", may play"
+                    }
+                } else {
+                    ""
+                };
+                let message = format!(
+                    "{source_name} ({source_id}) digs {} card(s) from opponent's library to {}{}",
+                    dig_count, dest_name, may_play_text
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }
