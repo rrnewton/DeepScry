@@ -575,9 +575,9 @@ enum Commands {
         #[arg(long)]
         password: Option<String>,
 
-        /// Your player name
-        #[arg(long, short = 'n', default_value = "Player")]
-        name: String,
+        /// Your player name (default: based on controller type, e.g. "Human", "Heuristic")
+        #[arg(long, short = 'n')]
+        name: Option<String>,
 
         /// Path to cardsfolder (default: cardsfolder)
         #[arg(long, default_value = "cardsfolder")]
@@ -922,10 +922,20 @@ async fn main() -> Result<()> {
             // Resolve seed
             let seed_resolved = seed_player.map(|s| s.resolve());
 
+            // Generate default player name from controller type if not specified
+            let player_name = name.unwrap_or_else(|| match controller_type {
+                ControllerType::Zero => "PassBot".to_string(),
+                ControllerType::Random => "Random".to_string(),
+                ControllerType::Tui => "Human".to_string(),
+                ControllerType::Heuristic => "Heuristic".to_string(),
+                ControllerType::Fixed => "Fixed".to_string(),
+                ControllerType::Fancy | ControllerType::FancyFixed => "Human".to_string(),
+            });
+
             let config = ClientConfig {
                 server,
                 password: password.unwrap_or_default(),
-                player_name: name,
+                player_name,
                 deck_path: deck,
                 cardsfolder,
             };

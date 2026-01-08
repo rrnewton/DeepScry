@@ -442,8 +442,12 @@ impl GameServer {
 
         // Check if we have a waiting player
         if let Some(waiting) = self.waiting_player.take() {
+            // Append "1" and "2" suffixes to player names
+            let p1_name = format!("{}1", waiting.name);
+            let p2_name = format!("{}2", player_name);
+
             // Start game with both players
-            log::info!("Starting game: {} vs {}", waiting.name, player_name);
+            log::info!("Starting game: {} vs {}", p1_name, p2_name);
 
             // Send auth success to player 2
             send_message(
@@ -457,11 +461,16 @@ impl GameServer {
             .await?;
 
             // Start the game and return the handle
+            // Use modified names with "1" and "2" suffixes
             let handle = self
                 .start_game(
-                    waiting,
                     WaitingPlayer {
-                        name: player_name,
+                        name: p1_name,
+                        deck: waiting.deck,
+                        ws_stream: waiting.ws_stream,
+                    },
+                    WaitingPlayer {
+                        name: p2_name,
                         deck,
                         ws_stream,
                     },
