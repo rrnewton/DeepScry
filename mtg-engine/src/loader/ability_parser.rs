@@ -559,6 +559,53 @@ impl AbilityParams {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
+
+    /// Parse an SVar body (without prefix) and return the params if successful
+    ///
+    /// This is a convenience function for parsing SVar bodies like:
+    /// `"DB$ Draw | NumCards$ 1"` instead of needing `"A:DB$ Draw | NumCards$ 1"`
+    ///
+    /// # Example
+    /// ```ignore
+    /// // OLD (hacky): body.contains("DB$ Draw")
+    /// // NEW (safe):
+    /// if let Some(params) = AbilityParams::parse_svar_body(body) {
+    ///     if params.api_type == ApiType::Draw { ... }
+    /// }
+    /// ```
+    pub fn parse_svar_body(body: &str) -> Option<Self> {
+        // Add a dummy prefix since parse() expects "PREFIX:BODY" format
+        let prefixed = format!("A:{}", body);
+        Self::parse(&prefixed).ok()
+    }
+
+    /// Check if an SVar body has a specific API type
+    ///
+    /// This is the safe replacement for `body.contains("DB$ Draw")` patterns.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // OLD (hacky): body.contains("DB$ Draw")
+    /// // NEW (safe): AbilityParams::is_api_type(body, ApiType::Draw)
+    /// ```
+    pub fn is_api_type(body: &str, expected: ApiType) -> bool {
+        Self::parse_svar_body(body)
+            .map(|params| params.api_type == expected)
+            .unwrap_or(false)
+    }
+
+    /// Check if an SVar body has any of the specified API types
+    ///
+    /// # Example
+    /// ```ignore
+    /// // OLD (hacky): body.contains("AB$ Draw") || body.contains("DB$ Draw")
+    /// // NEW (safe): AbilityParams::is_any_api_type(body, &[ApiType::Draw])
+    /// ```
+    pub fn is_any_api_type(body: &str, expected: &[ApiType]) -> bool {
+        Self::parse_svar_body(body)
+            .map(|params| expected.contains(&params.api_type))
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -638,5 +685,59 @@ mod tests {
 
         assert_eq!(params1.api_type, ApiType::DealDamage);
         assert!(matches!(params2.api_type, ApiType::Unknown(_))); // PreventDamage not in enum yet
+    }
+
+    #[test]
+    fn test_parse_svar_body() {
+        // Test parsing SVar body without prefix
+        let body = "DB$ Draw | NumCards$ 1";
+        let params = AbilityParams::parse_svar_body(body).unwrap();
+
+        assert_eq!(params.api_type, ApiType::Draw);
+        assert_eq!(params.get("NumCards"), Some("1"));
+    }
+
+    #[test]
+    fn test_is_api_type() {
+        // Test the is_api_type helper
+        let body = "DB$ Draw | NumCards$ 1";
+        assert!(AbilityParams::is_api_type(body, ApiType::Draw));
+        assert!(!AbilityParams::is_api_type(body, ApiType::DealDamage));
+
+        // Test with different ability types
+        let mana_body = "AB$ Mana | Produced$ R | Amount$ 1";
+        assert!(AbilityParams::is_api_type(mana_body, ApiType::Mana));
+        assert!(!AbilityParams::is_api_type(mana_body, ApiType::Draw));
+    }
+
+    #[test]
+    fn test_is_any_api_type() {
+        // Test checking multiple API types at once
+        let body = "DB$ Draw | NumCards$ 1";
+
+        // Should match Draw
+        assert!(AbilityParams::is_any_api_type(body, &[ApiType::Draw, ApiType::Mill]));
+
+        // Should not match
+        assert!(!AbilityParams::is_any_api_type(
+            body,
+            &[ApiType::DealDamage, ApiType::Mana]
+        ));
+    }
+
+    #[test]
+    fn test_is_api_type_replaces_contains() {
+        // Demonstrate that is_api_type is safer than .contains()
+        let body = "DB$ Draw | NumCards$ 1";
+
+        // OLD (hacky - would have false positives):
+        // body.contains("AB$ Draw") || body.contains("DB$ Draw")
+
+        // NEW (safe - tokenized parsing):
+        assert!(AbilityParams::is_api_type(body, ApiType::Draw));
+
+        // This body has "Draw" as part of a different context - wouldn't match
+        let misleading_body = "DB$ PutCounter | CounterType$ Drawing";
+        assert!(!AbilityParams::is_api_type(misleading_body, ApiType::Draw));
     }
 }
