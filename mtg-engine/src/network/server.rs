@@ -13,9 +13,7 @@ use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::protocol::{
     now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
 };
-use crate::network::{
-    CardRevealInfo, ChoiceRequest, ChoiceResponse, ChosenAbilityInfo, NetworkController, DEFAULT_PORT,
-};
+use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -143,14 +141,16 @@ struct RevealBroadcast {
 // we multiplex all game-related messages into a single ordered channel per
 // player connection. This ensures strict FIFO ordering of events.
 //
-// Previously, we had separate channels for:
-// - opponent_choice_rx: OpponentChoiceInfo
-// - ability_rx: ChosenAbilityInfo
+// The channel architecture is now consolidated:
+// - player_rx: Single channel for cross-player messages (OpponentChoice)
+// - request_rx: ChoiceRequest from NetworkController (game loop to handler)
+// - ws_rx: WebSocket messages from client
+// - game_end_rx: One-shot game end signal
+// - fatal_error_rx: Broadcast error channel
 //
-// Now these are all variants of PlayerChannelMessage, sent through a single
-// player_rx channel. The select! still exists for request_rx, ws_rx, game_end_rx,
-// and fatal_error_rx (which are fundamentally different event sources), but
-// game state synchronization messages are now totally ordered.
+// The former ability_rx channel has been eliminated - ability info is now
+// included directly in ChoiceRequest.abilities, allowing the handler to
+// look up the chosen ability without a separate channel round-trip.
 
 /// Multiplexed message type for the single-channel player architecture.
 /// All game synchronization messages flow through this enum to ensure ordering.
@@ -195,9 +195,6 @@ struct PlayerConnection {
     player_rx: PlayerChannelRx,
     /// Channel to send messages to opponent's player_rx
     player_tx: PlayerChannelTx,
-    /// Channel to receive chosen abilities from NetworkController (for Priority choices)
-    /// Used synchronously with timeout during choice processing.
-    ability_rx: tokio_mpsc::Receiver<ChosenAbilityInfo>,
     /// Current choice type being requested (for broadcasting)
     current_choice_type: Option<ChoiceType>,
     /// Expected action_count from the last ChoiceRequest sent to this client.
@@ -210,6 +207,9 @@ struct PlayerConnection {
     /// Server's DebugSyncInfo from the last ChoiceRequest sent to this client.
     /// Used for detailed diff logging when hashes mismatch.
     expected_debug_info: Option<crate::network::DebugSyncInfo>,
+    /// For Priority choices, the abilities from the ChoiceRequest.
+    /// Allows looking up the chosen ability without a separate channel. (mtg-e66iz)
+    expected_abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
     /// A choice that arrived before the corresponding ChoiceRequest.
     /// In synchronized GameLoop mode, the client may submit a choice before
     /// the server's NetworkController sends its ChoiceRequest due to timing.
@@ -568,31 +568,6 @@ async fn run_game(
     let (p1_game_end_tx, p1_game_end_rx) = oneshot::channel::<GameEndInfo>();
     let (p2_game_end_tx, p2_game_end_rx) = oneshot::channel::<GameEndInfo>();
 
-    // Create channels for chosen abilities from NetworkController (for OpponentChoice)
-    // These sync channels are used by NetworkController to send the ability after a priority choice
-    let (p1_ability_sync_tx, p1_ability_sync_rx) = std::sync::mpsc::channel::<ChosenAbilityInfo>();
-    let (p2_ability_sync_tx, p2_ability_sync_rx) = std::sync::mpsc::channel::<ChosenAbilityInfo>();
-    let (p1_ability_async_tx, p1_ability_async_rx) = tokio_mpsc::channel::<ChosenAbilityInfo>(16);
-    let (p2_ability_async_tx, p2_ability_async_rx) = tokio_mpsc::channel::<ChosenAbilityInfo>(16);
-
-    // Bridge ability channels from sync to async
-    let p1_ability_bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(ability_info) = p1_ability_sync_rx.recv() {
-            if p1_ability_async_tx.blocking_send(ability_info).is_err() {
-                break;
-            }
-        }
-    });
-    let p2_ability_bridge = tokio::task::spawn_blocking(move || {
-        while let Ok(ability_info) = p2_ability_sync_rx.recv() {
-            if p2_ability_async_tx.blocking_send(ability_info).is_err() {
-                break;
-            }
-        }
-    });
-    let _p1_ability_bridge = p1_ability_bridge; // Keep the handle alive
-    let _p2_ability_bridge = p2_ability_bridge;
-
     // Create single-channel infrastructure for game sync messages (mtg-e66iz fix)
     // P1's player_rx receives messages from P2's player_tx, and vice versa
     let (p1_player_tx, p2_player_rx) = tokio_mpsc::channel::<PlayerChannelMessage>(32);
@@ -610,13 +585,13 @@ async fn run_game(
         request_rx: p1_async_request_rx,
         response_tx: p1_response_tx,
         game_end_rx: p1_game_end_rx,
-        player_rx: p1_player_rx,         // P1 receives messages from P2 via single channel
-        player_tx: p1_player_tx,         // P1 sends messages to P2 via single channel
-        ability_rx: p1_ability_async_rx, // Used for Priority choices
+        player_rx: p1_player_rx, // P1 receives messages from P2 via single channel
+        player_tx: p1_player_tx, // P1 sends messages to P2 via single channel
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
         expected_debug_info: None,
+        expected_abilities: None,
         pending_choice: None,
         last_reveal_index: 0, // Will be set after opening hands are determined
         network_debug: config.network_debug,
@@ -629,13 +604,13 @@ async fn run_game(
         request_rx: p2_async_request_rx,
         response_tx: p2_response_tx,
         game_end_rx: p2_game_end_rx,
-        player_rx: p2_player_rx,         // P2 receives messages from P1 via single channel
-        player_tx: p2_player_tx,         // P2 sends messages to P1 via single channel
-        ability_rx: p2_ability_async_rx, // Used for Priority choices
+        player_rx: p2_player_rx, // P2 receives messages from P1 via single channel
+        player_tx: p2_player_tx, // P2 sends messages to P1 via single channel
         current_choice_type: None,
         expected_action_count: None,
         expected_state_hash: None,
         expected_debug_info: None,
+        expected_abilities: None,
         pending_choice: None,
         last_reveal_index: 0, // Will be set after opening hands are determined
         network_debug: config.network_debug,
@@ -847,9 +822,6 @@ async fn run_game(
     let mut p2_controller = NetworkController::new(p2_id, p2_request_tx, p2_response_rx, Arc::clone(&p2_reveal_index));
     p1_controller.set_network_debug(config.network_debug);
     p2_controller.set_network_debug(config.network_debug);
-    // Wire up ability channels so NetworkControllers can report chosen abilities
-    p1_controller.set_ability_tx(p1_ability_sync_tx);
-    p2_controller.set_ability_tx(p2_ability_sync_tx);
 
     // Wrap game state for sharing between tasks
     let game = Arc::new(Mutex::new(game));
@@ -1098,6 +1070,9 @@ async fn handle_player_websocket(
                         conn.expected_state_hash = Some(choice_request.state_hash);
                         conn.expected_debug_info = choice_request.debug_info.clone();
 
+                        // Store abilities for looking up chosen ability (mtg-e66iz channel consolidation)
+                        conn.expected_abilities = choice_request.abilities.clone();
+
                         // Check if client already sent a choice (pending_choice)
                         // This happens in synchronized GameLoop mode when client is faster
                         if let Some(pending) = conn.pending_choice.take() {
@@ -1145,31 +1120,13 @@ async fn handle_player_websocket(
                             // Broadcast to opponent with proper choice_type
                             let choice_type = conn.current_choice_type.take().unwrap();
 
-                            // For Priority choices, wait for the actual ability from NetworkController
+                            // For Priority choices, look up the ability directly from the ChoiceRequest
+                            // This eliminates the need for a separate ability_rx channel (mtg-e66iz)
                             let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
-                                match tokio::time::timeout(
-                                    std::time::Duration::from_millis(100),
-                                    conn.ability_rx.recv()
-                                ).await {
-                                    Ok(Some(ability_info)) => {
-                                        log::debug!(
-                                            "Player {:?}: Received ability info for pending choice {}: {:?}",
-                                            conn.player_id, ability_info.choice_seq, ability_info.ability
-                                        );
-                                        ability_info.ability
-                                    }
-                                    Ok(None) => {
-                                        log::warn!("Player {:?}: ability channel closed (pending)", conn.player_id);
-                                        None
-                                    }
-                                    Err(_) => {
-                                        log::warn!(
-                                            "Player {:?}: timeout waiting for ability info for pending choice {}",
-                                            conn.player_id, pending.choice_seq
-                                        );
-                                        None
-                                    }
-                                }
+                                let idx = pending.choice_indices.first().copied().unwrap_or(0);
+                                choice_request.abilities.as_ref()
+                                    .and_then(|abilities| abilities.get(idx).cloned())
+                                    .flatten()
                             } else {
                                 None
                             };
@@ -1400,34 +1357,13 @@ async fn handle_player_websocket(
                                     let choice_type = conn.current_choice_type.take()
                                         .expect("current_choice_type should be set when expected_action_count is set");
 
-                                    // For Priority choices, wait for the actual ability from NetworkController
-                                    // This is needed so the client can execute the opponent's action correctly
+                                    // For Priority choices, look up the ability directly from expected_abilities
+                                    // This eliminates the need for a separate ability_rx channel (mtg-e66iz)
                                     let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
-                                        // NetworkController sends ability info immediately after processing the choice
-                                        // Use a short timeout to avoid blocking forever on edge cases
-                                        match tokio::time::timeout(
-                                            std::time::Duration::from_millis(100),
-                                            conn.ability_rx.recv()
-                                        ).await {
-                                            Ok(Some(ability_info)) => {
-                                                log::debug!(
-                                                    "Player {:?}: Received ability info for choice {}: {:?}",
-                                                    conn.player_id, ability_info.choice_seq, ability_info.ability
-                                                );
-                                                ability_info.ability
-                                            }
-                                            Ok(None) => {
-                                                log::warn!("Player {:?}: ability channel closed", conn.player_id);
-                                                None
-                                            }
-                                            Err(_) => {
-                                                log::warn!(
-                                                    "Player {:?}: timeout waiting for ability info for choice {}",
-                                                    conn.player_id, choice_seq
-                                                );
-                                                None
-                                            }
-                                        }
+                                        let idx = choice_indices.first().copied().unwrap_or(0);
+                                        conn.expected_abilities.take()
+                                            .and_then(|abilities| abilities.get(idx).cloned())
+                                            .flatten()
                                     } else {
                                         None
                                     };

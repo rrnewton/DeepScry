@@ -15,16 +15,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
-/// Message sent from NetworkController to WebSocket handler after a priority choice
-/// This allows the handler to include the actual ability in OpponentChoice
-#[derive(Debug, Clone)]
-pub struct ChosenAbilityInfo {
-    /// The choice sequence number this ability corresponds to
-    pub choice_seq: u32,
-    /// The ability chosen (None = pass priority)
-    pub ability: Option<SpellAbility>,
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // CARD REVEAL INFO
 // ═══════════════════════════════════════════════════════════════════════════
@@ -71,6 +61,12 @@ pub struct ChoiceRequest {
     pub reveals: Vec<CardRevealInfo>,
     /// Debug synchronization info (only when network_debug is enabled)
     pub debug_info: Option<super::DebugSyncInfo>,
+    /// For Priority choices, the actual SpellAbility for each option.
+    ///
+    /// Index 0 is "Pass priority" (None), indices 1+ are the abilities.
+    /// This allows the handler to look up the chosen ability directly
+    /// without a separate channel round-trip. (mtg-e66iz channel consolidation)
+    pub abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
 }
 
 /// Response received from the network handler
@@ -149,9 +145,6 @@ pub struct NetworkController {
     shared_reveal_index: Arc<AtomicUsize>,
     /// Network debug mode - include debug info in choice requests
     network_debug: bool,
-    /// Channel to send the chosen ability back to WebSocket handler
-    /// This allows OpponentChoice to include the actual ability for opponent sync
-    ability_tx: Option<mpsc::Sender<ChosenAbilityInfo>>,
 }
 
 impl NetworkController {
@@ -172,7 +165,6 @@ impl NetworkController {
             choice_seq: 0,
             shared_reveal_index,
             network_debug: false,
-            ability_tx: None,
         }
     }
 
@@ -181,14 +173,6 @@ impl NetworkController {
     /// This allows the reveal pusher hook to share the same tracking index.
     pub fn shared_reveal_index(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.shared_reveal_index)
-    }
-
-    /// Set the channel for sending chosen abilities back to WebSocket handler
-    ///
-    /// When a priority choice is made, the chosen ability (or None for pass) is sent
-    /// on this channel so the WebSocket handler can include it in OpponentChoice.
-    pub fn set_ability_tx(&mut self, tx: mpsc::Sender<ChosenAbilityInfo>) {
-        self.ability_tx = Some(tx);
     }
 
     /// Enable network debug mode
@@ -203,12 +187,16 @@ impl NetworkController {
     /// This also collects any card reveals since this player's last choice
     /// and includes them in the request, ensuring reveals arrive before the client's
     /// shadow GameLoop needs them (eliminates race conditions with immediate reveals).
+    ///
+    /// For Priority choices, pass `abilities` containing the SpellAbility for each option.
+    /// This allows the handler to look up the chosen ability without a round-trip channel.
     fn request_choice(
         &mut self,
         view: &GameStateView,
         choice_type: ChoiceType,
         options: Vec<String>,
         state_hash: u64,
+        abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
     ) -> Result<Vec<usize>, NetworkError> {
         // Collect reveals since this player's last choice and include them in the request.
         // This ensures reveals are sent BEFORE the ChoiceRequest arrives, eliminating
@@ -254,6 +242,7 @@ impl NetworkController {
             action_count,
             reveals,
             debug_info,
+            abilities,
         };
 
         // Send request
@@ -460,6 +449,13 @@ impl PlayerController for NetworkController {
             options.push(self.format_spell_ability(view, ability));
         }
 
+        // Build abilities list for handler to look up chosen ability directly
+        // Index 0 is "Pass priority" (None), indices 1+ are the actual abilities
+        // This eliminates the need for a separate ability_rx channel (mtg-e66iz)
+        let abilities: Vec<Option<SpellAbility>> = std::iter::once(None)
+            .chain(available.iter().map(|a| Some(a.clone())))
+            .collect();
+
         // Compute state hash
         let state_hash = self.compute_view_hash(view);
 
@@ -468,16 +464,9 @@ impl PlayerController for NetworkController {
             available_count: available.len(),
         };
 
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, Some(abilities)) {
             Ok(indices) if indices.first() == Some(&0) => {
                 self.increment_choice_seq();
-                // Send ability info (None = pass priority)
-                if let Some(tx) = &self.ability_tx {
-                    let _ = tx.send(ChosenAbilityInfo {
-                        choice_seq: self.choice_seq,
-                        ability: None,
-                    });
-                }
                 ChoiceResult::Ok(None) // Pass priority
             }
             Ok(indices) => {
@@ -487,13 +476,6 @@ impl PlayerController for NetworkController {
                 let ability_idx = idx - 1;
                 if ability_idx < available.len() {
                     let ability = available[ability_idx].clone();
-                    // Send ability info to WebSocket handler for OpponentChoice
-                    if let Some(tx) = &self.ability_tx {
-                        let _ = tx.send(ChosenAbilityInfo {
-                            choice_seq: self.choice_seq,
-                            ability: Some(ability.clone()),
-                        });
-                    }
                     ChoiceResult::Ok(Some(ability))
                 } else {
                     ChoiceResult::Error("Invalid ability index from network".to_string())
@@ -529,7 +511,7 @@ impl PlayerController for NetworkController {
             target_count: 1, // FIXME-UNFINISHED: Support multiple targets
         };
 
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) => {
                 self.increment_choice_seq();
                 // Single-select for now (FIXME-UNFINISHED for multiple targets)
@@ -564,7 +546,7 @@ impl PlayerController for NetworkController {
         let choice_type = ChoiceType::ManaSources { cost: *cost };
 
         // FIXME-UNFINISHED: Needs multi-select for paying costs with multiple sources
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) => {
                 self.increment_choice_seq();
                 // Single-select for now
@@ -601,7 +583,7 @@ impl PlayerController for NetworkController {
 
         // Multi-select for attackers: indices contains all selected attacker indices
         // Index 0 means "done selecting" (no more attackers), indices 1..N are creature indices
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) if indices.is_empty() || indices == vec![0] => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(SmallVec::new()) // No attackers
@@ -657,7 +639,7 @@ impl PlayerController for NetworkController {
 
         // Multi-select for blockers: indices contains all selected blocker-attacker pairs
         // Index 0 means "done selecting", indices 1..N encode (blocker, attacker) pairs
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) if indices.is_empty() || indices == vec![0] => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(SmallVec::new()) // No blockers
@@ -709,7 +691,7 @@ impl PlayerController for NetworkController {
         };
 
         // Multi-select for damage order: indices specify the full ordering
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) => {
                 self.increment_choice_seq();
                 // If indices specify a full ordering, use it directly
@@ -766,7 +748,7 @@ impl PlayerController for NetworkController {
         let choice_type = ChoiceType::Discard { count };
 
         // Multi-select for discarding multiple cards
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) => {
                 self.increment_choice_seq();
                 let mut discards = SmallVec::new();
@@ -799,7 +781,7 @@ impl PlayerController for NetworkController {
             valid_count: valid_cards.len(),
         };
 
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) if indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Declined to find
@@ -843,7 +825,7 @@ impl PlayerController for NetworkController {
         };
 
         // Request choice (client sends all selections in one message for multi-select)
-        match self.request_choice(view, choice_type, options, state_hash) {
+        match self.request_choice(view, choice_type, options, state_hash, None) {
             Ok(indices) => {
                 self.increment_choice_seq();
                 let mut sacrifices = SmallVec::new();
@@ -978,7 +960,13 @@ mod tests {
 
         let options = vec!["Option A".to_string(), "Option B".to_string(), "Option C".to_string()];
 
-        let result = controller.request_choice(&view, ChoiceType::Priority { available_count: 2 }, options, 0x12345678);
+        let result = controller.request_choice(
+            &view,
+            ChoiceType::Priority { available_count: 2 },
+            options,
+            0x12345678,
+            None,
+        );
 
         assert_eq!(result.unwrap(), vec![2]);
     }
@@ -1011,6 +999,7 @@ mod tests {
             ChoiceType::Priority { available_count: 0 },
             vec!["Pass".to_string()],
             0,
+            None,
         );
 
         match result {
@@ -1046,6 +1035,7 @@ mod tests {
             ChoiceType::Priority { available_count: 1 },
             vec!["Pass".to_string(), "Play land".to_string()],
             0,
+            None,
         );
 
         // Invalid index 10 should be clamped to 0, not return an error
