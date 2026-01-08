@@ -499,6 +499,63 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::DigMultiple => {
+            // Dig effect: look at top N cards, exile some/all of them
+            //
+            // Fire Lord Ozai: AB$ Dig | Cost$ 6 | DigNum$ 1 | ChangeNum$ All | Defined$ Opponent
+            //                       | DestinationZone$ Exile | RememberChanged$ True | SubAbility$ DBEffect
+            //
+            // Parameters:
+            // - DigNum$: Number of cards to look at (default 1)
+            // - ChangeNum$: Number of cards to change zones ("All" or number)
+            // - Defined$: Who to affect (Opponent, You, etc.) - determines library source
+            // - DestinationZone$: Where to move cards (Exile, Graveyard, etc.)
+            // - RememberChanged$: Whether to remember moved cards for later use
+            // - MayPlay$: Whether controller may play exiled cards
+            // - MayPlayWithoutManaCost$: Whether playing costs no mana
+            //
+            // For Fire Lord Ozai, this exiles top card from each opponent's library
+            // and grants "may play one without paying mana cost" until end of turn.
+
+            let dig_count = params.get_u8("DigNum").unwrap_or(1);
+
+            // Parse ChangeNum$ - "All" means all cards looked at
+            let (change_count, change_all) = match params.get("ChangeNum") {
+                Some("All") => (dig_count, true),
+                Some(n) => (n.parse::<u8>().unwrap_or(dig_count), false),
+                None => (dig_count, true), // Default to moving all
+            };
+
+            // Parse destination zone
+            let destination = match params.get("DestinationZone") {
+                Some("Exile") => crate::zones::Zone::Exile,
+                Some("Graveyard") => crate::zones::Zone::Graveyard,
+                Some("Hand") => crate::zones::Zone::Hand,
+                _ => crate::zones::Zone::Exile, // Default for Dig
+            };
+
+            // Check for may play options (usually in SubAbility$ DBEffect)
+            // For now, we detect may_play by presence of SubAbility with Effect
+            let has_sub_ability = params.contains_key("SubAbility");
+            let may_play = has_sub_ability; // SubAbility usually grants may play
+            let may_play_without_mana_cost = has_sub_ability; // Fire Lord Ozai doesn't cost mana
+
+            log::debug!(
+                target: "effect_converter",
+                "Dig: {} cards, change {} (all={}), dest={:?}, may_play={}, free={}",
+                dig_count, change_count, change_all, destination, may_play, may_play_without_mana_cost
+            );
+
+            Some(Effect::Dig {
+                dig_count,
+                change_count,
+                change_all,
+                destination,
+                may_play,
+                may_play_without_mana_cost,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

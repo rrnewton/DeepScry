@@ -501,6 +501,36 @@ pub enum Effect {
         /// Whether the same mode can be chosen multiple times
         can_repeat_modes: bool,
     },
+
+    /// Dig: Exile top N cards from opponents' libraries.
+    ///
+    /// Effect: Look at the top N cards of each opponent's library, exile some/all.
+    ///
+    /// Corresponds to: `AB$ Dig | DigNum$ N | ChangeNum$ All | Defined$ Opponent | DestinationZone$ Exile`
+    ///
+    /// Implementation:
+    /// 1. For each opponent, look at top N cards of their library
+    /// 2. Move ChangeNum cards to the destination zone (Exile)
+    /// 3. Optionally grant "may play" permission (via MayPlay$ True)
+    ///
+    /// Cards using this:
+    /// - Fire Lord Ozai: "{6}: Exile the top card of each opponent's library. Until end of turn, you may play one of those cards without paying its mana cost."
+    ///
+    /// TODO(mtg-0iad2): Implement "may play without paying mana cost" via persistent effects
+    Dig {
+        /// Number of cards to look at from each library (DigNum$)
+        dig_count: u8,
+        /// Number of cards to change zones (ChangeNum$ - "All" means all)
+        change_count: u8,
+        /// Whether ALL cards should be moved (ChangeNum$ All)
+        change_all: bool,
+        /// Destination zone for cards (usually Exile)
+        destination: crate::zones::Zone,
+        /// Whether to grant "may play" permission for exiled cards
+        may_play: bool,
+        /// Whether "may play" costs no mana
+        may_play_without_mana_cost: bool,
+    },
 }
 
 /// A single mode in a modal spell.

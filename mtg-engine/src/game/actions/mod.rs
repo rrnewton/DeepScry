@@ -1703,6 +1703,98 @@ impl GameState {
                     ));
                 }
             }
+
+            Effect::Dig {
+                dig_count,
+                change_count: _,
+                change_all,
+                destination,
+                may_play,
+                may_play_without_mana_cost,
+            } => {
+                // Dig effect: Exile top N cards from each opponent's library
+                // For Fire Lord Ozai: "Exile the top card of each opponent's library.
+                //                      Until end of turn, you may play one of those cards
+                //                      without paying its mana cost."
+                //
+                // Implementation:
+                // 1. Get current player (the digger)
+                // 2. For each opponent, exile top N cards from their library
+                // 3. If may_play, create persistent effects for playing those cards
+
+                let digger = self.turn.active_player;
+
+                // Find all opponents (players other than the digger)
+                let opponent_ids: Vec<_> = self.players.iter().filter(|p| p.id != digger).map(|p| p.id).collect();
+
+                let mut exiled_cards: Vec<CardId> = Vec::new();
+
+                // For each opponent, exile top card(s) from their library
+                for opponent_id in opponent_ids {
+                    // Get opponent's library
+                    let library = self
+                        .player_zones
+                        .iter()
+                        .find(|(id, _)| *id == opponent_id)
+                        .map(|(_, zones)| &zones.library);
+
+                    if let Some(library) = library {
+                        // Get top N cards from library (N = dig_count)
+                        let cards_to_exile: Vec<CardId> = library
+                            .cards
+                            .iter()
+                            .take(if *change_all {
+                                *dig_count as usize
+                            } else {
+                                *dig_count as usize
+                            })
+                            .copied()
+                            .collect();
+
+                        // Exile each card
+                        for card_id in cards_to_exile {
+                            let card_name = self.cards.get(card_id)?.name.clone();
+                            let opponent_name = self.get_player(opponent_id)?.name.clone();
+
+                            // Move card from library to destination (usually exile)
+                            self.move_card(card_id, Zone::Library, *destination, opponent_id)?;
+
+                            // Log the exile
+                            self.logger
+                                .gamelog(&format!("{} exiled from {}'s library", card_name, opponent_name));
+
+                            exiled_cards.push(card_id);
+                        }
+                    }
+                }
+
+                // If may_play is true, create persistent effects to allow playing exiled cards
+                // TODO(mtg-0iad2): Implement "may play one without paying mana cost"
+                // For now, log that the effect would grant play permission
+                if *may_play && !exiled_cards.is_empty() {
+                    let mana_cost_text = if *may_play_without_mana_cost {
+                        " without paying its mana cost"
+                    } else {
+                        ""
+                    };
+
+                    self.logger.gamelog(&format!(
+                        "Until end of turn, you may play one of those cards{}",
+                        mana_cost_text
+                    ));
+
+                    // TODO: Create PersistentEffect(s) to actually grant may-play permission
+                    // This requires:
+                    // 1. Tracking which exiled cards can be played
+                    // 2. Allowing only ONE to be played
+                    // 3. Cleaning up at end of turn
+                    log::warn!(
+                        target: "dig",
+                        "Dig may_play not fully implemented - exiled {} cards but cannot yet play them",
+                        exiled_cards.len()
+                    );
+                }
+            }
         }
         Ok(())
     }

@@ -1,12 +1,25 @@
 ---
 title: Implement Legendary Rule (MTG 704.5j)
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-01-07T13:45:54.915107950+00:00
-updated_at: 2026-01-07T13:45:54.915107950+00:00
+updated_at: 2026-01-08T21:30:29.910727725+00:00
 ---
 
 # Description
 
-MTG Rule 704.5j - Legendary Rule. When a player controls two or more legendary permanents with the same name, that player chooses one and puts the rest into graveyard. Currently not implemented - two copies of Fire Lord Ozai can coexist. Evidence: test_legendary_rule.pzl shows both copies surviving.
+## Legendary Rule Implementation
+
+**Implemented in commit e2037c3 (2026-01-08_#1584)**
+
+MTG CR 704.5j - State-based action that prevents a player from controlling two or more legendary permanents with the same name.
+
+## Implementation
+
+- Added `is_legendary` field to CardDefinition (parsed from "Legendary" supertype)
+- Added `is_legendary` field to Card
+- Implemented `check_legendary_rule()` SBA in state.rs
+- Called after check_lethal_damage() in priority.rs
+
+The implementation keeps the first legendary permanent when duplicates exist. Future TODO: let player choose which to keep.
