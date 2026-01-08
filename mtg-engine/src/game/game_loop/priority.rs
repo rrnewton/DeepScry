@@ -197,6 +197,12 @@ impl<'a> GameLoop<'a> {
                 eprintln!("    Failed to check lethal damage: {e}");
             }
         }
+        // Check legendary rule (MTG CR 704.5j)
+        if let Err(e) = self.game.check_legendary_rule() {
+            if should_log {
+                eprintln!("    Failed to check legendary rule: {e}");
+            }
+        }
 
         // Remove the spell from our targets tracking
         self.spell_targets.retain(|(id, _)| *id != spell_id);
@@ -1104,6 +1110,12 @@ impl<'a> GameLoop<'a> {
                                     if let Err(e) = self.game.check_lethal_damage() {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             eprintln!("    Failed to check lethal damage: {e}");
+                                        }
+                                    }
+                                    // Check legendary rule (MTG CR 704.5j)
+                                    if let Err(e) = self.game.check_legendary_rule() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to check legendary rule: {e}");
                                         }
                                     }
                                 } else if self.verbosity >= VerbosityLevel::Normal && !self.replaying {

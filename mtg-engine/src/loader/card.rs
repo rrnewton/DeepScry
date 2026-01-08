@@ -93,6 +93,7 @@ impl CardLoader {
         let mut enters_tapped = false;
         let mut etb_choose_color = false;
         let mut etb_exclude_colors = Vec::new();
+        let mut is_legendary = false;
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -116,6 +117,7 @@ impl CardLoader {
                     "Types" => {
                         for part in value.split_whitespace() {
                             match part {
+                                "Legendary" => is_legendary = true, // Supertype (MTG CR 205.4a)
                                 "Creature" => types.push(CardType::Creature),
                                 "Instant" => types.push(CardType::Instant),
                                 "Sorcery" => types.push(CardType::Sorcery),
@@ -258,6 +260,7 @@ impl CardLoader {
             etb_choose_color,
             etb_exclude_colors,
             script_name: None, // Set by token loader
+            is_legendary,
         })
     }
 }
@@ -301,6 +304,10 @@ pub struct CardDefinition {
     // Note: skip_serializing_if was removed from the entire codebase because
     // it's incompatible with bincode (non-self-describing format) and caused bugs.
     pub script_name: Option<String>,
+    /// Is this a legendary permanent?
+    /// Derived from "Legendary" in Types line (e.g., "Types:Legendary Creature Human Noble")
+    /// Used for legendary rule (MTG CR 704.5j)
+    pub is_legendary: bool,
 }
 
 impl CardDefinition {
@@ -347,6 +354,7 @@ impl CardDefinition {
         card.set_base_power(self.power);
         card.set_base_toughness(self.toughness);
         card.text = self.oracle.clone();
+        card.is_legendary = self.is_legendary;
 
         // Initialize cache with type flags (for O(1) is_land/is_creature/is_artifact checks)
         // and empty mana production (will be populated after abilities are parsed)

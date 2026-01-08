@@ -1163,6 +1163,56 @@ impl GameState {
         Ok(())
     }
 
+    /// Check state-based actions for legendary rule (MTG CR 704.5j)
+    ///
+    /// If a player controls two or more legendary permanents with the same name,
+    /// that player chooses one of them, and the rest are put into their owners' graveyards.
+    /// This is a "legend rule" that prevents duplicate legendary permanents.
+    ///
+    /// Note: This is a simplified implementation that keeps the first one found.
+    /// A proper implementation would let the player choose which to keep.
+    pub fn check_legendary_rule(&mut self) -> Result<()> {
+        use crate::core::CardName;
+        use std::collections::HashMap;
+
+        // Group legendary permanents by (controller, name)
+        let mut legendary_groups: HashMap<(PlayerId, CardName), Vec<CardId>> = HashMap::new();
+
+        for &card_id in &self.battlefield.cards {
+            if let Ok(card) = self.cards.get(card_id) {
+                if card.is_legendary {
+                    let key = (card.controller, card.name.clone());
+                    legendary_groups.entry(key).or_default().push(card_id);
+                }
+            }
+        }
+
+        // Find duplicates and sacrifice all but the first one
+        let mut cards_to_sacrifice: Vec<(CardId, PlayerId, CardName)> = Vec::new();
+
+        for ((_controller, name), cards) in legendary_groups {
+            if cards.len() > 1 {
+                // Keep the first one (index 0), sacrifice the rest
+                // TODO: Let player choose which one to keep
+                for &card_id in &cards[1..] {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        cards_to_sacrifice.push((card_id, card.owner, name.clone()));
+                    }
+                }
+            }
+        }
+
+        // Move duplicates to graveyard (legend rule)
+        for (card_id, owner, name) in cards_to_sacrifice {
+            log::debug!(target: "sba", "Legendary rule: {} ({}) sacrificed as duplicate", name, card_id.as_u32());
+            self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            self.logger
+                .gamelog(&format!("{} ({}) sacrificed due to legendary rule", name, card_id));
+        }
+
+        Ok(())
+    }
+
     /// Clear temporary effects at end of turn (Cleanup step)
     /// This resets power/toughness bonuses from pump spells and clears damage
     /// MTG CR 514.2: Damage marked on permanents is removed (CR 704.5f)

@@ -595,6 +595,10 @@ pub struct Card {
     /// Cache for expensive string operations (computed at load time)
     /// Avoids repeated to_lowercase() and contains() allocations during gameplay
     pub cache: CardCache,
+
+    /// Is this a legendary permanent?
+    /// Used for legendary rule (MTG CR 704.5j)
+    pub is_legendary: bool,
 }
 
 impl Card {
@@ -639,6 +643,7 @@ impl Card {
             chosen_color: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
+            is_legendary: false,
         }
     }
 
