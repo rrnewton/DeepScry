@@ -1768,9 +1768,7 @@ impl GameState {
                     }
                 }
 
-                // If may_play is true, create persistent effects to allow playing exiled cards
-                // TODO(mtg-0iad2): Implement "may play one without paying mana cost"
-                // For now, log that the effect would grant play permission
+                // If may_play is true, create persistent effect to allow playing exiled cards
                 if *may_play && !exiled_cards.is_empty() {
                     let mana_cost_text = if *may_play_without_mana_cost {
                         " without paying its mana cost"
@@ -1783,16 +1781,35 @@ impl GameState {
                         mana_cost_text
                     ));
 
-                    // TODO: Create PersistentEffect(s) to actually grant may-play permission
-                    // This requires:
-                    // 1. Tracking which exiled cards can be played
-                    // 2. Allowing only ONE to be played
-                    // 3. Cleaning up at end of turn
-                    log::warn!(
-                        target: "dig",
-                        "Dig may_play not fully implemented - exiled {} cards but cannot yet play them",
-                        exiled_cards.len()
-                    );
+                    // Create persistent effect for "may play one without paying mana cost"
+                    // This effect tracks all exiled cards and allows the digger to play ONE
+                    use crate::core::{CleanupCondition, PersistentEffectKind};
+
+                    // For Fire Lord Ozai, we always grant may-play-without-cost
+                    // (other Dig effects might have different behavior)
+                    if *may_play_without_mana_cost {
+                        // Get source card ID (if available) for the persistent effect
+                        // Since we're in an activated ability, the source should be on the battlefield
+                        // For now, use the first exiled card as the "source" for tracking
+                        let source_card = exiled_cards[0];
+
+                        self.persistent_effects.add(
+                            PersistentEffectKind::MayPlayOneWithoutManaCost {
+                                tracked_cards: exiled_cards.clone(),
+                                beneficiary: digger,
+                            },
+                            source_card,
+                            digger,
+                            CleanupCondition::EndOfTurn,
+                        );
+
+                        log::debug!(
+                            target: "dig",
+                            "Created MayPlayOneWithoutManaCost effect for {} cards, beneficiary: player {}",
+                            exiled_cards.len(),
+                            digger.as_u32()
+                        );
+                    }
                 }
             }
         }

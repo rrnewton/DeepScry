@@ -203,7 +203,7 @@ impl<'a> GameLoop<'a> {
     /// Checks persistent effects like Airbend that grant permission to cast
     /// exiled cards for an alternative cost.
     fn push_castable_from_exile(&mut self, player_id: PlayerId) {
-        use crate::core::{PersistentEffectKind, SpellAbility};
+        use crate::core::{ManaCost, PersistentEffectKind, SpellAbility};
 
         // Update the mana engine for this player
         self.mana_engine.update_mut(self.game, player_id);
@@ -222,43 +222,84 @@ impl<'a> GameLoop<'a> {
 
         // Iterate through all persistent effects looking for MayPlayFromExile
         for effect in self.game.persistent_effects.all() {
-            if let PersistentEffectKind::MayPlayFromExile {
-                tracked_card,
-                alternative_cost,
-                owner,
-            } = &effect.kind
-            {
-                // Only the card's owner can cast it
-                if *owner != player_id {
-                    continue;
-                }
-
-                // Get the card from exile
-                if let Some(card) = self.game.cards.try_get(*tracked_card) {
-                    // Verify card is actually in exile
-                    // (effect cleanup should handle this, but double-check)
-                    if !self.game.is_card_in_exile(*tracked_card) {
+            match &effect.kind {
+                PersistentEffectKind::MayPlayFromExile {
+                    tracked_card,
+                    alternative_cost,
+                    owner,
+                } => {
+                    // Only the card's owner can cast it
+                    if *owner != player_id {
                         continue;
                     }
 
-                    // Check timing restrictions
-                    let can_cast_now = if card.is_instant() {
-                        true
-                    } else {
-                        is_sorcery_speed && is_active_player && stack_is_empty
-                    };
+                    // Get the card from exile
+                    if let Some(card) = self.game.cards.try_get(*tracked_card) {
+                        // Verify card is actually in exile
+                        // (effect cleanup should handle this, but double-check)
+                        if !self.game.is_card_in_exile(*tracked_card) {
+                            continue;
+                        }
 
-                    if can_cast_now {
-                        // Check if we can pay the alternative cost
-                        if self.mana_engine.can_pay_with_pool(alternative_cost, &mana_pool) {
-                            self.abilities_buffer.push(SpellAbility::CastFromExile {
-                                card_id: *tracked_card,
-                                alternative_cost: *alternative_cost,
-                                effect_id: effect.id,
-                            });
+                        // Check timing restrictions
+                        let can_cast_now = if card.is_instant() {
+                            true
+                        } else {
+                            is_sorcery_speed && is_active_player && stack_is_empty
+                        };
+
+                        if can_cast_now {
+                            // Check if we can pay the alternative cost
+                            if self.mana_engine.can_pay_with_pool(alternative_cost, &mana_pool) {
+                                self.abilities_buffer.push(SpellAbility::CastFromExile {
+                                    card_id: *tracked_card,
+                                    alternative_cost: *alternative_cost,
+                                    effect_id: effect.id,
+                                });
+                            }
                         }
                     }
                 }
+
+                PersistentEffectKind::MayPlayOneWithoutManaCost {
+                    tracked_cards,
+                    beneficiary,
+                } => {
+                    // Only the beneficiary can cast these cards
+                    if *beneficiary != player_id {
+                        continue;
+                    }
+
+                    // For each tracked card, check if we can cast it
+                    for &tracked_card in tracked_cards {
+                        // Get the card from exile
+                        if let Some(card) = self.game.cards.try_get(tracked_card) {
+                            // Verify card is actually in exile
+                            if !self.game.is_card_in_exile(tracked_card) {
+                                continue;
+                            }
+
+                            // Check timing restrictions
+                            let can_cast_now = if card.is_instant() {
+                                true
+                            } else {
+                                is_sorcery_speed && is_active_player && stack_is_empty
+                            };
+
+                            if can_cast_now {
+                                // No mana cost needed - cast for free!
+                                self.abilities_buffer.push(SpellAbility::CastFromExile {
+                                    card_id: tracked_card,
+                                    alternative_cost: ManaCost::new(), // Zero cost
+                                    effect_id: effect.id,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Other persistent effect kinds don't grant casting permission
+                _ => {}
             }
         }
     }
