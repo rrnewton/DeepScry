@@ -463,6 +463,7 @@ mod websocket_integration {
             port,
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
+            network_debug: true,
             ..Default::default()
         };
 
@@ -535,6 +536,7 @@ mod websocket_integration {
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
             starting_life: 20,
+            network_debug: true,
             ..Default::default()
         };
 
@@ -649,6 +651,7 @@ mod websocket_integration {
             port,
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
+            network_debug: true,
             ..Default::default()
         };
 
@@ -709,6 +712,7 @@ mod websocket_integration {
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
             starting_life: 20,
+            network_debug: true,
             ..Default::default()
         };
 
@@ -894,6 +898,7 @@ mod websocket_integration {
             port,
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
+            network_debug: true,
             ..Default::default()
         };
 
@@ -1006,6 +1011,7 @@ mod websocket_integration {
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
             deck_visibility: true,
+            network_debug: true,
             ..Default::default()
         };
 
@@ -1107,6 +1113,7 @@ mod websocket_integration {
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
             deck_visibility: false,
+            network_debug: true,
             ..Default::default()
         };
 
@@ -1232,7 +1239,7 @@ mod websocket_integration {
     /// REMAINING ISSUE: Intermittent action_count mismatch (client gets ahead of server)
     /// when "Card not in hand" errors occur. Needs investigation of how failed actions
     /// affect action_count tracking.
-    #[ignore = "Intermittent action_count mismatch - needs further debugging"]
+    #[ignore = "Flaky: intermittent timeout or action_count mismatch - needs investigation"]
     #[tokio::test]
     async fn test_run_game_with_random_controllers() {
         use mtg_forge_rs::game::RandomController;
@@ -1246,6 +1253,7 @@ mod websocket_integration {
             password: password.to_string(),
             cardsfolder: cardsfolder_path(),
             starting_life: 20,
+            network_debug: true, // Enable state hash comparison
             ..Default::default()
         };
 
