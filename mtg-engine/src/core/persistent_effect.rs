@@ -131,6 +131,25 @@ pub enum PersistentEffectKind {
         /// The creature that can't be blocked
         creature: CardId,
     },
+
+    /// MayPlayOneWithoutManaCost: Play ONE of multiple exiled cards without paying mana cost.
+    ///
+    /// Created by: Fire Lord Ozai's {6} ability, similar "exile and may play" effects
+    /// Effect: "Until end of turn, you may play one of those cards without paying its mana cost."
+    ///
+    /// Key differences from MayPlayFromExile:
+    /// - Tracks MULTIPLE cards (one from each opponent's library)
+    /// - No mana cost (play for free)
+    /// - Can only play ONE of them (effect removed after first play)
+    ///
+    /// Cleanup: End of turn, OR when any tracked card is played
+    MayPlayOneWithoutManaCost {
+        /// The exiled cards that can be played (one from each opponent)
+        tracked_cards: Vec<CardId>,
+
+        /// The player who may play one of these cards
+        beneficiary: PlayerId,
+    },
     // Future: Add more persistent effect types as needed
     // - Delay (cast spell at next upkeep)
     // - Cascade (exile until you hit a cheaper spell)
@@ -249,6 +268,34 @@ impl PersistentEffectStore {
                 &e.kind,
                 PersistentEffectKind::CantBeBlocked { creature }
                 if *creature == creature_id
+            )
+        })
+    }
+
+    /// Find MayPlayOneWithoutManaCost effects that allow playing a specific card.
+    ///
+    /// Used when determining if a player can cast a card from exile for free.
+    /// Returns the effect ID and beneficiary if the card is in a may-play effect.
+    pub fn find_may_play_without_cost(&self, card_id: CardId) -> Option<(PersistentEffectId, PlayerId)> {
+        self.effects.iter().find_map(|e| {
+            if let PersistentEffectKind::MayPlayOneWithoutManaCost { tracked_cards, beneficiary } = &e.kind {
+                if tracked_cards.contains(&card_id) {
+                    return Some((e.id, *beneficiary));
+                }
+            }
+            None
+        })
+    }
+
+    /// Check if a player can play a specific exiled card without paying mana.
+    ///
+    /// Used in casting logic to offer free plays from exile.
+    pub fn can_play_without_mana_cost(&self, card_id: CardId, player: PlayerId) -> bool {
+        self.effects.iter().any(|e| {
+            matches!(
+                &e.kind,
+                PersistentEffectKind::MayPlayOneWithoutManaCost { tracked_cards, beneficiary }
+                if tracked_cards.contains(&card_id) && *beneficiary == player
             )
         })
     }
