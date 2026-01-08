@@ -1410,6 +1410,7 @@ impl CardDefinition {
     ///
     /// Uses tokenized parameter extraction for safety. Replaces unsafe substring matching.
     fn parse_triggers(&self) -> Vec<Trigger> {
+        use super::ability_parser::{AbilityParams, ApiType};
         use std::collections::HashMap;
 
         let mut triggers = Vec::new();
@@ -1949,37 +1950,23 @@ impl CardDefinition {
                                     }
                                 }
 
-                                // Parse AB$ Draw effects (draw cards on attack)
-                                // Example: "AB$ Draw | Cost$ Sac<...> | SubAbility$ DBPutCounter"
-                                if body.contains("AB$ Draw") || body.contains("DB$ Draw") {
-                                    // Check for NumCards parameter
-                                    let mut draw_count = 1u8;
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            if key.trim() == "NumCards" {
-                                                if let Ok(n) = value.trim().parse::<u8>() {
-                                                    draw_count = n;
-                                                }
-                                            }
-                                        }
+                                // Parse AB$/DB$ Draw effects (draw cards on attack)
+                                // Uses tokenized AbilityParams instead of hacky .contains()
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::Draw {
+                                        let draw_count =
+                                            params.get("NumCards").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+                                        effects.push(Effect::DrawCards {
+                                            player: PlayerId::new(0), // Placeholder, resolved at trigger time
+                                            count: draw_count,
+                                        });
                                     }
-                                    effects.push(Effect::DrawCards {
-                                        player: PlayerId::new(0), // Placeholder, resolved at trigger time
-                                        count: draw_count,
-                                    });
                                 }
 
                                 // Parse SubAbility$ to follow chains (e.g., DBPutCounter)
-                                let mut sub_ability_ref: Option<String> = None;
-                                for param in body.split('|') {
-                                    let param = param.trim();
-                                    if let Some((key, value)) = param.split_once('$') {
-                                        if key.trim() == "SubAbility" {
-                                            sub_ability_ref = Some(value.trim().to_string());
-                                        }
-                                    }
-                                }
+                                // Use tokenized parsing for the main body
+                                let sub_ability_ref = AbilityParams::parse_svar_body(body)
+                                    .and_then(|params| params.get("SubAbility").map(String::from));
 
                                 // If there's a SubAbility, look it up and parse it
                                 if let Some(sub_ref) = sub_ability_ref {
@@ -1988,24 +1975,19 @@ impl CardDefinition {
                                             if let Some((_, sub_body)) =
                                                 sub_ab.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
                                             {
-                                                // Parse DB$ PutCounter from SubAbility
-                                                if sub_body.contains("DB$ PutCounter") {
-                                                    let mut counter_num = 1u8;
-                                                    for param in sub_body.split('|') {
-                                                        let param = param.trim();
-                                                        if let Some((key, value)) = param.split_once('$') {
-                                                            if key.trim() == "CounterNum" {
-                                                                if let Ok(n) = value.trim().parse::<u8>() {
-                                                                    counter_num = n;
-                                                                }
-                                                            }
-                                                        }
+                                                // Parse DB$ PutCounter from SubAbility using tokenized parsing
+                                                if let Some(sub_params) = AbilityParams::parse_svar_body(sub_body) {
+                                                    if sub_params.api_type == ApiType::PutCounter {
+                                                        let counter_num = sub_params
+                                                            .get("CounterNum")
+                                                            .and_then(|s| s.parse::<u8>().ok())
+                                                            .unwrap_or(1);
+                                                        effects.push(Effect::PutCounter {
+                                                            target: CardId::new(0), // Placeholder - self
+                                                            counter_type: crate::core::CounterType::P1P1,
+                                                            amount: counter_num,
+                                                        });
                                                     }
-                                                    effects.push(Effect::PutCounter {
-                                                        target: CardId::new(0), // Placeholder - self
-                                                        counter_type: crate::core::CounterType::P1P1,
-                                                        amount: counter_num,
-                                                    });
                                                 }
                                             }
                                             break;
@@ -2014,71 +1996,51 @@ impl CardDefinition {
                                 }
 
                                 // Parse DB$ PutCounter effects directly in body (for simpler cards)
-                                if body.contains("DB$ PutCounter")
-                                    && !effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }))
-                                {
-                                    let mut counter_num = 1u8;
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            if key.trim() == "CounterNum" {
-                                                if let Ok(n) = value.trim().parse::<u8>() {
-                                                    counter_num = n;
-                                                }
-                                            }
-                                        }
+                                // Uses tokenized parsing instead of .contains()
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::PutCounter
+                                        && !effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }))
+                                    {
+                                        let counter_num =
+                                            params.get("CounterNum").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+                                        effects.push(Effect::PutCounter {
+                                            target: CardId::new(0), // Placeholder - self
+                                            counter_type: crate::core::CounterType::P1P1,
+                                            amount: counter_num,
+                                        });
                                     }
-                                    effects.push(Effect::PutCounter {
-                                        target: CardId::new(0), // Placeholder - self
-                                        counter_type: crate::core::CounterType::P1P1,
-                                        amount: counter_num,
-                                    });
                                 }
 
-                                // Parse DB$ GainLife effects
-                                if body.contains("DB$ GainLife") {
-                                    let mut life_amount = 1i32;
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            if key.trim() == "LifeAmount" {
-                                                if let Ok(amt) = value.trim().parse::<i32>() {
-                                                    life_amount = amt;
-                                                }
-                                            }
-                                        }
+                                // Parse DB$ GainLife effects using tokenized parsing
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::GainLife {
+                                        let life_amount = params
+                                            .get("LifeAmount")
+                                            .and_then(|s| s.parse::<i32>().ok())
+                                            .unwrap_or(1);
+                                        effects.push(Effect::GainLife {
+                                            player: PlayerId::new(0),
+                                            amount: life_amount,
+                                        });
                                     }
-                                    effects.push(Effect::GainLife {
-                                        player: PlayerId::new(0),
-                                        amount: life_amount,
-                                    });
                                 }
 
-                                // Parse DB$ DealDamage effects
-                                if body.contains("DB$ DealDamage") {
-                                    let mut damage_amount = 1i32;
-                                    for param in body.split('|') {
-                                        let param = param.trim();
-                                        if let Some((key, value)) = param.split_once('$') {
-                                            if key.trim() == "NumDmg" {
-                                                if let Ok(amt) = value.trim().parse::<i32>() {
-                                                    damage_amount = amt;
-                                                }
-                                            }
-                                        }
+                                // Parse DB$ DealDamage effects using tokenized parsing
+                                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                                    if params.api_type == ApiType::DealDamage {
+                                        let damage_amount =
+                                            params.get("NumDmg").and_then(|s| s.parse::<i32>().ok()).unwrap_or(1);
+                                        effects.push(Effect::DealDamage {
+                                            target: TargetRef::None, // Will need targeting
+                                            amount: damage_amount,
+                                        });
                                     }
-                                    effects.push(Effect::DealDamage {
-                                        target: TargetRef::None, // Will need targeting
-                                        amount: damage_amount,
-                                    });
                                 }
 
                                 // Parse AB$ Mana / DB$ Mana effects (Firebending from attack triggers)
                                 // Example: "AB$ Mana | Cost$ Sac<1/Creature.Other/another creature> | Produced$ R | Amount$ X | CombatMana$ True"
-                                // Uses AbilityParams for proper tokenized parsing (no substring matching)
-                                use crate::loader::ability_parser::{AbilityParams, ApiType};
-                                let mana_prefix = format!("A:{}", body);
-                                if let Ok(ability_params) = AbilityParams::parse(&mana_prefix) {
+                                // Uses AbilityParams::parse_svar_body() for tokenized parsing (no substring matching)
+                                if let Some(ability_params) = AbilityParams::parse_svar_body(body) {
                                     if ability_params.api_type == ApiType::Mana {
                                         // Check if this is combat mana (CombatMana$ True)
                                         let is_combat_mana = ability_params.get("CombatMana") == Some("True");
