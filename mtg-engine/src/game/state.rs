@@ -102,6 +102,18 @@ pub struct GameState {
     /// changed for either player, the version stays the same.
     pub mana_state_version: u32,
 
+    /// Skip reveal action generation for local (non-networked) games.
+    ///
+    /// When `true` (default), `maybe_reveal_to_player()` and `maybe_reveal_to_all()`
+    /// are no-ops, avoiding the overhead of reveal tracking and undo logging.
+    ///
+    /// When `false`, reveal actions are generated for network synchronization.
+    /// This also enables testing that local simulations match network behavior.
+    ///
+    /// Note: Action logs will differ between networked and local games when
+    /// `skip_reveals=true`. Set to `false` for deterministic replay comparison.
+    pub skip_reveals: bool,
+
     /// Persistent effects that last beyond a single spell/ability resolution.
     ///
     /// # Design Note: NOT the Command Zone
@@ -201,6 +213,7 @@ impl GameState {
             card_definitions: std::sync::Arc::new(std::collections::HashMap::new()),
             bump: Bump::new(),
             mana_state_version: 0,
+            skip_reveals: true, // Default: skip reveals for local games
             persistent_effects: PersistentEffectStore::new(),
             delayed_triggers: DelayedTriggerStore::new(),
         }
@@ -213,6 +226,18 @@ impl GameState {
     /// controllers and game logic.
     pub fn seed_rng(&mut self, seed: u64) {
         *self.rng.borrow_mut() = ChaCha12Rng::seed_from_u64(seed);
+    }
+
+    /// Enable or disable reveal action generation.
+    ///
+    /// - `true` (default): Skip reveal actions for local games (no overhead)
+    /// - `false`: Generate reveal actions for networked games
+    ///
+    /// Call `set_skip_reveals(false)` for network games or when you want
+    /// action logs to match network simulation for testing.
+    #[inline]
+    pub fn set_skip_reveals(&mut self, skip: bool) {
+        self.skip_reveals = skip;
     }
 
     /// Get the action count (undo log length)
@@ -496,7 +521,13 @@ impl GameState {
     /// Used when a card becomes visible to one player only (e.g., drawing a card).
     /// If the card already exists and isn't revealed to the player, logs SetRevealedToMask.
     /// If the card doesn't exist (late-binding), logs RevealCard.
+    ///
+    /// No-op if `skip_reveals` is true (default for local games).
+    #[inline]
     pub fn maybe_reveal_to_player(&mut self, card_id: CardId, player_id: PlayerId, prior_log_size: usize) {
+        if self.skip_reveals {
+            return;
+        }
         if let Some(card) = self.cards.try_get_mut(card_id) {
             // Card exists - check if needs reveal to this player
             if !card.is_revealed_to(player_id) {
@@ -531,7 +562,13 @@ impl GameState {
     /// Used when a card becomes publicly visible (e.g., entering battlefield, stack, graveyard).
     /// If the card already exists and isn't revealed to all, logs SetRevealedToMask.
     /// If the card doesn't exist (late-binding), logs RevealCard.
+    ///
+    /// No-op if `skip_reveals` is true (default for local games).
+    #[inline]
     pub fn maybe_reveal_to_all(&mut self, card_id: CardId, prior_log_size: usize) {
+        if self.skip_reveals {
+            return;
+        }
         if let Some(card) = self.cards.try_get_mut(card_id) {
             // Card exists - check if needs reveal to all
             if !card.is_revealed_to_all() {
@@ -1980,6 +2017,7 @@ impl Clone for GameState {
             // Each clone gets a fresh empty bump allocator
             bump: Bump::new(),
             mana_state_version: self.mana_state_version,
+            skip_reveals: self.skip_reveals,
             persistent_effects: self.persistent_effects.clone(),
             delayed_triggers: self.delayed_triggers.clone(),
         }
@@ -2073,6 +2111,8 @@ mod tests {
         use crate::core::CardType;
 
         let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        // Enable reveal actions for this test (simulates network game)
+        game.set_skip_reveals(false);
         let p1_id = game.players.first().unwrap().id;
 
         assert_eq!(game.undo_log.len(), 0);
