@@ -1770,7 +1770,7 @@ impl GameState {
             Effect::Dig {
                 dig_count,
                 change_count: _,
-                change_all,
+                change_all: _, // TODO: implement partial dig (change fewer than looked at)
                 destination,
                 may_play,
                 may_play_without_mana_cost,
@@ -1787,10 +1787,18 @@ impl GameState {
 
                 let digger = self.turn.active_player;
 
-                // Find all opponents (players other than the digger)
-                let opponent_ids: Vec<_> = self.players.iter().filter(|p| p.id != digger).map(|p| p.id).collect();
+                // Collect opponent IDs first (SmallVec for stack allocation - typically 1-3 opponents)
+                // This releases the borrow on self.players before we call self.move_card()
+                let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> = self
+                    .players
+                    .iter()
+                    .filter(|p| p.id != digger)
+                    .map(|p| p.id)
+                    .collect();
 
-                let mut exiled_cards: Vec<CardId> = Vec::new();
+                // Pre-size exiled_cards buffer (at most dig_count cards per opponent)
+                let mut exiled_cards: Vec<CardId> =
+                    Vec::with_capacity(opponent_ids.len() * (*dig_count as usize));
 
                 // For each opponent, exile top card(s) from their library
                 for opponent_id in opponent_ids {
@@ -1802,29 +1810,27 @@ impl GameState {
                         .map(|(_, zones)| &zones.library);
 
                     if let Some(library) = library {
-                        // Get top N cards from library (N = dig_count)
-                        let cards_to_exile: Vec<CardId> = library
+                        // Collect card IDs to exile first (SmallVec for stack allocation)
+                        let take_count = *dig_count as usize;
+                        let card_ids: smallvec::SmallVec<[CardId; 4]> = library
                             .cards
                             .iter()
-                            .take(if *change_all {
-                                *dig_count as usize
-                            } else {
-                                *dig_count as usize
-                            })
+                            .take(take_count)
                             .copied()
                             .collect();
 
-                        // Exile each card
-                        for card_id in cards_to_exile {
-                            let card_name = self.cards.get(card_id)?.name.clone();
-                            let opponent_name = self.get_player(opponent_id)?.name.clone();
+                        // Now exile each card
+                        for card_id in card_ids {
+                            // Get names as references for logging (avoid clone)
+                            let card_name = self.cards.get(card_id)?.name.as_str();
+                            let opponent_name = self.get_player(opponent_id)?.name.as_str();
+
+                            // Log before move (need the names)
+                            self.logger
+                                .gamelog(&format!("{} exiled from {}'s library", card_name, opponent_name));
 
                             // Move card from library to destination (usually exile)
                             self.move_card(card_id, Zone::Library, *destination, opponent_id)?;
-
-                            // Log the exile
-                            self.logger
-                                .gamelog(&format!("{} exiled from {}'s library", card_name, opponent_name));
 
                             exiled_cards.push(card_id);
                         }
@@ -1855,10 +1861,12 @@ impl GameState {
                         // Since we're in an activated ability, the source should be on the battlefield
                         // For now, use the first exiled card as the "source" for tracking
                         let source_card = exiled_cards[0];
+                        let num_exiled = exiled_cards.len();
 
+                        // Move exiled_cards into the persistent effect (avoid clone)
                         self.persistent_effects.add(
                             PersistentEffectKind::MayPlayOneWithoutManaCost {
-                                tracked_cards: exiled_cards.clone(),
+                                tracked_cards: std::mem::take(&mut exiled_cards),
                                 beneficiary: digger,
                             },
                             source_card,
@@ -1869,7 +1877,7 @@ impl GameState {
                         log::debug!(
                             target: "dig",
                             "Created MayPlayOneWithoutManaCost effect for {} cards, beneficiary: player {}",
-                            exiled_cards.len(),
+                            num_exiled,
                             digger.as_u32()
                         );
                     }
