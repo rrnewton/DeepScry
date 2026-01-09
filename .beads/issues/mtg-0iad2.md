@@ -326,8 +326,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Not Yet Implemented (found during verification):**
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
-- DB$ Attach - equipment attach effects not implemented (Twin Blades ETB doesn't attach)
-- DB$ Pump with KW$ - granting keywords like Double Strike via pump not verified
+- DB$ Pump with KW$ - granting keywords like Double Strike via pump not verified (parsing added but effect resolution pending)
 
 **Recently Implemented:**
 - Mode$ Sacrificed triggers (7010ba5) - Pirate Peddlers sacrifice synergy now works
+- DB$ Attach (a5a2929) - Equipment ETB attach parsing (Twin Blades trigger now parses)
