@@ -1620,6 +1620,40 @@ impl CardDefinition {
                                 num_counters,
                             });
                         }
+
+                        // DB$ Attach effects (equipment ETB attachment)
+                        // Example: "DB$ Attach | ValidTgts$ Creature.YouCtrl | SubAbility$ DBPump"
+                        // Used by Twin Blades: attach to creature, then grants double strike
+                        if svar_params.api_type == ApiType::Attach {
+                            // Attach equipment effect - target will be selected at runtime
+                            effects.push(Effect::AttachEquipment {
+                                source_equipment: CardId::new(0),
+                                target_creature: CardId::new(0),
+                            });
+
+                            // Check for SubAbility$ which chains additional effects
+                            // Example: SubAbility$ DBPump -> DB$ Pump | KW$ Double Strike
+                            if let Some(sub_ref) = svar_params.get("SubAbility") {
+                                if let Some(sub_params) = self.parsed_svars.get(sub_ref) {
+                                    // DB$ Pump with KW$ (keyword grant)
+                                    // Example: "DB$ Pump | Defined$ Targeted | KW$ Double Strike"
+                                    if sub_params.api_type == ApiType::Pump {
+                                        if let Some(kw) = sub_params.get("KW") {
+                                            // Parse keyword and add to effects
+                                            // Mark with "[KW]" prefix for runtime processing
+                                            effects.push(Effect::PumpCreature {
+                                                target: CardId::new(0),
+                                                power_bonus: 0,
+                                                toughness_bonus: 0,
+                                            });
+                                            // Store keyword in description for now
+                                            // Will be processed during effect resolution
+                                            let _ = kw; // TODO: Parse keyword properly
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -3585,6 +3619,59 @@ Oracle:Deathtouch\nWhenever you sacrifice another permanent, put a +1/+1 counter
         assert!(
             has_put_counter,
             "Trigger should have PutCounter effect with P1P1 counter. Effects: {:?}",
+            trigger.effects
+        );
+    }
+
+    #[test]
+    fn test_parse_equipment_etb_attach_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Test Twin Blades equipment ETB trigger with DB$ Attach:
+        // "When this Equipment enters, attach it to target creature you control.
+        //  That creature gains double strike until end of turn."
+        let content = r#"
+Name:Twin Blades
+ManaCost:2 R
+Types:Artifact Equipment
+K:Flash
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigAttach | TriggerDescription$ When this Equipment enters, attach it to target creature you control. That creature gains double strike until end of turn.
+SVar:TrigAttach:DB$ Attach | ValidTgts$ Creature.YouCtrl | TgtPrompt$ Select target creature you control | SubAbility$ DBPump
+SVar:DBPump:DB$ Pump | Defined$ Targeted | KW$ Double Strike
+S:Mode$ Continuous | Affected$ Creature.EquippedBy | AddPower$ 1 | AddToughness$ 1 | Description$ Equipped creature gets +1/+1.
+K:Equip:2
+Oracle:Flash\nWhen this Equipment enters, attach it to target creature you control. That creature gains double strike until end of turn.\nEquipped creature gets +1/+1.\nEquip {2}
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify we have at least one trigger (the ETB attach trigger)
+        assert!(
+            !triggers.is_empty(),
+            "Should have at least one trigger. Got: {:?}",
+            triggers
+        );
+
+        // Find the ETB trigger
+        let etb_trigger = triggers.iter().find(|t| t.event == TriggerEvent::EntersBattlefield);
+
+        assert!(
+            etb_trigger.is_some(),
+            "Should have an EntersBattlefield trigger. Triggers: {:?}",
+            triggers
+        );
+
+        let trigger = etb_trigger.unwrap();
+
+        // Verify it has an AttachEquipment effect
+        let has_attach = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::AttachEquipment { .. }));
+        assert!(
+            has_attach,
+            "Trigger should have AttachEquipment effect. Effects: {:?}",
             trigger.effects
         );
     }

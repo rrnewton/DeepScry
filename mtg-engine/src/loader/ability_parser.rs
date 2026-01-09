@@ -97,6 +97,12 @@ pub enum ApiType {
 
     // === Tokens & Counters ===
     Token,
+
+    // === Equipment & Auras ===
+    /// Attach Equipment or Aura to target
+    /// Example: DB$ Attach | ValidTgts$ Creature.YouCtrl
+    /// Used by equipment ETB triggers like Twin Blades
+    Attach,
     /// Create a token that's a copy of a permanent
     /// Parameters:
     ///   ValidTgts$ / Defined$ - target permanent to copy
@@ -230,6 +236,7 @@ impl ApiType {
 
             // Tokens & Counters
             "Token" => Self::Token,
+            "Attach" => Self::Attach,
             "CopyPermanent" => Self::CopyPermanent,
             "PutCounter" => Self::PutCounter,
             "RemoveCounter" => Self::RemoveCounter,
@@ -324,6 +331,7 @@ impl ApiType {
             Self::Untap => "Untap",
             Self::UntapAll => "UntapAll",
             Self::Token => "Token",
+            Self::Attach => "Attach",
             Self::CopyPermanent => "CopyPermanent",
             Self::PutCounter => "PutCounter",
             Self::RemoveCounter => "RemoveCounter",
