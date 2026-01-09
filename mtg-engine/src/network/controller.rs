@@ -331,6 +331,17 @@ impl NetworkController {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 format!("Cast from exile: {} (for {})", name, alternative_cost)
             }
+            SpellAbility::Cycle {
+                card_id,
+                cost,
+                search_type,
+            } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                match search_type {
+                    Some(land_type) => format!("{}cycling: {} ({})", land_type.as_str(), name, cost),
+                    None => format!("Cycle: {} ({})", name, cost),
+                }
+            }
         }
     }
 

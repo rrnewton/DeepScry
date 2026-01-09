@@ -486,7 +486,10 @@ impl<'a> GameLoop<'a> {
                     crate::zones::Zone::Exile => "exile",
                     crate::zones::Zone::Graveyard => "graveyard",
                     crate::zones::Zone::Hand => "hand",
-                    _ => "exile",
+                    crate::zones::Zone::Library
+                    | crate::zones::Zone::Battlefield
+                    | crate::zones::Zone::Stack
+                    | crate::zones::Zone::Command => "exile", // Fallback, unlikely to happen
                 };
                 let may_play_text = if *may_play {
                     if *may_play_without_mana_cost {
