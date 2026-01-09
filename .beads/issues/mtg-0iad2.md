@@ -254,16 +254,16 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ## Cross-Card Synergies to Verify
 
-- [ ] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) (**BLOCKED** - Mode$ Sacrificed not implemented)
-- [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) (**BLOCKED** - Mode$ Sacrificed not implemented)
+- [ ] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
+- [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
 - [ ] Firebending creatures sharing firebend mana pool
 - [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
 - [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
-- [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) (**BLOCKED** - Mode$ Sacrificed not implemented)
-- [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) (**BLOCKED** - Mode$ Sacrificed not implemented)
+- [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
+- [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
 
 ---
 
@@ -325,7 +325,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 **Not Yet Implemented (found during verification):**
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
-- Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
 - DB$ Attach - equipment attach effects not implemented (Twin Blades ETB doesn't attach)
 - DB$ Pump with KW$ - granting keywords like Double Strike via pump not verified
+
+**Recently Implemented:**
+- Mode$ Sacrificed triggers (7010ba5) - Pirate Peddlers sacrifice synergy now works
