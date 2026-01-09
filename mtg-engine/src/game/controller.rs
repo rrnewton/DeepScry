@@ -72,6 +72,18 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
                     display_idx, name, alternative_cost
                 ));
             }
+            SpellAbility::Cycle {
+                card_id,
+                cost,
+                search_type,
+            } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                let type_str = match search_type {
+                    Some(st) => format!("{}cycling", st.as_str()),
+                    None => "Cycling".to_string(),
+                };
+                output.push_str(&format!("  [{}] {} {} ({})\n", display_idx, type_str, name, cost));
+            }
         }
     }
 
@@ -247,13 +259,14 @@ pub fn format_targets_prompt(view: &GameStateView, spell: CardId, valid_targets:
 /// Get sort key for a SpellAbility
 ///
 /// Returns a number used for canonical ordering:
-/// 0 = PlayLand, 1 = CastSpell, 2 = CastFromExile, 3 = ActivateAbility
+/// 0 = PlayLand, 1 = CastSpell, 2 = CastFromExile, 3 = ActivateAbility, 4 = Cycle
 fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
     match ability {
         SpellAbility::PlayLand { .. } => 0,
         SpellAbility::CastSpell { .. } => 1,
         SpellAbility::CastFromExile { .. } => 2,
         SpellAbility::ActivateAbility { .. } => 3,
+        SpellAbility::Cycle { .. } => 4,
     }
 }
 
@@ -296,6 +309,18 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
         } => {
             let name = view.card_name(*card_id).unwrap_or_default();
             format!("Cast from exile: {} (for {})", name, alternative_cost)
+        }
+        SpellAbility::Cycle {
+            card_id,
+            cost,
+            search_type,
+        } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            let type_str = match search_type {
+                Some(st) => format!("{}cycling", st.as_str()),
+                None => "cycle".to_string(),
+            };
+            format!("{} {} ({})", type_str, name, cost)
         }
     }
 }

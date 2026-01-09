@@ -1207,6 +1207,154 @@ impl<'a> GameLoop<'a> {
 
                                 // Spell is now on the stack - will resolve when both players pass
                             }
+
+                            crate::core::SpellAbility::Cycle {
+                                card_id,
+                                cost,
+                                search_type,
+                            } => {
+                                // Cycling ability from hand
+                                // MTG CR 702.29: "Cycling is an activated ability that functions only
+                                // while the card with cycling is in a player's hand."
+
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                                let type_str = match &search_type {
+                                    Some(st) => format!("{}cycling", st.as_str()),
+                                    None => "Cycling".to_string(),
+                                };
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let message = format!(
+                                        "{} uses {} on {} (cost: {})",
+                                        self.get_player_name(current_priority),
+                                        type_str,
+                                        card_name,
+                                        cost
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                // 1. Pay the cycling cost
+                                self.mana_engine.update_mut(self.game, current_priority);
+                                use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+                                let mana_sources = self.mana_engine.all_sources();
+                                let resolver = GreedyManaResolver::new();
+                                self.sources_to_tap_buffer.clear();
+                                resolver.compute_tap_order(&cost, mana_sources, &mut self.sources_to_tap_buffer);
+
+                                let mut remaining_hint = cost;
+                                for &source_id in &self.sources_to_tap_buffer {
+                                    if let Err(e) =
+                                        self.game
+                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
+                                    {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            self.game.logger.normal(&format!("Failed to tap for cycling: {e}"));
+                                        }
+                                    }
+                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                                }
+
+                                // 2. Discard the card (move from hand to graveyard)
+                                let owner = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.owner)
+                                    .unwrap_or(current_priority);
+
+                                if let Err(e) = self.game.move_card(
+                                    card_id,
+                                    crate::zones::Zone::Hand,
+                                    crate::zones::Zone::Graveyard,
+                                    owner,
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.normal(&format!("Failed to discard for cycling: {e}"));
+                                    }
+                                }
+
+                                // 3. Perform the cycling effect
+                                match search_type {
+                                    Some(land_type) => {
+                                        // Typecycling: Search library for card with matching type
+                                        // For Mountaincycling, search for Mountain
+                                        // For Swampcycling, search for Swamp
+
+                                        // Build search filter for matching land type
+                                        let filter = format!("Land.{}", land_type.as_str());
+
+                                        // Get library and filter for matching cards
+                                        let library_cards = self
+                                            .game
+                                            .player_zones
+                                            .iter()
+                                            .find(|(id, _)| *id == current_priority)
+                                            .map(|(_, zones)| zones.library.cards.clone())
+                                            .unwrap_or_default();
+
+                                        // Filter cards by type
+                                        let mut valid_cards = Vec::new();
+                                        for &lib_card_id in &library_cards {
+                                            if let Ok(card) = self.game.cards.get(lib_card_id) {
+                                                if crate::game::state::GameState::card_matches_search_filter(
+                                                    card, &filter,
+                                                ) {
+                                                    valid_cards.push(lib_card_id);
+                                                }
+                                            }
+                                        }
+
+                                        // Ask controller to choose a card (or decline to find)
+                                        let prior_log_size = self.game.logger.log_count();
+                                        let view =
+                                            crate::game::controller::GameStateView::new(self.game, current_priority);
+                                        let choice = controller.choose_from_library(&view, &valid_cards);
+                                        let chosen_card_opt =
+                                            handle_choice_result_break!(choice, self.game, current_priority);
+
+                                        // Log the choice for replay
+                                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
+                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                                        // If a card was chosen, move it to hand
+                                        if let Some(chosen_card) = chosen_card_opt {
+                                            if let Err(e) = self.game.move_card(
+                                                chosen_card,
+                                                crate::zones::Zone::Library,
+                                                crate::zones::Zone::Hand,
+                                                current_priority,
+                                            ) {
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    self.game
+                                                        .logger
+                                                        .normal(&format!("Failed to move card to hand: {e}"));
+                                                }
+                                            }
+                                        }
+
+                                        // Shuffle library after searching (MTG CR 702.29)
+                                        self.game.shuffle_library(current_priority);
+                                    }
+                                    None => {
+                                        // Regular cycling: Draw a card
+                                        if let Err(e) = self.game.draw_card(current_priority) {
+                                            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                self.game.logger.normal(&format!("Failed to draw from cycling: {e}"));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Cycling is complete (doesn't use the stack)
+                            }
                         }
 
                         // After taking an action, switch priority to other player

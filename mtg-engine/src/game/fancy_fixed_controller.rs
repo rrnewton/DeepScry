@@ -206,6 +206,18 @@ impl PlayerController for FancyFixedController {
                     let name = view.card_name(*card_id).unwrap_or_default();
                     format!("Cast from exile: {} (for {})", name, alternative_cost)
                 }
+                SpellAbility::Cycle {
+                    card_id,
+                    cost,
+                    search_type,
+                } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    let type_str = match search_type {
+                        Some(st) => format!("{}cycling", st.as_str()),
+                        None => "Cycle".to_string(),
+                    };
+                    format!("{}: {} ({})", type_str, name, cost)
+                }
             }))
             .collect();
 

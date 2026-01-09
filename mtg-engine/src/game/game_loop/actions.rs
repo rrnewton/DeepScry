@@ -299,7 +299,9 @@ impl<'a> GameLoop<'a> {
                 }
 
                 // Other persistent effect kinds don't grant casting permission
-                _ => {}
+                PersistentEffectKind::Imprint { .. }
+                | PersistentEffectKind::Suspend { .. }
+                | PersistentEffectKind::CantBeBlocked { .. } => {}
             }
         }
     }
@@ -437,6 +439,68 @@ impl<'a> GameLoop<'a> {
         }
     }
 
+    /// Push cycling abilities for cards in hand
+    ///
+    /// Cycling abilities are activated from hand (not battlefield).
+    /// MTG CR 702.29: "Cycling is an activated ability that functions only
+    /// while the card with cycling is in a player's hand."
+    ///
+    /// Checks for both regular Cycling and Typecycling (Mountaincycling, etc.)
+    fn push_cycling_abilities(&mut self, player_id: PlayerId) {
+        use crate::core::{Keyword, KeywordArgs, SpellAbility};
+
+        // Update mana engine for cost checking
+        self.mana_engine.update_mut(self.game, player_id);
+        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+
+        // Get cards in hand
+        let hand = self
+            .game
+            .player_zones
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .map(|(_, zones)| &zones.hand);
+
+        let Some(hand) = hand else {
+            return;
+        };
+
+        // Check each card in hand for cycling abilities
+        for &card_id in &hand.cards {
+            if let Some(card) = self.game.cards.try_get(card_id) {
+                // Check for regular Cycling keyword
+                if card.keywords.contains(Keyword::Cycling) {
+                    if let Some(KeywordArgs::Cycling { cost }) = card.keywords.get_args(Keyword::Cycling) {
+                        // Check if we can pay the cycling cost
+                        if self.mana_engine.can_pay_with_pool(cost, &mana_pool) {
+                            self.abilities_buffer.push(SpellAbility::Cycle {
+                                card_id,
+                                cost: *cost,
+                                search_type: None, // Regular cycling draws a card
+                            });
+                        }
+                    }
+                }
+
+                // Check for Typecycling (Mountaincycling, Swampcycling, etc.)
+                if card.keywords.contains(Keyword::Typecycling) {
+                    if let Some(KeywordArgs::Typecycling { cost, card_type }) =
+                        card.keywords.get_args(Keyword::Typecycling)
+                    {
+                        // Check if we can pay the typecycling cost
+                        if self.mana_engine.can_pay_with_pool(cost, &mana_pool) {
+                            self.abilities_buffer.push(SpellAbility::Cycle {
+                                card_id,
+                                cost: *cost,
+                                search_type: Some(card_type.clone()), // Search for this land type
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Get all available spell abilities for a player
     ///
     /// This matches Java Forge's approach where lands, spells, and activated
@@ -492,6 +556,9 @@ impl<'a> GameLoop<'a> {
 
         // Add activated abilities (pushes directly to abilities_buffer)
         self.push_activatable_abilities(player_id);
+
+        // Add cycling abilities from hand (Cycling, Mountaincycling, etc.)
+        self.push_cycling_abilities(player_id);
 
         // Sort by card ID to ensure deterministic ordering
         // This is critical for snapshot/resume: if two runs have the same cards available

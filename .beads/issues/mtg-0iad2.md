@@ -213,8 +213,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Has Menace (verified: puzzles/test_mongoose_lizard_menace.pzl)
 - [x] Menace prevents single blocker (verified: "Menace prevents Grizzly Bears from blocking Mongoose Lizard alone")
 - [x] Menace allows 2+ blockers (verified: puzzles/test_menace_two_blockers.pzl)
-- [ ] Mountaincycling {2} can be activated from hand (**NOT IMPLEMENTED** - cycling from hand not yet supported)
-- [ ] Mountaincycling searches for Mountain
+- [x] Mountaincycling {2} can be activated from hand (verified: puzzles/test_mountaincycling.pzl - Turn 1 shows "uses Mountaincycling")
+- [x] Mountaincycling searches for Mountain (verified: found Mountain in library and added to hand)
 
 ---
 
@@ -321,9 +321,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - check_attack_triggers now handles optional triggers with sacrifice costs
 - Prowess keyword expansion implemented (test_prowess_keyword_expansion, test_prowess_trigger.pzl)
 - Fire Lord Ozai {6} AB$ Dig ability COMPLETE (73af57a, fa27f1e) - exiles from opponent library + may-play-one-free
+- Cycling/Typecycling from hand COMPLETE - SpellAbility::Cycle, push_cycling_abilities(), library search (puzzles/test_mountaincycling.pzl)
 
 **Not Yet Implemented (found during verification):**
-- Cycling abilities from hand (Swampcycling, Mountaincycling) - needs push_activatable_abilities to check hand
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
 - Sacrifice triggers (Mode$ Sacrificed) - TriggerEvent::Sacrifice not implemented, Pirate Peddlers doesn't trigger
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types

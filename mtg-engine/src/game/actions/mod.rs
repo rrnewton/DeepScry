@@ -1726,16 +1726,11 @@ impl GameState {
 
                 // Collect opponent IDs first (SmallVec for stack allocation - typically 1-3 opponents)
                 // This releases the borrow on self.players before we call self.move_card()
-                let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> = self
-                    .players
-                    .iter()
-                    .filter(|p| p.id != digger)
-                    .map(|p| p.id)
-                    .collect();
+                let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> =
+                    self.players.iter().filter(|p| p.id != digger).map(|p| p.id).collect();
 
                 // Pre-size exiled_cards buffer (at most dig_count cards per opponent)
-                let mut exiled_cards: Vec<CardId> =
-                    Vec::with_capacity(opponent_ids.len() * (*dig_count as usize));
+                let mut exiled_cards: Vec<CardId> = Vec::with_capacity(opponent_ids.len() * (*dig_count as usize));
 
                 // For each opponent, exile top card(s) from their library
                 for opponent_id in opponent_ids {
@@ -1749,12 +1744,8 @@ impl GameState {
                     if let Some(library) = library {
                         // Collect card IDs to exile first (SmallVec for stack allocation)
                         let take_count = *dig_count as usize;
-                        let card_ids: smallvec::SmallVec<[CardId; 4]> = library
-                            .cards
-                            .iter()
-                            .take(take_count)
-                            .copied()
-                            .collect();
+                        let card_ids: smallvec::SmallVec<[CardId; 4]> =
+                            library.cards.iter().take(take_count).copied().collect();
 
                         // Now exile each card
                         for card_id in card_ids {

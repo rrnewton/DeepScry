@@ -278,7 +278,11 @@ impl PersistentEffectStore {
     /// Returns the effect ID and beneficiary if the card is in a may-play effect.
     pub fn find_may_play_without_cost(&self, card_id: CardId) -> Option<(PersistentEffectId, PlayerId)> {
         self.effects.iter().find_map(|e| {
-            if let PersistentEffectKind::MayPlayOneWithoutManaCost { tracked_cards, beneficiary } = &e.kind {
+            if let PersistentEffectKind::MayPlayOneWithoutManaCost {
+                tracked_cards,
+                beneficiary,
+            } = &e.kind
+            {
                 if tracked_cards.contains(&card_id) {
                     return Some((e.id, *beneficiary));
                 }

@@ -1,0 +1,15 @@
+[metadata]
+Name:Mountaincycling Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Test that Mongoose Lizard's Mountaincycling {2} can be activated from hand
+p0life=20
+p0hand=Mongoose Lizard
+p0library=Mountain; Mountain; Mountain; Mountain; Forest; Forest
+p0battlefield=Mountain; Mountain
+p1life=20
+p1hand=Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Island; Island

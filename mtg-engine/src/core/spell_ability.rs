@@ -62,6 +62,26 @@ pub enum SpellAbility {
         /// The persistent effect that grants this cast permission
         effect_id: PersistentEffectId,
     },
+
+    /// Activate a cycling ability from hand
+    ///
+    /// Cycling abilities are activated from hand (not battlefield).
+    /// When activated:
+    /// 1. Pay the cycling cost
+    /// 2. Discard the card
+    /// 3. For regular Cycling: draw a card
+    /// 4. For Typecycling: search library for a card of that type
+    ///
+    /// MTG CR 702.29: "Cycling is an activated ability that functions only
+    /// while the card with cycling is in a player's hand."
+    Cycle {
+        card_id: CardId,
+        /// The mana cost to activate cycling
+        cost: ManaCost,
+        /// For Typecycling: the type to search for (e.g., "Mountain")
+        /// None for regular cycling (just draw a card)
+        search_type: Option<crate::core::Subtype>,
+    },
 }
 
 impl SpellAbility {
@@ -72,6 +92,7 @@ impl SpellAbility {
             SpellAbility::CastSpell { card_id } => *card_id,
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
             SpellAbility::CastFromExile { card_id, .. } => *card_id,
+            SpellAbility::Cycle { card_id, .. } => *card_id,
         }
     }
 
@@ -96,6 +117,11 @@ impl SpellAbility {
     /// Check if this is an activated ability
     pub fn is_activated_ability(&self) -> bool {
         matches!(self, SpellAbility::ActivateAbility { .. })
+    }
+
+    /// Check if this is a cycling ability
+    pub fn is_cycling_ability(&self) -> bool {
+        matches!(self, SpellAbility::Cycle { .. })
     }
 }
 
