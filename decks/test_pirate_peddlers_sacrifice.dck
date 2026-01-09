@@ -1,0 +1,17 @@
+[metadata]
+Name=Pirate Peddlers Sacrifice Test
+
+[Main]
+# Sacrifice trigger card
+4 Pirate Peddlers
+
+# Sacrifice outlet
+4 Viscera Seer
+
+# Fodder creatures
+4 Llanowar Elves
+4 Grizzly Bears
+
+# Mana base
+22 Swamp
+22 Forest

@@ -1987,6 +1987,79 @@ impl CardDefinition {
 
                 triggers.push(trigger);
             }
+
+            // Parse Sacrifice triggers (Mode$ Sacrificed)
+            // Example: T:Mode$ Sacrificed | ValidCard$ Permanent.Other | Execute$ TrigPutCounter | ValidPlayer$ You
+            // This triggers when the controller sacrifices a permanent
+            if mode == Some("Sacrificed") {
+                use crate::core::Effect;
+
+                let mut effects = Vec::new();
+
+                // Check ValidCard$ to determine what sacrifices trigger this
+                // Permanent.Other = triggers on other permanents (not self)
+                let valid_card = params.get("ValidCard").map(|s| s.as_str());
+                let is_other_only = valid_card == Some("Permanent.Other") || valid_card == Some("Card.Other");
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        // DB$ PutCounter effects (like Pirate Peddlers)
+                        if svar_params.api_type == ApiType::PutCounter {
+                            let counter_num = svar_params
+                                .get("CounterNum")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::PutCounter {
+                                target: CardId::new(0),
+                                counter_type: crate::core::CounterType::P1P1,
+                                amount: counter_num,
+                            });
+                        }
+
+                        // DB$ DrawCards effects
+                        if svar_params.api_type == ApiType::Draw {
+                            let draw_count = svar_params
+                                .get("NumCards")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::DrawCards {
+                                player: PlayerId::new(0),
+                                count: draw_count,
+                            });
+                        }
+
+                        // DB$ GainLife effects
+                        if svar_params.api_type == ApiType::GainLife {
+                            let life_amount = svar_params
+                                .get("LifeAmount")
+                                .and_then(|s| s.parse::<i32>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::GainLife {
+                                player: PlayerId::new(0),
+                                amount: life_amount,
+                            });
+                        }
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever you sacrifice a permanent".to_string());
+
+                // Sacrifice triggers are NOT self-only (they trigger on OTHER cards being sacrificed)
+                // Use new_any() to mark trigger_self_only = false
+                let mut trigger = Trigger::new_any(TriggerEvent::Sacrificed, effects, description);
+
+                // Store "other-only" flag in description for runtime filtering
+                if is_other_only && !trigger.description.contains("[other]") {
+                    trigger.description = format!("[other] {}", trigger.description);
+                }
+
+                triggers.push(trigger);
+            }
         }
 
         triggers
@@ -3463,5 +3536,56 @@ Oracle:Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 
             assert_eq!(*power_bonus, 1, "Power bonus should be +1");
             assert_eq!(*toughness_bonus, 1, "Toughness bonus should be +1");
         }
+    }
+
+    #[test]
+    fn test_parse_sacrifice_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Test Pirate Peddlers style sacrifice trigger:
+        // "Whenever you sacrifice another permanent, put a +1/+1 counter on this creature."
+        let content = r#"
+Name:Pirate Peddlers
+ManaCost:2 B
+Types:Creature Human Pirate
+PT:2/2
+K:Deathtouch
+T:Mode$ Sacrificed | ValidCard$ Permanent.Other | Execute$ TrigPutCounter | TriggerZones$ Battlefield | ValidPlayer$ You | TriggerDescription$ Whenever you sacrifice another permanent, put a +1/+1 counter on this creature.
+SVar:TrigPutCounter:DB$ PutCounter | Defined$ Self | CounterType$ P1P1 | CounterNum$ 1
+Oracle:Deathtouch\nWhenever you sacrifice another permanent, put a +1/+1 counter on this creature.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the sacrifice trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::Sacrificed);
+
+        // Verify it has the [other] flag (triggers on OTHER permanents, not self)
+        assert!(
+            trigger.description.contains("[other]"),
+            "Trigger should be marked [other] for other permanents only. Description: {}",
+            trigger.description
+        );
+
+        // Verify it has a PutCounter effect
+        let has_put_counter = trigger.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::PutCounter {
+                    counter_type: crate::core::CounterType::P1P1,
+                    amount: 1,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_put_counter,
+            "Trigger should have PutCounter effect with P1P1 counter. Effects: {:?}",
+            trigger.effects
+        );
     }
 }
