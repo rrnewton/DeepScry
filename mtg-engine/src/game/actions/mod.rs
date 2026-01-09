@@ -7,6 +7,9 @@ use crate::{MtgError, Result};
 
 impl GameState {
     /// Play a land from hand to battlefield
+    ///
+    /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
+    /// to battlefield (which is a public zone).
     pub fn play_land(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
         // Check if player can play a land
         let player = self.get_player(player_id)?;
@@ -27,7 +30,12 @@ impl GameState {
             }
         }
 
-        // Move card to battlefield
+        // Reveal to all players before logging movement
+        // (playing a land reveals to all since battlefield is public)
+        let prior_log_size = self.logger.log_count();
+        self.maybe_reveal_to_all(card_id, prior_log_size);
+
+        // Move card to battlefield (move_card logs the MoveCard action)
         self.move_card(card_id, Zone::Hand, Zone::Battlefield, player_id)?;
 
         // Record the turn number when this land entered the battlefield
@@ -75,6 +83,9 @@ impl GameState {
     /// Cast a spell (put it on the stack)
     ///
     /// This validates mana payment and deducts the cost from the player's mana pool.
+    ///
+    /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
+    /// to stack (which is a public zone).
     pub fn cast_spell(&mut self, player_id: PlayerId, card_id: CardId, _targets: Vec<CardId>) -> Result<()> {
         // Check if card is in hand
         if let Some(zones) = self.get_player_zones(player_id) {
@@ -95,7 +106,12 @@ impl GameState {
             .pay_from_total_mana(&mana_cost)
             .map_err(MtgError::InvalidAction)?;
 
-        // Move card to stack
+        // Reveal to all players before logging movement
+        // (casting a spell reveals to all since stack is public)
+        let prior_log_size = self.logger.log_count();
+        self.maybe_reveal_to_all(card_id, prior_log_size);
+
+        // Move card to stack (move_card logs the MoveCard action)
         self.move_card(card_id, Zone::Hand, Zone::Stack, player_id)?;
 
         Ok(())
@@ -558,7 +574,12 @@ impl GameState {
             }
         }
 
-        // Step 1: Propose the spell - move card to stack
+        // Reveal to all players before logging movement
+        // (casting a spell reveals to all since stack is public)
+        let prior_log_size = self.logger.log_count();
+        self.maybe_reveal_to_all(card_id, prior_log_size);
+
+        // Step 1: Propose the spell - move card to stack (move_card logs the MoveCard action)
         // This happens BEFORE paying costs (unlike our old implementation)
         self.move_card(card_id, Zone::Hand, Zone::Stack, player_id)?;
 

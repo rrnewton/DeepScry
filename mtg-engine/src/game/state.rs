@@ -480,6 +480,87 @@ impl GameState {
         }
     }
 
+    // ========================================================================
+    // Reveal helpers
+    //
+    // These functions handle the "should I reveal / emit reveal" logic for
+    // card visibility in networked games.
+    //
+    // Two cases:
+    // 1. Card exists in store (normal) - just update mask, log SetRevealedToMask
+    // 2. Card doesn't exist (late-binding) - log RevealCard to create it
+    // ========================================================================
+
+    /// Maybe reveal a card to a specific player.
+    ///
+    /// Used when a card becomes visible to one player only (e.g., drawing a card).
+    /// If the card already exists and isn't revealed to the player, logs SetRevealedToMask.
+    /// If the card doesn't exist (late-binding), logs RevealCard.
+    pub fn maybe_reveal_to_player(&mut self, card_id: CardId, player_id: PlayerId, prior_log_size: usize) {
+        if let Some(card) = self.cards.try_get_mut(card_id) {
+            // Card exists - check if needs reveal to this player
+            if !card.is_revealed_to(player_id) {
+                let old_mask = card.revealed_to_mask;
+                card.mark_revealed_to(player_id);
+                let new_mask = card.revealed_to_mask;
+                // Log mask change for undo
+                self.undo_log.log(
+                    crate::undo::GameAction::SetRevealedToMask {
+                        card_id,
+                        old_value: old_mask,
+                        new_value: new_mask,
+                    },
+                    prior_log_size,
+                );
+            }
+        } else {
+            // Card doesn't exist - late-binding reveal creates it
+            self.undo_log.log(
+                crate::undo::GameAction::RevealCard {
+                    card_id,
+                    name: None, // Late-binding: name will be filled by caller
+                    revealed_to: crate::undo::RevealTarget::Player(player_id),
+                },
+                prior_log_size,
+            );
+        }
+    }
+
+    /// Maybe reveal a card to all players.
+    ///
+    /// Used when a card becomes publicly visible (e.g., entering battlefield, stack, graveyard).
+    /// If the card already exists and isn't revealed to all, logs SetRevealedToMask.
+    /// If the card doesn't exist (late-binding), logs RevealCard.
+    pub fn maybe_reveal_to_all(&mut self, card_id: CardId, prior_log_size: usize) {
+        if let Some(card) = self.cards.try_get_mut(card_id) {
+            // Card exists - check if needs reveal to all
+            if !card.is_revealed_to_all() {
+                let old_mask = card.revealed_to_mask;
+                card.mark_revealed_to_all();
+                let new_mask = card.revealed_to_mask;
+                // Log mask change for undo
+                self.undo_log.log(
+                    crate::undo::GameAction::SetRevealedToMask {
+                        card_id,
+                        old_value: old_mask,
+                        new_value: new_mask,
+                    },
+                    prior_log_size,
+                );
+            }
+        } else {
+            // Card doesn't exist - late-binding reveal creates it
+            self.undo_log.log(
+                crate::undo::GameAction::RevealCard {
+                    card_id,
+                    name: None, // Late-binding: name will be filled by caller
+                    revealed_to: crate::undo::RevealTarget::All,
+                },
+                prior_log_size,
+            );
+        }
+    }
+
     /// Move a card from one zone to another
     pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
         // Debug log card movement
@@ -753,7 +834,12 @@ impl GameState {
     /// Draw a card for a player
     ///
     /// In the late-binding architecture, all CardIDs are known upfront (library
-    /// contains actual CardIds). Card identities are revealed via RevealCard.
+    /// contains actual CardIds). Card identities are revealed via RevealCard
+    /// BEFORE the move, per NETWORK_ARCHITECTURE.md.
+    ///
+    /// When drawing:
+    /// 1. RevealCard logged to reveal the card's identity to the drawing player
+    /// 2. MoveCard logged to move from Library to Hand
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<Option<CardId>> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             let lib_size = zones.library.len();
@@ -767,8 +853,13 @@ impl GameState {
             if let Some(card_id) = zones.library.draw_top() {
                 zones.hand.add(card_id);
 
-                // Log the card movement for undo with prior log size
                 let prior_log_size = self.logger.log_count();
+
+                // Reveal to drawing player before logging movement
+                // (drawing reveals to owner only since hand is hidden)
+                self.maybe_reveal_to_player(card_id, player_id, prior_log_size);
+
+                // Log the card movement for undo
                 self.undo_log.log(
                     crate::undo::GameAction::MoveCard {
                         card_id,
@@ -789,11 +880,14 @@ impl GameState {
     ///
     /// Returns SmallVec to avoid heap allocation for typical mill counts (up to 8 cards).
     /// Mill effects typically mill 1-7 cards (e.g., "mill 3 cards").
+    ///
+    /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
+    /// to graveyard (which is a public zone).
     pub fn mill_cards(&mut self, player_id: PlayerId, count: u8) -> Result<SmallVec<[CardId; 8]>> {
         let mut milled_cards: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for _ in 0..count {
-            // Try to draw from library
+            // Try to get top card from library
             let card_id = if let Some(zones) = self.get_player_zones(player_id) {
                 zones.library.cards.last().copied()
             } else {
@@ -801,13 +895,20 @@ impl GameState {
             };
 
             if let Some(card_id) = card_id {
-                // Move the card from library to graveyard
+                let prior_log_size = self.logger.log_count();
+
+                // Reveal to all players before logging movement
+                // (milling reveals to all since graveyard is public)
+                self.maybe_reveal_to_all(card_id, prior_log_size);
+
+                // Move the card from library to graveyard (move_card logs the MoveCard action)
                 self.move_card(
                     card_id,
                     crate::zones::Zone::Library,
                     crate::zones::Zone::Graveyard,
                     player_id,
                 )?;
+
                 milled_cards.push(card_id);
             } else {
                 // Library is empty, can't mill more cards
@@ -1661,14 +1762,26 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
 
-                crate::undo::GameAction::RevealCard { card_id, name } => {
+                crate::undo::GameAction::RevealCard { card_id, name, .. } => {
                     // Undo reveal: clear the card from EntityStore (unreveal it)
                     // Only clear if we actually revealed a card (name was Some)
+                    // Note: revealed_to is not used for undo - we just need to clear the slot
                     if name.is_some() {
                         self.cards.clear(card_id);
                     }
                     // If name was None, this was a dummy reveal (opponent perspective)
                     // and nothing needs to be undone
+                }
+
+                crate::undo::GameAction::SetRevealedToMask {
+                    card_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    // Restore the previous revealed_to_mask value
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.revealed_to_mask = old_value;
+                    }
                 }
             }
 
@@ -1974,9 +2087,10 @@ mod tests {
             zones.hand.add(card_id);
         }
 
-        // Play the land - should log MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
+        // Play the land - should log SetRevealedToMask, MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
+        // Note: SetRevealedToMask (not RevealCard) because the card already exists in the store
         game.play_land(p1_id, card_id).unwrap();
-        assert_eq!(game.undo_log.len(), 3);
+        assert_eq!(game.undo_log.len(), 4);
         matches!(
             game.undo_log.peek().unwrap(),
             crate::undo::GameAction::SetLandsPlayedThisTurn { .. }
@@ -1984,30 +2098,33 @@ mod tests {
 
         // Tap for mana - should log TapCard and AddMana
         game.tap_for_mana(p1_id, card_id).unwrap();
-        assert_eq!(game.undo_log.len(), 5); // MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn, TapCard, AddMana
+        assert_eq!(game.undo_log.len(), 6); // SetRevealedToMask, MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn, TapCard, AddMana
 
         // Untap all - should log TapCard for untap
         game.untap_all(p1_id).unwrap();
-        assert_eq!(game.undo_log.len(), 6); // + TapCard (untapped)
+        assert_eq!(game.undo_log.len(), 7); // + TapCard (untapped)
 
-        // Verify all actions are logged
+        // Verify all actions are logged (SetRevealedToMask comes before MoveCard per NETWORK_ARCHITECTURE.md)
+        // Note: For cards that already exist in store, we log SetRevealedToMask (not RevealCard)
+        // RevealCard is only for late-binding when the card doesn't exist yet
         let actions = game.undo_log.actions();
-        assert!(matches!(actions[0], crate::undo::GameAction::MoveCard { .. }));
+        assert!(matches!(actions[0], crate::undo::GameAction::SetRevealedToMask { .. }));
+        assert!(matches!(actions[1], crate::undo::GameAction::MoveCard { .. }));
         assert!(matches!(
-            actions[1],
+            actions[2],
             crate::undo::GameAction::SetTurnEnteredBattlefield { .. }
         ));
         assert!(matches!(
-            actions[2],
+            actions[3],
             crate::undo::GameAction::SetLandsPlayedThisTurn { .. }
         ));
         assert!(matches!(
-            actions[3],
+            actions[4],
             crate::undo::GameAction::TapCard { tapped: true, .. }
         ));
-        assert!(matches!(actions[4], crate::undo::GameAction::AddMana { .. }));
+        assert!(matches!(actions[5], crate::undo::GameAction::AddMana { .. }));
         assert!(matches!(
-            actions[5],
+            actions[6],
             crate::undo::GameAction::TapCard { tapped: false, .. }
         ));
     }

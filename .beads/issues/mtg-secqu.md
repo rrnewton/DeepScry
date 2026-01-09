@@ -29,46 +29,45 @@ The network architecture is based on these inviolable principles:
 - [x] Handler loop is sequential (no select!)
 - [x] Opponent choices flow through coordinator
 
-### Reveal Architecture (TODO - mtg-hbt5i)
-- [ ] Move reveal generation to core GameLoop (not server handlers)
-- [ ] Use `GameAction::RevealCard` with `revealed_to` field (P1, P2, or BOTH)
-- [ ] Reveals logged BEFORE moves (reveal before first use)
-- [ ] Deduplication happens at log time (skip if already revealed to target)
-- [ ] Remove `collect_reveals_since_last_choice()` from NetworkController
-- [ ] Remove reveal bundling from ChoiceRequest
-- [ ] Remove `revealed_cards` HashSet from PlayerConnection
-- [ ] Server reads RevealCard from action log, forwards to clients
+### Reveal Architecture (IN PROGRESS - mtg-hbt5i)
+- [x] Move reveal generation to core GameLoop (not server handlers)
+  - draw_card, mill_cards, play_land, cast_spell, cast_spell_8_step now log RevealCard
+- [x] Use `GameAction::RevealCard` with `revealed_to` field (P1, P2, or BOTH)
+  - Added `RevealTarget` enum: `Player(PlayerId)` or `All`
+- [x] Reveals logged BEFORE moves (reveal before first use)
+  - RevealCard logged before MoveCard in all updated functions
+- [x] Deduplication happens at log time (skip if already revealed to target)
+  - Added `revealed_to_mask: u8` field to Card struct
+  - `is_revealed_to()`, `mark_revealed_to()` helper methods
+- [x] Update `collect_reveals_since_last_choice()` in NetworkController
+  - Now reads RevealCard actions from log, not infers from MoveCard
+- [ ] Remove reveal bundling from ChoiceRequest (still used, but populated from RevealCard)
+- [x] `revealed_cards` HashSet was already removed from PlayerConnection
+- [ ] Opening hand reveals still need updating to use RevealCard
 
-### Code Violations to Fix
+### Code Violations Status
 
 #### server.rs
-- [ ] `collect_reveals_since_last_choice()` scans undo_log in handler - WRONG
-  - Should read RevealCard actions from log, not infer from MoveCard
-- [ ] `revealed_cards: HashSet<CardId>` in PlayerConnection - WRONG
-  - Deduplication belongs in core engine, not handler
-- [ ] `send_reveal_if_new()` - WRONG
-  - Reveals should be deterministic game actions, not handler decisions
-- [ ] Opening hand reveals sent manually - WRONG
-  - Should be RevealCard actions in the log from GameLoop
+- [x] `revealed_cards: HashSet<CardId>` - REMOVED (not present in code)
+- [x] `send_reveal_if_new()` - REMOVED (not present in code)
+- [ ] Opening hand reveals - still sent manually, needs RevealCard migration
 
 #### controller.rs
-- [ ] `collect_reveals_since_last_choice()` - WRONG
-  - NetworkController shouldn't compute reveals from MoveCard
-  - Should forward RevealCard actions from log
-- [ ] `shared_reveal_index` coordination - WRONG
-  - No need for coordination if reveals are in the log
+- [x] `collect_reveals_since_last_choice()` - FIXED
+  - Now reads RevealCard actions from log, not MoveCard
+- [ ] `shared_reveal_index` - still in place for coordination, may simplify later
 
 #### game_loop/
-- [ ] No `GameAction::RevealCard` being logged on card moves - WRONG
-  - Core engine should log reveals before moves
-- [ ] `reveal_pusher` callback never used - should be removed or repurposed
+- [x] GameAction::RevealCard now logged on card moves
+  - draw_card, mill_cards, play_land, cast_spell, cast_spell_8_step
+- [x] Added `SetRevealedToMask` action for undo support when card already exists
+- [x] Added helper functions: `maybe_reveal_to_player()` and `maybe_reveal_to_all()`
+- [ ] `reveal_pusher` callback - still unused, review if needed
 - [ ] `reveal_drainer` architecture - review if still needed
 
 #### client.rs
-- [ ] `drain_reveals` processing - review timing
-  - With proper reveal ordering, should be simpler
-- [ ] Reveal validation happening before reveals arrive - timing issue
-  - Proper reveal-before-move ordering should fix this
+- [ ] `drain_reveals` processing - may be simplified now
+- [ ] Reveal validation timing - should be improved with proper ordering
 
 ## Architecture Principles (from docs/NETWORK_ARCHITECTURE.md)
 

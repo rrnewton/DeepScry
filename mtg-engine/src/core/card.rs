@@ -586,6 +586,12 @@ pub struct Card {
     /// Used for SubAbility$ resolution during effect execution
     pub svars: std::collections::HashMap<String, String>,
 
+    /// Bitmask tracking which players have seen this card's identity
+    /// Per NETWORK_ARCHITECTURE.md, this enables deduplication at log time.
+    /// Bit 0 = PlayerId(0), Bit 1 = PlayerId(1), etc.
+    /// Used to avoid logging redundant RevealCard actions.
+    pub revealed_to_mask: u8,
+
     /// Cache for expensive string operations (computed at load time)
     /// Avoids repeated to_lowercase() and contains() allocations during gameplay
     pub cache: CardCache,
@@ -632,6 +638,7 @@ impl Card {
             attached_to: None,
             chosen_color: None,
             svars: std::collections::HashMap::new(),
+            revealed_to_mask: 0,
         }
     }
 
@@ -758,6 +765,51 @@ impl Card {
 
     pub fn has_keyword(&self, keyword: Keyword) -> bool {
         self.keywords.contains(keyword)
+    }
+
+    // === Reveal tracking methods (per NETWORK_ARCHITECTURE.md) ===
+
+    /// Check if this card has been revealed to a specific player
+    ///
+    /// Used for deduplication: skip logging RevealCard if already revealed.
+    #[inline]
+    pub fn is_revealed_to(&self, player_id: PlayerId) -> bool {
+        let bit = 1u8 << (player_id.as_u32() as u8);
+        (self.revealed_to_mask & bit) != 0
+    }
+
+    /// Check if this card has been revealed to all players (both in 2-player game)
+    #[inline]
+    pub fn is_revealed_to_all(&self) -> bool {
+        // For 2-player games, both players means bits 0 and 1 are set (0b11 = 3)
+        self.revealed_to_mask >= 0b11
+    }
+
+    /// Mark this card as revealed to a specific player
+    #[inline]
+    pub fn mark_revealed_to(&mut self, player_id: PlayerId) {
+        let bit = 1u8 << (player_id.as_u32() as u8);
+        self.revealed_to_mask |= bit;
+    }
+
+    /// Mark this card as revealed to all players
+    #[inline]
+    pub fn mark_revealed_to_all(&mut self) {
+        // For 2-player games, set both bits
+        self.revealed_to_mask = 0b11;
+    }
+
+    /// Clear a player from the revealed mask (for undo)
+    #[inline]
+    pub fn clear_revealed_to(&mut self, player_id: PlayerId) {
+        let bit = 1u8 << (player_id.as_u32() as u8);
+        self.revealed_to_mask &= !bit;
+    }
+
+    /// Clear all reveal tracking (for undo of "reveal to all")
+    #[inline]
+    pub fn clear_revealed_to_all(&mut self) {
+        self.revealed_to_mask = 0;
     }
 
     pub fn has_flying(&self) -> bool {

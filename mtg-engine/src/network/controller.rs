@@ -342,24 +342,23 @@ impl NetworkController {
 
     /// Collect card reveals since this player's last choice
     ///
-    /// Scans the undo log backwards from the current position until we find
-    /// a `ChoicePoint` for this player, or until we reach `last_reveal_index`
-    /// (actions before that were already sent during handshake).
-    /// Returns `MoveCard` actions from Library that this player should see.
+    /// Per NETWORK_ARCHITECTURE.md, this reads RevealCard actions from the log
+    /// instead of inferring reveals from MoveCard actions. The `revealed_to` field
+    /// on RevealCard tells us which players should see each reveal.
     ///
     /// A player sees a reveal if:
-    /// - They own the card (e.g., their own draw to hand)
-    /// - The card moved to a public zone (battlefield, graveyard, stack, exile)
-    ///
-    /// We do NOT reveal opponent's draws to hand - that would leak hidden information.
+    /// - revealed_to == All (public zone like battlefield, graveyard, stack)
+    /// - revealed_to == Player(id) where id matches this player
     ///
     /// Called by request_choice to bundle reveals with the ChoiceRequest.
     /// Uses the shared_reveal_index to coordinate with the immediate reveal pusher.
     ///
     /// Note: Wildcard is intentional - GameAction has many variants;
-    /// we only collect MoveCard from Library.
+    /// we only collect RevealCard actions targeted at this player.
     #[allow(clippy::wildcard_enum_match_arm)]
     fn collect_reveals_since_last_choice(&mut self, view: &GameStateView) -> Vec<CardRevealInfo> {
+        use crate::undo::RevealTarget;
+
         let actions = view.undo_log_actions();
         let mut reveals = Vec::new();
         let total_actions = actions.len();
@@ -382,27 +381,26 @@ impl NetworkController {
                 GameAction::ChoicePoint { player_id, .. } if *player_id == self.player_id => {
                     break;
                 }
-                // Collect card moves from library for THIS player only
-                // A player sees a reveal if:
-                // - They own the card (their own draw to hand)
-                // - The card moved to a public zone (battlefield, graveyard, stack, exile)
-                // We do NOT reveal opponent's draws to hand - that's hidden information
-                GameAction::MoveCard {
+                // Collect RevealCard actions targeted at this player (per NETWORK_ARCHITECTURE.md)
+                GameAction::RevealCard {
                     card_id,
-                    from_zone: Zone::Library,
-                    to_zone,
-                    owner,
+                    name,
+                    revealed_to,
                 } => {
-                    let is_public_zone =
-                        matches!(to_zone, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
-                    let is_own_card = *owner == self.player_id;
+                    let should_reveal = match revealed_to {
+                        RevealTarget::All => true,
+                        RevealTarget::Player(target_id) => *target_id == self.player_id,
+                    };
 
-                    if is_own_card || is_public_zone {
+                    // Only include reveals with actual card names (not dummy reveals for opponents)
+                    if should_reveal && name.is_some() {
+                        // Use placeholder zone info - CardRevealInfo may need updating
+                        // to better match the RevealCard architecture
                         reveals.push(CardRevealInfo {
                             card_id: *card_id,
-                            owner: *owner,
-                            from_zone: Zone::Library,
-                            to_zone: *to_zone,
+                            owner: self.player_id,    // Placeholder
+                            from_zone: Zone::Library, // Placeholder
+                            to_zone: Zone::Hand,      // Placeholder
                         });
                     }
                 }

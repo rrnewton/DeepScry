@@ -11,6 +11,19 @@ use std::fmt;
 
 use crate::game::GameState;
 
+/// Target audience for a card reveal
+///
+/// Specifies WHO should see a card's identity when it's revealed.
+/// Per NETWORK_ARCHITECTURE.md, reveals are first-class game actions logged
+/// BEFORE any move that depends on the card's identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RevealTarget {
+    /// Reveal to a single player only (e.g., drawing a card - only the owner sees it)
+    Player(PlayerId),
+    /// Reveal to all players (e.g., card entering battlefield - everyone sees it)
+    All,
+}
+
 /// Atomic game actions that can be logged and undone
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GameAction {
@@ -127,11 +140,17 @@ pub enum GameAction {
     /// Part of the late-binding CardID architecture (mtg-qtqcr). This action binds
     /// a pre-allocated CardID to its actual card identity (name).
     ///
+    /// ## Target Audience
+    ///
+    /// The `revealed_to` field specifies WHO should see this reveal:
+    /// - `RevealTarget::Player(id)`: Only that player sees it (e.g., drawing a card)
+    /// - `RevealTarget::All`: Everyone sees it (e.g., card entering battlefield)
+    ///
     /// ## Viewer-Specific Content
     ///
     /// This action is logged by ALL players for EVERY reveal, but with different content:
-    /// - Players who learn the identity: `name = Some("Lightning Bolt")`
-    /// - Players who don't learn: `name = None` (keeps action_count in sync)
+    /// - Players in the target audience: `name = Some("Lightning Bolt")`
+    /// - Players NOT in the audience: `name = None` (keeps action_count in sync)
     ///
     /// This keeps action_count synchronized across all clients while maintaining
     /// information asymmetry.
@@ -163,6 +182,20 @@ pub enum GameAction {
         card_id: CardId,
         /// The revealed card name, or None for dummy reveals (opponent's hidden card)
         name: Option<String>,
+        /// Who should see this reveal (determines whether name is Some or None)
+        revealed_to: RevealTarget,
+    },
+
+    /// Set revealed_to_mask field (for tracking which players have seen a card)
+    ///
+    /// This is logged when a card is revealed to track deduplication state.
+    /// Used to avoid redundant RevealCard actions for cards already revealed.
+    SetRevealedToMask {
+        card_id: CardId,
+        /// Previous mask value (for undo)
+        old_value: u8,
+        /// New mask value
+        new_value: u8,
     },
 }
 
@@ -244,10 +277,31 @@ impl fmt::Display for GameAction {
                 choice_id,
                 choice,
             } => write!(f, "Choice(P{} #{} = {:?})", player_id.as_u32(), choice_id, choice),
-            GameAction::RevealCard { card_id, name, .. } => match name {
-                Some(n) => write!(f, "RevealCard({} = \"{}\")", card_id.as_u32(), n),
-                None => write!(f, "RevealCard({} = ???)", card_id.as_u32()),
-            },
+            GameAction::RevealCard {
+                card_id,
+                name,
+                revealed_to,
+            } => {
+                let target = match revealed_to {
+                    RevealTarget::Player(pid) => format!("P{}", pid.as_u32()),
+                    RevealTarget::All => "ALL".to_string(),
+                };
+                match name {
+                    Some(n) => write!(f, "RevealCard({} = \"{}\" to {})", card_id.as_u32(), n, target),
+                    None => write!(f, "RevealCard({} = ??? to {})", card_id.as_u32(), target),
+                }
+            }
+            GameAction::SetRevealedToMask {
+                card_id,
+                old_value,
+                new_value,
+            } => write!(
+                f,
+                "SetRevealedMask({} 0x{:02x} -> 0x{:02x})",
+                card_id.as_u32(),
+                old_value,
+                new_value
+            ),
         }
     }
 }
@@ -448,14 +502,31 @@ impl GameAction {
                 // ChoicePoints don't modify game state, nothing to undo
             }
 
-            GameAction::RevealCard { card_id, name } => {
+            GameAction::RevealCard { card_id, name, .. } => {
                 // Undo reveal: clear the card from EntityStore (unreveal it)
                 // Only clear if we actually revealed a card (name was Some)
+                // Note: revealed_to is not used for undo - we just need to clear the slot
                 if name.is_some() {
                     game.cards.clear(*card_id);
                 }
                 // If name was None, this was a dummy reveal (opponent perspective)
                 // and nothing needs to be undone
+            }
+
+            GameAction::SetRevealedToMask {
+                card_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous revealed_to_mask value
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.revealed_to_mask = *old_value;
+                } else {
+                    return Err(format!(
+                        "Card {} not found for SetRevealedToMask undo",
+                        card_id.as_u32()
+                    ));
+                }
             }
         }
 
@@ -927,10 +998,23 @@ mod tests {
         let action = GameAction::RevealCard {
             card_id: CardId::new(5),
             name: Some("Lightning Bolt".to_string()),
+            revealed_to: RevealTarget::All,
         };
 
         let display = format!("{}", action);
-        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\")");
+        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\" to ALL)");
+    }
+
+    #[test]
+    fn test_reveal_card_display_to_single_player() {
+        let action = GameAction::RevealCard {
+            card_id: CardId::new(5),
+            name: Some("Lightning Bolt".to_string()),
+            revealed_to: RevealTarget::Player(PlayerId::new(1)),
+        };
+
+        let display = format!("{}", action);
+        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\" to P1)");
     }
 
     #[test]
@@ -939,10 +1023,11 @@ mod tests {
         let action = GameAction::RevealCard {
             card_id: CardId::new(42),
             name: None,
+            revealed_to: RevealTarget::Player(PlayerId::new(0)),
         };
 
         let display = format!("{}", action);
-        assert_eq!(display, "RevealCard(42 = ???)");
+        assert_eq!(display, "RevealCard(42 = ??? to P0)");
     }
 
     #[test]
@@ -964,6 +1049,7 @@ mod tests {
         let action = GameAction::RevealCard {
             card_id: CardId::new(100),
             name: Some("Test Card".to_string()),
+            revealed_to: RevealTarget::All,
         };
 
         // Undo the reveal
@@ -983,9 +1069,11 @@ mod tests {
         assert!(!game.cards.is_revealed(CardId::new(100)));
 
         // Create dummy RevealCard (opponent doesn't learn the card)
+        // revealed_to is Player(0), but since we're the opponent (Player 1), name is None
         let action = GameAction::RevealCard {
             card_id: CardId::new(100),
             name: None,
+            revealed_to: RevealTarget::Player(PlayerId::new(0)),
         };
 
         // Undo should succeed without error (no-op)
@@ -1009,11 +1097,12 @@ mod tests {
         let card = Card::new(CardId::new(50), "Mountain", PlayerId::new(0));
         game.cards.insert(CardId::new(50), card);
 
-        // Log the reveal action (just needs card_id and name for undo)
+        // Log the reveal action
         log.log(
             GameAction::RevealCard {
                 card_id: CardId::new(50),
                 name: Some("Mountain".to_string()),
+                revealed_to: RevealTarget::All,
             },
             0,
         );
