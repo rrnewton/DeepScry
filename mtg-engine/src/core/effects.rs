@@ -584,6 +584,10 @@ pub enum TriggerEvent {
     /// When a creature deals combat damage
     /// Corresponds to: T:Mode$ DamageDone | ValidSource$ Card.Self | CombatDamage$ True
     DealsCombatDamage,
+
+    /// When a permanent is sacrificed
+    /// Corresponds to: T:Mode$ Sacrificed | ValidCard$ Permanent.Other | ValidPlayer$ You
+    Sacrificed,
 }
 
 /// A triggered ability that executes when an event occurs

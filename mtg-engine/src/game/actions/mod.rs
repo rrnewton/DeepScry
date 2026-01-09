@@ -2153,7 +2153,23 @@ impl GameState {
                         .triggers
                         .iter()
                         .filter(|trigger| {
-                            trigger.event == event && (!trigger.trigger_self_only || card_id == source_card_id)
+                            // Check event type matches
+                            if trigger.event != event {
+                                return false;
+                            }
+
+                            // Self-only triggers only fire when the trigger source is the event source
+                            if trigger.trigger_self_only && card_id != source_card_id {
+                                return false;
+                            }
+
+                            // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
+                            // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
+                            if trigger.description.contains("[other]") && card_id == source_card_id {
+                                return false;
+                            }
+
+                            true
                         })
                         .map(|trigger| TriggerInfo {
                             card_id,
@@ -2971,6 +2987,9 @@ impl GameState {
 
                     // Move from battlefield to graveyard
                     self.move_card(sac_target, Zone::Battlefield, Zone::Graveyard, sac_owner)?;
+
+                    // Check sacrifice triggers (e.g., Pirate Peddlers)
+                    self.check_triggers(TriggerEvent::Sacrificed, sac_target)?;
                 }
             }
 
@@ -3622,10 +3641,12 @@ impl GameState {
                     )));
                 }
 
-                // Sacrifice the permanents (move to graveyard)
+                // Sacrifice the permanents (move to graveyard) and check triggers
                 for sac_id in to_sacrifice.iter().take(*count as usize) {
                     let owner = self.cards.get(*sac_id)?.owner;
                     self.move_card(*sac_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    // Check sacrifice triggers (e.g., Pirate Peddlers)
+                    self.check_triggers(TriggerEvent::Sacrificed, *sac_id)?;
                 }
 
                 Ok(())
@@ -3634,7 +3655,9 @@ impl GameState {
             Cost::Sacrifice { card_id: sac_id } => {
                 // Sacrifice a specific permanent (move to graveyard)
                 let owner = self.cards.get(*sac_id)?.owner;
-                self.move_card(*sac_id, Zone::Battlefield, Zone::Graveyard, owner)
+                self.move_card(*sac_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                // Check sacrifice triggers
+                self.check_triggers(TriggerEvent::Sacrificed, *sac_id)
             }
 
             Cost::Discard { card_id: _ } => {
@@ -3862,6 +3885,9 @@ impl GameState {
 
                         // Move to graveyard
                         self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+
+                        // Check sacrifice triggers (e.g., Pirate Peddlers)
+                        let _ = self.check_triggers(TriggerEvent::Sacrificed, card_id);
                     }
                 }
             }
