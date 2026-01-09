@@ -661,7 +661,7 @@ async fn run_game(
     // - P2's cards get CardIDs [P1_deck_size..total)
     // Clients use init_game_reserve_only with the same ranges
     let initializer = GameInitializer::new(&card_db);
-    let game = initializer
+    let mut game = initializer
         .init_game_with_positional_ids(
             p1_name.clone(),
             &p1_decklist,
@@ -671,6 +671,11 @@ async fn run_game(
             seed,
         )
         .await?;
+
+    // Enable reveal logging for network games.
+    // RevealCard actions are logged during draw_card, play_land, etc.
+    // These are collected by NetworkController and sent to clients as CardRevealed messages.
+    game.set_skip_reveals(false);
 
     let p1_id = game.players[0].id;
     let p2_id = game.players[1].id;
