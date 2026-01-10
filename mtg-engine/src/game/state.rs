@@ -1171,6 +1171,10 @@ impl GameState {
     ///
     /// Note: This is a simplified implementation that keeps the first one found.
     /// A proper implementation would let the player choose which to keep.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a card cannot be found or moved to graveyard.
     pub fn check_legendary_rule(&mut self) -> Result<()> {
         use crate::core::CardName;
         use std::collections::HashMap;

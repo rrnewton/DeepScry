@@ -112,22 +112,22 @@ impl From<stats_alloc::Stats> for AllocStats {
 
 /// Guard for allocation tracking - measures allocations in its scope
 pub struct AllocTracker {
-    #[cfg(feature = "bench-stats-alloc")]
+    #[cfg(all(feature = "bench-stats-alloc", not(feature = "dhat-heap")))]
     region: Region<'static, System>,
-    #[cfg(not(feature = "bench-stats-alloc"))]
+    #[cfg(any(not(feature = "bench-stats-alloc"), feature = "dhat-heap"))]
     _phantom: (),
 }
 
 impl AllocTracker {
     /// Create a new allocation tracker
     pub fn new() -> Self {
-        #[cfg(feature = "bench-stats-alloc")]
+        #[cfg(all(feature = "bench-stats-alloc", not(feature = "dhat-heap")))]
         {
             AllocTracker {
                 region: Region::new(GLOBAL),
             }
         }
-        #[cfg(not(feature = "bench-stats-alloc"))]
+        #[cfg(any(not(feature = "bench-stats-alloc"), feature = "dhat-heap"))]
         {
             AllocTracker { _phantom: () }
         }
@@ -135,11 +135,11 @@ impl AllocTracker {
 
     /// Get statistics since tracker was created
     pub fn stats(&self) -> AllocStats {
-        #[cfg(feature = "bench-stats-alloc")]
+        #[cfg(all(feature = "bench-stats-alloc", not(feature = "dhat-heap")))]
         {
             self.region.change().into()
         }
-        #[cfg(not(feature = "bench-stats-alloc"))]
+        #[cfg(any(not(feature = "bench-stats-alloc"), feature = "dhat-heap"))]
         {
             AllocStats::zero()
         }
