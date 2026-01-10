@@ -67,12 +67,15 @@ The network architecture is based on these inviolable principles:
 #### game_loop/
 - [x] GameAction::RevealCard now logged on card moves
   - draw_card, mill_cards, play_land, cast_spell, cast_spell_8_step
-- [x] Added `SetRevealedToMask` action for undo support when card already exists
+- [x] RevealCard includes `old_mask` field for undo support
+  - Always use RevealCard (SetRevealedToMask is DEPRECATED)
+  - Undo restores the previous revealed_to_mask value
 - [x] Added helper functions: `maybe_reveal_to_player()` and `maybe_reveal_to_all()`
 - [ ] `reveal_pusher` callback - unused, can be removed (LOW PRIORITY)
 - [x] `reveal_drainer` architecture - NEEDED for client to process CardRevealed
 
 #### client.rs
+- [x] `skip_reveals=false` enabled for network games - matches server logs
 - [x] `drain_reveals` processing - working correctly for late-binding architecture
 - [x] Reveal validation timing - works with current ChoiceRequest flow
 

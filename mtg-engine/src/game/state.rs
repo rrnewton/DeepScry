@@ -532,25 +532,27 @@ impl GameState {
             // Card exists - check if needs reveal to this player
             if !card.is_revealed_to(player_id) {
                 let old_mask = card.revealed_to_mask;
+                let card_name = card.name.to_string();
                 card.mark_revealed_to(player_id);
-                let new_mask = card.revealed_to_mask;
-                // Log mask change for undo
+                // Log RevealCard with name (for network) and old_mask (for undo)
                 self.undo_log.log(
-                    crate::undo::GameAction::SetRevealedToMask {
+                    crate::undo::GameAction::RevealCard {
                         card_id,
-                        old_value: old_mask,
-                        new_value: new_mask,
+                        name: Some(card_name),
+                        revealed_to: crate::undo::RevealTarget::Player(player_id),
+                        old_mask,
                     },
                     prior_log_size,
                 );
             }
         } else {
-            // Card doesn't exist - late-binding reveal creates it
+            // Card doesn't exist - late-binding reveal (client doesn't know name yet)
             self.undo_log.log(
                 crate::undo::GameAction::RevealCard {
                     card_id,
-                    name: None, // Late-binding: name will be filled by caller
+                    name: None,
                     revealed_to: crate::undo::RevealTarget::Player(player_id),
+                    old_mask: 0,
                 },
                 prior_log_size,
             );
@@ -560,8 +562,7 @@ impl GameState {
     /// Maybe reveal a card to all players.
     ///
     /// Used when a card becomes publicly visible (e.g., entering battlefield, stack, graveyard).
-    /// If the card already exists and isn't revealed to all, logs SetRevealedToMask.
-    /// If the card doesn't exist (late-binding), logs RevealCard.
+    /// Logs RevealCard with name and old_mask for network and undo support.
     ///
     /// No-op if `skip_reveals` is true (default for local games).
     #[inline]
@@ -573,25 +574,27 @@ impl GameState {
             // Card exists - check if needs reveal to all
             if !card.is_revealed_to_all() {
                 let old_mask = card.revealed_to_mask;
+                let card_name = card.name.to_string();
                 card.mark_revealed_to_all();
-                let new_mask = card.revealed_to_mask;
-                // Log mask change for undo
+                // Log RevealCard with name (for network) and old_mask (for undo)
                 self.undo_log.log(
-                    crate::undo::GameAction::SetRevealedToMask {
+                    crate::undo::GameAction::RevealCard {
                         card_id,
-                        old_value: old_mask,
-                        new_value: new_mask,
+                        name: Some(card_name),
+                        revealed_to: crate::undo::RevealTarget::All,
+                        old_mask,
                     },
                     prior_log_size,
                 );
             }
         } else {
-            // Card doesn't exist - late-binding reveal creates it
+            // Card doesn't exist - late-binding reveal (client doesn't know name yet)
             self.undo_log.log(
                 crate::undo::GameAction::RevealCard {
                     card_id,
-                    name: None, // Late-binding: name will be filled by caller
+                    name: None,
                     revealed_to: crate::undo::RevealTarget::All,
+                    old_mask: 0,
                 },
                 prior_log_size,
             );
@@ -2127,8 +2130,8 @@ mod tests {
             zones.hand.add(card_id);
         }
 
-        // Play the land - should log SetRevealedToMask, MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
-        // Note: SetRevealedToMask (not RevealCard) because the card already exists in the store
+        // Play the land - should log RevealCard, MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn
+        // RevealCard always used now (with old_mask for undo support)
         game.play_land(p1_id, card_id).unwrap();
         assert_eq!(game.undo_log.len(), 4);
         matches!(
@@ -2138,17 +2141,16 @@ mod tests {
 
         // Tap for mana - should log TapCard and AddMana
         game.tap_for_mana(p1_id, card_id).unwrap();
-        assert_eq!(game.undo_log.len(), 6); // SetRevealedToMask, MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn, TapCard, AddMana
+        assert_eq!(game.undo_log.len(), 6); // RevealCard, MoveCard, SetTurnEnteredBattlefield, SetLandsPlayedThisTurn, TapCard, AddMana
 
         // Untap all - should log TapCard for untap
         game.untap_all(p1_id).unwrap();
         assert_eq!(game.undo_log.len(), 7); // + TapCard (untapped)
 
-        // Verify all actions are logged (SetRevealedToMask comes before MoveCard per NETWORK_ARCHITECTURE.md)
-        // Note: For cards that already exist in store, we log SetRevealedToMask (not RevealCard)
-        // RevealCard is only for late-binding when the card doesn't exist yet
+        // Verify all actions are logged (RevealCard comes before MoveCard per NETWORK_ARCHITECTURE.md)
+        // RevealCard is always logged now (with old_mask for undo support)
         let actions = game.undo_log.actions();
-        assert!(matches!(actions[0], crate::undo::GameAction::SetRevealedToMask { .. }));
+        assert!(matches!(actions[0], crate::undo::GameAction::RevealCard { .. }));
         assert!(matches!(actions[1], crate::undo::GameAction::MoveCard { .. }));
         assert!(matches!(
             actions[2],

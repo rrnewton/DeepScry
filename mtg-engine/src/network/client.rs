@@ -669,6 +669,11 @@ impl NetworkClient {
                 .await?
         };
 
+        // Enable reveal logging for network games.
+        // Both server and client must have matching skip_reveals settings
+        // so their undo_logs contain the same RevealCard actions.
+        game.set_skip_reveals(false);
+
         // Get player IDs
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;

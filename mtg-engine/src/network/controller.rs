@@ -386,6 +386,7 @@ impl NetworkController {
                     card_id,
                     name,
                     revealed_to,
+                    ..
                 } => {
                     let should_reveal = match revealed_to {
                         RevealTarget::All => true,

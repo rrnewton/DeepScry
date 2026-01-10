@@ -175,21 +175,24 @@ pub enum GameAction {
     ///
     /// ## Undo Logic
     ///
-    /// If `name` is Some (real reveal), clear the slot back to None.
-    /// If `name` is None (dummy reveal), nothing to undo.
+    /// Restores the previous revealed_to_mask value. If old_mask is 0 and
+    /// name is Some (card was created by this reveal), clears the card slot.
     RevealCard {
         /// The CardID being revealed
         card_id: CardId,
-        /// The revealed card name, or None for dummy reveals (opponent's hidden card)
+        /// The revealed card name, or None for late-binding (client doesn't know yet)
         name: Option<String>,
-        /// Who should see this reveal (determines whether name is Some or None)
+        /// Who should see this reveal
         revealed_to: RevealTarget,
+        /// Previous mask value (for undo). If 0, this was the first reveal.
+        old_mask: u8,
     },
 
     /// Set revealed_to_mask field (for tracking which players have seen a card)
     ///
-    /// This is logged when a card is revealed to track deduplication state.
-    /// Used to avoid redundant RevealCard actions for cards already revealed.
+    /// DEPRECATED: Use RevealCard with old_mask instead. This is kept for
+    /// backwards compatibility with existing undo logs but should not be
+    /// logged in new code.
     SetRevealedToMask {
         card_id: CardId,
         /// Previous mask value (for undo)
@@ -281,14 +284,28 @@ impl fmt::Display for GameAction {
                 card_id,
                 name,
                 revealed_to,
+                old_mask,
             } => {
                 let target = match revealed_to {
                     RevealTarget::Player(pid) => format!("P{}", pid.as_u32()),
                     RevealTarget::All => "ALL".to_string(),
                 };
                 match name {
-                    Some(n) => write!(f, "RevealCard({} = \"{}\" to {})", card_id.as_u32(), n, target),
-                    None => write!(f, "RevealCard({} = ??? to {})", card_id.as_u32(), target),
+                    Some(n) => write!(
+                        f,
+                        "RevealCard({} = \"{}\" to {} mask:0x{:02x})",
+                        card_id.as_u32(),
+                        n,
+                        target,
+                        old_mask
+                    ),
+                    None => write!(
+                        f,
+                        "RevealCard({} = ??? to {} mask:0x{:02x})",
+                        card_id.as_u32(),
+                        target,
+                        old_mask
+                    ),
                 }
             }
             GameAction::SetRevealedToMask {
@@ -502,15 +519,29 @@ impl GameAction {
                 // ChoicePoints don't modify game state, nothing to undo
             }
 
-            GameAction::RevealCard { card_id, name, .. } => {
-                // Undo reveal: clear the card from EntityStore (unreveal it)
-                // Only clear if we actually revealed a card (name was Some)
-                // Note: revealed_to is not used for undo - we just need to clear the slot
-                if name.is_some() {
+            GameAction::RevealCard {
+                card_id,
+                name,
+                old_mask,
+                ..
+            } => {
+                // Undo reveal: restore the previous mask state
+                // Two cases:
+                // 1. Card exists (server or client after instantiation):
+                //    Restore the old_mask value
+                // 2. Card was created by this reveal (late-binding, old_mask=0, name=Some):
+                //    Clear the slot entirely
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    // Card exists - restore the mask
+                    card.revealed_to_mask = *old_mask;
+                } else if *old_mask == 0 && name.is_some() {
+                    // Card doesn't exist but was created by this reveal
+                    // This shouldn't normally happen since the card should exist
+                    // if it was instantiated, but handle it defensively
                     game.cards.clear(*card_id);
                 }
-                // If name was None, this was a dummy reveal (opponent perspective)
-                // and nothing needs to be undone
+                // If card doesn't exist and old_mask != 0, this is a late-binding
+                // reveal that never instantiated (opponent's hidden card) - nothing to undo
             }
 
             GameAction::SetRevealedToMask {
@@ -999,10 +1030,11 @@ mod tests {
             card_id: CardId::new(5),
             name: Some("Lightning Bolt".to_string()),
             revealed_to: RevealTarget::All,
+            old_mask: 0,
         };
 
         let display = format!("{}", action);
-        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\" to ALL)");
+        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\" to ALL mask:0x00)");
     }
 
     #[test]
@@ -1011,10 +1043,11 @@ mod tests {
             card_id: CardId::new(5),
             name: Some("Lightning Bolt".to_string()),
             revealed_to: RevealTarget::Player(PlayerId::new(1)),
+            old_mask: 0,
         };
 
         let display = format!("{}", action);
-        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\" to P1)");
+        assert_eq!(display, "RevealCard(5 = \"Lightning Bolt\" to P1 mask:0x00)");
     }
 
     #[test]
@@ -1024,10 +1057,11 @@ mod tests {
             card_id: CardId::new(42),
             name: None,
             revealed_to: RevealTarget::Player(PlayerId::new(0)),
+            old_mask: 0,
         };
 
         let display = format!("{}", action);
-        assert_eq!(display, "RevealCard(42 = ??? to P0)");
+        assert_eq!(display, "RevealCard(42 = ??? to P0 mask:0x00)");
     }
 
     #[test]
@@ -1041,22 +1075,27 @@ mod tests {
         assert!(!game.cards.is_revealed(CardId::new(100)));
 
         // Create a test card and insert (simulating forward execution)
-        let card = Card::new(CardId::new(100), "Test Card", PlayerId::new(0));
+        let mut card = Card::new(CardId::new(100), "Test Card", PlayerId::new(0));
+        // Mark as revealed to all (simulating forward execution of reveal)
+        card.mark_revealed_to_all();
         game.cards.insert(CardId::new(100), card);
         assert!(game.cards.is_revealed(CardId::new(100)));
+        assert!(game.cards.get(CardId::new(100)).unwrap().is_revealed_to_all());
 
-        // Create the RevealCard action (name determines real vs dummy)
+        // Create the RevealCard action with old_mask=0 (was unrevealed before)
         let action = GameAction::RevealCard {
             card_id: CardId::new(100),
             name: Some("Test Card".to_string()),
             revealed_to: RevealTarget::All,
+            old_mask: 0,
         };
 
         // Undo the reveal
         action.undo(&mut game).unwrap();
 
-        // Card should be unrevealed (cleared)
-        assert!(!game.cards.is_revealed(CardId::new(100)));
+        // Card should still exist but mask restored to 0
+        assert!(game.cards.is_revealed(CardId::new(100))); // card still exists
+        assert_eq!(game.cards.get(CardId::new(100)).unwrap().revealed_to_mask, 0);
     }
 
     #[test]
@@ -1074,6 +1113,7 @@ mod tests {
             card_id: CardId::new(100),
             name: None,
             revealed_to: RevealTarget::Player(PlayerId::new(0)),
+            old_mask: 0,
         };
 
         // Undo should succeed without error (no-op)
@@ -1094,7 +1134,9 @@ mod tests {
         game.cards.reserve(CardId::new(50));
 
         // Create and insert card (forward execution)
-        let card = Card::new(CardId::new(50), "Mountain", PlayerId::new(0));
+        let mut card = Card::new(CardId::new(50), "Mountain", PlayerId::new(0));
+        // Mark as revealed to all (simulating forward execution of reveal)
+        card.mark_revealed_to_all();
         game.cards.insert(CardId::new(50), card);
 
         // Log the reveal action
@@ -1103,20 +1145,23 @@ mod tests {
                 card_id: CardId::new(50),
                 name: Some("Mountain".to_string()),
                 revealed_to: RevealTarget::All,
+                old_mask: 0,
             },
             0,
         );
 
         // Verify card is revealed
         assert!(game.cards.is_revealed(CardId::new(50)));
+        assert!(game.cards.get(CardId::new(50)).unwrap().is_revealed_to_all());
         assert_eq!(log.len(), 1);
 
         // Pop and undo
         let (action, _) = log.pop().unwrap();
         action.undo(&mut game).unwrap();
 
-        // Verify unrevealed
-        assert!(!game.cards.is_revealed(CardId::new(50)));
+        // Card still exists but mask is restored to 0
+        assert!(game.cards.is_revealed(CardId::new(50))); // card still exists
+        assert_eq!(game.cards.get(CardId::new(50)).unwrap().revealed_to_mask, 0);
         assert!(log.is_empty());
     }
 }
