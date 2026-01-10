@@ -48,6 +48,10 @@ impl CardEditionIndex {
     }
 
     /// Load all edition files from a directory and build the card-year index
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if directory reading fails.
     pub fn load_from_directory(editions_dir: &Path) -> std::io::Result<Self> {
         let mut index = Self::new();
 

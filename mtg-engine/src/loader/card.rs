@@ -42,6 +42,10 @@ pub struct CardLoader;
 
 impl CardLoader {
     /// Load a card from a .txt file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed.
     #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<CardDefinition> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
@@ -58,6 +62,10 @@ impl CardLoader {
     }
 
     /// Parse a card with explicit file context for warnings
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card definition cannot be parsed.
     pub fn parse_with_context(content: &str, file_context: Option<&str>) -> Result<CardDefinition> {
         set_parsing_context(file_context);
         let result = Self::parse(content);
@@ -66,6 +74,10 @@ impl CardLoader {
     }
 
     /// Parse a card from its text content
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card definition is incomplete or malformed.
     pub fn parse(content: &str) -> Result<CardDefinition> {
         let mut name = None;
         let mut mana_cost = ManaCost::new();
@@ -248,6 +260,7 @@ impl CardLoader {
             etb_choose_color,
             etb_exclude_colors,
             is_legendary,
+            script_name: None, // Set by token loader
         })
     }
 }
@@ -288,6 +301,12 @@ pub struct CardDefinition {
     /// Derived from "Legendary" in Types line (e.g., "Types:Legendary Creature Human Noble")
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
+    /// Script name (for tokens only). Used to look up token definitions.
+    /// For tokens loaded from tokenscripts/, this is the filename without extension
+    /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
+    /// For regular cards, this is None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
 }
 
 impl CardDefinition {
@@ -3627,6 +3646,32 @@ Oracle:Flash\nWhen this Equipment enters, attach it to target creature you contr
             has_attach,
             "Trigger should have AttachEquipment effect. Effects: {:?}",
             trigger.effects
+        );
+    }
+
+    #[test]
+    fn test_extract_token_scripts_canyon_crawler() {
+        // Canyon Crawler creates a Food token via trigger
+        let content = r#"
+Name:Canyon Crawler
+ManaCost:4 B B
+Types:Creature Spider Beast
+PT:6/6
+K:Deathtouch
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigFood | TriggerDescription$ When this creature enters, create a Food token. (It's an artifact with "{2}, {T}, Sacrifice this token:You gain 3 life.")
+SVar:TrigFood:DB$ Token | TokenScript$ c_a_food_sac | TokenOwner$ You
+K:TypeCycling:Swamp:2
+Oracle:Deathtouch\nWhen this creature enters, create a Food token.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let token_scripts = def.extract_token_scripts();
+
+        assert!(
+            token_scripts.contains(&"c_a_food_sac".to_string()),
+            "Should extract c_a_food_sac token script. Got: {:?}. raw_abilities: {:?}",
+            token_scripts,
+            def.raw_abilities
         );
     }
 }

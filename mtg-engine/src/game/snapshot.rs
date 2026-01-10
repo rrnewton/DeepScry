@@ -185,6 +185,11 @@ impl GameSnapshot {
     }
 
     /// Save this snapshot to a file (native only - requires filesystem access)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SnapshotError::Serialization` if encoding fails, or
+    /// `SnapshotError::Io` if file writing fails.
     #[cfg(feature = "native")]
     pub fn save_to_file<P: AsRef<std::path::Path>>(
         &self,
@@ -206,6 +211,11 @@ impl GameSnapshot {
     }
 
     /// Load a snapshot from a file (native only - requires filesystem access)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SnapshotError::Io` if the file cannot be read, or
+    /// `SnapshotError::Deserialization` if the content is invalid.
     #[cfg(feature = "native")]
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P, format: SnapshotFormat) -> Result<Self, SnapshotError> {
         match format {
@@ -225,21 +235,37 @@ impl GameSnapshot {
     }
 
     /// Serialize to JSON string (platform-independent)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SnapshotError::Serialization` if JSON serialization fails.
     pub fn to_json(&self) -> Result<String, SnapshotError> {
         serde_json::to_string(self).map_err(|e| SnapshotError::Serialization(e.to_string()))
     }
 
     /// Serialize to bincode bytes (platform-independent)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SnapshotError::Serialization` if bincode serialization fails.
     pub fn to_bincode(&self) -> Result<Vec<u8>, SnapshotError> {
         bincode::serialize(self).map_err(|e| SnapshotError::Serialization(e.to_string()))
     }
 
     /// Deserialize from JSON string (platform-independent)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SnapshotError::Deserialization` if JSON parsing fails.
     pub fn from_json(json: &str) -> Result<Self, SnapshotError> {
         serde_json::from_str(json).map_err(|e| SnapshotError::Deserialization(e.to_string()))
     }
 
     /// Deserialize from bincode bytes (platform-independent)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SnapshotError::Deserialization` if bincode parsing fails.
     pub fn from_bincode(bytes: &[u8]) -> Result<Self, SnapshotError> {
         bincode::deserialize(bytes).map_err(|e| SnapshotError::Deserialization(e.to_string()))
     }

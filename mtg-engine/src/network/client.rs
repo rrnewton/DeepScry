@@ -24,19 +24,69 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 type RevealMsg = (PlayerId, CardReveal, RevealReason);
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GAME LOOP MESSAGE (SINGLE-CHANNEL ARCHITECTURE)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// All messages from WebSocket handler to the game loop.
+///
+/// The single-channel architecture routes ALL server messages through one channel.
+/// This eliminates race conditions between reveal processing and controller messages
+/// by ensuring messages are processed in the exact order they were received from
+/// the server.
+///
+/// The game loop's `drain_messages` callback processes these sequentially:
+/// 1. CardRevealed - instantiates card in game state
+/// 2. ChoiceRequest - signals NetworkLocalController to proceed
+/// 3. OpponentChoice - signals RemoteController to proceed
+/// 4. GameEnded - signals both controllers to exit
+#[derive(Debug)]
+pub enum GameLoopMessage {
+    /// A card was revealed by the server - instantiate it in game state
+    CardRevealed {
+        owner: PlayerId,
+        card_id: CardId,
+        card_name: String,
+        reason: RevealReason,
+    },
+    /// Server is requesting a choice from us (signals NetworkLocalController)
+    ChoiceRequest { action_count: u64, choice_seq: u32 },
+    /// Server acknowledged our previous choice (signals NetworkLocalController)
+    ChoiceAcknowledged,
+    /// Opponent made a choice - apply it to shadow state (signals RemoteController)
+    OpponentChoice {
+        choice_indices: Vec<usize>,
+        description: String,
+        spell_ability: Option<crate::core::SpellAbility>,
+    },
+    /// Game has ended
+    GameEnded {
+        winner: Option<PlayerId>,
+        action_count: u64,
+    },
+    /// Server reported a fatal error
+    Error(String),
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CARD REVEAL UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Get CardDefinition from CardReveal by looking up in the database
+/// Get CardDefinition from CardReveal
 ///
-/// The simplified CardReveal only contains card_id and name, so we MUST
-/// look up full card info from the local database. This panics if the card
-/// is not found - the client must have all cards in the game loaded.
+/// Prefers using the embedded CardDefinition sent by the server (enables
+/// clients to run without a local card database). Falls back to database
+/// lookup if the server didn't include the definition.
 fn get_card_def_from_reveal(reveal: &CardReveal, card_db: &AsyncCardDatabase) -> CardDefinition {
+    // Prefer the CardDefinition sent by the server - this enables DB-free clients
+    if let Some(ref card_def) = reveal.card_def {
+        return card_def.clone();
+    }
+
+    // Fallback to local database lookup
     match futures_executor::block_on(card_db.get_card(&reveal.name)) {
         Ok(Some(def)) => (*def).clone(),
         Ok(None) => panic!(
-            "Card '{}' not in database - client must have all game cards loaded",
+            "Card '{}' not in database and server didn't provide definition",
             reveal.name
         ),
         Err(e) => panic!("Failed to load card '{}' from database: {}", reveal.name, e),
@@ -119,6 +169,10 @@ pub struct ClientGameState {
 
 impl ClientGameState {
     /// Create a new client game state from GameStarted message
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card database cannot resolve opening hand cards.
     pub fn new(info: GameStartInfo, card_db: &AsyncCardDatabase) -> Result<Self> {
         let our_player_id = info.your_player_id;
 
@@ -196,6 +250,14 @@ impl ClientGameState {
     }
 
     /// Process a CardRevealed message
+    ///
+    /// In the late-binding architecture:
+    /// - For deck cards (Draw, OpeningHand, Played): CardID slot was pre-reserved, use insert()
+    /// - For tokens (TokenCreated): New CardID, use insert_if_vacant() as fallback
+    ///
+    /// # Errors
+    ///
+    /// This function currently always succeeds, but returns Result for API consistency.
     pub fn process_card_revealed(
         &mut self,
         owner: PlayerId,
@@ -209,38 +271,52 @@ impl ClientGameState {
         if let Some(card_def) = Self::card_from_reveal(&card, card_db) {
             self.known_cards.insert(card.card_id, card_def.clone());
 
-            // Create card instance if not already in game (write-once)
+            // If this is a token definition with script_name, add to token_definitions
+            // This allows the client to create tokens without local card database
+            if let Some(script_name) = &card_def.script_name {
+                if !self.game.token_definitions.contains_key(script_name) {
+                    log::debug!("Adding token definition '{}' from server", script_name);
+                    self.game
+                        .token_definitions
+                        .insert(script_name.clone(), std::sync::Arc::new(card_def.clone()));
+                }
+            }
+
+            // Create card instance
             let card_instance = card_def.instantiate(card.card_id, owner);
-            self.game.cards.insert_if_vacant(card.card_id, card_instance);
 
             // Handle based on reason
             match reason {
-                RevealReason::Draw => {
-                    // Card reveals are now handled via RevealCard action in the game engine
-                    // The library no longer has queue_reveal since cards are already in the library
-                    // Just track that the card is known
-                }
-                RevealReason::OpeningHand => {
-                    // Already handled in new()
+                RevealReason::Draw | RevealReason::OpeningHand => {
+                    // Late-binding: CardID slot was pre-reserved via init_game_reserve_only()
+                    // Insert into the reserved slot (write-once semantics)
+                    if !self.game.cards.is_revealed(card.card_id) {
+                        self.game.cards.insert(card.card_id, card_instance);
+                    }
                 }
                 RevealReason::Played => {
-                    // When opponent plays a card from their hand, just add it if not already there
-                    // The hidden_card_count mechanism is removed in the new architecture
+                    // Opponent plays a card - CardID slot was pre-reserved
+                    if !self.game.cards.is_revealed(card.card_id) {
+                        self.game.cards.insert(card.card_id, card_instance);
+                    }
+                    // Add to hand if not already there (card will be moved to stack/battlefield)
                     if let Some(zones) = self.game.get_player_zones_mut(owner) {
                         if !zones.hand.contains(card.card_id) {
                             zones.hand.add(card.card_id);
                         }
                     }
                 }
-                RevealReason::Targeting | RevealReason::Effect => {
-                    // Card is now public knowledge, already added above
-                }
-                RevealReason::Searched => {
-                    // Tutor effect - card revealed but not yet in a known zone
+                RevealReason::Targeting | RevealReason::Effect | RevealReason::Searched => {
+                    // Card is now public knowledge - insert if not already revealed
+                    if !self.game.cards.is_revealed(card.card_id) {
+                        self.game.cards.insert(card.card_id, card_instance);
+                    }
                 }
                 RevealReason::TokenCreated => {
-                    // Token created - add to battlefield (shared zone on GameState)
-                    self.game.battlefield.add(card.card_id);
+                    // Token created - new CardID not from deck, use insert_if_vacant
+                    if self.game.cards.insert_if_vacant(card.card_id, card_instance) {
+                        self.game.battlefield.add(card.card_id);
+                    }
                 }
             }
         }
@@ -249,6 +325,10 @@ impl ClientGameState {
     }
 
     /// Process an OpponentChoice message (sync opponent's decision)
+    ///
+    /// # Errors
+    ///
+    /// This function currently always succeeds, but returns Result for API consistency.
     pub fn process_opponent_choice(
         &mut self,
         _choice_seq: u32,
@@ -371,6 +451,11 @@ impl NetworkClient {
     ///
     /// Note: Wildcard is intentional - ServerMessage has 12+ variants;
     /// we only expect AuthResult during connect, others are errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if card database loading, deck loading, WebSocket connection,
+    /// or authentication fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn connect(&mut self) -> Result<()> {
         // Load card database
@@ -435,6 +520,14 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage has 12+ variants;
     /// we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if WebSocket communication fails or game initialization fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if WebSocket communication or card database operations fail unexpectedly.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn wait_for_game_start(&mut self) -> Result<()> {
         use crate::loader::GameInitializer;
@@ -451,7 +544,8 @@ impl NetworkClient {
             initial_state_hash,
             opponent_decklist,
             server_network_debug,
-            deck_card_ids, // Phase 3: CardID ranges for late-binding architecture
+            deck_card_ids,     // Phase 3: CardID ranges for late-binding architecture
+            token_definitions, // Token definitions for network clients without local card DB
         ) = loop {
             let msg = self.receive_message().await?;
             match msg {
@@ -470,6 +564,7 @@ impl NetworkClient {
                     opponent_decklist,
                     network_debug,
                     deck_card_ids,
+                    token_definitions,
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(
@@ -489,6 +584,9 @@ impl NetworkClient {
                             ranges.p2_end
                         );
                     }
+                    if !token_definitions.is_empty() {
+                        log::info!("Received {} token definitions from server", token_definitions.len());
+                    }
 
                     let our_hand_count = opening_hand.len();
                     break (
@@ -501,6 +599,7 @@ impl NetworkClient {
                         opponent_decklist,
                         network_debug,
                         deck_card_ids,
+                        token_definitions,
                     );
                 }
                 ServerMessage::Error { message, fatal } => {
@@ -559,59 +658,44 @@ impl NetworkClient {
             }
         }
 
-        // Initialize game using GameInitializer for deterministic card IDs
+        // Initialize game using GameInitializer
         let card_db = self.card_db.as_ref().expect("Card DB not loaded");
         let initializer = GameInitializer::new(card_db);
-        let mut game = initializer
-            .init_game(p1_name, p1_deck, p2_name, p2_deck, starting_life)
-            .await?;
+
+        // Late-binding architecture: use init_game_reserve_only when server provides DeckCardIdRanges
+        // This creates CardID slots upfront, with identities revealed later via CardRevealed messages
+        let mut game = if let Some(ref ranges) = deck_card_ids {
+            log::debug!(
+                "Using late-binding architecture: {} total CardIDs (P1: [{}..{}), P2: [{}..{}))",
+                ranges.total_cards(),
+                ranges.p1_start,
+                ranges.p1_end,
+                ranges.p2_start,
+                ranges.p2_end
+            );
+            initializer.init_game_reserve_only(p1_name, p2_name, starting_life, ranges)
+        } else {
+            // Fallback: instantiate cards locally (legacy mode, may cause ID mismatches)
+            log::warn!("Server did not provide DeckCardIdRanges - using legacy initialization");
+            initializer
+                .init_game(p1_name, p1_deck, p2_name, p2_deck, starting_life)
+                .await?
+        };
 
         // Get player IDs
         let p1_id = game.players[0].id;
         let p2_id = game.players[1].id;
         let opponent_id = if we_are_p1 { p2_id } else { p1_id };
 
-        // Phase 3: Validate deck_card_ids ranges match our initialized game
-        // This ensures server and client agree on CardID assignment
-        if let Some(ref ranges) = deck_card_ids {
-            let total_cards = game.cards.len() as u32;
-            let expected_total = ranges.total_cards();
-            if total_cards != expected_total {
-                log::warn!(
-                    "CardID mismatch: client has {} cards, server expects {} (P1: {}, P2: {})",
-                    total_cards,
-                    expected_total,
-                    ranges.p1_end - ranges.p1_start,
-                    ranges.p2_end - ranges.p2_start
-                );
-            } else {
-                log::debug!(
-                    "CardID ranges validated: {} total cards (P1: [{}..{}), P2: [{}..{}))",
-                    total_cards,
-                    ranges.p1_start,
-                    ranges.p1_end,
-                    ranges.p2_start,
-                    ranges.p2_end
-                );
+        // Populate token_definitions from server's GameStarted message
+        // This allows the client to create tokens without a local card database
+        if !token_definitions.is_empty() {
+            log::debug!("Populating {} token definitions from server", token_definitions.len());
+            for (script_name, card_def) in token_definitions {
+                log::trace!("  Token: {} -> {}", script_name, card_def.name);
+                game.token_definitions
+                    .insert(script_name, std::sync::Arc::new(card_def));
             }
-        }
-
-        // Convert libraries to Remote mode - we don't know the shuffle order
-        // The server has shuffled and drawn, we need to receive reveals to know card order
-        let _our_lib_size = game
-            .get_player_zones(our_player_id)
-            .map(|z| z.library.len())
-            .unwrap_or(0);
-        let _opp_lib_size = game.get_player_zones(opponent_id).map(|z| z.library.len()).unwrap_or(0);
-
-        // Clear the local libraries and set them to Remote mode
-        // TODO(mtg-qtqcr Phase 3): Use CardZone::new_library_with_cards() once server sends DeckCardIdRanges
-        // For now, just create empty libraries since we don't have CardIDs yet
-        if let Some(zones) = game.get_player_zones_mut(our_player_id) {
-            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, our_player_id);
-        }
-        if let Some(zones) = game.get_player_zones_mut(opponent_id) {
-            zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, opponent_id);
         }
 
         // Create ClientGameState with the initialized game
@@ -634,20 +718,46 @@ impl NetworkClient {
             let msg = self.receive_message().await?;
             match msg {
                 ServerMessage::CardRevealed { owner, card, reason } => {
-                    log::debug!(
-                        "Opening hand reveal {}/{}: {} (id={:?}) for {:?}",
-                        reveals_received + 1,
-                        expected_reveals,
-                        card.name,
-                        card.card_id,
-                        owner
-                    );
-                    // Card reveals are now handled via RevealCard action in the game engine
-                    // The library no longer has queue_reveal since cards are already in the library
-                    // Just track that we received the reveal
-                    log::debug!("Received opening hand reveal for card id={}", card.card_id.as_u32());
+                    // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+                    // - Real reveal: name is non-empty, instantiate the card
+                    // - Dummy reveal: name is empty, opponent's hidden card - don't instantiate
+                    let is_dummy_reveal = card.name.is_empty();
+
+                    if is_dummy_reveal {
+                        log::debug!(
+                            "Opening hand dummy reveal {}/{}: CardID {} for {:?} (hidden)",
+                            reveals_received + 1,
+                            expected_reveals,
+                            card.card_id.as_u32(),
+                            owner
+                        );
+                        // Dummy reveal: CardID exists but we don't know what card it is
+                        // The slot is already reserved, leave it empty (None in EntityStore)
+                    } else {
+                        log::debug!(
+                            "Opening hand reveal {}/{}: {} (id={:?}) for {:?}",
+                            reveals_received + 1,
+                            expected_reveals,
+                            card.name,
+                            card.card_id,
+                            owner
+                        );
+
+                        // Late-binding: instantiate the card now that we know its identity
+                        // The CardID slot was already reserved via init_game_reserve_only()
+                        let card_db = self.card_db.as_ref().expect("Card DB not loaded");
+                        let card_def = get_card_def_from_reveal(&card, card_db);
+                        let card_instance = card_def.instantiate(card.card_id, owner);
+
+                        // Insert into the reserved slot (write-once semantics)
+                        if let Some(ref mut state) = self.state {
+                            state.game.cards.insert(card.card_id, card_instance);
+                            state.known_cards.insert(card.card_id, card_def);
+                        }
+                    }
+
                     reveals_received += 1;
-                    let _ = reason; // Reason is always Draw for opening hand
+                    let _ = reason; // Reason is Draw for opening hand reveals
                 }
                 ServerMessage::Error { message, fatal } => {
                     if fatal {
@@ -669,6 +779,17 @@ impl NetworkClient {
     async fn send_message(&mut self, msg: &ClientMessage) -> Result<()> {
         let ws = self.ws.as_mut().ok_or_else(|| anyhow!("Not connected"))?;
         let json = serde_json::to_string(msg)?;
+
+        // Log at DEBUG level with truncation for long messages
+        if log::log_enabled!(log::Level::Debug) {
+            let truncated = if json.len() > 500 {
+                format!("{}... ({} bytes total)", &json[..500], json.len())
+            } else {
+                json.clone()
+            };
+            log::debug!("[CLIENT->SERVER] {}", truncated);
+        }
+
         ws.send(Message::Text(json.into())).await?;
         Ok(())
     }
@@ -680,6 +801,16 @@ impl NetworkClient {
         loop {
             match ws.next().await {
                 Some(Ok(Message::Text(text))) => {
+                    // Log at DEBUG level with truncation for long messages
+                    if log::log_enabled!(log::Level::Debug) {
+                        let truncated = if text.len() > 500 {
+                            format!("{}... ({} bytes total)", &text[..500], text.len())
+                        } else {
+                            text.to_string()
+                        };
+                        log::debug!("[SERVER->CLIENT] {}", truncated);
+                    }
+
                     let msg: ServerMessage = serde_json::from_str(&text)?;
                     return Ok(msg);
                 }
@@ -701,6 +832,14 @@ impl NetworkClient {
     }
 
     /// Send a ping to keep connection alive
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket message cannot be sent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system time is before the Unix epoch (should never happen).
     pub async fn send_ping(&mut self) -> Result<()> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -714,6 +853,10 @@ impl NetworkClient {
     }
 
     /// Disconnect gracefully
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the disconnect message cannot be sent or WebSocket close fails.
     pub async fn disconnect(&mut self) -> Result<()> {
         self.send_message(&ClientMessage::Disconnect).await?;
         if let Some(mut ws) = self.ws.take() {
@@ -746,6 +889,14 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
     /// variants; we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not connected, game not started, or communication fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal channel communication fails or required state is missing.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
@@ -788,6 +939,9 @@ impl NetworkClient {
         let network_debug = self.network_debug;
 
         // Create controllers
+        // SINGLE-CHANNEL FIX: Controllers no longer need reveal_tx - reveals go directly
+        // to reveal_rx from the WebSocket handler. Controllers don't push reveals anymore.
+
         let local_controller = NetworkLocalController::new(
             controller,
             // Convert tokio channel to std channel for blocking thread
@@ -838,11 +992,13 @@ impl NetworkClient {
             // We MUST echo this back in SubmitChoice
             let mut server_choice_seq: Option<u32> = None;
 
-            // Buffer for pending CardRevealed with RevealReason::Played
-            // The server sends CardRevealed immediately before OpponentChoice for spell plays.
-            // We buffer it here and include it in the RemoteMessage so the game thread
-            // has the card info BEFORE trying to execute the spell.
-            let mut pending_played_reveal: Option<(PlayerId, CardReveal)> = None;
+            // SINGLE-CHANNEL ARCHITECTURE: Send reveals directly to reveal_tx immediately.
+            // This eliminates the race condition where drain_reveals() was called before
+            // controllers had a chance to push their bundled reveals.
+            //
+            // The fix: reveals go DIRECTLY to reveal_tx as they arrive, not via bundling.
+            // Controllers no longer need push_pending_reveals() - reveals are already
+            // in reveal_rx waiting for drain_reveals() to process them.
 
             loop {
                 tokio::select! {
@@ -852,54 +1008,34 @@ impl NetworkClient {
                             Some(Ok(Message::Text(text))) => {
                                 match serde_json::from_str::<ServerMessage>(&text) {
                                     Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
-                                        log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
-
-                                        // Buffer Played reveals to include with OpponentChoice
-                                        // This ensures the game thread has the card info before
-                                        // trying to execute the spell cast.
-                                        if reason == RevealReason::Played {
-                                            log::debug!(
-                                                "WebSocket: Buffering Played reveal for opponent spell: {} (id={})",
-                                                card.name, card.card_id.as_u32()
-                                            );
-                                            pending_played_reveal = Some((owner, card));
-                                        } else {
-                                            // Send other reveals (Draw, etc.) directly to game thread
-                                            if let Err(e) = reveal_tx.send((owner, card, reason)) {
-                                                log::error!("Failed to send reveal to game thread: {:?}", e);
-                                            }
+                                        // SINGLE-CHANNEL FIX: Send reveals directly to reveal_tx.
+                                        // This ensures drain_reveals() can process them in order,
+                                        // eliminating the race condition from the bundling approach.
+                                        log::debug!(
+                                            "WebSocket: Sending reveal to game thread: {} (id={}) for {:?} ({:?})",
+                                            card.name, card.card_id.as_u32(), owner, reason
+                                        );
+                                        if let Err(e) = reveal_tx.send((owner, card, reason)) {
+                                            log::error!("WebSocket: Failed to send reveal: {:?}", e);
                                         }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
-                                        log::debug!("WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}, sending to RemoteController channel", description, choice_indices, spell_ability);
+                                        // SINGLE-CHANNEL FIX: No bundled reveals - they're already in reveal_tx.
+                                        // Just send the choice to the controller.
+                                        log::debug!(
+                                            "WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}",
+                                            description, choice_indices, spell_ability
+                                        );
 
-                                        // Send the opponent choice to RemoteController
-                                        // The card_reveal field is no longer used - we send Played reveals
-                                        // via reveal_tx instead so drain_reveals() can process them.
                                         match remote_choice_tx.send(RemoteMessage::Choice {
                                             choice_indices,
                                             description: description.clone(),
                                             spell_ability,
-                                            card_reveal: None, // Not used - reveal sent via reveal_tx
+                                            card_reveal: None,
+                                            reveals: Vec::new(), // Empty - reveals sent directly to reveal_tx
                                         }) {
                                             Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController channel successfully"),
                                             Err(e) => log::error!("WebSocket: FAILED to send opponent choice to RemoteController channel: {:?}", e),
-                                        }
-
-                                        // CRITICAL: Send the pending Played reveal via reveal_tx AFTER sending OpponentChoice
-                                        // This way:
-                                        // 1. RemoteController.wait_for_choice() unblocks and choose_spell_ability_to_play() returns
-                                        // 2. drain_reveals() at priority.rs:343 processes the Played reveal
-                                        // 3. The card is instantiated in game.cards
-                                        // 4. Game proceeds to execute the spell
-                                        if let Some((owner, card)) = pending_played_reveal.take() {
-                                            log::debug!(
-                                                "WebSocket: Sending buffered Played reveal for {} (id={}) via reveal_tx",
-                                                card.name, card.card_id.as_u32()
-                                            );
-                                            if let Err(e) = reveal_tx.send((owner, card, RevealReason::Played)) {
-                                                log::error!("Failed to send Played reveal to game thread: {:?}", e);
-                                            }
                                         }
                                     }
                                     Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
@@ -908,11 +1044,20 @@ impl NetworkClient {
                                         // before making a choice, ensuring client doesn't run ahead of server
                                         server_action_count = Some(action_count);
                                         server_choice_seq = Some(choice_seq);
-                                        log::debug!("Player {:?}: Received ChoiceRequest #{}, server action_count={}", our_player_id, choice_seq, action_count);
+
+                                        // SINGLE-CHANNEL FIX: No bundled reveals - they're already in reveal_tx.
+                                        // drain_reveals() will have processed them by the time the controller
+                                        // gets this ChoiceRequest and evaluates available options.
+                                        log::debug!(
+                                            "Player {:?}: Received ChoiceRequest #{}, server action_count={}",
+                                            our_player_id, choice_seq, action_count
+                                        );
+
                                         // Notify the local controller that server is ready for a choice
                                         let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
                                             action_count,
                                             choice_seq,
+                                            reveals: Vec::new(), // Empty - reveals sent directly to reveal_tx
                                         });
                                     }
                                     Ok(ServerMessage::ChoiceAccepted { choice_seq, action_count: server_action_count, .. }) => {
@@ -947,9 +1092,11 @@ impl NetworkClient {
                                     }
                                     Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
                                         log::info!("Game ended, winner: {:?}, action_count: {}", winner, action_count);
-                                        // Signal RemoteController to exit gracefully before we drop the channel
-                                        let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
+                                        // CRITICAL: Send winner to game_end_tx FIRST, before signaling controllers
+                                        // Otherwise the game loop might exit before we send the winner
                                         let _ = game_end_tx.send((winner, action_count)).await;
+                                        // Now signal RemoteController to exit gracefully
+                                        let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
                                         return;
                                     }
                                     Ok(ServerMessage::Error { message, fatal }) => {
@@ -1072,15 +1219,50 @@ impl NetworkClient {
             let drain_reveals = move |game: &mut GameState| {
                 // Helper to process a single reveal
                 // Now handles all reveal types by instantiating cards when needed
+                //
+                // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+                // - Real reveal: name is non-empty, instantiate the card
+                // - Dummy reveal: name is empty, opponent's hidden card - don't instantiate
                 let process_reveal =
                     |game: &mut GameState, owner: PlayerId, card_reveal: CardReveal, reason: RevealReason| {
                         let card_id = card_reveal.card_id;
 
+                        // Check for dummy reveal (empty name = hidden card)
+                        if card_reveal.name.is_empty() {
+                            log::debug!(
+                                "Dummy reveal: CardID {} for {:?} ({:?}) - skipping instantiation",
+                                card_id.as_u32(),
+                                owner,
+                                reason
+                            );
+                            return; // Nothing to instantiate for dummy reveals
+                        }
+
                         match reason {
                             RevealReason::Draw => {
-                                // Card reveals are now handled via RevealCard action in the game engine
-                                // The library no longer has queue_reveal since cards are already in the library
-                                log::debug!("Received draw reveal for {:?}: {:?}", owner, card_id);
+                                // Late-binding architecture: instantiate the card now that we know its identity
+                                // The CardID slot was reserved via init_game_reserve_only(), we need to bind
+                                // the card identity when revealed via draw.
+                                let card_already_known = game.cards.get(card_id).is_ok();
+                                log::debug!(
+                                    "RevealReason::Draw: {} (id={}) for {:?} card_already_known={}",
+                                    card_reveal.name,
+                                    card_id.as_u32(),
+                                    owner,
+                                    card_already_known
+                                );
+
+                                if !card_already_known {
+                                    let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                                    let card_instance = card_def.instantiate(card_id, owner);
+                                    game.cards.insert(card_id, card_instance);
+                                    log::debug!(
+                                        "Instantiated drawn card for {:?}: {} ({:?})",
+                                        owner,
+                                        card_reveal.name,
+                                        card_id
+                                    );
+                                }
                             }
                             RevealReason::Played => {
                                 // A card was played - this could be:
@@ -1223,7 +1405,7 @@ impl NetworkClient {
                     // We'll try again before the actual draw in draw_card.
                 }
 
-                // Also drain any additional reveals that may have arrived
+                // Non-blocking drain: get all reveals currently in the channel
                 while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
                     process_reveal(game, owner, card_reveal, reason);
                 }
@@ -1320,11 +1502,19 @@ impl NetworkClient {
                     }
                     None => {
                         // Channel closed without sending winner - check if fatal error
-                        if let Ok(msg) = fatal_error_rx.try_recv() {
-                            log::error!("Game terminated due to fatal error: {}", msg);
-                            Err(anyhow!("Fatal server error: {}", msg))
-                        } else {
-                            Ok(None)
+                        // Wait a short time for fatal error to arrive (race condition mitigation)
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(100),
+                            fatal_error_rx.recv()
+                        ).await {
+                            Ok(Some(msg)) => {
+                                log::error!("Game terminated due to fatal error: {}", msg);
+                                Err(anyhow!("Fatal server error: {}", msg))
+                            }
+                            _ => {
+                                // No fatal error, treat as normal termination (draw)
+                                Ok(None)
+                            }
                         }
                     }
                 }
@@ -1362,6 +1552,14 @@ impl NetworkClient {
     ///
     /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
     /// variants; we handle specific variants and log/ignore unexpected ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not connected, game not started, or communication fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if tokio runtime creation fails or card database is not loaded.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn run_game_sync<C: PlayerController>(&mut self, controller: C) -> Result<Option<PlayerId>> {
         use crate::game::GameLoop;
@@ -1429,6 +1627,7 @@ impl NetworkClient {
                                                 description,
                                                 spell_ability,
                                                 card_reveal: None, // Not used in basic mode
+                                                reveals: Vec::new(), // No bundled reveals in basic mode
                                             });
                                         }
                                         Ok(ServerMessage::ChoiceRequest { action_count, choice_seq, .. }) => {
@@ -1438,6 +1637,7 @@ impl NetworkClient {
                                             let _ = local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
                                                 action_count,
                                                 choice_seq,
+                                                reveals: Vec::new(), // No bundled reveals in basic mode
                                             });
                                         }
                                         Ok(ServerMessage::ChoiceAccepted { choice_seq, .. }) => {
@@ -1446,8 +1646,11 @@ impl NetworkClient {
                                         }
                                         Ok(ServerMessage::GameEnded { winner, action_count, .. }) => {
                                             log::info!("Game ended: winner={:?}, action_count={}", winner, action_count);
-                                            let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
+                                            // CRITICAL: Send winner to game_end_tx FIRST, before signaling controllers
+                                            // Otherwise the game loop might exit before we send the winner
                                             let _ = game_end_tx.send((winner, action_count));
+                                            // Now signal RemoteController to exit gracefully
+                                            let _ = remote_choice_tx.send(RemoteMessage::GameEnded);
                                             return;
                                         }
                                         Ok(ServerMessage::Error { message, fatal }) => {
@@ -1524,20 +1727,38 @@ impl NetworkClient {
         }
 
         // Create drain function for reveals
+        // In late-binding architecture, CardID slots are pre-reserved, so use insert()
         let drain_reveals = move |game: &mut crate::game::GameState| {
             while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
                 let card_id = card_reveal.card_id;
                 match reason {
                     RevealReason::Draw => {
-                        // Card reveals are now handled via RevealCard action in the game engine
-                        // The library no longer has queue_reveal since cards are already in the library
-                        log::debug!("Received draw reveal for {:?}: {:?}", owner, card_id);
+                        // Late-binding: instantiate the card when revealed
+                        if !game.cards.is_revealed(card_id) {
+                            let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                            let card_instance = card_def.instantiate(card_id, owner);
+                            game.cards.insert(card_id, card_instance);
+                            log::debug!(
+                                "Instantiated draw reveal for {:?}: {} ({:?})",
+                                owner,
+                                card_reveal.name,
+                                card_id
+                            );
+                        }
                     }
                     RevealReason::Played => {
-                        // Use the free function that includes DB fallback
-                        let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
-                        let card_instance = card_def.instantiate(card_id, owner);
-                        game.cards.insert_if_vacant(card_id, card_instance);
+                        // Late-binding: instantiate the card when revealed
+                        if !game.cards.is_revealed(card_id) {
+                            let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                            let card_instance = card_def.instantiate(card_id, owner);
+                            game.cards.insert(card_id, card_instance);
+                            log::debug!(
+                                "Instantiated played reveal for {:?}: {} ({:?})",
+                                owner,
+                                card_reveal.name,
+                                card_id
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -1562,7 +1783,8 @@ impl NetworkClient {
         let _ = ws_thread.join();
 
         // Check for fatal error first (highest priority)
-        if let Ok(msg) = fatal_error_rx.try_recv() {
+        // Use timeout to allow time for error to propagate
+        if let Ok(msg) = fatal_error_rx.recv_timeout(Duration::from_millis(100)) {
             log::error!("Game terminated due to fatal error: {}", msg);
             return Err(anyhow!("Fatal server error: {}", msg));
         }
@@ -1582,7 +1804,14 @@ impl NetworkClient {
                         log::error!("Game terminated due to fatal error: {}", msg);
                         return Err(anyhow!("Fatal server error: {}", msg));
                     }
-                    if let Ok((winner, _)) = game_end_rx.recv_timeout(Duration::from_millis(100)) {
+                    // Wait up to 5 seconds for the server to send the winner
+                    // This matches the async version timeout
+                    if let Ok((winner, server_action_count)) = game_end_rx.recv_timeout(Duration::from_secs(5)) {
+                        log::info!(
+                            "Game ended gracefully via ExitGame signal: winner={:?}, server_action_count={}",
+                            winner,
+                            server_action_count
+                        );
                         return Ok(winner);
                     }
                     // Check fatal error one more time after timeout
@@ -1590,6 +1819,7 @@ impl NetworkClient {
                         log::error!("Game terminated due to fatal error: {}", msg);
                         return Err(anyhow!("Fatal server error: {}", msg));
                     }
+                    log::info!("Game ended gracefully (no server signal within timeout)");
                     return Ok(None);
                 }
                 Err(anyhow!("Game error: {}", e))

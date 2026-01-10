@@ -46,6 +46,10 @@ impl Default for DeckBuilderConfig {
 }
 
 /// Run the deck builder TUI
+///
+/// # Errors
+///
+/// Returns an error if terminal setup, file I/O, or deck operations fail.
 pub async fn run_deck_builder(
     config: DeckBuilderConfig,
     card_names: Vec<String>,

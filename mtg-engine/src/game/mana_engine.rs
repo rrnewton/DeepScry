@@ -650,6 +650,10 @@ impl ManaEngine {
     /// This version can rebuild the cache if needed (after undo/rewind).
     ///
     /// The player_id parameter specifies which player's mana sources to query.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mana cache does not exist after rebuild (indicates internal error).
     pub fn update_mut(&mut self, game: &mut GameState, player_id: PlayerId) {
         // Memoization: skip rebuild if nothing has changed
         if self.cached_player == Some(player_id) && self.cached_version == game.mana_state_version {

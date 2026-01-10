@@ -130,29 +130,39 @@ pub enum GameAction {
     /// ## Viewer-Specific Content
     ///
     /// This action is logged by ALL players for EVERY reveal, but with different content:
-    /// - Players who learn the identity: `name = Some("Lightning Bolt")`, `card = Some(...)`
-    /// - Players who don't learn: `name = None`, `card = None` (keeps action_count in sync)
+    /// - Players who learn the identity: `name = Some("Lightning Bolt")`
+    /// - Players who don't learn: `name = None` (keeps action_count in sync)
     ///
     /// This keeps action_count synchronized across all clients while maintaining
     /// information asymmetry.
     ///
+    /// ## Write-Once Semantics
+    ///
+    /// Reveals are monotonic: a CardID can only transition from unrevealed (None)
+    /// to revealed (Some). The EntityStore enforces this with a panic if attempting
+    /// to insert into an already-occupied slot. This prevents revealing CardID 33
+    /// as "Lightning Bolt" then later revealing it as "Mountain".
+    ///
+    /// For game tree exploration, undo clears the slot back to None, allowing
+    /// a subsequent re-reveal (which is fine since each timeline only sees
+    /// a single None→Some transition).
+    ///
     /// ## Forward Logic
     ///
-    /// If `card` is Some, insert the Card into the EntityStore at `card_id`.
-    /// If `card` is None, this is a "dummy" reveal that doesn't modify state
+    /// If `name` is Some, the Card should be instantiated and inserted into
+    /// the EntityStore at `card_id` by the caller.
+    /// If `name` is None, this is a "dummy" reveal that doesn't modify state
     /// (for opponents who don't learn the card identity).
     ///
     /// ## Undo Logic
     ///
-    /// Clear the slot back to None using EntityStore::clear().
+    /// If `name` is Some (real reveal), clear the slot back to None.
+    /// If `name` is None (dummy reveal), nothing to undo.
     RevealCard {
         /// The CardID being revealed
         card_id: CardId,
-        /// The revealed card name, or None for players who don't learn it
+        /// The revealed card name, or None for dummy reveals (opponent's hidden card)
         name: Option<String>,
-        /// The full Card entity to insert, or None for dummy reveals
-        /// This is stored so that undo can restore the exact card state
-        card: Option<Box<crate::core::Card>>,
     },
 }
 
@@ -246,6 +256,10 @@ impl GameAction {
     /// Apply the inverse of this action to undo it
     ///
     /// Returns Ok(()) if successful, Err if the action cannot be undone
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the action cannot be undone (e.g., card/player not found).
     pub fn undo(&self, game: &mut GameState) -> Result<(), String> {
         match self {
             GameAction::MoveCard {
@@ -438,13 +452,13 @@ impl GameAction {
                 // ChoicePoints don't modify game state, nothing to undo
             }
 
-            GameAction::RevealCard { card_id, card, .. } => {
+            GameAction::RevealCard { card_id, name } => {
                 // Undo reveal: clear the card from EntityStore (unreveal it)
-                // Only clear if we actually revealed a card (card was Some)
-                if card.is_some() {
+                // Only clear if we actually revealed a card (name was Some)
+                if name.is_some() {
                     game.cards.clear(*card_id);
                 }
-                // If card was None, this was a dummy reveal (opponent perspective)
+                // If name was None, this was a dummy reveal (opponent perspective)
                 // and nothing needs to be undone
             }
         }
@@ -917,7 +931,6 @@ mod tests {
         let action = GameAction::RevealCard {
             card_id: CardId::new(5),
             name: Some("Lightning Bolt".to_string()),
-            card: None, // Display doesn't need the card
         };
 
         let display = format!("{}", action);
@@ -930,7 +943,6 @@ mod tests {
         let action = GameAction::RevealCard {
             card_id: CardId::new(42),
             name: None,
-            card: None,
         };
 
         let display = format!("{}", action);
@@ -938,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reveal_card_undo_with_card() {
+    fn test_reveal_card_undo_with_name() {
         use crate::core::Card;
 
         let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
@@ -947,18 +959,15 @@ mod tests {
         game.cards.reserve(CardId::new(100));
         assert!(!game.cards.is_revealed(CardId::new(100)));
 
-        // Create a test card
+        // Create a test card and insert (simulating forward execution)
         let card = Card::new(CardId::new(100), "Test Card", PlayerId::new(0));
-
-        // Insert the card (simulating forward execution of RevealCard)
-        game.cards.insert(CardId::new(100), card.clone());
+        game.cards.insert(CardId::new(100), card);
         assert!(game.cards.is_revealed(CardId::new(100)));
 
-        // Create the RevealCard action (with the card for undo)
+        // Create the RevealCard action (name determines real vs dummy)
         let action = GameAction::RevealCard {
             card_id: CardId::new(100),
             name: Some("Test Card".to_string()),
-            card: Some(Box::new(card)),
         };
 
         // Undo the reveal
@@ -970,7 +979,7 @@ mod tests {
 
     #[test]
     fn test_reveal_card_undo_dummy_reveal() {
-        // Dummy reveal (opponent perspective) - no card to insert/clear
+        // Dummy reveal (opponent perspective) - name is None
         let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 
         // Reserve a slot (slot stays empty for opponent)
@@ -981,7 +990,6 @@ mod tests {
         let action = GameAction::RevealCard {
             card_id: CardId::new(100),
             name: None,
-            card: None,
         };
 
         // Undo should succeed without error (no-op)
@@ -1001,16 +1009,15 @@ mod tests {
         // Reserve slot
         game.cards.reserve(CardId::new(50));
 
-        // Create and insert card
+        // Create and insert card (forward execution)
         let card = Card::new(CardId::new(50), "Mountain", PlayerId::new(0));
-        game.cards.insert(CardId::new(50), card.clone());
+        game.cards.insert(CardId::new(50), card);
 
-        // Log the reveal action
+        // Log the reveal action (just needs card_id and name for undo)
         log.log(
             GameAction::RevealCard {
                 card_id: CardId::new(50),
                 name: Some("Mountain".to_string()),
-                card: Some(Box::new(card)),
             },
             0,
         );

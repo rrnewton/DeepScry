@@ -526,6 +526,11 @@ impl AbilityParams {
     }
 
     /// Get a parameter and parse it as an integer
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbilityParseError::MissingParameter` if key not found,
+    /// or `AbilityParseError::InvalidParameter` if value cannot be parsed.
     pub fn get_i32(&self, key: &str) -> Result<i32, AbilityParseError> {
         let value = self.get(key).ok_or_else(|| AbilityParseError::MissingParameter {
             api_type: self.api_type.as_str().to_string(),
@@ -540,6 +545,11 @@ impl AbilityParams {
     }
 
     /// Get a parameter and parse it as an unsigned integer
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbilityParseError::MissingParameter` if key not found,
+    /// or `AbilityParseError::InvalidParameter` if value cannot be parsed.
     pub fn get_u8(&self, key: &str) -> Result<u8, AbilityParseError> {
         let value = self.get(key).ok_or_else(|| AbilityParseError::MissingParameter {
             api_type: self.api_type.as_str().to_string(),

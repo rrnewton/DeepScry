@@ -23,6 +23,10 @@ use crate::Result;
 
 impl PuzzleFile {
     /// Load a puzzle file from disk (native only - requires filesystem access)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed.
     #[cfg(feature = "native")]
     pub fn load(path: &std::path::Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
@@ -30,6 +34,10 @@ impl PuzzleFile {
     }
 
     /// Parse a puzzle file from a string
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the puzzle format is invalid or missing required sections.
     pub fn parse(contents: &str) -> Result<Self> {
         format::parse_puzzle(contents)
     }

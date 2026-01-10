@@ -210,7 +210,9 @@ impl ManaPool {
     /// This method deducts the mana from the pool. It first pays colored requirements,
     /// then pays generic cost using any remaining mana in WUBRG order.
     ///
-    /// Returns Ok(()) if payment successful, Err if insufficient mana.
+    /// # Errors
+    ///
+    /// Returns an error message if insufficient mana to pay the cost.
     pub fn pay_cost(&mut self, cost: &ManaCost) -> Result<(), String> {
         // First check if we can pay
         if !self.can_pay(cost) {

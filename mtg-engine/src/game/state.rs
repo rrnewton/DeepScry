@@ -1,7 +1,7 @@
 //! Main game state structure
 
 use crate::core::{
-    Card, CardId, Color, DelayedTriggerStore, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId,
+    Card, CardId, CardName, Color, DelayedTriggerStore, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId,
 };
 use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
 use crate::undo::UndoLog;
@@ -73,6 +73,13 @@ pub struct GameState {
     /// For WASM builds, loaded from bundled deck token data.
     #[serde(skip)]
     pub token_definitions: std::collections::HashMap<String, std::sync::Arc<crate::loader::CardDefinition>>,
+
+    /// Card definitions for all cards in this game (server only)
+    /// Maps card name to its definition for network transmission.
+    /// Wrapped in Arc so that cloning GameState only bumps refcount.
+    /// Not serialized - rebuilt during game initialization.
+    #[serde(skip)]
+    pub card_definitions: std::sync::Arc<std::collections::HashMap<CardName, crate::loader::CardDefinition>>,
 
     /// Per-game bump allocator for temporary allocations
     ///
@@ -191,6 +198,7 @@ impl GameState {
             undo_log: UndoLog::new(),
             logger: GameLogger::new(),
             token_definitions: std::collections::HashMap::new(),
+            card_definitions: std::sync::Arc::new(std::collections::HashMap::new()),
             bump: Bump::new(),
             mana_state_version: 0,
             persistent_effects: PersistentEffectStore::new(),
@@ -233,7 +241,9 @@ impl GameState {
     /// - Logging the undo action
     /// - Incrementing the mana state version for cache invalidation
     ///
-    /// Returns Ok(()) if successful, Err if the card doesn't exist.
+    /// # Errors
+    ///
+    /// Returns an error if the card doesn't exist.
     pub fn tap_permanent(&mut self, card_id: CardId) -> Result<()> {
         let card = self.cards.get_mut(card_id)?;
         if card.tapped {
@@ -266,7 +276,9 @@ impl GameState {
     /// - Logging the undo action
     /// - Incrementing the mana state version for cache invalidation
     ///
-    /// Returns Ok(()) if successful, Err if the card doesn't exist.
+    /// # Errors
+    ///
+    /// Returns an error if the card doesn't exist.
     pub fn untap_permanent(&mut self, card_id: CardId) -> Result<()> {
         let card = self.cards.get_mut(card_id)?;
         if !card.tapped {
@@ -419,6 +431,10 @@ impl GameState {
     }
 
     /// Get a player by ID
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the player ID does not exist.
     pub fn get_player(&self, id: PlayerId) -> Result<&Player> {
         self.players
             .iter()
@@ -427,6 +443,10 @@ impl GameState {
     }
 
     /// Get a mutable player by ID
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the player ID does not exist.
     pub fn get_player_mut(&mut self, id: PlayerId) -> Result<&mut Player> {
         self.players
             .iter_mut()
@@ -473,6 +493,10 @@ impl GameState {
     }
 
     /// Move a card from one zone to another
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if zone operations fail.
     pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
         // Debug log card movement
         if let Ok(card) = self.cards.get(card_id) {
@@ -746,6 +770,10 @@ impl GameState {
     ///
     /// In the late-binding architecture, all CardIDs are known upfront (library
     /// contains actual CardIds). Card identities are revealed via RevealCard.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if drawing fails (should not happen for normal draw operations).
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<Option<CardId>> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             let lib_size = zones.library.len();
@@ -781,6 +809,10 @@ impl GameState {
     ///
     /// Returns SmallVec to avoid heap allocation for typical mill counts (up to 8 cards).
     /// Mill effects typically mill 1-7 cards (e.g., "mill 3 cards").
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if zone operations fail.
     pub fn mill_cards(&mut self, player_id: PlayerId, count: u8) -> Result<SmallVec<[CardId; 8]>> {
         let mut milled_cards: SmallVec<[CardId; 8]> = SmallVec::new();
 
@@ -811,7 +843,12 @@ impl GameState {
     }
 
     /// Counter a spell on the stack
-    /// This removes the spell from the stack and moves it to its owner's graveyard
+    ///
+    /// This removes the spell from the stack and moves it to its owner's graveyard.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the spell is not on the stack or if the card cannot be found.
     pub fn counter_spell(&mut self, spell_id: CardId) -> Result<()> {
         // Check if the spell is on the stack
         if !self.stack.contains(spell_id) {
@@ -850,6 +887,10 @@ impl GameState {
     }
 
     /// Untap all permanents controlled by a player
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if card access fails (should not happen for normal operations).
     pub fn untap_all(&mut self, player_id: PlayerId) -> Result<()> {
         for card_id in self.battlefield.cards.iter() {
             if let Ok(card) = self.cards.get_mut(*card_id) {
@@ -871,6 +912,10 @@ impl GameState {
     }
 
     /// Add counters to a card and log for undo
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found.
     pub fn add_counters(&mut self, card_id: CardId, counter_type: crate::core::CounterType, amount: u8) -> Result<()> {
         if let Ok(card) = self.cards.get_mut(card_id) {
             card.add_counter(counter_type, amount);
@@ -893,6 +938,10 @@ impl GameState {
     }
 
     /// Remove counters from a card and log for undo
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found.
     pub fn remove_counters(
         &mut self,
         card_id: CardId,
@@ -925,6 +974,10 @@ impl GameState {
     /// and it doesn't have indestructible, that creature's controller puts it into the graveyard.
     ///
     /// This should be called after damage is dealt or whenever state-based actions are checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if zone operations fail.
     pub fn check_lethal_damage(&mut self) -> Result<()> {
         // Collect creatures that need to die (to avoid borrow checker issues)
         let creatures_to_destroy: Vec<(CardId, PlayerId)> = self
@@ -1037,6 +1090,10 @@ impl GameState {
     }
 
     /// Advance the game to the next step
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if player lookup fails during turn transitions.
     pub fn advance_step(&mut self) -> Result<()> {
         let from_step = self.turn.current_step;
 
@@ -1173,6 +1230,10 @@ impl GameState {
     ///
     /// Note: Wildcard matches are intentional - we match ChoicePoint specially,
     /// then handle all other GameAction variants through detailed inner matching.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if undoing any game action fails (e.g., card not found, invalid zone).
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn undo_to_previous_choice_point(&mut self, requesting_player: PlayerId) -> Result<Option<(usize, usize)>> {
         // Debug: Log initial state
@@ -1483,6 +1544,10 @@ impl GameState {
     ///
     /// Pops the last action from the undo log and reverts it.
     /// Returns Ok(Some(prior_log_size)) to truncate logs to, Ok(None) if log is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the action cannot be undone (e.g., card not found, invalid state).
     pub fn undo(&mut self) -> Result<Option<usize>> {
         if let Some((action, prior_log_size)) = self.undo_log.pop() {
             match action {
@@ -1703,13 +1768,13 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
 
-                crate::undo::GameAction::RevealCard { card_id, card, .. } => {
+                crate::undo::GameAction::RevealCard { card_id, name } => {
                     // Undo reveal: clear the card from EntityStore (unreveal it)
-                    // Only clear if we actually revealed a card (card was Some)
-                    if card.is_some() {
+                    // Only clear if we actually revealed a card (name was Some)
+                    if name.is_some() {
                         self.cards.clear(card_id);
                     }
-                    // If card was None, this was a dummy reveal (opponent perspective)
+                    // If name was None, this was a dummy reveal (opponent perspective)
                     // and nothing needs to be undone
                 }
             }
@@ -1732,6 +1797,10 @@ impl GameState {
     /// that were waiting for this event (e.g., Earthbend's return-to-battlefield).
     ///
     /// Returns the number of triggers that fired.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if executing a trigger effect fails.
     pub fn check_delayed_triggers_on_zone_change(
         &mut self,
         card_id: CardId,
@@ -1905,6 +1974,7 @@ impl Clone for GameState {
             undo_log: self.undo_log.clone(),
             logger: self.logger.clone(),
             token_definitions: self.token_definitions.clone(),
+            card_definitions: std::sync::Arc::clone(&self.card_definitions), // Arc clone = cheap refcount bump
             // Each clone gets a fresh empty bump allocator
             bump: Bump::new(),
             mana_state_version: self.mana_state_version,

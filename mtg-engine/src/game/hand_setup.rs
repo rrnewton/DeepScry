@@ -16,6 +16,10 @@ pub struct HandSetup {
 
 impl HandSetup {
     /// Parse hand setup from semicolon-separated card names
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is empty or contains more than 7 cards.
     pub fn parse(input: &str) -> Result<Self> {
         let cards: Vec<String> = input
             .split(';')
@@ -41,6 +45,10 @@ impl HandSetup {
 }
 
 /// Setup initial hands for all players with optional controlled card selection
+///
+/// # Errors
+///
+/// Returns an error if a specified card is not found in the library.
 pub fn setup_opening_hands(
     game: &mut GameState,
     player_ids: &[PlayerId],

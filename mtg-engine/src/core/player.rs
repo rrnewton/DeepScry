@@ -125,7 +125,9 @@ impl Player {
     /// Spends from regular pool first, then combat pool for the remainder.
     /// This is used during combat when Firebending has added combat mana.
     ///
-    /// Returns Ok(()) if payment successful, Err with message if insufficient mana.
+    /// # Errors
+    ///
+    /// Returns an error message if insufficient total mana to pay the cost.
     pub fn pay_from_total_mana(&mut self, cost: &crate::core::ManaCost) -> Result<(), String> {
         let total = self.total_available_mana();
         if !total.can_pay(cost) {
@@ -142,13 +144,12 @@ impl Player {
         }
 
         // Fast path: no combat mana, just pay from regular pool
-        if self.combat_mana_pool.is_none() {
+        let Some(combat) = self.combat_mana_pool.as_mut() else {
             return self.mana_pool.pay_cost(cost);
-        }
+        };
 
         // Slow path: have combat mana, need to coordinate payment between pools
         // Strategy: Pay colored requirements first (from both pools), then generic
-        let combat = self.combat_mana_pool.as_mut().unwrap();
 
         // Pay colored costs - use regular pool first, then combat pool
         // White

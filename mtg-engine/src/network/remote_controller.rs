@@ -23,6 +23,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
+use crate::network::local_controller::BundledReveal;
 use crate::network::protocol::CardReveal;
 use smallvec::SmallVec;
 use std::sync::mpsc;
@@ -33,6 +34,7 @@ use std::sync::mpsc;
 /// that the game has ended (allowing graceful shutdown without treating
 /// channel close as a disconnect error).
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Choice is the hot path; boxing adds overhead
 pub enum RemoteMessage {
     /// An actual choice from the opponent
     Choice {
@@ -48,6 +50,11 @@ pub enum RemoteMessage {
         /// When opponent casts a spell from their hand that we don't know about,
         /// this contains the card reveal info so we can instantiate it.
         card_reveal: Option<(PlayerId, CardReveal)>,
+        /// Bundled reveals that arrived before this choice from the server.
+        /// These MUST be processed before the choice is applied to ensure
+        /// cards are instantiated in time. This eliminates race conditions
+        /// from having separate reveal/choice channels.
+        reveals: Vec<BundledReveal>,
     },
     /// Signal that the game has ended normally
     ///
@@ -64,6 +71,10 @@ pub type RemoteChoice = RemoteMessage;
 /// This is used on the client side to represent the opponent. When the GameLoop
 /// asks this controller for a choice, it blocks waiting for the server to send
 /// an `OpponentChoice` message via the channel, then returns that choice.
+///
+/// SINGLE-CHANNEL ARCHITECTURE: This controller no longer handles reveals.
+/// Reveals are sent directly from WebSocket handler to drain_reveals() via reveal_tx,
+/// eliminating the race condition that existed when controllers pushed bundled reveals.
 pub struct RemoteController {
     player_id: PlayerId,
     /// Receiver for opponent choices from the WebSocket handler
@@ -104,6 +115,9 @@ impl RemoteController {
     ///
     /// Returns the choice indices, or signals disconnect if channel is closed.
     /// Also stores any spell_ability and card_reveal for use by choose_spell_ability_to_play.
+    ///
+    /// SINGLE-CHANNEL ARCHITECTURE: Reveals are no longer bundled with choices.
+    /// They go directly to drain_reveals() via reveal_tx, eliminating race conditions.
     fn wait_for_choice(&mut self) -> ChoiceResult<Vec<usize>> {
         if self.disconnected || self.game_ended {
             return ChoiceResult::ExitGame;
@@ -116,6 +130,7 @@ impl RemoteController {
                 description,
                 spell_ability,
                 card_reveal,
+                reveals: _, // Ignored - reveals sent directly to reveal_tx now
             }) => {
                 log::debug!(
                     "RemoteController {:?}: Opponent chose indices {:?} ({}) spell_ability={:?} card_reveal={:?}",
@@ -479,6 +494,7 @@ mod tests {
             description: "Cast Lightning Bolt".to_string(),
             spell_ability: None,
             card_reveal: None,
+            reveals: Vec::new(),
         })
         .unwrap();
 

@@ -212,6 +212,10 @@ impl ImageOverlayManager {
     /// # Arguments
     /// * `container_id` - ID of the container element to append images to
     /// * `enabled` - Whether to actually create images (can be toggled by user)
+    ///
+    /// # Errors
+    ///
+    /// Returns a `JsValue` error if window or document cannot be accessed.
     pub fn new(container_id: &str, enabled: bool) -> Result<Self, JsValue> {
         let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
         let document = window.document().ok_or_else(|| JsValue::from_str("No document"))?;
@@ -249,6 +253,10 @@ impl ImageOverlayManager {
     /// - ID: `card-image-{card_id}`
     /// - Absolute positioning over terminal
     /// - Z-index to appear above terminal but below UI elements
+    ///
+    /// # Errors
+    ///
+    /// Returns a `JsValue` error if DOM element creation or style manipulation fails.
     #[allow(clippy::too_many_arguments)]
     pub fn set_card_image_with_fallback(
         &self,
@@ -350,6 +358,10 @@ impl ImageOverlayManager {
     /// * `width` - Width in terminal cells
     /// * `height` - Height in terminal cells
     /// * `image_url` - URL to card image
+    ///
+    /// # Errors
+    ///
+    /// Returns a `JsValue` error if DOM element creation or style manipulation fails.
     pub fn set_card_image(
         &self,
         card_id: &str,
@@ -418,6 +430,10 @@ impl ImageOverlayManager {
     ///
     /// # Arguments
     /// * `card_id` - Unique identifier for this card instance
+    ///
+    /// # Errors
+    ///
+    /// This function currently always succeeds, but returns Result for API consistency.
     pub fn remove_overlay(&self, card_id: &str) -> Result<(), JsValue> {
         let img_id = format!("card-image-{}", card_id);
         if let Some(img) = self.document.get_element_by_id(&img_id) {

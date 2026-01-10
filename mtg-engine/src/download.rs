@@ -117,6 +117,10 @@ pub struct ImageDownloader {
 
 impl ImageDownloader {
     /// Create a new downloader with the given configuration
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be created (should never happen in practice).
     pub fn new(config: DownloadConfig) -> Self {
         let client = reqwest::Client::builder()
             .user_agent("mtg-forge-rs/0.1 (https://github.com/your-repo)")
@@ -167,6 +171,14 @@ impl ImageDownloader {
     }
 
     /// Download all configured card images
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if creating output directories fails or HTTP requests fail.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the progress bar template is invalid (should never happen with hardcoded template).
     pub async fn download_all(&self) -> Result<DownloadStats> {
         let mut stats = DownloadStats::default();
 
@@ -399,6 +411,10 @@ impl std::fmt::Display for DownloadStats {
 }
 
 /// Load card names from cardsfolder
+///
+/// # Errors
+///
+/// Returns an I/O error if the directory cannot be read or iterated.
 pub async fn load_card_names_from_cardsfolder(cardsfolder: &Path) -> Result<Vec<String>> {
     let mut names = HashSet::new();
 
@@ -460,6 +476,10 @@ async fn extract_card_name(path: &Path) -> Option<String> {
 }
 
 /// Load card names from a deck file
+///
+/// # Errors
+///
+/// Returns an I/O error if the deck file cannot be read.
 pub async fn load_card_names_from_deck(deck_path: &Path) -> Result<Vec<String>> {
     let content = fs::read_to_string(deck_path).await.map_err(|e| {
         MtgError::IoError(std::io::Error::other(format!(

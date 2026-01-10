@@ -16,6 +16,10 @@ use std::collections::HashMap;
 ///
 /// This creates a game with the exact state specified in the puzzle file,
 /// including player life, zones, card states, etc.
+///
+/// # Errors
+///
+/// Returns an error if card loading fails or the puzzle state is invalid.
 pub async fn load_puzzle_into_game(puzzle: &PuzzleFile, card_db: &AsyncCardDatabase) -> Result<GameState> {
     let state_def = &puzzle.state;
 

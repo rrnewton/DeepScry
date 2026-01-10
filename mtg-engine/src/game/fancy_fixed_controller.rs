@@ -42,6 +42,10 @@ impl FancyFixedController {
     /// * `player_id` - The player this controller manages
     /// * `script` - The fixed input script (from RichInputController)
     /// * `screenshot_dir` - Optional directory to save screenshots
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the screenshot directory cannot be created.
     pub fn new(player_id: PlayerId, script: Vec<String>, screenshot_dir: Option<PathBuf>) -> Result<Self, MtgError> {
         Self::with_size(
             player_id,
@@ -60,6 +64,10 @@ impl FancyFixedController {
     /// * `screenshot_dir` - Optional directory to save screenshots
     /// * `width` - Terminal width for screenshots
     /// * `height` - Terminal height for screenshots
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the screenshot directory cannot be created.
     pub fn with_size(
         player_id: PlayerId,
         script: Vec<String>,

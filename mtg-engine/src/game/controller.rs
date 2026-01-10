@@ -994,6 +994,10 @@ impl<T> ChoiceResult<T> {
     }
 
     /// Helper to unwrap the Ok value (panics if not Ok)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the result is not `Ok` (i.e., is `UndoRequest`, `ExitGame`, `Error`, or `NeedInput`).
     pub fn unwrap(self) -> T {
         match self {
             ChoiceResult::Ok(value) => value,
@@ -1005,6 +1009,10 @@ impl<T> ChoiceResult<T> {
     }
 
     /// Convert to Result for easier handling
+    ///
+    /// # Errors
+    ///
+    /// Returns error messages for non-Ok variants (undo request, exit game, need input).
     pub fn into_result(self) -> Result<T, String> {
         match self {
             ChoiceResult::Ok(value) => Ok(value),

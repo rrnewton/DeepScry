@@ -44,6 +44,15 @@ pub struct LocalChoice {
     pub debug_info: Option<super::DebugSyncInfo>,
 }
 
+/// A bundled card reveal with all info needed to instantiate
+#[derive(Debug, Clone)]
+pub struct BundledReveal {
+    pub owner: PlayerId,
+    pub card_id: CardId,
+    pub card_name: String,
+    pub reason: super::protocol::RevealReason,
+}
+
 /// Message types for the local controller
 #[derive(Debug)]
 pub enum LocalControllerMessage {
@@ -59,11 +68,19 @@ pub enum LocalControllerMessage {
     /// 5. Client sends SubmitChoice back to server
     ///
     /// This ensures the client never gets ahead of the server.
+    ///
+    /// IMPORTANT: The `reveals` field contains all CardRevealed messages that
+    /// arrived BEFORE this ChoiceRequest. They MUST be processed before the
+    /// game evaluates available options. This eliminates race conditions from
+    /// having separate channels for reveals vs choice requests.
     ChoiceRequest {
         /// Server's authoritative action count (for sync validation)
         action_count: u64,
         /// Server's choice sequence number
         choice_seq: u32,
+        /// Bundled reveals that arrived before this ChoiceRequest
+        /// These should be processed before evaluating available options
+        reveals: Vec<BundledReveal>,
     },
     /// Server acknowledged our choice, continue
     ChoiceAcknowledged,
@@ -72,6 +89,13 @@ pub enum LocalControllerMessage {
     /// Game has ended
     GameEnded,
 }
+
+/// Reveal message type for controller → game thread communication
+pub type RevealMsg = (
+    crate::core::PlayerId,
+    super::protocol::CardReveal,
+    super::protocol::RevealReason,
+);
 
 /// A controller that wraps a local controller and sends choices to the server.
 ///
@@ -82,11 +106,15 @@ pub enum LocalControllerMessage {
 ///
 /// The flow is:
 /// 1. GameLoop calls choose_spell_ability_to_play() (or similar)
-/// 2. We drain pending messages (ChoiceRequest updates server_action_count if present)
+/// 2. We wait for ChoiceRequest (which updates server_action_count)
 /// 3. We delegate to inner controller
-/// 4. We send the choice via choice_tx using server's action_count if available
+/// 4. We send the choice via choice_tx using server's action_count
 /// 5. We wait for ChoiceAcknowledged from server
 /// 6. We return the result to GameLoop
+///
+/// SINGLE-CHANNEL ARCHITECTURE: This controller no longer handles reveals.
+/// Reveals are sent directly from WebSocket handler to drain_reveals() via reveal_tx,
+/// eliminating the race condition that existed when controllers pushed bundled reveals.
 pub struct NetworkLocalController<C: PlayerController> {
     /// The wrapped local controller
     inner: C,
@@ -143,6 +171,9 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// this returns immediately.
     ///
     /// Returns true if we're ready to proceed, false if we're disconnected.
+    ///
+    /// SINGLE-CHANNEL ARCHITECTURE: Reveals are no longer bundled with ChoiceRequest.
+    /// They go directly to drain_reveals() via reveal_tx, eliminating race conditions.
     fn wait_for_choice_request(&mut self) -> bool {
         // If we already have server state from a previous message, we're ready
         if self.server_action_count.is_some() && self.server_choice_seq.is_some() {
@@ -161,6 +192,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 Ok(LocalControllerMessage::ChoiceRequest {
                     action_count,
                     choice_seq,
+                    reveals: _, // Ignored - reveals sent directly to reveal_tx now
                 }) => {
                     log::trace!(
                         "NetworkLocalController: received ChoiceRequest seq={} action_count={}",
@@ -285,6 +317,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 Ok(LocalControllerMessage::ChoiceRequest {
                     action_count,
                     choice_seq,
+                    reveals: _,
                 }) => {
                     // This can happen when the server sends the next ChoiceRequest before we
                     // receive the ChoiceAcknowledged for the previous choice. Store the request
