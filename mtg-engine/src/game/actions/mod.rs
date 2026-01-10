@@ -2092,6 +2092,10 @@ impl GameState {
     /// - For spells, prefer higher CMC (less likely to cast soon)
     ///
     /// Returns None if the player has no cards in hand.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the player's zones cannot be found.
     pub fn choose_card_to_discard(&self, player_id: PlayerId) -> Result<Option<CardId>> {
         let zones = self
             .get_player_zones(player_id)
@@ -2132,6 +2136,11 @@ impl GameState {
     /// Discard a specific card from the player's hand.
     ///
     /// Moves the card from hand to graveyard and logs the action.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card or player cannot be found, or if the
+    /// card cannot be moved from hand to graveyard.
     pub fn discard_card(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
         // Get card name for logging before move
         let card_name = self.cards.get(card_id)?.name.to_string();
@@ -2699,6 +2708,10 @@ impl GameState {
     /// # Parameters
     /// - `cast_spell_id`: The spell that was just cast (used to check if it's noncreature)
     /// - `caster_id`: The player who cast the spell (triggers only fire for spells cast by the controller)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if trigger effects fail to resolve.
     pub fn check_spellcast_triggers(&mut self, cast_spell_id: CardId, caster_id: PlayerId) -> Result<()> {
         use crate::core::Trigger;
 
