@@ -1,0 +1,16 @@
+[metadata]
+Name:Swampcycling Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Test that Canyon Crawler's Swampcycling {2} can be activated from hand
+# K:TypeCycling:Swamp:2
+p0life=20
+p0hand=Canyon Crawler
+p0library=Swamp; Mountain; Swamp; Forest; Island
+p0battlefield=Swamp; Swamp
+p1life=20
+p1hand=Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Island; Island

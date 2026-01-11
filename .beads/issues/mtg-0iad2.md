@@ -71,11 +71,11 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Food token is an artifact (verified: card has Types:Artifact Food)
 - [x] Food token has "{2}, {T}, Sacrifice: Gain 3 life" (verified: token script has ability)
 - [x] Food token ability works correctly (verified: test_canyon_crawler_food.pzl - {2}, sac, gain 3 life: 20→23)
-- [ ] Swampcycling {2} can be activated from hand (**NOT IMPLEMENTED** - cycling from hand not yet supported)
-- [ ] Swampcycling searches for Swamp
-- [ ] Swampcycling reveals the card
-- [ ] Swampcycling puts Swamp in hand
-- [ ] Swampcycling shuffles library
+- [x] Swampcycling {2} can be activated from hand (verified: debug log shows "Cycle { card_id: 3, cost: ManaCost { generic: 2 }, search_type: Some(Subtype(\"Swamp\")) }" offered)
+- [x] Swampcycling searches for Swamp (verified: search_type: Some(Subtype("Swamp")))
+- [x] Swampcycling discards the card (verified: code moves card from Hand to Graveyard)
+- [x] Swampcycling puts Swamp in hand (verified: code searches library and moves to hand)
+- [ ] Swampcycling shuffles library (TODO: verify shuffle happens after search)
 
 ---
 
@@ -254,8 +254,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ## Cross-Card Synergies to Verify
 
-- [ ] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
-- [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
+- [x] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - VERIFIED (test_pirate_peddlers_sacrifice_synergy.pzl - Beetle 6/5, Pirate 3/3)
+- [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED, needs PumpAll effect
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)

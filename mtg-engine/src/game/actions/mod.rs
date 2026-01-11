@@ -2335,6 +2335,9 @@ impl GameState {
 
                     // Move from battlefield to graveyard
                     self.move_card(sac_target, Zone::Battlefield, Zone::Graveyard, sac_owner)?;
+
+                    // Check sacrifice triggers (e.g., Pirate Peddlers Mode$ Sacrificed)
+                    self.check_triggers(TriggerEvent::Sacrificed, sac_target)?;
                 }
             }
 
