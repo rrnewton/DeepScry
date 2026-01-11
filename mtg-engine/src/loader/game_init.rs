@@ -87,6 +87,10 @@ impl<'a> GameInitializer<'a> {
     ///
     /// **Important**: CardIDs start from 0, NOT from the next_entity_id counter. This
     /// separates the CardID namespace from PlayerIDs for network synchronization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a card definition cannot be found in the database.
     pub async fn init_game_with_positional_ids(
         &self,
         player1_name: String,
@@ -241,6 +245,10 @@ impl<'a> GameInitializer<'a> {
     }
 
     /// Initialize a two-player game from two decks
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any card in the decks cannot be loaded.
     pub async fn init_game(
         &self,
         player1_name: String,

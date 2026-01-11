@@ -59,6 +59,10 @@ pub enum GoalType {
 
 impl GoalType {
     /// Parse goal type from string, with optional targets
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the goal type string is unknown or targets are missing when required.
     pub fn parse(goal_str: &str, targets: Option<&str>, target_count: usize) -> Result<Self> {
         let goal_lower = goal_str.trim().to_lowercase();
 
@@ -128,6 +132,10 @@ impl Default for PuzzleMetadata {
 
 impl PuzzleMetadata {
     /// Parse metadata from lines in \[metadata\] section
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required fields are missing or have invalid values.
     pub fn parse(lines: &[String]) -> Result<Self> {
         let mut meta = PuzzleMetadata::default();
 

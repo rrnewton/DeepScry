@@ -327,6 +327,10 @@ impl GameAction {
     /// Apply the inverse of this action to undo it
     ///
     /// Returns Ok(()) if successful, Err if the action cannot be undone
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the action cannot be undone (e.g., card/player not found).
     pub fn undo(&self, game: &mut GameState) -> Result<(), String> {
         match self {
             GameAction::MoveCard {

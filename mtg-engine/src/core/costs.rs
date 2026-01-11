@@ -141,7 +141,8 @@ impl Cost {
             if costs.len() > 1 {
                 return Some(Cost::Composite(costs));
             } else if costs.len() == 1 {
-                return Some(costs.into_iter().next().unwrap());
+                // Safe: we just checked len() == 1
+                return costs.into_iter().next();
             }
         }
 

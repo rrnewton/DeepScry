@@ -303,6 +303,10 @@ impl GameServer {
     ///
     /// This is a single-game server: it accepts exactly two players, runs one game,
     /// and then exits. For a multi-game lobby server, use a different implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if card database loading or TCP binding fails.
     pub async fn run(&mut self) -> Result<()> {
         // Load card database
         log::info!("Loading card database from {:?}...", self.config.cardsfolder);

@@ -574,6 +574,10 @@ impl<'a> GameLoop<'a> {
     /// Run the game loop with the given player controllers
     ///
     /// Returns when the game reaches a win condition or turn limit
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if game setup fails or a fatal game state error occurs.
     pub fn run_game(
         &mut self,
         controller1: &mut dyn PlayerController,
@@ -628,6 +632,10 @@ impl<'a> GameLoop<'a> {
     /// Returns:
     /// - `Ok(GameResult)` with the game outcome if the game ended
     /// - `Ok(GameResult)` with `GameEndReason::Manual` if all turns completed without ending
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a fatal game state error occurs during turn execution.
     pub fn run_turns(
         &mut self,
         controller1: &mut dyn PlayerController,
@@ -693,6 +701,10 @@ impl<'a> GameLoop<'a> {
     /// - `Ok(GameLoopState::Complete(result))` when game ends
     /// - `Ok(GameLoopState::AwaitingInput(context))` when human input is needed
     /// - `Err(_)` on actual errors
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for fatal game state errors (not for awaiting input).
     pub fn run_until_input(
         &mut self,
         controller1: &mut dyn PlayerController,
@@ -714,6 +726,10 @@ impl<'a> GameLoop<'a> {
     /// - `Ok(Some(GameResult))` if the game ended during this turn
     /// - `Ok(None)` if the turn completed and the game continues
     /// - `Err(_)` on error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if game setup or turn execution fails.
     pub fn run_one_turn(
         &mut self,
         controller1: &mut dyn PlayerController,
@@ -907,6 +923,10 @@ impl<'a> GameLoop<'a> {
     /// - `Ok(Some(GameResult))` if the game should end (win condition or turn limit reached)
     /// - `Ok(None)` if the game should continue with another turn
     /// - `Err(_)` if an error occurred during turn execution
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if turn execution encounters a fatal game state error.
     pub fn run_turn_once(
         &mut self,
         controller1: &mut dyn PlayerController,
@@ -1077,6 +1097,10 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Execute a single step
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if step execution encounters a fatal game state error.
     pub fn execute_step(
         &mut self,
         controller1: &mut dyn PlayerController,

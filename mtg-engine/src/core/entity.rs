@@ -242,6 +242,10 @@ where
     }
 
     /// Get an entity by ID
+    ///
+    /// # Errors
+    ///
+    /// Returns `MtgError::EntityNotFound` if the entity ID does not exist.
     #[inline]
     pub fn get(&self, id: EntityId<T>) -> Result<&T> {
         self.entities
@@ -269,6 +273,10 @@ where
     }
 
     /// Get a mutable reference to an entity
+    ///
+    /// # Errors
+    ///
+    /// Returns `MtgError::EntityNotFound` if the entity ID does not exist.
     #[inline]
     pub fn get_mut(&mut self, id: EntityId<T>) -> Result<&mut T> {
         self.entities
@@ -359,6 +367,10 @@ where
     /// Remove an entity (not supported - entities are never removed)
     ///
     /// This method exists only for API compatibility but will panic if called.
+    ///
+    /// # Panics
+    ///
+    /// Always panics. Entities are never removed in MTG games.
     #[allow(unused_variables)]
     pub fn remove(&mut self, id: EntityId<T>) -> Option<T> {
         panic!("EntityStore::remove() is not supported - entities are never removed in MTG games")

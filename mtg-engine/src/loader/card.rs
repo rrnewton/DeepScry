@@ -42,6 +42,10 @@ pub struct CardLoader;
 
 impl CardLoader {
     /// Load a card from a .txt file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed.
     #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<CardDefinition> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
@@ -58,6 +62,10 @@ impl CardLoader {
     }
 
     /// Parse a card with explicit file context for warnings
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card definition cannot be parsed.
     pub fn parse_with_context(content: &str, file_context: Option<&str>) -> Result<CardDefinition> {
         set_parsing_context(file_context);
         let result = Self::parse(content);
@@ -66,6 +74,10 @@ impl CardLoader {
     }
 
     /// Parse a card from its text content
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card definition is incomplete or malformed.
     pub fn parse(content: &str) -> Result<CardDefinition> {
         let mut name = None;
         let mut mana_cost = ManaCost::new();

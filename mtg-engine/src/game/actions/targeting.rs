@@ -47,6 +47,10 @@ impl GameState {
     ///
     /// # Returns
     /// A sorted SmallVec of valid target CardIds
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the spell card cannot be found.
     pub fn get_valid_targets_for_spell(&self, spell_card_id: CardId) -> Result<SmallVec<[CardId; 8]>> {
         let mut valid_targets = SmallVec::new();
 
@@ -466,6 +470,10 @@ impl GameState {
     ///
     /// # Returns
     /// A sorted SmallVec of valid target CardIds
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card or ability cannot be found.
     pub fn get_valid_targets_for_ability(
         &self,
         source_card_id: CardId,
@@ -712,6 +720,10 @@ impl GameState {
     ///
     /// Modal spells have "Choose one —" or similar text and require mode
     /// selection before targeting (MTG Rule 601.2b).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the spell card cannot be found.
     pub fn get_modal_choice_info(&self, spell_card_id: CardId) -> Result<Option<crate::core::Effect>> {
         let spell_card = self.cards.get(spell_card_id)?;
 
@@ -728,6 +740,10 @@ impl GameState {
     ///
     /// Returns a vector of mode descriptions for display to the player.
     /// Used by controllers when prompting for mode selection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the spell card cannot be found.
     pub fn get_modal_mode_descriptions(&self, spell_card_id: CardId) -> Result<Vec<String>> {
         let spell_card = self.cards.get(spell_card_id)?;
 
@@ -752,6 +768,10 @@ impl GameState {
     ///
     /// # Returns
     /// A vector of (mode_index, has_valid_targets) for each mode
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the spell card cannot be found.
     pub fn get_valid_modes_for_spell(
         &self,
         spell_card_id: CardId,
@@ -903,6 +923,10 @@ impl GameState {
     ///
     /// # Returns
     /// Ok(true) if modes were applied, Ok(false) if spell wasn't modal
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the spell card cannot be found.
     pub fn apply_selected_modes(&mut self, spell_card_id: CardId, selected_mode_indices: &[usize]) -> Result<bool> {
         let spell_card = self.cards.get_mut(spell_card_id)?;
 

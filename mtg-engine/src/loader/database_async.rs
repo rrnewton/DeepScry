@@ -67,8 +67,13 @@ impl CardDatabase {
     }
 
     /// Load a single card by name (async, with caching)
-    /// Returns None if card file doesn't exist
-    /// Returns Arc<CardDefinition> to avoid cloning
+    ///
+    /// Returns None if card file doesn't exist.
+    /// Returns Arc<CardDefinition> to avoid cloning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card file exists but fails to parse.
     pub async fn get_card(&self, name: &str) -> Result<Option<Arc<CardDefinition>>> {
         let name_lower = name.to_lowercase();
 
@@ -133,7 +138,12 @@ impl CardDatabase {
     }
 
     /// Load multiple cards in parallel
-    /// Returns timing information
+    ///
+    /// Returns timing information (cards loaded, duration).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any card file is not found or fails to parse.
     pub async fn load_cards(&self, names: &[String]) -> Result<(usize, std::time::Duration)> {
         let start = Instant::now();
 
@@ -173,8 +183,13 @@ impl CardDatabase {
     }
 
     /// Eagerly load all cards from cardsfolder (parallel)
-    /// Uses streaming discovery - starts loading cards while still walking directory tree
-    /// Returns (cards_loaded, duration)
+    ///
+    /// Uses streaming discovery - starts loading cards while still walking directory tree.
+    /// Returns (cards_loaded, duration).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any card file fails to parse or directory walking fails.
     pub async fn eager_load(&self) -> Result<(usize, std::time::Duration)> {
         let start = Instant::now();
 
@@ -248,8 +263,13 @@ impl CardDatabase {
     }
 
     /// Load a token definition by script name
+    ///
     /// Token scripts are in forge-java/forge-gui/res/tokenscripts/
     /// Example: "c_a_food_sac" -> "forge-java/forge-gui/res/tokenscripts/c_a_food_sac.txt"
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the token file exists but fails to parse.
     pub async fn get_token(&self, token_script: &str) -> Result<Option<CardDefinition>> {
         // Token scripts are stored in a sibling directory to cardsfolder
         // cardsfolder is typically at: forge-java/forge-gui/res/cardsfolder/

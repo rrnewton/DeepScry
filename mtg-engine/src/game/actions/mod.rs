@@ -10,6 +10,11 @@ impl GameState {
     ///
     /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
     /// to battlefield (which is a public zone).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the player cannot play more lands, the card is not a land,
+    /// or the card is not in hand.
     pub fn play_land(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
         // Check if player can play a land
         let player = self.get_player(player_id)?;
@@ -86,6 +91,10 @@ impl GameState {
     ///
     /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
     /// to stack (which is a public zone).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card is not in hand or if insufficient mana to pay the cost.
     pub fn cast_spell(&mut self, player_id: PlayerId, card_id: CardId, _targets: Vec<CardId>) -> Result<()> {
         // Check if card is in hand
         if let Some(zones) = self.get_player_zones(player_id) {
@@ -125,6 +134,10 @@ impl GameState {
     ///
     /// If targets are provided, they will be used to fill in placeholder targets in effects.
     /// Otherwise, effects must already have their targets specified.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card is not found or if spell resolution fails.
     pub fn resolve_spell(&mut self, card_id: CardId, chosen_targets: &[CardId]) -> Result<()> {
         // Get card owner and effects count (without cloning effects)
         let (card_owner, effects_len) = {
@@ -236,6 +249,11 @@ impl GameState {
     /// - Auras can attach based on their enchant ability
     /// - If already attached, detaches from previous target first
     /// - Updates timestamp on the Equipment/Aura (CR 613.7e)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the equipment/target is not on battlefield,
+    /// the card is not equipment/aura, or target is not a valid creature.
     pub fn attach_equipment(&mut self, equipment_id: CardId, target_id: CardId) -> Result<()> {
         // Validate Equipment is on battlefield
         if !self.battlefield.contains(equipment_id) {
@@ -326,6 +344,10 @@ impl GameState {
     /// - Auras can attach to any legal target (including opponent's creatures)
     /// - The target is determined by the "enchant" keyword (e.g., "Enchant creature")
     /// - If already attached, detaches from previous target first
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the aura/target is not on battlefield, or the card is not an aura.
     pub fn attach_aura(&mut self, aura_id: CardId, target_id: CardId) -> Result<()> {
         // Validate Aura is on battlefield
         if !self.battlefield.contains(aura_id) {
@@ -410,6 +432,10 @@ impl GameState {
     /// ## Rules Implementation
     /// - Equipment remains on battlefield when detached
     /// - Auras that become unattached typically go to graveyard (handled elsewhere)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the equipment cannot be found.
     pub fn detach_equipment(&mut self, equipment_id: CardId) -> Result<()> {
         // Get names and attached_to before mutable borrow
         let equipment = self.cards.get(equipment_id)?;
@@ -513,6 +539,10 @@ impl GameState {
     /// ## Returns
     ///
     /// Final power after applying all layers, or error if creature not found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature cannot be found.
     pub fn get_effective_power(&self, creature_id: CardId) -> Result<i32> {
         let breakdown = self.get_pt_breakdown(creature_id)?;
         Ok(breakdown.power())
@@ -525,6 +555,10 @@ impl GameState {
     /// ## Returns
     ///
     /// Final toughness after applying all layers, or error if creature not found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature cannot be found.
     pub fn get_effective_toughness(&self, creature_id: CardId) -> Result<i32> {
         let breakdown = self.get_pt_breakdown(creature_id)?;
         Ok(breakdown.toughness())
@@ -557,6 +591,10 @@ impl GameState {
     /// 1. Moves spell to stack (line 99)
     /// 2. Handles targeting
     /// 3. Pays costs with `CostPayment.payComputerCosts()` (line 125)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card is not in hand, cannot move to stack, or mana payment fails.
     pub fn cast_spell_8_step<TargetFn>(
         &mut self,
         player_id: PlayerId,
@@ -1021,6 +1059,10 @@ impl GameState {
     }
 
     /// Execute a single effect
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the effect cannot be executed (e.g., invalid target).
     pub fn execute_effect(&mut self, effect: &Effect) -> Result<()> {
         match effect {
             Effect::DealDamage { target, amount } => match target {
@@ -1935,6 +1977,10 @@ impl GameState {
     ///
     /// Note: Wildcard match is intentional - only specific effects need placeholder
     /// target resolution; others execute as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
         use crate::core::Trigger;
@@ -2285,6 +2331,10 @@ impl GameState {
     ///
     /// Note: Wildcard matches are intentional - only specific effects need placeholder
     /// resolution or formatted logging; others pass through unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers_for_controller(
         &mut self,
@@ -2423,6 +2473,10 @@ impl GameState {
     ///
     /// Note: Wildcard match is intentional - only AddMana effects need player
     /// resolution; others execute as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_death_triggers(&mut self, dying_card_id: CardId) -> Result<()> {
         // Get the card's triggers and controller while it's still on battlefield
@@ -2516,6 +2570,10 @@ impl GameState {
     ///
     /// Note: Wildcard match is intentional - only AddMana/Firebend effects need player
     /// resolution; others execute as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the attacker card is not found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_attack_triggers(&mut self, attacker_id: CardId, _active_player: PlayerId) -> Result<()> {
         use smallvec::SmallVec;
@@ -2599,6 +2657,10 @@ impl GameState {
     }
 
     /// Deal damage to a player target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target player does not exist.
     pub fn deal_damage(&mut self, target_id: PlayerId, amount: i32) -> Result<()> {
         // Check if target is a player
         if self.players.iter().any(|p| p.id == target_id) {
@@ -2635,6 +2697,10 @@ impl GameState {
     ///
     /// MTG Rules 120.3: Damage dealt to a creature or planeswalker remains until the cleanup step
     /// MTG Rules 704.5g: State-based actions check if creature has lethal damage and destroys it
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target is not a creature or cannot be found.
     pub fn deal_damage_to_creature(&mut self, target_id: CardId, amount: i32) -> Result<()> {
         // Get info about the creature first (without holding the borrow)
         let (is_creature, creature_name) = {
@@ -2663,6 +2729,10 @@ impl GameState {
     }
 
     /// Tap a land for mana (without cost hint)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be tapped for mana.
     pub fn tap_for_mana(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
         // Create an empty cost hint
         let empty_cost = crate::core::ManaCost::new();
@@ -2677,6 +2747,10 @@ impl GameState {
     ///
     /// For mana abilities with sacrifice costs (e.g., Black Lotus), this will also
     /// sacrifice the permanent after activating the mana ability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be tapped for mana or is already tapped.
     pub fn tap_for_mana_for_cost(
         &mut self,
         player_id: PlayerId,
@@ -3082,6 +3156,10 @@ impl GameState {
     /// - Support cost refund if payment fails midway
     /// - Handle cost ordering more comprehensively
     /// - Support all cost types (sacrifice, discard, pay life, etc.)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cost cannot be paid.
     pub fn pay_ability_cost(&mut self, player_id: PlayerId, card_id: CardId, cost: &crate::core::Cost) -> Result<()> {
         use crate::core::{Cost, ManaCost};
 
@@ -3316,6 +3394,10 @@ impl GameState {
     /// Note: This is a non-interactive implementation. For proper interactive
     /// sacrifice choice (where players select which permanents to sacrifice),
     /// this must be called through the game loop which has access to controllers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if balance effect execution fails.
     pub fn execute_balance_effect(&mut self, card_type: &str, zone: &str) -> Result<()> {
         // Get all player IDs
         let player_ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();

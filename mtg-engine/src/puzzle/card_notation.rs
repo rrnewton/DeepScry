@@ -65,6 +65,10 @@ pub enum CardModifier {
 }
 
 /// Parse a single card definition from notation like "CardName|Mod1|Mod2"
+///
+/// # Errors
+///
+/// Returns an error if the notation is empty or contains invalid modifiers.
 pub fn parse_card_notation(notation: &str) -> Result<(String, Vec<CardModifier>)> {
     let parts: Vec<&str> = notation.split('|').collect();
 

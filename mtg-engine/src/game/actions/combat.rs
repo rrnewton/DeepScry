@@ -27,6 +27,11 @@ impl GameState {
     /// # Arguments
     /// * `player_id` - The attacking player
     /// * `card_id` - The creature to declare as attacker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature cannot attack (not a creature, wrong controller,
+    /// tapped, defender, summoning sickness).
     pub fn declare_attacker(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
         // Validate creature can attack
         let card = self.cards.get(card_id)?;
@@ -117,6 +122,11 @@ impl GameState {
     /// * `player_id` - The defending player
     /// * `blocker_id` - The creature to declare as blocker
     /// * `attackers` - The attackers to block (usually 1, unless blocker has special ability)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature cannot block (not a creature, wrong controller,
+    /// tapped, cannot block due to flying/menace restrictions).
     pub fn declare_blocker(&mut self, player_id: PlayerId, blocker_id: CardId, attackers: Vec<CardId>) -> Result<()> {
         // Validate blocker can block
         let blocker = self.cards.get(blocker_id)?;
@@ -220,6 +230,10 @@ impl GameState {
     /// * `attacker_controller` - Controller for the attacking player
     /// * `blocker_controller` - Controller for the defending player
     /// * `first_strike_step` - True for first strike damage step, false for normal damage step
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if damage assignment or application fails.
     pub fn assign_combat_damage(
         &mut self,
         attacker_controller: &mut dyn crate::game::controller::PlayerController,
