@@ -31,10 +31,10 @@ pub struct LogEntry {
     /// Log message
     pub message: String,
     /// Optional category (e.g., "controller_choice", "game_event")
-    #[serde(skip_serializing_if = "Option::is_none")]
+    
     pub category: Option<String>,
     /// Optional metadata (e.g., controller name, card name)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    
     pub metadata: Option<serde_json::Value>,
 }
 

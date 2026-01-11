@@ -95,7 +95,6 @@ pub enum ClientMessage {
         /// Server password
         password: String,
         /// Player's display name (None = let server assign a default name with suffix)
-        #[serde(skip_serializing_if = "Option::is_none")]
         player_name: Option<String>,
         /// Deck to use for the game
         deck: DeckSubmission,
@@ -123,10 +122,8 @@ pub enum ClientMessage {
         timestamp_ms: u64,
         /// Client's computed state hash (for server validation in debug mode)
         /// When present, server compares against its expected hash
-        #[serde(skip_serializing_if = "Option::is_none")]
         client_state_hash: Option<u64>,
         /// Debug synchronization info (only in network debug mode)
-        #[serde(skip_serializing_if = "Option::is_none")]
         debug_info: Option<DebugSyncInfo>,
     },
 
@@ -180,13 +177,10 @@ pub enum ServerMessage {
         /// Whether authentication succeeded
         success: bool,
         /// Error message if failed
-        #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         /// Assigned player ID if successful
-        #[serde(skip_serializing_if = "Option::is_none")]
         your_player_id: Option<PlayerId>,
         /// Assigned player name (includes suffix if server-generated)
-        #[serde(skip_serializing_if = "Option::is_none")]
         your_name: Option<String>,
     },
 
@@ -209,7 +203,6 @@ pub enum ServerMessage {
         opponent_library_size: usize,
         /// Opponent's initial deck list (if deck_visibility enabled)
         /// This is the INITIAL list before sideboarding.
-        #[serde(skip_serializing_if = "Option::is_none")]
         opponent_decklist: Option<DeckListInfo>,
         /// Starting life total
         starting_life: i32,
@@ -228,12 +221,11 @@ pub enum ServerMessage {
         /// This is PUBLIC information - everyone knows which CardIDs belong
         /// to which deck. Only the CardID ⟺ CardName binding is hidden until
         /// a RevealCard action makes it known.
-        #[serde(skip_serializing_if = "Option::is_none")]
         deck_card_ids: Option<DeckCardIdRanges>,
         /// Token definitions that may be created during this game.
         /// Sent upfront so clients can create tokens without a local card database.
         /// Key is the script name (e.g., "c_a_food_sac"), value is the CardDefinition.
-        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        #[serde(default)]
         token_definitions: std::collections::HashMap<String, crate::loader::CardDefinition>,
     },
 
@@ -269,10 +261,8 @@ pub enum ServerMessage {
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         timestamp_ms: u64,
         /// Optional context for the choice
-        #[serde(skip_serializing_if = "Option::is_none")]
         context: Option<ChoiceContext>,
         /// Debug synchronization info (only in network debug mode)
-        #[serde(skip_serializing_if = "Option::is_none")]
         debug_info: Option<DebugSyncInfo>,
     },
 
@@ -304,13 +294,10 @@ pub enum ServerMessage {
         /// When the opponent plays a spell/land/ability, this contains the
         /// actual ability so the client can execute it directly without
         /// needing to compute available abilities from hidden hand contents.
-        #[serde(skip_serializing_if = "Option::is_none")]
         spell_ability: Option<SpellAbility>,
         /// State hash AFTER applying this choice (for client validation)
-        #[serde(skip_serializing_if = "Option::is_none")]
         state_hash_after: Option<u64>,
         /// Debug synchronization info (only in network debug mode)
-        #[serde(skip_serializing_if = "Option::is_none")]
         debug_info: Option<DebugSyncInfo>,
     },
 
@@ -336,7 +323,6 @@ pub enum ServerMessage {
     /// Game has ended
     GameEnded {
         /// Winner (None for draw)
-        #[serde(skip_serializing_if = "Option::is_none")]
         winner: Option<PlayerId>,
         /// Why the game ended
         reason: GameEndReason,
@@ -384,7 +370,6 @@ pub enum ServerMessage {
         /// Expected hash
         expected_hash: u64,
         /// Client's reported hash (if applicable)
-        #[serde(skip_serializing_if = "Option::is_none")]
         client_hash: Option<u64>,
     },
 }
@@ -478,7 +463,6 @@ pub struct CardReveal {
     pub name: String,
     /// Full card definition (enables client to run without local card DB)
     /// Server should always provide this for real reveals; omitted for dummy reveals (hidden opponent cards)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub card_def: Option<crate::loader::CardDefinition>,
 }
 
@@ -583,7 +567,6 @@ pub enum ChoiceType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoiceContext {
     /// Spell/ability that triggered this choice (if applicable)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub spell: Option<CardReveal>,
     /// Human-readable description of the choice
     pub description: String,
@@ -664,7 +647,6 @@ pub struct DebugSyncInfo {
     /// Which player's turn it is
     pub active_player: PlayerId,
     /// Who currently has priority (if applicable)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub priority_player: Option<PlayerId>,
     /// Life totals: [P1_life, P2_life]
     pub life_totals: [i32; 2],
@@ -680,7 +662,7 @@ pub struct DebugSyncInfo {
     pub graveyard_sizes: [usize; 2],
     /// Last N actions from undo log (human-readable strings)
     /// Typically the last 10-20 actions for debugging
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub last_actions: Vec<String>,
 }
 
@@ -834,7 +816,6 @@ pub struct SyncErrorDetails {
     /// Debug info from the side that detected the error
     pub local_debug_info: DebugSyncInfo,
     /// Debug info from the other side (if available)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_debug_info: Option<DebugSyncInfo>,
     /// Human-readable description of the mismatch
     pub description: String,
@@ -928,8 +909,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&msg).expect("serialize");
-        // Verify player_name is not in JSON when None
-        assert!(!json.contains("player_name"));
+        // player_name is serialized as null (skip_serializing_if was removed for bincode compat)
 
         let roundtrip: ClientMessage = serde_json::from_str(&json).expect("deserialize");
 

@@ -271,8 +271,8 @@ pub struct CardDefinition {
     /// For tokens loaded from tokenscripts/, this is the filename without extension
     /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
     /// For regular cards, this is None.
-    // Note: Do NOT use skip_serializing_if here - bincode is not self-describing
-    // and requires all fields to be present in order. See commit fixing mtg-e66iz.
+    // Note: skip_serializing_if was removed from the entire codebase because
+    // it's incompatible with bincode (non-self-describing format) and caused bugs.
     pub script_name: Option<String>,
 }
 
