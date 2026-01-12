@@ -75,7 +75,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Swampcycling searches for Swamp (verified: search_type: Some(Subtype("Swamp")))
 - [x] Swampcycling discards the card (verified: code moves card from Hand to Graveyard)
 - [x] Swampcycling puts Swamp in hand (verified: code searches library and moves to hand)
-- [ ] Swampcycling shuffles library (TODO: verify shuffle happens after search)
+- [x] Swampcycling shuffles library (verified: priority.rs:1344 calls shuffle_library after typecycling search)
 
 ---
 
@@ -262,8 +262,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Firebending creatures sharing firebend mana pool
 - [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
 - [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
-- [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
-- [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
+- [x] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Food is artifact permanent, sacrifice triggers work)
+- [x] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Clue is artifact permanent, sacrifice triggers work)
 
 ---
 
