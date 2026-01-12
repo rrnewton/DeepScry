@@ -255,7 +255,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 ## Cross-Card Synergies to Verify
 
 - [x] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - VERIFIED (test_pirate_peddlers_sacrifice_synergy.pzl - Beetle 6/5, Pirate 3/3)
-- [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED, needs PumpAll effect
+- [x] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - VERIFIED (test_zhao_beetle_sacrifice_synergy.pzl - PumpAllCreatures implemented)
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
@@ -331,3 +331,4 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Recently Implemented:**
 - Mode$ Sacrificed triggers (7010ba5) - Pirate Peddlers sacrifice synergy now works
 - DB$ Attach (a5a2929) - Equipment ETB attach parsing (Twin Blades trigger now parses)
+- DB$ PumpAll - Mass pump effect for Zhao, Ruthless Admiral sacrifice trigger (PumpAllCreatures effect)

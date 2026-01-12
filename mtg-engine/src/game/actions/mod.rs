@@ -1192,6 +1192,62 @@ impl GameState {
                     prior_log_size,
                 );
             }
+            Effect::PumpAllCreatures {
+                controller,
+                filter,
+                power_bonus,
+                toughness_bonus,
+            } => {
+                // Mass pump: "Creatures you control get +X/+Y until end of turn"
+                // Find all creatures matching the filter and pump them
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .filter_map(|&card_id| {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            // Check if it's a creature
+                            if !card.is_creature() {
+                                return None;
+                            }
+                            // Check filter: "Creature.YouCtrl" means controller's creatures
+                            if filter.contains("YouCtrl") && card.controller != *controller {
+                                return None;
+                            }
+                            // Check filter: "Creature.OppCtrl" means opponent's creatures
+                            if filter.contains("OppCtrl") && card.controller == *controller {
+                                return None;
+                            }
+                            Some(card_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Apply pump to all matching creatures
+                for target in targets {
+                    let prior_log_size = self.logger.log_count();
+                    if let Ok(card) = self.cards.get_mut(target) {
+                        card.power_bonus += power_bonus;
+                        card.toughness_bonus += toughness_bonus;
+                        log::debug!(
+                            "PumpAllCreatures: {} gets +{}/+{}",
+                            card.name,
+                            power_bonus,
+                            toughness_bonus
+                        );
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::PumpCreature {
+                            card_id: target,
+                            power_delta: *power_bonus,
+                            toughness_delta: *toughness_bonus,
+                        },
+                        prior_log_size,
+                    );
+                }
+            }
             Effect::Mill { player, count } => {
                 // Mill cards from library to graveyard
                 self.mill_cards(*player, *count)?;
@@ -2559,6 +2615,21 @@ impl GameState {
                             continue;
                         }
                     }
+                    Effect::PumpAllCreatures {
+                        controller,
+                        filter,
+                        power_bonus,
+                        toughness_bonus,
+                    } if controller.as_u32() == 0 => {
+                        // Placeholder controller 0 means the controller of the trigger source
+                        let source_controller = self.cards.get(trigger_source)?.controller;
+                        effect = Effect::PumpAllCreatures {
+                            controller: source_controller,
+                            filter: filter.clone(),
+                            power_bonus: *power_bonus,
+                            toughness_bonus: *toughness_bonus,
+                        };
+                    }
                     _ => {}
                 }
 
@@ -2685,6 +2756,21 @@ impl GameState {
                         // No valid land target - skip this trigger
                         continue;
                     }
+                }
+                Effect::PumpAllCreatures {
+                    controller,
+                    filter,
+                    power_bonus,
+                    toughness_bonus,
+                } if controller.as_u32() == 0 => {
+                    // Placeholder controller 0 means the controller of the trigger source
+                    let source_controller = self.cards.get(card_id)?.controller;
+                    effect = Effect::PumpAllCreatures {
+                        controller: source_controller,
+                        filter: filter.clone(),
+                        power_bonus: *power_bonus,
+                        toughness_bonus: *toughness_bonus,
+                    };
                 }
                 _ => {}
             }

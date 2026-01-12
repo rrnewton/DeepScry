@@ -341,7 +341,8 @@ impl GameState {
                             | Effect::RemoveCounter { .. }
                             | Effect::PutCounter { .. }
                             | Effect::AttachEquipment { .. }
-                            | Effect::ModalChoice { .. } => {
+                            | Effect::ModalChoice { .. }
+                            | Effect::PumpAllCreatures { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -394,9 +395,11 @@ impl GameState {
                 | Effect::GrantCantBeBlocked { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
-                | Effect::CopyPermanent { .. } => {
+                | Effect::CopyPermanent { .. }
+                | Effect::PumpAllCreatures { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // This means the effect has a concrete target already assigned
+                    // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                 }
             }
         }
@@ -708,8 +711,10 @@ impl GameState {
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
-                | Effect::AttachEquipment { .. } => {
+                | Effect::AttachEquipment { .. }
+                | Effect::PumpAllCreatures { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
+                    // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                 }
             }
         }
@@ -895,7 +900,8 @@ impl GameState {
             | Effect::SetBasePowerToughness { .. }
             | Effect::Earthbend { .. }
             | Effect::AttachEquipment { .. }
-            | Effect::ModalChoice { .. } => true,
+            | Effect::ModalChoice { .. }
+            | Effect::PumpAllCreatures { .. } => true, // PumpAllCreatures uses filter, not explicit targets
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

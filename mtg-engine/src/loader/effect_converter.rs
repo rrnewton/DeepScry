@@ -99,6 +99,38 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        ApiType::PumpAll => {
+            // Mass pump: "Creatures you control get +1/+0 until end of turn"
+            // Example: DB$ PumpAll | ValidCards$ Creature.YouCtrl | NumAtt$ +1
+            let mut power_bonus = 0;
+            let mut toughness_bonus = 0;
+
+            // Extract power bonus (NumAtt$) - optional, defaults to 0
+            if let Ok(att) = params.get_i32("NumAtt") {
+                power_bonus = att;
+            }
+
+            // Extract toughness bonus (NumDef$) - optional, defaults to 0
+            if let Ok(def) = params.get_i32("NumDef") {
+                toughness_bonus = def;
+            }
+
+            // Get the filter (ValidCards$) - defaults to "Creature"
+            let filter = params.get("ValidCards").unwrap_or("Creature").to_string();
+
+            // Only create effect if at least one bonus is non-zero
+            if power_bonus != 0 || toughness_bonus != 0 {
+                Some(Effect::PumpAllCreatures {
+                    controller: PlayerId::new(0), // Placeholder - filled in at effect execution
+                    filter,
+                    power_bonus,
+                    toughness_bonus,
+                })
+            } else {
+                None
+            }
+        }
+
         ApiType::Tap => {
             // Check for TapAll (mass tap) vs single target tap
             if params.contains_key("TapAll") {
