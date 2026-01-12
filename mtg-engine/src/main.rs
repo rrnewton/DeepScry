@@ -1238,22 +1238,25 @@ async fn run_tui(
             // Initialize game
             log::info!("Initializing game...");
         }
+        // Use positional IDs (shuffle BEFORE assigning CardIDs) for network compatibility
+        // This ensures CardIDs reflect shuffled library position, matching server behavior
+        let game_seed = seed_resolved.unwrap_or_else(rand::random::<u64>);
         let game_init = GameInitializer::new(&card_db);
         game_init
-            .init_game(
+            .init_game_with_positional_ids(
                 p1_name.clone(),
                 &deck1,
                 p2_name.clone(),
                 &deck2,
                 20, // starting life
+                game_seed,
             )
             .await?
     };
 
-    // Set random seed if provided
-    if let Some(seed_value) = seed_resolved {
-        game.seed_rng(seed_value);
-        if !suppress_output {
+    // Log seed (RNG is already seeded by init_game_with_positional_ids)
+    if !suppress_output {
+        if let Some(seed_value) = seed_resolved {
             log::info!("Using random seed: {seed_value}");
         }
     }
@@ -1634,9 +1637,13 @@ async fn run_tui(
             .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
     }
 
+    // Note: When using init_game_with_positional_ids (which shuffles BEFORE assigning CardIDs),
+    // we must skip the shuffle in GameLoop to preserve the CardID-to-position mapping.
+    // The skip_opening_hands() option skips shuffling but still draws 7 cards.
     let mut game_loop = GameLoop::new(&mut game)
         .with_verbosity(verbosity)
-        .with_snapshot_format(snapshot_format);
+        .with_snapshot_format(snapshot_format)
+        .skip_opening_hands();
 
     // If loading from snapshot, restore the turn counter
     // Note: snapshot.turn_number represents the turn we're STARTING,

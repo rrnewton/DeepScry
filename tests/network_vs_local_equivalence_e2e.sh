@@ -131,14 +131,12 @@ echo -e "${BLUE}Starting NETWORK game...${NC}"
 # Find an available port
 PORT=17780
 
-# Start server
-# Note: --network-debug is disabled to avoid race condition between async WebSocket
-# handler and blocking GameLoop in tokio. The debug/network_heuristic_vs_random.sh
-# script with separate processes can be used for strict reveal validation testing.
+# Start server with --network-debug for strict reveal validation
 RUST_LOG=warn "$MTG_BIN" server \
     --port "$PORT" \
     --seed "$SEED" \
     --tag-gamelogs \
+    --network-debug \
     --verbosity minimal \
     > "$NETWORK_OUTPUT/server.log" 2>&1 &
 SERVER_PID=$!
