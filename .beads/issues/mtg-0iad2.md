@@ -117,8 +117,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Card loads and can be cast for 1B (IMPLEMENTED - SP$ DelayedTrigger now parsed)
 - [x] Requires target creature (ValidTgts$ Creature -> targeting.rs)
 - [x] Creates delayed trigger for death (Effect::CreateDelayedTrigger -> actions/mod.rs)
-- [ ] Trigger fires when creature dies this turn (runtime behavior, not yet verified)
-- [ ] Trigger does NOT fire if creature dies next turn (runtime behavior, not yet verified)
+- [x] Trigger fires when creature dies this turn (verified: test_fatal_fissure_delayed_trigger.pzl - earthbend 4 on Mountain after Lightning Bolt kills Grizzly Bears)
+- [ ] Trigger does NOT fire if creature dies next turn (runtime behavior, not yet verified - needs separate test)
 - [x] Earthbend mechanic exists (verified: Effect::Earthbend implemented in codebase)
 - [x] Earthbend targets a land you control (verified: test_earthbend.pzl)
 - [x] Land becomes a creature (0/0 base) (verified: Forest shows as 8/8 with 8 counters)
@@ -184,7 +184,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Mode 2: Works with fewer than 3 counters (verified: creature had 2 counters)
 - [ ] Mode 2: Can choose to remove fewer counters
 - [x] Mode 2: Works with +1/+1 counters (verified: P1P1 counters removed)
-- [ ] Mode 2: Works with other counter types (**BLOCKED** - CounterType$ Any defaults to P1P1, see TODO in effect_converter.rs:270)
+- [x] Mode 2: Works with other counter types (IMPLEMENTED - CounterType$ Any now iterates all counter types - e52bae8)
 - [x] Can be cast at instant speed (verified: instants work during opponent's turn per test_instant_opponent_turn.pzl)
 
 ---
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 130 items verified as of 2026-01-13_#1646
+**Progress:** 132 items verified as of 2026-01-13_#1651
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -328,9 +328,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Flash keyword (CR 702.8a) enables instant-speed permanent casting (6af1111)
 - SP$ DelayedTrigger parsing and Effect::CreateDelayedTrigger for Fatal Fissure
 - DB$ Pump with KW$ - granting keywords (Double Strike, etc.) via PumpCreature effect (keywords_granted field)
+- CounterType$ Any for RemoveCounter - removes counters of any type (e52bae8)
+- SP$ DelayedTrigger target resolution - tracked_card now filled from chosen_targets (Fatal Fissure death trigger works)
 
 **Not Yet Implemented (found during verification):**
-- CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
 - DB$ DelayedTrigger (for Jeong Jeong) - different from SP$ DelayedTrigger, not yet implemented
 
 **Recently Implemented:**

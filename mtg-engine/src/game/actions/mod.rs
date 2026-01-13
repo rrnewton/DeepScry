@@ -1094,6 +1094,29 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // CreateDelayedTrigger: fill in tracked_card from chosen_targets
+            // This is for spells like Fatal Fissure that target a creature and create
+            // a delayed trigger for when that creature dies
+            Effect::CreateDelayedTrigger {
+                tracked_card,
+                condition,
+                effect: delayed_effect,
+                expiry,
+            } if tracked_card.as_u32() == 0 => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::CreateDelayedTrigger {
+                        tracked_card: resolved_target,
+                        condition: condition.clone(),
+                        effect: delayed_effect.clone(),
+                        expiry: expiry.clone(),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }

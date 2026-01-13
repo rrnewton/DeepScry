@@ -1,0 +1,22 @@
+[metadata]
+Name:Fatal Fissure Delayed Trigger Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+
+# P0 has Fatal Fissure and Lightning Bolt to test delayed trigger
+# After casting Fatal Fissure on P1's creature and killing it,
+# the delayed trigger should fire earthbend 4
+p0life=20
+p0hand=Fatal Fissure; Lightning Bolt
+p0battlefield=Mountain; Mountain; Swamp; Swamp
+p0library=Swamp; Swamp; Swamp
+
+# P1 has a target creature (Grizzly Bears) that P0 will kill
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest; Forest; Forest
