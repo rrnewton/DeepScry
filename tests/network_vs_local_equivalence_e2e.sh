@@ -139,12 +139,14 @@ PORT=17780
 
 # Start server with --network-debug for strict reveal validation
 # Use verbosity=normal to capture GAMELOG entries (minimal suppresses them)
+# Use --no-color-logs to avoid ANSI codes in output
 "$MTG_BIN" server \
     --port "$PORT" \
     --seed "$SEED" \
     --tag-gamelogs \
     --network-debug \
     --verbosity normal \
+    --no-color-logs \
     > "$NETWORK_OUTPUT/server.log" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID (port $PORT)"
@@ -278,13 +280,17 @@ echo "GAMELOG comparison:"
 LOCAL_GAMELOG="$OUTPUT_DIR/local_gamelog.txt"
 NETWORK_GAMELOG="$OUTPUT_DIR/network_gamelog.txt"
 
-# Extract GAMELOG entries from LOCAL
-grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" > "$LOCAL_GAMELOG" 2>/dev/null || true
+# Extract GAMELOG entries from LOCAL (excluding noise: Tap, resolves, takes damage)
+grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" 2>/dev/null | \
+    grep -v 'Tap.*for {' | \
+    grep -v 'resolves$' | \
+    grep -v 'takes.*damage.*life:' \
+    > "$LOCAL_GAMELOG" || true
 
 # Extract SERVER gamelogs (authoritative, has full card info)
-# Filter out: ANSI codes, "Tap X for {M}", "resolves$", "takes N damage (life:"
+# Same filters as LOCAL for apples-to-apples comparison
+# Note: --no-color-logs removes ANSI codes so no sed needed
 grep '\[GAMELOG' "$NETWORK_OUTPUT/server.log" 2>/dev/null | \
-    sed 's/\x1b\[[0-9;]*m//g' | \
     grep -v 'Tap.*for {' | \
     grep -v 'resolves$' | \
     grep -v 'takes.*damage.*life:' \
@@ -322,26 +328,28 @@ else
     EXIT_CODE=1
 fi
 
-# Report GAMELOG summary and compare LOCAL vs SERVER
+# STRICT REQUIREMENT: Gamelogs must be IDENTICAL
 if [ "$LOCAL_GAMELOG_COUNT" -gt 0 ] && [ "$NETWORK_GAMELOG_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}✓ Both games produced GAMELOG entries (local: $LOCAL_GAMELOG_COUNT, server: $NETWORK_GAMELOG_COUNT)${NC}"
+    echo "Both games produced GAMELOG entries (local: $LOCAL_GAMELOG_COUNT, server: $NETWORK_GAMELOG_COUNT)"
 
-    # Compare LOCAL vs SERVER gamelogs (exact match expected for CardIDs and actions)
+    # Compare LOCAL vs SERVER gamelogs - STRICT: must be identical
     DIFF_OUTPUT=$(diff "$LOCAL_GAMELOG" "$NETWORK_GAMELOG" 2>/dev/null || true)
     DIFF_COUNT=$(echo "$DIFF_OUTPUT" | grep -c '^[<>]' 2>/dev/null || echo "0")
 
     if [ "$DIFF_COUNT" -eq 0 ]; then
         echo -e "${GREEN}✓ LOCAL and SERVER gamelogs are IDENTICAL${NC}"
     else
-        echo -e "${YELLOW}⚠ LOCAL and SERVER gamelogs differ by $DIFF_COUNT lines${NC}"
-        echo -e "${YELLOW}  (Known issue: earthbend shadow state desync may cause minor divergence)${NC}"
+        echo -e "${RED}✗ LOCAL and SERVER gamelogs differ by $DIFF_COUNT lines${NC}"
         echo "  First differences:"
-        echo "$DIFF_OUTPUT" | head -10
+        echo "$DIFF_OUTPUT" | head -20
+        EXIT_CODE=1
     fi
 elif [ "$LOCAL_GAMELOG_COUNT" -gt 0 ]; then
-    echo -e "${YELLOW}⚠ Only local game produced GAMELOG entries ($LOCAL_GAMELOG_COUNT entries)${NC}"
+    echo -e "${RED}✗ Only local game produced GAMELOG entries ($LOCAL_GAMELOG_COUNT entries)${NC}"
+    EXIT_CODE=1
 elif [ "$NETWORK_GAMELOG_COUNT" -gt 0 ]; then
-    echo -e "${YELLOW}⚠ Only network game produced GAMELOG entries ($NETWORK_GAMELOG_COUNT entries)${NC}"
+    echo -e "${RED}✗ Only network game produced GAMELOG entries ($NETWORK_GAMELOG_COUNT entries)${NC}"
+    EXIT_CODE=1
 else
     echo -e "${RED}✗ Neither game produced GAMELOG entries${NC}"
     EXIT_CODE=1

@@ -559,6 +559,10 @@ enum Commands {
         /// Server validates client's state hash matches its own after each choice.
         #[arg(long)]
         network_debug: bool,
+
+        /// Disable ANSI colored log output (respects NO_COLOR env var by default)
+        #[arg(long)]
+        no_color_logs: bool,
     },
 
     /// Connect to a multiplayer game server
@@ -868,6 +872,7 @@ async fn main() -> Result<()> {
             tag_gamelogs,
             verbosity,
             network_debug,
+            no_color_logs,
         } => {
             use mtg_forge_rs::game::VerbosityLevel;
             use mtg_forge_rs::network::{GameServer, ServerConfig};
@@ -884,6 +889,7 @@ async fn main() -> Result<()> {
                 tag_gamelogs,
                 verbosity: verbosity_level,
                 network_debug,
+                no_color_logs,
                 ..Default::default()
             };
 
