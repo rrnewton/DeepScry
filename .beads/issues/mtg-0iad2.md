@@ -327,10 +327,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Fire Lord Ozai Sacrificed$CardPower sentinel 254 fixed (check_triggers now resolves to sacrificed creature's power)
 - Flash keyword (CR 702.8a) enables instant-speed permanent casting (6af1111)
 - SP$ DelayedTrigger parsing and Effect::CreateDelayedTrigger for Fatal Fissure
+- DB$ Pump with KW$ - granting keywords (Double Strike, etc.) via PumpCreature effect (keywords_granted field)
 
 **Not Yet Implemented (found during verification):**
 - CounterType$ Any - defaults to P1P1, can't remove -1/-1 or other counter types
-- DB$ Pump with KW$ - granting keywords like Double Strike via pump not verified (parsing added but effect resolution pending)
 - DB$ DelayedTrigger (for Jeong Jeong) - different from SP$ DelayedTrigger, not yet implemented
 
 **Recently Implemented:**

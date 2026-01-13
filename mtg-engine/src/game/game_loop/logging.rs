@@ -222,6 +222,7 @@ impl<'a> GameLoop<'a> {
                 target,
                 power_bonus,
                 toughness_bonus,
+                keywords_granted,
             } => {
                 let target_name = self
                     .game
@@ -229,9 +230,21 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                let message = format!(
-                    "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
-                );
+                let message = if keywords_granted.is_empty() {
+                    format!(
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
+                    )
+                } else if *power_bonus == 0 && *toughness_bonus == 0 {
+                    format!(
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {:?} until end of turn",
+                        keywords_granted
+                    )
+                } else {
+                    format!(
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} and {:?} until end of turn",
+                        keywords_granted
+                    )
+                };
                 self.game.logger.gamelog(&message);
             }
             Effect::Mill { player, count } => {

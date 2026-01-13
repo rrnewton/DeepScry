@@ -898,6 +898,7 @@ impl GameState {
                 target,
                 power_bonus,
                 toughness_bonus,
+                keywords_granted,
             } if target.as_u32() == 0 => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -907,6 +908,7 @@ impl GameState {
                         target: resolved_target,
                         power_bonus: *power_bonus,
                         toughness_bonus: *toughness_bonus,
+                        keywords_granted: keywords_granted.clone(),
                     }
                 } else {
                     effect.clone()
@@ -1192,6 +1194,7 @@ impl GameState {
                 target,
                 power_bonus,
                 toughness_bonus,
+                keywords_granted,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
@@ -1199,13 +1202,17 @@ impl GameState {
                     log::warn!(target: "pump", "PumpCreature fizzled: target is still placeholder 0");
                     return Ok(());
                 }
-                log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}", target.as_u32(), power_bonus, toughness_bonus);
+                log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted);
                 // Capture log size before pump
                 let prior_log_size = self.logger.log_count();
 
                 let card = self.cards.get_mut(*target)?;
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
+                // Grant keywords
+                for keyword in keywords_granted.iter() {
+                    card.keywords.insert(*keyword);
+                }
 
                 // Log the pump effect
                 self.undo_log.log(
@@ -1213,6 +1220,7 @@ impl GameState {
                         card_id: *target,
                         power_delta: *power_bonus,
                         toughness_delta: *toughness_bonus,
+                        keywords_granted: keywords_granted.clone(),
                     },
                     prior_log_size,
                 );
@@ -1268,6 +1276,7 @@ impl GameState {
                             card_id: target,
                             power_delta: *power_bonus,
                             toughness_delta: *toughness_bonus,
+                            keywords_granted: smallvec::SmallVec::new(),
                         },
                         prior_log_size,
                     );
@@ -2642,6 +2651,7 @@ impl GameState {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        keywords_granted,
                     } if target.as_u32() == 0 => {
                         // Find a valid target (any creature on battlefield)
                         if let Some(target_id) = self
@@ -2661,6 +2671,7 @@ impl GameState {
                                 target: target_id,
                                 power_bonus: *power_bonus,
                                 toughness_bonus: *toughness_bonus,
+                                keywords_granted: keywords_granted.clone(),
                             };
                         }
                     }
@@ -3071,6 +3082,7 @@ impl GameState {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        keywords_granted,
                     } if target.as_u32() == 0 => {
                         // Placeholder CardId 0 means "pump self" (for Prowess-like effects)
                         self.logger.normal(&format!(
@@ -3082,6 +3094,7 @@ impl GameState {
                             target: trigger.source_card_id,
                             power_bonus,
                             toughness_bonus,
+                            keywords_granted,
                         }
                     }
                     other => other,

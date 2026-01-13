@@ -1,6 +1,6 @@
 //! Card effects and ability system
 
-use crate::core::{CardId, PlayerId};
+use crate::core::{CardId, Keyword, PlayerId};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -248,12 +248,15 @@ pub enum Effect {
     /// Example: "Untap target land"
     UntapPermanent { target: CardId },
 
-    /// Pump (temporary stat boost) until end of turn
+    /// Pump (temporary stat boost and/or keyword grant) until end of turn
     /// Example: "Target creature gets +3/+3 until end of turn"
+    /// Example with keyword: "Target creature gains double strike until end of turn"
     PumpCreature {
         target: CardId,
         power_bonus: i32,
         toughness_bonus: i32,
+        /// Keywords to grant (e.g., Double Strike from KW$ parameter)
+        keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
     },
 
     /// Pump all creatures matching a filter until end of turn

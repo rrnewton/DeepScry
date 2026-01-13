@@ -4,7 +4,8 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{CardId, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 /// Convert ability parameters to an Effect
@@ -87,12 +88,25 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 toughness_bonus = def;
             }
 
-            // Only create effect if at least one bonus is non-zero
-            if power_bonus != 0 || toughness_bonus != 0 {
+            // Extract keywords to grant (KW$) - optional
+            // Format: "KW$ Double Strike" or "KW$ Flying & Haste" (multiple separated by &)
+            let keywords_granted: SmallVec<[Keyword; 2]> = params
+                .get("KW")
+                .map(|kw_str| {
+                    kw_str
+                        .split(" & ")
+                        .filter_map(|kw| Keyword::from_string(kw.trim()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Create effect if at least one bonus is non-zero OR keywords are granted
+            if power_bonus != 0 || toughness_bonus != 0 || !keywords_granted.is_empty() {
                 Some(Effect::PumpCreature {
                     target: CardId::new(0), // Placeholder - filled in at cast time
                     power_bonus,
                     toughness_bonus,
+                    keywords_granted,
                 })
             } else {
                 None
@@ -1005,12 +1019,70 @@ mod tests {
 
         match effect {
             Effect::PumpCreature {
-                target: _,
                 power_bonus,
                 toughness_bonus,
+                ..
             } => {
                 assert_eq!(power_bonus, 3);
                 assert_eq!(toughness_bonus, 2);
+            }
+            _ => panic!("Expected PumpCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_pump_with_keyword() {
+        use crate::core::Keyword;
+
+        // KW$ Double Strike only (no stat bonuses)
+        let params = AbilityParams::parse("A:DB$ Pump | Defined$ Targeted | KW$ Double Strike").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::PumpCreature {
+                power_bonus,
+                toughness_bonus,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(power_bonus, 0, "Power bonus should be 0");
+                assert_eq!(toughness_bonus, 0, "Toughness bonus should be 0");
+                assert_eq!(keywords_granted.len(), 1, "Should have 1 keyword");
+                assert!(
+                    keywords_granted.contains(&Keyword::DoubleStrike),
+                    "Should grant Double Strike"
+                );
+            }
+            _ => panic!("Expected PumpCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_pump_with_multiple_keywords() {
+        use crate::core::Keyword;
+
+        // KW$ Flying & Haste (multiple keywords)
+        let params = AbilityParams::parse("A:SP$ Pump | NumAtt$ +1 | NumDef$ +1 | KW$ Flying & Haste").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::PumpCreature {
+                power_bonus,
+                toughness_bonus,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(power_bonus, 1, "Power bonus should be +1");
+                assert_eq!(toughness_bonus, 1, "Toughness bonus should be +1");
+                assert_eq!(keywords_granted.len(), 2, "Should have 2 keywords");
+                assert!(
+                    keywords_granted.contains(&Keyword::Flying),
+                    "Should grant Flying"
+                );
+                assert!(
+                    keywords_granted.contains(&Keyword::Haste),
+                    "Should grant Haste"
+                );
             }
             _ => panic!("Expected PumpCreature effect"),
         }
@@ -1047,6 +1119,7 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 target,
                 power_bonus,
                 toughness_bonus,
+                ..
             } => {
                 assert_eq!(target.as_u32(), 0, "Target should be placeholder 0");
                 assert_eq!(*power_bonus, 3, "Power bonus should be +3");

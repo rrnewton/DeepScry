@@ -1594,10 +1594,15 @@ impl GameState {
                             card_id,
                             power_delta,
                             toughness_delta,
+                            keywords_granted,
                         } => {
                             if let Ok(card) = self.cards.get_mut(card_id) {
                                 card.power_bonus -= power_delta;
                                 card.toughness_bonus -= toughness_delta;
+                                // Remove granted keywords
+                                for keyword in keywords_granted {
+                                    card.keywords.remove(keyword);
+                                }
                             }
                         }
                         crate::undo::GameAction::SetTurnEnteredBattlefield {
@@ -1872,11 +1877,16 @@ impl GameState {
                     card_id,
                     power_delta,
                     toughness_delta,
+                    keywords_granted,
                 } => {
                     // Reverse the pump effect
                     if let Ok(card) = self.cards.get_mut(card_id) {
                         card.power_bonus -= power_delta;
                         card.toughness_bonus -= toughness_delta;
+                        // Remove granted keywords
+                        for keyword in keywords_granted {
+                            card.keywords.remove(keyword);
+                        }
                     }
                 }
                 crate::undo::GameAction::SetTurnEnteredBattlefield {

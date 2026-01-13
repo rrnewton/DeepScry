@@ -711,9 +711,9 @@ impl HeuristicController {
                     // Check if this is a pump spell (has PumpCreature effect)
                     for effect in &spell_card.effects {
                         if let crate::core::Effect::PumpCreature {
-                            target: _,
                             power_bonus,
                             toughness_bonus,
+                            ..
                         } = effect
                         {
                             // Check phase restrictions for instant pumps
@@ -5494,6 +5494,7 @@ mod tests {
                 target: CardId::new(0),
                 power_bonus: 1,
                 toughness_bonus: 0,
+                keywords_granted: smallvec::SmallVec::new(),
             }],
             "{R}: +1/+0 until end of turn".to_string(),
             false,
