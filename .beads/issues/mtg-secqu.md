@@ -2,9 +2,9 @@
 title: 'Network architecture compliance tracking'
 status: open
 priority: 1
-issue_type: tracking
+issue_type: epic
 created_at: 2026-01-08T01:50:48.341942482+00:00
-updated_at: 2026-01-08T22:30:31.481711838+00:00
+updated_at: 2026-01-13T00:00:00.000000000+00:00
 ---
 
 # Description
@@ -131,3 +131,29 @@ DURING GameLoop execution where the timing is controlled by ChoiceRequest/Choice
 - mtg-to96y: Main networking tracking issue
 - mtg-qtqcr: Hidden information architecture
 - mtg-e66iz: Original desync bug (dormant)
+
+## Network vs Local Equivalence Testing (2026-01-13)
+
+### Test Infrastructure (DONE)
+- [x] Created `tests/network_vs_local_equivalence_e2e.sh` (commit 9baf01138)
+- [x] Fixed CardID assignment to use identical ordering in LOCAL and NETWORK modes (commit 98030fa25)
+- [x] Added exact gamelog comparison between LOCAL and SERVER (commit 20dc88b12)
+- [x] Same player names ("Ryan", "Gabriel") used in both modes
+
+### Test Results
+- Both games run to completion with identical CardIDs
+- Gamelogs are nearly identical (86-88 entries)
+- 2-line difference at Turn 18 due to earthbend shadow state desync
+
+### Known Issue: Earthbend Shadow State Desync
+When Badgermole's earthbend effect transforms Thriving Grove (76) into a 2/2 creature:
+- **SERVER**: Logs the earthbend transformation, Thriving Grove becomes valid attacker
+- **CLIENT**: Shadow state doesn't receive `CardRevealed` for the transformation
+- **Result**: Client's heuristic AI doesn't see Thriving Grove as a creature, makes different attack declarations
+
+**Root cause**: Earthbend transformation doesn't emit `CardRevealed` to inform clients that
+a land has become a creature. The server's authoritative game state knows, but clients' shadow
+state thinks it's still just a land.
+
+**Fix needed**: Earthbend logic should emit `CardRevealed` when transforming a card into a creature,
+similar to how `draw_card()` reveals cards to their owner.
