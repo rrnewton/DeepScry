@@ -308,19 +308,18 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // CounterType$ can be:
             // - "P1P1" for +1/+1 counters
             // - "M1M1" for -1/-1 counters
-            // - "Any" to remove any counter type
+            // - "Any" to remove any counter type (represented as None)
             //
             // UpTo$ True means "up to N counters" (minimum 0), otherwise exactly N counters
             use crate::core::CounterType;
 
-            // Parse counter type (e.g., "P1P1" -> +1/+1 counter, "Any" -> P1P1 as default for now)
+            // Parse counter type (e.g., "P1P1" -> Some(+1/+1 counter), "Any" -> None)
             let counter_type_str = params.get("CounterType").unwrap_or("P1P1");
             let counter_type = if counter_type_str == "Any" {
-                // "Any" means remove any counter type - for now default to P1P1
-                // TODO(mtg-charm): Support "Any" counter type properly
-                CounterType::P1P1
+                // "Any" means remove any counter type - represented as None
+                None
             } else {
-                CounterType::parse(counter_type_str)?
+                Some(CounterType::parse(counter_type_str)?)
             };
 
             // Parse counter count (default to 1)
@@ -1410,8 +1409,6 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
 
     #[test]
     fn test_convert_remove_counter() {
-        use crate::core::CounterType;
-
         // Heartless Act mode 2: Remove up to three counters from target creature
         let params = AbilityParams::parse(
             "A:DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True",
@@ -1425,8 +1422,8 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 counter_type,
                 amount,
             } => {
-                // "Any" counter type defaults to P1P1 for now
-                assert_eq!(counter_type, CounterType::P1P1);
+                // "Any" counter type now means None (any counter)
+                assert_eq!(counter_type, None);
                 assert_eq!(amount, 3);
             }
             _ => panic!("Expected RemoveCounter effect, got: {:?}", effect),
@@ -1449,7 +1446,7 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 counter_type,
                 amount,
             } => {
-                assert_eq!(counter_type, CounterType::P1P1);
+                assert_eq!(counter_type, Some(CounterType::P1P1));
                 assert_eq!(amount, 1);
             }
             _ => panic!("Expected RemoveCounter effect"),

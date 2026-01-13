@@ -1363,7 +1363,26 @@ impl GameState {
                     return Ok(());
                 }
                 // Remove counters using the GameState method (which logs for undo)
-                self.remove_counters(*target, *counter_type, *amount)?;
+                if let Some(ct) = counter_type {
+                    // Specific counter type
+                    self.remove_counters(*target, *ct, *amount)?;
+                } else {
+                    // CounterType$ Any - remove counters of any type
+                    // Get all counter types present on the card and remove up to `amount` total
+                    let mut remaining = *amount;
+                    let counter_types: smallvec::SmallVec<[crate::core::CounterType; 4]> = {
+                        let card = self.cards.get(*target)?;
+                        card.counters.iter().map(|(ct, _)| *ct).collect()
+                    };
+
+                    for ct in counter_types {
+                        if remaining == 0 {
+                            break;
+                        }
+                        let removed = self.remove_counters(*target, ct, remaining)?;
+                        remaining = remaining.saturating_sub(removed);
+                    }
+                }
             }
             Effect::ExilePermanent { target } => {
                 // Skip if target is still placeholder (0) - no valid targets found
