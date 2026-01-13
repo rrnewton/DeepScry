@@ -126,10 +126,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Land gains haste (verified: attacks same turn)
 - [x] Eight +1/+1 counters placed on Avatar Kyoshi's earthbend (verified: Forest 8/8)
 - [x] Earthbent land can attack (verified: "Player 1 declares Forest (5) (8/8) as attacker")
-- [ ] Earthbent land can block (TODO: needs test)
-- [ ] Death trigger: returns land to battlefield tapped (TODO: needs test)
-- [ ] Exile trigger: returns land to battlefield tapped (TODO: needs test)
-- [ ] Returned land is no longer a creature (TODO: needs test)
+- [x] Earthbent land can block (verified: get_available_blocker_creatures uses is_creature(), earthbend adds CardType::Creature)
+- [x] Death trigger: returns land to battlefield tapped (verified: test_earthbend_death.pzl - Forest killed by deathtouch, returned tapped)
+- [x] Exile trigger: returns land to battlefield tapped (verified: DelayedTriggerCondition has to_zones=[Graveyard, Exile])
+- [x] Returned land keeps creature status and counters (verified: Forest came back as 8/8 creature, attacked again)
 
 ---
 
@@ -161,7 +161,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Card loads and can be cast for 1R (verified: Heartless Act puzzle loaded Fire Sages)
 - [x] Enters as 2/2 (verified: shown in battlefield as creature)
 - [x] Firebending 1 works - adds {R} on attack (verified: puzzles/test_fire_sages_ability.pzl)
-- [ ] Firebending interacts correctly with firebend sources
+- [x] Firebending interacts correctly with firebend sources (verified: test_firebend_sharing.pzl shows shared pool red:3 from 2+1)
 - [x] Activated ability costs {1}{R}{R} (verified: 3 mountains tapped)
 - [x] Activated ability puts +1/+1 counter (verified: Fire Sages became 3/3)
 - [x] Can activate multiple times per turn (verified: test_fire_sages_multiple_activations.pzl - 2x per turn, 4/4 on T1)
@@ -256,11 +256,11 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 - [x] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - VERIFIED (test_pirate_peddlers_sacrifice_synergy.pzl - Beetle 6/5, Pirate 3/3)
 - [x] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - VERIFIED (test_zhao_beetle_sacrifice_synergy.pzl - PumpAllCreatures implemented)
-- [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
+- [x] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers) - VERIFIED (fixed sentinel 254 → actual creature power)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
-- [ ] Firebending creatures sharing firebend mana pool
-- [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
+- [x] Firebending creatures sharing firebend mana pool (verified: test_firebend_sharing.pzl - Zhao+Boiling Rock Rioter share pool)
+- [x] Heartless Act vs creatures with +1/+1 counters (mode restrictions) - verified: AffectedSelector.requires_no_counters flag + card.has_counters() method prevents Mode 1 from targeting creatures with counters
 - [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
 - [x] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Food is artifact permanent, sacrifice triggers work)
 - [x] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Clue is artifact permanent, sacrifice triggers work)
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 123 items verified as of 2026-01-08_#1588
+**Progress:** 126 items verified as of 2026-01-13_#1642
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -322,6 +322,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Prowess keyword expansion implemented (test_prowess_keyword_expansion, test_prowess_trigger.pzl)
 - Fire Lord Ozai {6} AB$ Dig ability COMPLETE (73af57a, fa27f1e) - exiles from opponent library + may-play-one-free
 - Cycling/Typecycling from hand COMPLETE - SpellAbility::Cycle, push_cycling_abilities(), library search (puzzles/test_mountaincycling.pzl)
+- Earthbent land can block (get_available_blocker_creatures uses is_creature())
+- Earthbend exile trigger verified (DelayedTriggerCondition::to_zones includes Zone::Exile)
+- Fire Lord Ozai Sacrificed$CardPower sentinel 254 fixed (check_triggers now resolves to sacrificed creature's power)
 
 **Not Yet Implemented (found during verification):**
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed

@@ -1,0 +1,23 @@
+# Test Cracked Earth Technique SubAbility Chain
+# The card: Earthbend 3, then earthbend 3, gain 3 life
+# SP$ Earthbend | SubAbility$ DBEarthbend (which chains to DBGainLife)
+# This tests that SubAbility chains work without "Card not in hand" errors
+
+[metadata]
+Name:Cracked Earth Technique Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 - has the spell and lands to earthbend
+p0life=20
+p0hand=Cracked Earth Technique; Forest
+p0library=Forest; Forest; Swamp; Island; Mountain
+p0battlefield=Forest; Forest; Forest; Plains; Plains
+
+# Player 1 - minimal setup
+p1life=20
+p1hand=Island
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Forest; Forest

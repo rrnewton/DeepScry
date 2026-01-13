@@ -1,0 +1,23 @@
+# Test Earthbend Blocking
+# Earthbent land should be able to block attacking creatures
+# Setup: P1 has Avatar Kyoshi and earthbent Forest, P2 has attacking creature
+# Expected: Forest should be able to block
+
+[metadata]
+Name:Earthbend Blocking Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 - Avatar Kyoshi with earthbent forest (already earthbent)
+p0life=20
+p0hand=Mountain
+p0library=Forest; Forest; Swamp; Island; Mountain
+p0battlefield=Avatar Kyoshi, Earthbender; Forest; Mountain; Swamp
+
+# Player 1 - Has Grizzly Bears to attack
+p1life=20
+p1hand=Forest
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Grizzly Bears; Forest; Swamp

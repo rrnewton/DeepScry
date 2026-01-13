@@ -170,6 +170,7 @@ impl GameState {
             // Execute effects by index, resolving targets at execution time
             // This avoids cloning the entire Vec<Effect>
             let mut target_index = 0;
+            let mut last_resolved_target: Option<CardId> = None;
             for effect_index in 0..effects_len {
                 // Re-fetch effect each iteration (card ref can't be held across execute calls)
                 let effect = self.cards.get(card_id)?.effects.get(effect_index).cloned();
@@ -177,8 +178,14 @@ impl GameState {
                 if let Some(effect) = effect {
                     log::debug!(target: "resolve_spell", "Effect[{}] before resolve: {:?}", effect_index, effect);
                     // Resolve the effect with context, advancing target_index as needed
-                    let resolved =
-                        self.resolve_effect_target(&effect, chosen_targets, &mut target_index, card_owner, opponent_id);
+                    let resolved = self.resolve_effect_target(
+                        &effect,
+                        chosen_targets,
+                        &mut target_index,
+                        card_owner,
+                        opponent_id,
+                        &mut last_resolved_target,
+                    );
                     log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
                     self.execute_effect(&resolved)?;
                 }
@@ -833,6 +840,8 @@ impl GameState {
     /// - `target_index`: Mutable index tracking which target to consume next
     /// - `card_owner`: The controller of the spell (for "you" player references)
     /// - `opponent_id`: Pre-computed opponent ID for untargeted damage effects
+    /// - `last_resolved_target`: Tracks the most recently resolved target for SubAbility chains
+    ///   with `Defined$ Targeted` (reuse_previous sentinel)
     ///
     /// Note: Wildcard match is intentional - effects without placeholder targets
     /// are returned unchanged. New Effect variants should be reviewed for target
@@ -846,6 +855,7 @@ impl GameState {
         target_index: &mut usize,
         card_owner: PlayerId,
         opponent_id: Option<PlayerId>,
+        last_resolved_target: &mut Option<CardId>,
     ) -> Effect {
         match effect {
             // Target resolution for permanent-targeting effects
@@ -856,6 +866,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(target);
                     Effect::DealDamage {
                         target: TargetRef::Permanent(target),
                         amount: *amount,
@@ -874,6 +885,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::DestroyPermanent {
                         target: resolved_target,
                         restriction: restriction.clone(),
@@ -890,6 +902,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::PumpCreature {
                         target: resolved_target,
                         power_bonus: *power_bonus,
@@ -903,6 +916,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::TapPermanent {
                         target: resolved_target,
                     }
@@ -910,10 +924,21 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // Handle UntapPermanent with reuse_previous sentinel (from Defined$ Targeted)
+            Effect::UntapPermanent { target } if target.is_reuse_previous() => {
+                // Reuse the target from the previous effect in the chain
+                if let Some(prev_target) = *last_resolved_target {
+                    Effect::UntapPermanent { target: prev_target }
+                } else {
+                    log::warn!(target: "resolve_effect", "UntapPermanent has reuse_previous but no previous target");
+                    effect.clone()
+                }
+            }
             Effect::UntapPermanent { target } if target.as_u32() == 0 => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::UntapPermanent {
                         target: resolved_target,
                     }
@@ -2268,6 +2293,7 @@ impl GameState {
             source_card_id: CardId,
             effects: Vec<Effect>,
             sacrifice_target: Option<CardId>, // Card to sacrifice for the cost
+            sacrificed_power: u8,             // Power of sacrifice target (for Firebend effects)
         }
 
         // Phase 1: Collect matching triggers with their metadata
@@ -2328,6 +2354,7 @@ impl GameState {
             .into_iter()
             .filter_map(|info| {
                 let mut sacrifice_target: Option<CardId> = None;
+                let mut sacrificed_power: u8 = 0;
 
                 // For optional triggers with costs, check payability and choose targets
                 if info.trigger.optional {
@@ -2346,6 +2373,13 @@ impl GameState {
 
                             // Choose which permanent to sacrifice (AI heuristic: pick lowest P/T creature or artifact)
                             sacrifice_target = self.choose_sacrifice_target(pattern, info.card_id, info.controller);
+
+                            // Capture power of sacrifice target for Firebend effects (Fire Lord Ozai)
+                            if let Some(sac_id) = sacrifice_target {
+                                if let Ok(sac_card) = self.cards.get(sac_id) {
+                                    sacrificed_power = sac_card.current_power().max(0) as u8;
+                                }
+                            }
                         }
                         // TODO: Check other cost types (mana, life, etc.)
                     }
@@ -2364,13 +2398,19 @@ impl GameState {
                     }
                     if let Some(sac_id) = sacrifice_target {
                         if let Ok(sac_card) = self.cards.get(sac_id) {
-                            log::debug!("  Will sacrifice: {} ({})", sac_card.name, sac_id.as_u32());
+                            log::debug!(
+                                "  Will sacrifice: {} ({}) power={}",
+                                sac_card.name,
+                                sac_id.as_u32(),
+                                sacrificed_power
+                            );
                         }
                     }
                     Some(TriggerToExecute {
                         source_card_id: info.card_id,
                         effects: info.trigger.effects,
                         sacrifice_target,
+                        sacrificed_power,
                     })
                 } else {
                     None
@@ -2381,6 +2421,7 @@ impl GameState {
         // Phase 3: Execute sacrifices and triggered effects
         for trigger_to_exec in triggered_effects {
             let trigger_source = trigger_to_exec.source_card_id;
+            let sacrificed_power = trigger_to_exec.sacrificed_power;
 
             // Execute sacrifice cost first (if any)
             if let Some(sac_target) = trigger_to_exec.sacrifice_target {
@@ -2629,6 +2670,30 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                         };
+                    }
+                    Effect::Firebend {
+                        controller: ctrl,
+                        amount,
+                    } if ctrl.as_u32() == 0 => {
+                        // Resolve placeholder controller to the actual creature controller
+                        // amount=254 means "use sacrificed creature's power" (Fire Lord Ozai)
+                        let source_controller = self.cards.get(trigger_source)?.controller;
+                        let actual_amount = if *amount == 254 { sacrificed_power } else { *amount };
+
+                        effect = Effect::Firebend {
+                            controller: source_controller,
+                            amount: actual_amount,
+                        };
+
+                        // Log the firebend trigger
+                        if actual_amount > 0 {
+                            if let Ok(card) = self.cards.get(trigger_source) {
+                                self.logger.gamelog(&format!(
+                                    "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                                    card.name, actual_amount, actual_amount
+                                ));
+                            }
+                        }
                     }
                     _ => {}
                 }
