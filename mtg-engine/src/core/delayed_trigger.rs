@@ -98,7 +98,7 @@ impl DelayedTrigger {
 }
 
 /// What event triggers a delayed trigger
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DelayedTriggerCondition {
     /// Fire when tracked card moves between zones
     /// Example: Earthbend - when land goes to Graveyard or Exile
@@ -167,10 +167,20 @@ pub enum DelayedEffect {
     /// Cast the tracked card without paying mana cost
     /// Used by: Suspend
     CastWithoutPaying,
+
+    /// Execute an effect when triggered
+    /// Used by: SP$ DelayedTrigger (Fatal Fissure, etc.)
+    ///
+    /// The effect is stored directly rather than referencing an SVar,
+    /// since SVars are resolved at parse time.
+    ExecuteEffect {
+        /// The effect to execute when the trigger fires
+        effect: Box<super::effects::Effect>,
+    },
 }
 
 /// When to remove the trigger (even if it hasn't fired)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DelayedTriggerExpiry {
     /// Remove at end of turn
     EndOfTurn,

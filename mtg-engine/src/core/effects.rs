@@ -541,6 +541,31 @@ pub enum Effect {
         /// Whether "may play" costs no mana
         may_play_without_mana_cost: bool,
     },
+
+    /// Create a delayed trigger that fires when a condition is met.
+    ///
+    /// Corresponds to: `SP$ DelayedTrigger | Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | Execute$ TrigEffect`
+    ///
+    /// Example: Fatal Fissure - "Choose target creature. When that creature dies this turn, you earthbend 4."
+    ///
+    /// Implementation:
+    /// 1. Remember the targeted card
+    /// 2. Create a DelayedTrigger with the specified condition (e.g., ZoneChange from Battlefield to Graveyard)
+    /// 3. When the condition is met, execute the specified effect
+    /// 4. If ThisTurn$ True, the trigger expires at end of turn
+    ///
+    /// Cards using this:
+    /// - Fatal Fissure: Delayed trigger on creature death -> earthbend 4
+    CreateDelayedTrigger {
+        /// The card to track (target of the spell)
+        tracked_card: CardId,
+        /// The condition that fires the trigger
+        condition: crate::core::DelayedTriggerCondition,
+        /// The effect to execute when triggered
+        effect: Box<Effect>,
+        /// When the trigger expires (usually EndOfTurn for ThisTurn$ True)
+        expiry: Option<crate::core::DelayedTriggerExpiry>,
+    },
 }
 
 /// A single mode in a modal spell.

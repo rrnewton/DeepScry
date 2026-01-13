@@ -2066,6 +2066,130 @@ impl GameState {
                 // This requires putting the spell on the stack without paying costs
                 log::warn!(target: "delayed_triggers", "CastWithoutPaying not yet implemented");
             }
+
+            DelayedEffect::ExecuteEffect { effect } => {
+                // Execute the stored effect when the delayed trigger fires
+                // Used by: SP$ DelayedTrigger (Fatal Fissure, etc.)
+                //
+                // The effect was parsed at card load time from the Execute$ SVar.
+                // We need to resolve it now with the actual target (tracked_card).
+
+                log::debug!(
+                    target: "delayed_triggers",
+                    "Executing delayed effect: {:?} for card {:?}",
+                    effect, card_id
+                );
+
+                // For effects that need the tracked card as target, update the target
+                match *effect {
+                    crate::core::Effect::Earthbend { num_counters, .. } => {
+                        // Earthbend needs to target a land we control
+                        // Find an untapped land controlled by the trigger controller
+                        let target_land = self
+                            .battlefield
+                            .cards
+                            .iter()
+                            .find(|&&cid| {
+                                self.cards
+                                    .get(cid)
+                                    .is_ok_and(|c| c.is_land() && c.controller == controller && !c.tapped)
+                            })
+                            .copied();
+
+                        if let Some(land_id) = target_land {
+                            // Execute earthbend on the land (inline the logic)
+                            use crate::core::{CardType, CounterType, Keyword};
+
+                            // Get land name before mutable borrow
+                            let land_name = self
+                                .cards
+                                .get(land_id)
+                                .map(|c| c.name.to_string())
+                                .unwrap_or_else(|_| "Land".to_string());
+
+                            // Modify the land card
+                            {
+                                let card = self.cards.get_mut(land_id)?;
+
+                                // Add Creature type (still remains a land)
+                                if !card.is_creature() {
+                                    card.add_type(CardType::Creature);
+                                }
+
+                                // Set base P/T to 0/0
+                                card.set_temp_base_power(0);
+                                card.set_temp_base_toughness(0);
+
+                                // Add Haste keyword
+                                card.keywords.insert(Keyword::Haste);
+                            }
+
+                            // Add +1/+1 counters
+                            self.add_counters(land_id, CounterType::P1P1, num_counters)?;
+
+                            // Register delayed trigger for return-to-battlefield on death/exile
+                            use crate::core::{DelayedTrigger, DelayedTriggerCondition};
+                            use smallvec::smallvec;
+
+                            let return_trigger = DelayedTrigger::new(
+                                crate::core::DelayedTriggerId::new(0),
+                                land_id,
+                                land_id,
+                                controller,
+                                DelayedTriggerCondition::ZoneChange {
+                                    from_zones: smallvec![Zone::Battlefield],
+                                    to_zones: smallvec![Zone::Graveyard, Zone::Exile],
+                                },
+                                DelayedEffect::ReturnToBattlefield {
+                                    tapped: true,
+                                    to_owner: true,
+                                },
+                            );
+                            self.delayed_triggers.add(return_trigger);
+
+                            self.logger
+                                .normal(&format!("Delayed trigger: earthbend {} on {}", num_counters, land_name));
+                        } else {
+                            self.logger
+                                .normal("Delayed trigger: no valid land target for earthbend");
+                        }
+                    }
+                    crate::core::Effect::DealDamage { .. }
+                    | crate::core::Effect::DrawCards { .. }
+                    | crate::core::Effect::Loot { .. }
+                    | crate::core::Effect::GainLife { .. }
+                    | crate::core::Effect::DestroyPermanent { .. }
+                    | crate::core::Effect::TapPermanent { .. }
+                    | crate::core::Effect::UntapPermanent { .. }
+                    | crate::core::Effect::PumpCreature { .. }
+                    | crate::core::Effect::PumpAllCreatures { .. }
+                    | crate::core::Effect::Mill { .. }
+                    | crate::core::Effect::CounterSpell { .. }
+                    | crate::core::Effect::AddMana { .. }
+                    | crate::core::Effect::PutCounter { .. }
+                    | crate::core::Effect::RemoveCounter { .. }
+                    | crate::core::Effect::ExilePermanent { .. }
+                    | crate::core::Effect::SearchLibrary { .. }
+                    | crate::core::Effect::AttachEquipment { .. }
+                    | crate::core::Effect::CreateToken { .. }
+                    | crate::core::Effect::CopyPermanent { .. }
+                    | crate::core::Effect::Balance { .. }
+                    | crate::core::Effect::SetBasePowerToughness { .. }
+                    | crate::core::Effect::Airbend { .. }
+                    | crate::core::Effect::Firebend { .. }
+                    | crate::core::Effect::GrantCantBeBlocked { .. }
+                    | crate::core::Effect::ModalChoice { .. }
+                    | crate::core::Effect::Dig { .. }
+                    | crate::core::Effect::CreateDelayedTrigger { .. } => {
+                        // Other effect types not yet implemented for delayed triggers
+                        log::warn!(
+                            target: "delayed_triggers",
+                            "Delayed ExecuteEffect for {:?} not yet implemented",
+                            effect
+                        );
+                    }
+                }
+            }
         }
 
         Ok(())

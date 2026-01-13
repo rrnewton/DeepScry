@@ -526,6 +526,23 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::CreateDelayedTrigger {
+                tracked_card,
+                effect: delayed_effect,
+                ..
+            } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*tracked_card)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) creates delayed trigger on {} (effect: {:?})",
+                    target_name, delayed_effect
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

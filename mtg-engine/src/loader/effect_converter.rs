@@ -592,6 +592,87 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::DelayedTrigger => {
+            // Delayed trigger: SP$ DelayedTrigger | Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard
+            //                  | ValidTgts$ Creature | RememberObjects$ Targeted | ThisTurn$ True | Execute$ TrigEarthbend
+            //
+            // Creates a delayed trigger that fires when a condition is met.
+            // Fatal Fissure: "Choose target creature. When that creature dies this turn, you earthbend 4."
+            //
+            // Parameters:
+            // - Mode$: Trigger condition (ChangesZone, SpellCast, etc.)
+            // - Origin$: Source zone for zone change (Battlefield, Any)
+            // - Destination$: Destination zone for zone change (Graveyard, Exile)
+            // - ValidTgts$: What can be targeted (Creature, Permanent)
+            // - RememberObjects$: What to remember (Targeted)
+            // - ThisTurn$: If True, trigger expires at end of turn
+            // - Execute$: SVar to execute when trigger fires
+            //
+            // Note: This only creates a placeholder effect. The actual effect needs
+            // SVar resolution via params_to_delayed_trigger_with_svars().
+
+            let mode = params.get("Mode").unwrap_or("ChangesZone");
+
+            // Parse zone change condition (most common for delayed triggers)
+            let condition = if mode == "ChangesZone" {
+                let from_zone = match params.get("Origin") {
+                    Some("Battlefield") => crate::zones::Zone::Battlefield,
+                    Some("Hand") => crate::zones::Zone::Hand,
+                    Some("Library") => crate::zones::Zone::Library,
+                    Some("Graveyard") => crate::zones::Zone::Graveyard,
+                    _ => crate::zones::Zone::Battlefield, // Default for death triggers
+                };
+
+                let to_zone = match params.get("Destination") {
+                    Some("Graveyard") => crate::zones::Zone::Graveyard,
+                    Some("Exile") => crate::zones::Zone::Exile,
+                    Some("Hand") => crate::zones::Zone::Hand,
+                    Some("Battlefield") => crate::zones::Zone::Battlefield,
+                    _ => crate::zones::Zone::Graveyard, // Default for death triggers
+                };
+
+                crate::core::DelayedTriggerCondition::ZoneChange {
+                    from_zones: smallvec::smallvec![from_zone],
+                    to_zones: smallvec::smallvec![to_zone],
+                }
+            } else {
+                // Other modes (SpellCast, etc.) not yet supported
+                log::debug!(
+                    target: "effect_converter",
+                    "DelayedTrigger Mode$ '{}' not yet implemented",
+                    mode
+                );
+                return None;
+            };
+
+            // Parse expiry - ThisTurn$ True means expire at end of turn
+            let expiry = if params.get("ThisTurn") == Some("True") {
+                Some(crate::core::DelayedTriggerExpiry::EndOfTurn)
+            } else {
+                None
+            };
+
+            // Placeholder effect - the actual effect needs SVar resolution
+            // This will be replaced by params_to_delayed_trigger_with_svars()
+            let placeholder_effect = Effect::DrawCards {
+                player: PlayerId::new(0),
+                count: 0,
+            };
+
+            log::debug!(
+                target: "effect_converter",
+                "DelayedTrigger: mode={}, condition={:?}, expiry={:?}, execute={:?}",
+                mode, condition, expiry, params.get("Execute")
+            );
+
+            Some(Effect::CreateDelayedTrigger {
+                tracked_card: CardId::new(0), // Placeholder - filled in at cast time
+                condition,
+                effect: Box::new(placeholder_effect),
+                expiry,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -798,6 +879,91 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
 
     // For all other types, delegate to the base function
     params_to_effect(params)
+}
+
+/// Convert DelayedTrigger ability parameters to a CreateDelayedTrigger Effect with SVar resolution.
+///
+/// This resolves the Execute$ SVar to get the actual effect to execute when triggered.
+///
+/// # Arguments
+///
+/// * `params` - The parsed ability parameters (must be ApiType::DelayedTrigger)
+/// * `svars` - The card's SVar definitions (name -> body)
+///
+/// # Example
+///
+/// ```ignore
+/// // Card has: A:SP$ DelayedTrigger | Mode$ ChangesZone | Execute$ TrigEarthbend
+/// // And SVar:TrigEarthbend:DB$ Earthbend | Num$ 4
+/// let params = AbilityParams::parse("A:SP$ DelayedTrigger | ...")?;
+/// let effect = params_to_delayed_trigger_with_svars(&params, &card.svars);
+/// // Returns Effect::CreateDelayedTrigger with Effect::Earthbend inside
+/// ```
+pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &HashMap<String, String>) -> Option<Effect> {
+    if params.api_type != ApiType::DelayedTrigger {
+        return None;
+    }
+
+    let mode = params.get("Mode").unwrap_or("ChangesZone");
+
+    // Parse zone change condition (most common for delayed triggers)
+    let condition = if mode == "ChangesZone" {
+        let from_zone = match params.get("Origin") {
+            Some("Battlefield") => crate::zones::Zone::Battlefield,
+            Some("Hand") => crate::zones::Zone::Hand,
+            Some("Library") => crate::zones::Zone::Library,
+            Some("Graveyard") => crate::zones::Zone::Graveyard,
+            _ => crate::zones::Zone::Battlefield, // Default for death triggers
+        };
+
+        let to_zone = match params.get("Destination") {
+            Some("Graveyard") => crate::zones::Zone::Graveyard,
+            Some("Exile") => crate::zones::Zone::Exile,
+            Some("Hand") => crate::zones::Zone::Hand,
+            Some("Battlefield") => crate::zones::Zone::Battlefield,
+            _ => crate::zones::Zone::Graveyard, // Default for death triggers
+        };
+
+        crate::core::DelayedTriggerCondition::ZoneChange {
+            from_zones: smallvec::smallvec![from_zone],
+            to_zones: smallvec::smallvec![to_zone],
+        }
+    } else {
+        log::debug!(
+            target: "effect_converter",
+            "DelayedTrigger Mode$ '{}' not yet supported with SVar resolution",
+            mode
+        );
+        return None;
+    };
+
+    // Parse expiry
+    let expiry = if params.get("ThisTurn") == Some("True") {
+        Some(crate::core::DelayedTriggerExpiry::EndOfTurn)
+    } else {
+        None
+    };
+
+    // Resolve Execute$ SVar to get the actual effect
+    let execute_svar = params.get("Execute")?;
+    let svar_body = svars.get(execute_svar)?;
+
+    // Parse the SVar as an ability
+    let execute_params = AbilityParams::parse(&format!("A:{}", svar_body)).ok()?;
+    let execute_effect = params_to_effect(&execute_params)?;
+
+    log::debug!(
+        target: "effect_converter",
+        "DelayedTrigger with SVar resolution: mode={}, execute_svar={}, effect={:?}",
+        mode, execute_svar, execute_effect
+    );
+
+    Some(Effect::CreateDelayedTrigger {
+        tracked_card: CardId::new(0), // Placeholder - filled in at cast time
+        condition,
+        effect: Box::new(execute_effect),
+        expiry,
+    })
 }
 
 #[cfg(test)]

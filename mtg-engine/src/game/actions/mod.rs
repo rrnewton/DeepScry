@@ -1732,6 +1732,80 @@ impl GameState {
                     .gamelog(&format!("{} can't be blocked this turn", card_name));
             }
 
+            Effect::CreateDelayedTrigger {
+                tracked_card,
+                condition,
+                effect: delayed_effect,
+                expiry,
+            } => {
+                // CreateDelayedTrigger effect: Register a delayed trigger that fires on a condition
+                // Created by SP$ DelayedTrigger spells (e.g., Fatal Fissure)
+                //
+                // Implementation:
+                // 1. Verify the tracked card is still on battlefield (target still valid)
+                // 2. Create a DelayedTrigger with the specified condition
+                // 3. Store the effect to execute when triggered
+                // 4. Register the trigger in the delayed_triggers store
+
+                // Skip if tracked_card is still placeholder (0) - no valid targets found
+                if tracked_card.as_u32() == 0 {
+                    // Spell fizzles - no valid targets
+                    log::debug!(target: "actions", "CreateDelayedTrigger: tracked_card is placeholder, spell fizzles");
+                    return Ok(());
+                }
+
+                // Verify the target is still on battlefield
+                if !self.battlefield.contains(*tracked_card) {
+                    log::debug!(target: "actions", "CreateDelayedTrigger: target no longer on battlefield, spell fizzles");
+                    return Ok(());
+                }
+
+                // Get card name for logging
+                let card_name = self
+                    .cards
+                    .get(*tracked_card)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+
+                // Get the spell controller
+                let controller = self.turn.active_player;
+
+                // Create the delayed trigger
+                use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerId};
+
+                let trigger = DelayedTrigger::new(
+                    DelayedTriggerId::new(0), // ID will be assigned by store
+                    *tracked_card,            // tracked_card - the creature that needs to die
+                    *tracked_card,            // source_card - same as tracked for spell-created triggers
+                    controller,
+                    condition.clone(),
+                    DelayedEffect::ExecuteEffect {
+                        effect: delayed_effect.clone(),
+                    },
+                );
+
+                // Apply expiry if specified
+                let trigger = match expiry {
+                    Some(exp) => trigger.with_expiry(exp.clone()),
+                    None => trigger,
+                };
+
+                let trigger_id = self.delayed_triggers.add(trigger);
+
+                // Log the delayed trigger creation
+                self.logger.gamelog(&format!(
+                    "Delayed trigger {} created: watching {} for death",
+                    trigger_id.as_u32(),
+                    card_name
+                ));
+
+                log::debug!(
+                    target: "actions",
+                    "CreateDelayedTrigger: trigger {} for {} with effect {:?}",
+                    trigger_id.as_u32(), card_name, delayed_effect
+                );
+            }
+
             Effect::ModalChoice { modes, .. } => {
                 // Modal spells are handled during casting, not execution.
                 // When the spell resolves, only the selected mode's effect is executed.

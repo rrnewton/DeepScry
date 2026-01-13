@@ -226,6 +226,19 @@ impl GameState {
                         }
                     }
                 }
+                Effect::CreateDelayedTrigger { tracked_card, .. } if tracked_card.as_u32() == 0 => {
+                    // CreateDelayedTrigger targets creatures (e.g., Fatal Fissure: "Choose target creature")
+                    // The tracked_card field holds the target that will be watched for death
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            // Default to targeting any creature (Fatal Fissure targets any creature)
+                            // Controller restriction from ValidTgts$ is checked at ability level
+                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::PutCounter { target, .. } if target.as_u32() == 0 => {
                     // PutCounter targets creatures (e.g., +1/+1 counter effects)
                     // TODO: Some PutCounter effects can target any permanent
@@ -342,7 +355,8 @@ impl GameState {
                             | Effect::PutCounter { .. }
                             | Effect::AttachEquipment { .. }
                             | Effect::ModalChoice { .. }
-                            | Effect::PumpAllCreatures { .. } => {
+                            | Effect::PumpAllCreatures { .. }
+                            | Effect::CreateDelayedTrigger { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -396,10 +410,12 @@ impl GameState {
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
-                | Effect::PumpAllCreatures { .. } => {
+                | Effect::PumpAllCreatures { .. }
+                | Effect::CreateDelayedTrigger { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // This means the effect has a concrete target already assigned
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
+                    // CreateDelayedTrigger with non-zero tracked_card already has target
                 }
             }
         }
@@ -693,8 +709,10 @@ impl GameState {
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
                 | Effect::Earthbend { .. }
-                | Effect::ModalChoice { .. } => {
+                | Effect::ModalChoice { .. }
+                | Effect::CreateDelayedTrigger { .. } => {
                     // These effects target players or have no targeting requirements
+                    // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. } => {
@@ -901,7 +919,8 @@ impl GameState {
             | Effect::Earthbend { .. }
             | Effect::AttachEquipment { .. }
             | Effect::ModalChoice { .. }
-            | Effect::PumpAllCreatures { .. } => true, // PumpAllCreatures uses filter, not explicit targets
+            | Effect::PumpAllCreatures { .. }
+            | Effect::CreateDelayedTrigger { .. } => true, // PumpAllCreatures uses filter, not explicit targets
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
