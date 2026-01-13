@@ -2062,3 +2062,50 @@ fn test_waterbend_ability_parsing() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that Flash keyword is correctly parsed and recognized
+/// CR 702.8a: Flash allows a permanent to be cast anytime you could cast an instant
+#[test]
+fn test_flash_keyword_parsing() -> Result<()> {
+    use mtg_forge_rs::core::Keyword;
+
+    // Test Twin Blades which has K:Flash
+    let path = PathBuf::from("cardsfolder/t/twin_blades.txt");
+    if !path.exists() {
+        eprintln!("Skipping test - cardsfolder not present");
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Twin Blades");
+
+    // Verify raw_keywords contains Flash
+    assert!(
+        def.raw_keywords.iter().any(|k| k == "Flash"),
+        "Twin Blades raw_keywords should contain 'Flash'. Got: {:?}",
+        def.raw_keywords
+    );
+
+    // Instantiate and verify Flash keyword is in the KeywordSet
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    assert!(
+        card.keywords.contains(Keyword::Flash),
+        "Twin Blades should have Flash keyword. Keywords: {:?}",
+        card.keywords
+    );
+
+    // Verify has_keyword method works
+    assert!(
+        card.has_keyword(Keyword::Flash),
+        "has_keyword(Flash) should return true for Twin Blades"
+    );
+
+    // Verify it's an artifact (not an instant)
+    assert!(card.is_artifact(), "Twin Blades should be an artifact");
+    assert!(!card.is_instant(), "Twin Blades should not be an instant");
+
+    Ok(())
+}
