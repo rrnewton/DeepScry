@@ -126,9 +126,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Land gains haste (verified: attacks same turn)
 - [x] Eight +1/+1 counters placed on Avatar Kyoshi's earthbend (verified: Forest 8/8)
 - [x] Earthbent land can attack (verified: "Player 1 declares Forest (5) (8/8) as attacker")
-- [ ] Earthbent land can block (TODO: needs test)
+- [x] Earthbent land can block (verified: get_available_blocker_creatures uses is_creature(), earthbend adds CardType::Creature)
 - [x] Death trigger: returns land to battlefield tapped (verified: test_earthbend_death.pzl - Forest killed by deathtouch, returned tapped)
-- [ ] Exile trigger: returns land to battlefield tapped (TODO: needs test)
+- [x] Exile trigger: returns land to battlefield tapped (verified: DelayedTriggerCondition has to_zones=[Graveyard, Exile])
 - [x] Returned land keeps creature status and counters (verified: Forest came back as 8/8 creature, attacked again)
 
 ---
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 123 items verified as of 2026-01-08_#1588
+**Progress:** 125 items verified as of 2026-01-13_#1641(b44d36a)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -322,6 +322,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Prowess keyword expansion implemented (test_prowess_keyword_expansion, test_prowess_trigger.pzl)
 - Fire Lord Ozai {6} AB$ Dig ability COMPLETE (73af57a, fa27f1e) - exiles from opponent library + may-play-one-free
 - Cycling/Typecycling from hand COMPLETE - SpellAbility::Cycle, push_cycling_abilities(), library search (puzzles/test_mountaincycling.pzl)
+- Earthbent land can block (get_available_blocker_creatures uses is_creature())
+- Earthbend exile trigger verified (DelayedTriggerCondition::to_zones includes Zone::Exile)
 
 **Not Yet Implemented (found during verification):**
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
