@@ -167,3 +167,29 @@ after deserializing a CardDefinition from the network.
 **Files changed**:
 - `mtg-engine/src/loader/card.rs`: Added `rebuild_parsed_svars()` method
 - `mtg-engine/src/network/client.rs`: Call `rebuild_parsed_svars()` after cloning card_def
+
+### Known Limitation: Library Search Desync with Random Controller
+
+The random-vs-heuristic controller combination exposes a limitation in the late-binding architecture:
+when a player's controller searches their own library (e.g., Mountaincycling), the CLIENT can't
+find valid cards because card identities aren't revealed until drawn.
+
+**Root cause**: In late-binding mode, library cards are just CardIDs without identities. When you
+search YOUR OWN library, you should see all cards (per MTG rules), but the client only knows
+revealed card identities.
+
+**Symptoms**:
+- Library search on client returns "fail to find (no valid cards)"
+- Same search on server succeeds (server has full card info)
+- Game states diverge, leading to CardID mismatch and reveal validation failure
+
+**Workaround**: Use heuristic-vs-heuristic or zero-vs-zero controllers that don't trigger
+library searches. The network equivalence test uses heuristic-vs-heuristic.
+
+**Future fix**: Either:
+1. Reveal all library cards to owner at game start (but this breaks hidden information for effects)
+2. Forward library search to server and return results
+3. Reveal searched cards on-demand when searching
+
+This is tracked separately - the current architecture works for normal gameplay where library
+searches are initiated by game effects (which the server handles), not by controller decisions.
