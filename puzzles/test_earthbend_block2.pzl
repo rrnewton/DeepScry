@@ -1,0 +1,21 @@
+# Test Earthbend Blocking (P1 on defense)
+# P1's turn starts with earthbent Forest, then P2 attacks and P1 blocks
+
+[metadata]
+Name:Earthbend Blocking Test 2
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 - Has Avatar Kyoshi, earthbend will fire at beginning of combat
+p0life=10
+p0hand=Mountain
+p0library=Forest; Forest; Swamp; Island; Mountain
+p0battlefield=Avatar Kyoshi, Earthbender; Forest; Forest; Mountain; Swamp
+
+# Player 1 - Has creatures to attack P0
+p1life=20
+p1hand=Forest
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Grizzly Bears; Hill Giant; Forest; Swamp

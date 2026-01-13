@@ -545,10 +545,16 @@ impl WasmFancyTuiState {
         None
     }
 
-    /// Rewind game state to turn start and return choices made so far
+    /// Rewind game state to turn start and return P1's choices made so far
     ///
     /// This undoes all game state changes since the start of the turn,
-    /// returning the ReplayChoice entries that were logged.
+    /// returning only P1's ReplayChoice entries that were logged.
+    ///
+    /// IMPORTANT: We only extract choices for P1 (the human player) because:
+    /// - P1's choices will be replayed via ReplayController
+    /// - P2's choices will be re-made by the AI controller during replay
+    /// - If we included P2's choices in P1's replay queue, P1 would try to
+    ///   execute P2's actions (e.g., casting P2's spells) causing "Card not in hand" errors
     fn rewind_to_turn_start(&mut self) -> Vec<ReplayChoice> {
         let log_len_before = self.game.undo_log.len();
         log::debug!(target: "wasm_tui", "REWIND: Undo log has {} actions before rewind", log_len_before);
@@ -574,23 +580,57 @@ impl WasmFancyTuiState {
         // when we replay the choices
         self.game.logger.truncate_to(log_size_at_turn);
 
+        // Get P1's player ID for filtering choices
+        let p1_id = self.game.players[0].id;
+
+        // Count total and P1's choices for logging
+        let total_choices = choice_actions
+            .iter()
+            .filter(|a| matches!(a, GameAction::ChoicePoint { choice: Some(_), .. }))
+            .count();
+
         log::debug!(
             target: "wasm_tui",
-            "REWIND: Rewound to turn {}, {} actions undone, log now {} actions, {} choice points",
-            turn_number, actions_rewound, log_len_after, choice_actions.len()
+            "REWIND: Rewound to turn {}, {} actions undone, log now {} actions, {} total choice points",
+            turn_number, actions_rewound, log_len_after, total_choices
         );
 
-        // Extract ReplayChoice from the ChoicePoint actions
-        choice_actions
+        // Extract ReplayChoice from ChoicePoint actions, filtering to only P1's choices
+        // This prevents the "Card not in hand" bug where P1's ReplayController
+        // would try to replay P2's actions (like casting P2's spells)
+        let p1_choices: Vec<ReplayChoice> = choice_actions
             .into_iter()
             .filter_map(|action| {
-                if let GameAction::ChoicePoint { choice: Some(c), .. } = action {
-                    Some(c)
+                if let GameAction::ChoicePoint {
+                    player_id,
+                    choice: Some(c),
+                    ..
+                } = action
+                {
+                    // Only include choices made by P1 (human player)
+                    if player_id == p1_id {
+                        Some(c)
+                    } else {
+                        log::debug!(
+                            target: "wasm_tui",
+                            "REWIND: Skipping P2 choice (will be re-made by AI): {:?}",
+                            c
+                        );
+                        None
+                    }
                 } else {
                     None
                 }
             })
-            .collect()
+            .collect();
+
+        log::debug!(
+            target: "wasm_tui",
+            "REWIND: Extracted {} P1 choices for replay",
+            p1_choices.len()
+        );
+
+        p1_choices
     }
 
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context

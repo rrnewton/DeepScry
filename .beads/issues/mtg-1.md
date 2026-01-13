@@ -26,6 +26,8 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-hcahb: Web GUI implementation with shared TUI/GUI architecture
 - mtg-m7v83: Upstream Java Forge card script issues (PRs to upstream)
 - mtg-6n8rl: Avatar set mechanics (Waterbend, Airbend) support
+- mtg-0iad2: Ryan Avatar Deck compatibility testing
+- mtg-5hvly: Gabriel Avatar Deck compatibility testing (has critical bugs)
 
 **Current status as of 2026-01-03_#1477(54b4e2c):**
 - Tests: 732 passing (nextest, all categories)

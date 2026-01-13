@@ -1,0 +1,24 @@
+# Test Firebending Mana Pool Sharing
+# Multiple firebending creatures should share a combat mana pool
+# Zhao, Ruthless Admiral: Firebending 2 (adds {R}{R})
+# Boiling Rock Rioter: Firebending 1 (adds {R})
+# Expected: When both attack, they add {R}{R} + {R} = {R}{R}{R} shared pool
+
+[metadata]
+Name:Firebending Mana Pool Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 - Two firebending creatures
+p0life=20
+p0hand=Mountain
+p0library=Forest; Forest; Swamp; Island; Mountain
+p0battlefield=Zhao, Ruthless Admiral; Boiling Rock Rioter; Mountain; Mountain; Swamp; Swamp
+
+# Player 1 - minimal setup
+p1life=20
+p1hand=Forest
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Forest; Forest

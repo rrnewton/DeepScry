@@ -1,0 +1,24 @@
+# Test Earthbend Death Trigger
+# When an earthbent land dies, it should return to battlefield tapped
+# Setup: Player 0 has Avatar Kyoshi (earthbends at combat) and Forests
+# Player 1 has Typhoid Rats (deathtouch) that can block and kill the earthbent land
+# Expected: When earthbent Forest dies in combat to deathtouch, it returns to battlefield tapped
+
+[metadata]
+Name:Earthbend Death Trigger Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 - Avatar Kyoshi with lands
+p0life=20
+p0hand=Mountain
+p0library=Forest; Forest; Swamp; Island; Mountain
+p0battlefield=Avatar Kyoshi, Earthbender; Forest; Forest; Mountain; Swamp
+
+# Player 1 - Has Typhoid Rats (deathtouch) to block and kill the earthbent land
+p1life=20
+p1hand=Forest
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Typhoid Rats; Typhoid Rats; Forest; Swamp; Swamp

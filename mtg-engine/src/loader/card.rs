@@ -3700,4 +3700,62 @@ Oracle:Flash\nWhen this Equipment enters, attach it to target creature you contr
             trigger.effects
         );
     }
+
+    #[test]
+    fn test_parse_cracked_earth_technique_subability_chain() {
+        use crate::core::Effect;
+
+        // Cracked Earth Technique: Earthbend 3, then earthbend 3, gain 3 life
+        // SubAbility chain: SP$ Earthbend -> DBEarthbend -> DBGainLife
+        let content = r#"
+Name:Cracked Earth Technique
+ManaCost:4 G
+Types:Sorcery Lesson
+A:SP$ Earthbend | Num$ 3 | SubAbility$ DBEarthbend | SpellDescription$ Earthbend 3, then earthbend 3. You gain 3 life.
+SVar:DBEarthbend:DB$ Earthbend | Num$ 3 | SubAbility$ DBGainLife
+SVar:DBGainLife:DB$ GainLife | LifeAmount$ 3
+Oracle:Earthbend 3, then earthbend 3. You gain 3 life.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Cracked Earth Technique");
+        assert_eq!(def.mana_cost.generic, 4);
+        assert_eq!(def.mana_cost.green, 1);
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        // Parse effects - should have 3 effects from SubAbility chain:
+        // 1. First Earthbend (from SP$ Earthbend | Num$ 3)
+        // 2. Second Earthbend (from SubAbility$ DBEarthbend -> DB$ Earthbend | Num$ 3)
+        // 3. GainLife (from SubAbility$ DBGainLife -> DB$ GainLife | LifeAmount$ 3)
+        let effects = def.parse_effects();
+
+        assert!(
+            effects.len() >= 2,
+            "Should have at least 2 effects from SubAbility chain. Got {} effects: {:?}",
+            effects.len(),
+            effects
+        );
+
+        // First effect should be Earthbend with 3 counters
+        let earthbend_count = effects
+            .iter()
+            .filter(|e| matches!(e, Effect::Earthbend { num_counters: 3, .. }))
+            .count();
+        assert!(
+            earthbend_count >= 1,
+            "Should have at least 1 Earthbend effect with 3 counters. Effects: {:?}",
+            effects
+        );
+
+        // Should have GainLife effect from the end of the chain
+        let gainlife_count = effects
+            .iter()
+            .filter(|e| matches!(e, Effect::GainLife { amount: 3, .. }))
+            .count();
+        assert!(
+            gainlife_count >= 1,
+            "Should have GainLife 3 effect from SubAbility chain. Effects: {:?}",
+            effects
+        );
+    }
 }
