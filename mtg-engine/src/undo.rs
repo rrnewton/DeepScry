@@ -200,6 +200,25 @@ pub enum GameAction {
         /// New mask value
         new_value: u8,
     },
+
+    /// Shuffle a player's library
+    ///
+    /// Stores the previous order of CardIds so it can be restored on undo.
+    /// This is essential for deterministic replay and game tree search when
+    /// tutor effects (search library, then shuffle) are involved.
+    ///
+    /// ## Network Considerations
+    ///
+    /// In network mode, after shuffling the server sends a LibraryReordered
+    /// message to clients with the new order. The previous_order stored here
+    /// is the order BEFORE shuffling, which is only known to the server.
+    ShuffleLibrary {
+        /// Which player's library was shuffled
+        player: PlayerId,
+        /// Previous order of CardIds (for undo)
+        /// Stored as Vec since library size varies and SmallVec wouldn't help
+        previous_order: Vec<CardId>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -319,6 +338,9 @@ impl fmt::Display for GameAction {
                 old_value,
                 new_value
             ),
+            GameAction::ShuffleLibrary { player, previous_order } => {
+                write!(f, "ShuffleLibrary(P{} {} cards)", player.as_u32(), previous_order.len())
+            }
         }
     }
 }
@@ -560,6 +582,23 @@ impl GameAction {
                     return Err(format!(
                         "Card {} not found for SetRevealedToMask undo",
                         card_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::ShuffleLibrary { player, previous_order } => {
+                // Restore the library to its previous order
+                if let Some(zones) = game
+                    .player_zones
+                    .iter_mut()
+                    .find(|(id, _)| *id == *player)
+                    .map(|(_, z)| z)
+                {
+                    zones.library.cards = previous_order.clone();
+                } else {
+                    return Err(format!(
+                        "Player {} zones not found for ShuffleLibrary undo",
+                        player.as_u32()
                     ));
                 }
             }
