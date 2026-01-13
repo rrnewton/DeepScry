@@ -239,6 +239,24 @@ pub enum ServerMessage {
         reason: RevealReason,
     },
 
+    /// Library has been reordered (shuffled after search)
+    ///
+    /// Sent after a library search + shuffle to update the client's shadow
+    /// state with the new CardId order. Card identities remain hidden;
+    /// only the chosen card is revealed via CardRevealed.
+    ///
+    /// ## Late-binding architecture
+    /// The client's library zone contains CardIds without known identities.
+    /// This message updates the order of those CardIds (minus the one that
+    /// was found and moved to another zone).
+    LibraryReordered {
+        /// Which player's library was reordered
+        player: PlayerId,
+        /// New order of CardIds in the library (top to bottom)
+        /// Identities remain unknown until individually revealed
+        new_order: Vec<CardId>,
+    },
+
     /// Request a choice from this client
     ChoiceRequest {
         /// Sequence number for response correlation
@@ -531,10 +549,30 @@ pub enum ChoiceType {
         /// Number of cards to discard
         count: usize,
     },
-    /// Choose a card from library (tutor/search effect)
+    /// Choose a card from library (tutor/search effect) - DEPRECATED
+    /// Use LibrarySearchByName instead for network mode to avoid revealing CardIds
     LibrarySearch {
         /// Number of valid cards that can be chosen
         valid_count: usize,
+    },
+    /// Choose a card from library by NAME (tutor/search effect)
+    ///
+    /// This variant sends unique card names instead of CardIds, allowing
+    /// the client to choose without knowing which specific CardId will be used.
+    /// The server picks the actual CardId after receiving the name choice.
+    ///
+    /// ## Protocol
+    /// 1. Server filters library for matching cards, extracts unique names
+    /// 2. Server sends names in `options` field (e.g., ["Decline", "Island", "Swamp"])
+    /// 3. Client picks a name index
+    /// 4. Server picks a CardId with that name from valid_cards
+    /// 5. Server sends CardRevealed for the chosen card only
+    LibrarySearchByName {
+        /// Unique card names matching the search filter
+        /// (derived from valid_cards, deduplicated by name)
+        unique_names: Vec<String>,
+        /// Description of what's being searched for (e.g., "a basic land")
+        filter_description: String,
     },
     /// Choose permanents to sacrifice (Balance, Cataclysm, etc.)
     Sacrifice {

@@ -50,6 +50,8 @@ pub struct ServerConfig {
     pub verbosity: crate::game::VerbosityLevel,
     /// Enable network debug mode - populates debug fields in protocol messages
     pub network_debug: bool,
+    /// Disable ANSI colored log output
+    pub no_color_logs: bool,
 }
 
 impl Default for ServerConfig {
@@ -65,6 +67,7 @@ impl Default for ServerConfig {
             tag_gamelogs: false,
             verbosity: crate::game::VerbosityLevel::Normal,
             network_debug: false,
+            no_color_logs: false,
         }
     }
 }
@@ -879,8 +882,16 @@ async fn run_game(
     let game_clone = Arc::clone(&game);
     let tag_gamelogs = config.tag_gamelogs;
     let verbosity = config.verbosity;
+    let no_color_logs = config.no_color_logs;
     let game_loop_handle = tokio::task::spawn_blocking(move || {
-        run_game_loop(game_clone, p1_controller, p2_controller, tag_gamelogs, verbosity)
+        run_game_loop(
+            game_clone,
+            p1_controller,
+            p2_controller,
+            tag_gamelogs,
+            verbosity,
+            no_color_logs,
+        )
     });
 
     // Wait for game to complete, OR for any critical task to fail
@@ -1553,6 +1564,7 @@ fn run_game_loop(
     mut p2_controller: NetworkController,
     tag_gamelogs: bool,
     verbosity: crate::game::VerbosityLevel,
+    no_color_logs: bool,
 ) -> Result<GameResult> {
     // Take ownership of game for the game loop
     let mut game = {
@@ -1565,6 +1577,9 @@ fn run_game_loop(
     // Configure the game logger with server settings
     game.logger.set_verbosity(verbosity);
     game.logger.set_tag_gamelogs(tag_gamelogs);
+    // Disable colors if --no-color-logs flag or NO_COLOR env var is set
+    let color_enabled = !no_color_logs && std::env::var("NO_COLOR").is_err();
+    game.logger.set_color_enabled(color_enabled);
 
     log::debug!(
         "Server GameLoop: undo_log.len() = {} (should be 0 for synchronized mode)",

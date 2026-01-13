@@ -311,6 +311,21 @@ pub struct CardDefinition {
 }
 
 impl CardDefinition {
+    /// Rebuild parsed_svars from svars after deserialization
+    ///
+    /// The `parsed_svars` field is skipped during serialization (because AbilityParams
+    /// doesn't implement Serialize). After deserializing a CardDefinition from the network,
+    /// call this method to rebuild the parsed_svars for trigger/ability parsing.
+    pub fn rebuild_parsed_svars(&mut self) {
+        use super::ability_parser::AbilityParams;
+        self.parsed_svars.clear();
+        for (svar_name, svar_body) in &self.svars {
+            if let Some(params) = AbilityParams::parse_svar_body(svar_body) {
+                self.parsed_svars.insert(svar_name.clone(), params);
+            }
+        }
+    }
+
     /// Extract all TokenScript references from this card's abilities
     ///
     /// Scans all raw_abilities for SVar lines containing "DB$ Token" and extracts

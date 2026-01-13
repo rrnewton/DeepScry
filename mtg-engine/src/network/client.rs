@@ -79,7 +79,11 @@ pub enum GameLoopMessage {
 fn get_card_def_from_reveal(reveal: &CardReveal, card_db: &AsyncCardDatabase) -> CardDefinition {
     // Prefer the CardDefinition sent by the server - this enables DB-free clients
     if let Some(ref card_def) = reveal.card_def {
-        return card_def.clone();
+        let mut def = card_def.clone();
+        // Rebuild parsed_svars which is skipped during serialization (AbilityParams doesn't impl Serialize).
+        // Without this, trigger effects that reference SVars (like earthbend) won't be parsed.
+        def.rebuild_parsed_svars();
+        return def;
     }
 
     // Fallback to local database lookup
@@ -1036,6 +1040,16 @@ impl NetworkClient {
                                             log::error!("WebSocket: Failed to send reveal: {:?}", e);
                                         }
                                     }
+                                    Ok(ServerMessage::LibraryReordered { player, new_order }) => {
+                                        // Library was shuffled after a search - update shadow state
+                                        // TODO(mtg-library-sync): Apply this to the shadow GameLoop's library zone
+                                        // For now, just log it. The name-based search protocol doesn't
+                                        // require the client to know card positions in library.
+                                        log::debug!(
+                                            "WebSocket: Library reordered for player {:?}, new size: {}",
+                                            player, new_order.len()
+                                        );
+                                    }
                                     Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
                                         // SINGLE-CHANNEL FIX: No bundled reveals - they're already in reveal_tx.
                                         // Just send the choice to the controller.
@@ -1628,6 +1642,14 @@ impl NetworkClient {
                                             if let Err(e) = reveal_tx.send((owner, card, reason)) {
                                                 log::error!("Failed to send reveal: {:?}", e);
                                             }
+                                        }
+                                        Ok(ServerMessage::LibraryReordered { player, new_order }) => {
+                                            // Library was shuffled after a search - update shadow state
+                                            // TODO(mtg-library-sync): Apply this to the shadow GameLoop's library zone
+                                            log::debug!(
+                                                "Library reordered for player {:?}, new size: {}",
+                                                player, new_order.len()
+                                            );
                                         }
                                         Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
                                             log::debug!("Opponent chose: {} (indices={:?})", description, choice_indices);

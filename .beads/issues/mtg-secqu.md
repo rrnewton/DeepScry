@@ -2,9 +2,9 @@
 title: 'Network architecture compliance tracking'
 status: open
 priority: 1
-issue_type: tracking
+issue_type: epic
 created_at: 2026-01-08T01:50:48.341942482+00:00
-updated_at: 2026-01-08T22:30:31.481711838+00:00
+updated_at: 2026-01-13T00:00:00.000000000+00:00
 ---
 
 # Description
@@ -131,3 +131,65 @@ DURING GameLoop execution where the timing is controlled by ChoiceRequest/Choice
 - mtg-to96y: Main networking tracking issue
 - mtg-qtqcr: Hidden information architecture
 - mtg-e66iz: Original desync bug (dormant)
+
+## Network vs Local Equivalence Testing (2026-01-13)
+
+### Test Infrastructure (DONE)
+- [x] Created `tests/network_vs_local_equivalence_e2e.sh` (commit 9baf01138)
+- [x] Fixed CardID assignment to use identical ordering in LOCAL and NETWORK modes (commit 98030fa25)
+- [x] Added exact gamelog comparison between LOCAL and SERVER (commit 20dc88b12)
+- [x] Same player names ("Ryan", "Gabriel") used in both modes
+
+### Test Results
+- [x] Both games run to completion with identical CardIDs
+- [x] Gamelogs are IDENTICAL (88 entries each)
+- [x] Earthbend trigger now fires correctly on all CLIENT shadow states
+
+### FIXED: Triggered Ability Desync (2026-01-13)
+
+**Root cause identified**: `parsed_svars` field in CardDefinition had `#[serde(skip)]`
+
+The `parsed_svars` HashMap contains pre-parsed SVar parameters needed for trigger/ability
+construction. When CardDefinition was serialized and sent over the network, this field
+was skipped (because AbilityParams doesn't implement Serialize). The CLIENT's
+`parse_triggers()` function looks up SVars in `parsed_svars`, but found an empty HashMap.
+
+Result: Trigger had correct event type but **empty effects array** on CLIENT:
+```
+SERVER: effects=["Earthbend { target: 0, num_counters: 2 }"]
+CLIENT: effects=[]  ← EMPTY!
+```
+
+**Fix applied**: Added `CardDefinition::rebuild_parsed_svars()` method that rebuilds the
+parsed_svars HashMap from the raw svars. This is called in `get_card_def_from_reveal()`
+after deserializing a CardDefinition from the network.
+
+**Files changed**:
+- `mtg-engine/src/loader/card.rs`: Added `rebuild_parsed_svars()` method
+- `mtg-engine/src/network/client.rs`: Call `rebuild_parsed_svars()` after cloning card_def
+
+### Known Limitation: Library Search Desync with Random Controller
+
+The random-vs-heuristic controller combination exposes a limitation in the late-binding architecture:
+when a player's controller searches their own library (e.g., Mountaincycling), the CLIENT can't
+find valid cards because card identities aren't revealed until drawn.
+
+**Root cause**: In late-binding mode, library cards are just CardIDs without identities. When you
+search YOUR OWN library, you should see all cards (per MTG rules), but the client only knows
+revealed card identities.
+
+**Symptoms**:
+- Library search on client returns "fail to find (no valid cards)"
+- Same search on server succeeds (server has full card info)
+- Game states diverge, leading to CardID mismatch and reveal validation failure
+
+**Workaround**: Use heuristic-vs-heuristic or zero-vs-zero controllers that don't trigger
+library searches. The network equivalence test uses heuristic-vs-heuristic.
+
+**Future fix**: Either:
+1. Reveal all library cards to owner at game start (but this breaks hidden information for effects)
+2. Forward library search to server and return results
+3. Reveal searched cards on-demand when searching
+
+This is tracked separately - the current architecture works for normal gameplay where library
+searches are initiated by game effects (which the server handles), not by controller decisions.

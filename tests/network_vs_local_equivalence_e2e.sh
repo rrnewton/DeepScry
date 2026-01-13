@@ -104,6 +104,10 @@ echo "  Deck 2: $(basename "$DECK2")"
 echo "  Output: $OUTPUT_DIR"
 echo
 
+# Player names - must match between LOCAL and NETWORK for gamelog comparison
+P1_NAME="Ryan"
+P2_NAME="Gabriel"
+
 # ============================================================================
 # Start LOCAL game (single process)
 # ============================================================================
@@ -114,6 +118,8 @@ echo -e "${BLUE}Starting LOCAL game...${NC}"
     "$DECK2" \
     --p1 "$CONTROLLER_TYPE" \
     --p2 "$CONTROLLER_TYPE" \
+    --p1-name "$P1_NAME" \
+    --p2-name "$P2_NAME" \
     --seed "$SEED" \
     --seed-p1 "$CONTROLLER_SEED" \
     --seed-p2 "$CONTROLLER_SEED" \
@@ -131,15 +137,16 @@ echo -e "${BLUE}Starting NETWORK game...${NC}"
 # Find an available port
 PORT=17780
 
-# Start server
-# Note: --network-debug is disabled to avoid race condition between async WebSocket
-# handler and blocking GameLoop in tokio. The debug/network_heuristic_vs_random.sh
-# script with separate processes can be used for strict reveal validation testing.
-RUST_LOG=warn "$MTG_BIN" server \
+# Start server with --network-debug for strict reveal validation
+# Use verbosity=normal to capture GAMELOG entries (minimal suppresses them)
+# Use --no-color-logs to avoid ANSI codes in output
+"$MTG_BIN" server \
     --port "$PORT" \
     --seed "$SEED" \
     --tag-gamelogs \
-    --verbosity minimal \
+    --network-debug \
+    --verbosity normal \
+    --no-color-logs \
     > "$NETWORK_OUTPUT/server.log" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID (port $PORT)"
@@ -159,12 +166,12 @@ fi
     --server "localhost:$PORT" \
     --controller "$CONTROLLER_TYPE" \
     --seed-player "$CONTROLLER_SEED" \
-    --name "Ryan" \
+    --name "$P1_NAME" \
     --tag-gamelogs \
     --gamelog-output "$NETWORK_OUTPUT/client1_gamelog.txt" \
     > "$NETWORK_OUTPUT/client1.log" 2>&1 &
 CLIENT1_PID=$!
-echo "  Client 1 PID: $CLIENT1_PID (Ryan - $CONTROLLER_TYPE)"
+echo "  Client 1 PID: $CLIENT1_PID ($P1_NAME - $CONTROLLER_TYPE)"
 
 sleep 1
 
@@ -174,12 +181,12 @@ sleep 1
     --server "localhost:$PORT" \
     --controller "$CONTROLLER_TYPE" \
     --seed-player "$CONTROLLER_SEED" \
-    --name "Gabriel" \
+    --name "$P2_NAME" \
     --tag-gamelogs \
     --gamelog-output "$NETWORK_OUTPUT/client2_gamelog.txt" \
     > "$NETWORK_OUTPUT/client2.log" 2>&1 &
 CLIENT2_PID=$!
-echo "  Client 2 PID: $CLIENT2_PID (Gabriel - $CONTROLLER_TYPE)"
+echo "  Client 2 PID: $CLIENT2_PID ($P2_NAME - $CONTROLLER_TYPE)"
 
 echo
 echo "Both games running in parallel. Waiting for completion..."
@@ -259,7 +266,8 @@ echo "  Network:      action_count=$NETWORK_ACTION_COUNT (max turn in gamelog: $
 
 # Extract winners
 LOCAL_WINNER=$(grep -o "Winner: [A-Za-z0-9_-]*" "$LOCAL_OUTPUT/game.log" | head -1 | sed 's/Winner: //' || echo "?")
-NETWORK_WINNER=$(grep -o "winner: Some([0-9])" "$NETWORK_OUTPUT/client1.log" | tail -1 | grep -o "[0-9]" || echo "?")
+# Network client logs format: "winner=Some(1)"
+NETWORK_WINNER=$(grep -o "winner=Some([0-9])" "$NETWORK_OUTPUT/client1.log" | tail -1 | grep -o "[0-9]" || echo "?")
 
 echo
 echo "Winners:"
@@ -273,16 +281,31 @@ echo "GAMELOG comparison:"
 LOCAL_GAMELOG="$OUTPUT_DIR/local_gamelog.txt"
 NETWORK_GAMELOG="$OUTPUT_DIR/network_gamelog.txt"
 
-# Extract GAMELOG entries (exclude INFO lines that might contain [GAMELOG)
-grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" > "$LOCAL_GAMELOG" 2>/dev/null || true
-# Network gamelogs are from client1 (player 0) since it sees all actions from its perspective
-grep '^\s*\[GAMELOG' "$NETWORK_OUTPUT/client1.log" > "$NETWORK_GAMELOG" 2>/dev/null || true
+# Extract GAMELOG entries from LOCAL (excluding noise: Tap, resolves, damage messages)
+# Damage messages are filtered because SERVER logs damage from GameLoop while clients
+# may have slight timing differences in when damage is observed
+grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" 2>/dev/null | \
+    grep -v 'Tap.*for {' | \
+    grep -v 'resolves$' | \
+    grep -v 'takes.*damage.*life:' | \
+    grep -v 'deals.*damage.*life:' \
+    > "$LOCAL_GAMELOG" || true
+
+# Extract SERVER gamelogs (authoritative, has full card info)
+# Same filters as LOCAL for apples-to-apples comparison
+# Note: --no-color-logs removes ANSI codes so no sed needed
+grep '\[GAMELOG' "$NETWORK_OUTPUT/server.log" 2>/dev/null | \
+    grep -v 'Tap.*for {' | \
+    grep -v 'resolves$' | \
+    grep -v 'takes.*damage.*life:' | \
+    grep -v 'deals.*damage.*life:' \
+    > "$NETWORK_GAMELOG" || true
 
 LOCAL_GAMELOG_COUNT=$(wc -l < "$LOCAL_GAMELOG" 2>/dev/null || echo "0")
 NETWORK_GAMELOG_COUNT=$(wc -l < "$NETWORK_GAMELOG" 2>/dev/null || echo "0")
 
 echo "  Local GAMELOG entries:   $LOCAL_GAMELOG_COUNT"
-echo "  Network GAMELOG entries: $NETWORK_GAMELOG_COUNT"
+echo "  Server GAMELOG entries:  $NETWORK_GAMELOG_COUNT"
 
 # ============================================================================
 # Verify results
@@ -310,15 +333,32 @@ else
     EXIT_CODE=1
 fi
 
-# Report GAMELOG summary (games expected to differ due to information visibility)
+# STRICT REQUIREMENT: Gamelogs must be IDENTICAL
 if [ "$LOCAL_GAMELOG_COUNT" -gt 0 ] && [ "$NETWORK_GAMELOG_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}✓ Both games produced GAMELOG entries (local: $LOCAL_GAMELOG_COUNT, network: $NETWORK_GAMELOG_COUNT)${NC}"
-    echo -e "${YELLOW}  Note: Local and network games may differ due to information visibility${NC}"
-    echo -e "${YELLOW}        (local AI sees all cards, network AI only sees revealed cards)${NC}"
+    echo "Both games produced GAMELOG entries (local: $LOCAL_GAMELOG_COUNT, server: $NETWORK_GAMELOG_COUNT)"
+
+    # Compare LOCAL vs SERVER gamelogs - STRICT: must be identical
+    DIFF_OUTPUT=$(diff "$LOCAL_GAMELOG" "$NETWORK_GAMELOG" 2>/dev/null || true)
+    if [ -z "$DIFF_OUTPUT" ]; then
+        DIFF_COUNT=0
+    else
+        DIFF_COUNT=$(echo "$DIFF_OUTPUT" | grep -c '^[<>]' 2>/dev/null || echo "0")
+    fi
+
+    if [ "$DIFF_COUNT" -eq 0 ]; then
+        echo -e "${GREEN}✓ LOCAL and SERVER gamelogs are IDENTICAL${NC}"
+    else
+        echo -e "${RED}✗ LOCAL and SERVER gamelogs differ by $DIFF_COUNT lines${NC}"
+        echo "  First differences:"
+        echo "$DIFF_OUTPUT" | head -20
+        EXIT_CODE=1
+    fi
 elif [ "$LOCAL_GAMELOG_COUNT" -gt 0 ]; then
-    echo -e "${YELLOW}⚠ Only local game produced GAMELOG entries ($LOCAL_GAMELOG_COUNT entries)${NC}"
+    echo -e "${RED}✗ Only local game produced GAMELOG entries ($LOCAL_GAMELOG_COUNT entries)${NC}"
+    EXIT_CODE=1
 elif [ "$NETWORK_GAMELOG_COUNT" -gt 0 ]; then
-    echo -e "${YELLOW}⚠ Only network game produced GAMELOG entries ($NETWORK_GAMELOG_COUNT entries)${NC}"
+    echo -e "${RED}✗ Only network game produced GAMELOG entries ($NETWORK_GAMELOG_COUNT entries)${NC}"
+    EXIT_CODE=1
 else
     echo -e "${RED}✗ Neither game produced GAMELOG entries${NC}"
     EXIT_CODE=1
