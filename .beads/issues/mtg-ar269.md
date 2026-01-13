@@ -38,12 +38,18 @@ Implemented the name-based library search protocol. This addresses the issue whe
 - [x] Added LibraryReordered message type to ServerMessage
 - [x] Modified NetworkController::choose_from_library() for name-based selection
 - [x] Updated client.rs to handle LibraryReordered (stub)
+- [x] Removed deprecated LibrarySearch ChoiceType
+- [x] Added ShuffleLibrary to GameAction enum for undo log tracking
+- [x] Modified shuffle_library() to log action with previous order
+- [x] Implemented undo logic for ShuffleLibrary in both undo.rs and state.rs
 
 ### Deferred
 - [ ] Emit LibraryReordered from server after library shuffle
-- [ ] Client shadow state library zone update
+- [ ] Client shadow state library zone update from LibraryReordered
 
 ## Files Changed
-- mtg-engine/src/network/protocol.rs - New enum variants
+- mtg-engine/src/network/protocol.rs - LibrarySearchByName, LibraryReordered, removed deprecated LibrarySearch
 - mtg-engine/src/network/controller.rs - Name-based selection logic
 - mtg-engine/src/network/client.rs - LibraryReordered handler stub
+- mtg-engine/src/undo.rs - ShuffleLibrary GameAction variant
+- mtg-engine/src/game/state.rs - shuffle_library() logging, undo support
