@@ -258,10 +258,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - VERIFIED (test_zhao_beetle_sacrifice_synergy.pzl - PumpAllCreatures implemented)
 - [x] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers) - VERIFIED (fixed sentinel 254 → actual creature power)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
-- [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
+- [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell) - BLOCKED: DB$ DelayedTrigger not implemented
 - [x] Firebending creatures sharing firebend mana pool (verified: test_firebend_sharing.pzl - Zhao+Boiling Rock Rioter share pool)
 - [x] Heartless Act vs creatures with +1/+1 counters (mode restrictions) - verified: AffectedSelector.requires_no_counters flag + card.has_counters() method prevents Mode 1 from targeting creatures with counters
-- [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
+- [x] Ty Lee Prowess + Twin Blades Flash (combat tricks) - VERIFIED: Flash keyword allows instant-speed cast (6af1111)
 - [x] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Food is artifact permanent, sacrifice triggers work)
 - [x] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Clue is artifact permanent, sacrifice triggers work)
 
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 126 items verified as of 2026-01-13_#1642
+**Progress:** 127 items verified as of 2026-01-13_#1644(6af1111)
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -325,6 +325,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Earthbent land can block (get_available_blocker_creatures uses is_creature())
 - Earthbend exile trigger verified (DelayedTriggerCondition::to_zones includes Zone::Exile)
 - Fire Lord Ozai Sacrificed$CardPower sentinel 254 fixed (check_triggers now resolves to sacrificed creature's power)
+- Flash keyword (CR 702.8a) enables instant-speed permanent casting (6af1111)
 
 **Not Yet Implemented (found during verification):**
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
