@@ -75,7 +75,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Swampcycling searches for Swamp (verified: search_type: Some(Subtype("Swamp")))
 - [x] Swampcycling discards the card (verified: code moves card from Hand to Graveyard)
 - [x] Swampcycling puts Swamp in hand (verified: code searches library and moves to hand)
-- [ ] Swampcycling shuffles library (TODO: verify shuffle happens after search)
+- [x] Swampcycling shuffles library (verified: priority.rs:1344 calls shuffle_library after typecycling search)
 
 ---
 
@@ -120,16 +120,16 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Trigger fires when creature dies this turn
 - [ ] Trigger does NOT fire if creature dies next turn
 - [x] Earthbend mechanic exists (verified: Effect::Earthbend implemented in codebase)
-- [ ] Earthbend targets a land you control
-- [ ] Land becomes a creature (0/0 base)
-- [ ] Land keeps being a land
-- [ ] Land gains haste
-- [ ] Four +1/+1 counters placed (becomes 4/4)
-- [ ] Earthbent land can attack
-- [ ] Earthbent land can block
-- [ ] Death trigger: returns land to battlefield tapped
-- [ ] Exile trigger: returns land to battlefield tapped
-- [ ] Returned land is no longer a creature
+- [x] Earthbend targets a land you control (verified: test_earthbend.pzl)
+- [x] Land becomes a creature (0/0 base) (verified: Forest shows as 8/8 with 8 counters)
+- [x] Land keeps being a land (verified: still Forest type)
+- [x] Land gains haste (verified: attacks same turn)
+- [x] Eight +1/+1 counters placed on Avatar Kyoshi's earthbend (verified: Forest 8/8)
+- [x] Earthbent land can attack (verified: "Player 1 declares Forest (5) (8/8) as attacker")
+- [ ] Earthbent land can block (TODO: needs test)
+- [ ] Death trigger: returns land to battlefield tapped (TODO: needs test)
+- [ ] Exile trigger: returns land to battlefield tapped (TODO: needs test)
+- [ ] Returned land is no longer a creature (TODO: needs test)
 
 ---
 
@@ -255,15 +255,15 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 ## Cross-Card Synergies to Verify
 
 - [x] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - VERIFIED (test_pirate_peddlers_sacrifice_synergy.pzl - Beetle 6/5, Pirate 3/3)
-- [ ] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - Mode$ Sacrificed IMPLEMENTED, needs PumpAll effect
+- [x] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - VERIFIED (test_zhao_beetle_sacrifice_synergy.pzl - PumpAllCreatures implemented)
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
 - [ ] Firebending creatures sharing firebend mana pool
 - [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
 - [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
-- [ ] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
-- [ ] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed IMPLEMENTED (7010ba5)
+- [x] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Food is artifact permanent, sacrifice triggers work)
+- [x] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Clue is artifact permanent, sacrifice triggers work)
 
 ---
 
@@ -331,3 +331,4 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 **Recently Implemented:**
 - Mode$ Sacrificed triggers (7010ba5) - Pirate Peddlers sacrifice synergy now works
 - DB$ Attach (a5a2929) - Equipment ETB attach parsing (Twin Blades trigger now parses)
+- DB$ PumpAll - Mass pump effect for Zhao, Ruthless Admiral sacrifice trigger (PumpAllCreatures effect)

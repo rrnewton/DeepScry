@@ -16,6 +16,10 @@ impl<'a> GameLoop<'a> {
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
+        // Check for beginning of combat triggers (e.g., Avatar Kyoshi's earthbend trigger)
+        use crate::core::TriggerEvent;
+        self.check_phase_triggers(TriggerEvent::BeginningOfCombat)?;
+
         if let Some(result) = self.priority_round(controller1, controller2)? {
             return Ok(Some(result));
         }

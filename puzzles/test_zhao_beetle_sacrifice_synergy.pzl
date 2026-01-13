@@ -1,0 +1,26 @@
+# Test Zhao + Beetle-Headed Merchants Sacrifice Synergy
+# Zhao, Ruthless Admiral: "Whenever you sacrifice another permanent, creatures you control get +1/+0 until end of turn"
+# Beetle-Headed Merchants: "Whenever this creature attacks, you may sacrifice another creature or artifact. If you do, draw a card and put a +1/+1 counter on this creature."
+# Expected: When Beetle attacks and sacrifices a creature:
+# 1. Beetle draws a card and gets +1/+1 counter (5/4 -> 6/5)
+# 2. Zhao's Mode$ Sacrificed triggers, giving +1/+0 to all creatures (Zhao 3/4 -> 4/4, Beetle 6/5 -> 7/5)
+# Result: Zhao should be 4/4, Beetle should be 7/5
+
+[metadata]
+Name:Zhao + Beetle Sacrifice Synergy
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 (AI) - starts with Zhao and Beetle on battlefield, Typhoid Rats to sacrifice
+p0life=20
+p0hand=Swamp
+p0library=Mountain; Forest; Swamp; Island; Mountain
+p0battlefield=Zhao, Ruthless Admiral; Beetle-Headed Merchants; Typhoid Rats; Mountain; Mountain; Swamp; Swamp
+
+# Player 1 - opponent with minimal blockers
+p1life=20
+p1hand=Forest
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Forest; Forest

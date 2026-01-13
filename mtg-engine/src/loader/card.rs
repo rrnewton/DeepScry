@@ -2074,6 +2074,31 @@ impl CardDefinition {
                                 amount: life_amount,
                             });
                         }
+
+                        // DB$ PumpAll effects (like Zhao, Ruthless Admiral)
+                        // Example: DB$ PumpAll | ValidCards$ Creature.YouCtrl | NumAtt$ +1
+                        if svar_params.api_type == ApiType::PumpAll {
+                            let mut power_bonus = 0;
+                            let mut toughness_bonus = 0;
+
+                            if let Some(att) = svar_params.get("NumAtt") {
+                                power_bonus = att.trim_start_matches('+').parse::<i32>().unwrap_or(0);
+                            }
+                            if let Some(def) = svar_params.get("NumDef") {
+                                toughness_bonus = def.trim_start_matches('+').parse::<i32>().unwrap_or(0);
+                            }
+
+                            let filter = svar_params.get("ValidCards").unwrap_or("Creature").to_string();
+
+                            if power_bonus != 0 || toughness_bonus != 0 {
+                                effects.push(Effect::PumpAllCreatures {
+                                    controller: PlayerId::new(0), // Placeholder - filled in at trigger execution
+                                    filter,
+                                    power_bonus,
+                                    toughness_bonus,
+                                });
+                            }
+                        }
                     }
                 }
 

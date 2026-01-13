@@ -256,6 +256,16 @@ pub enum Effect {
         toughness_bonus: i32,
     },
 
+    /// Pump all creatures matching a filter until end of turn
+    /// Example: "Creatures you control get +1/+0 until end of turn"
+    PumpAllCreatures {
+        controller: PlayerId,
+        /// Filter string like "Creature.YouCtrl" or "Creature"
+        filter: String,
+        power_bonus: i32,
+        toughness_bonus: i32,
+    },
+
     /// Mill cards from library to graveyard
     /// Example: "Target player mills 3 cards"
     Mill { player: PlayerId, count: u8 },
