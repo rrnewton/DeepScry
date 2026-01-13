@@ -15,6 +15,8 @@ You are performing a continuous integration task. We are using multiple branches
 6. **Push to main** once integration is green, catching main up to the integrated changes
 7. **Archive completed branches** as tags (e.g., `branchname.v1`) per project conventions
 
+When you're done with a work session, leave the working copy with the latest version of the `integration` branch checked out.
+
 ## Key Commands
 
 ```bash
