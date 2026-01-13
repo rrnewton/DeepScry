@@ -161,7 +161,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Card loads and can be cast for 1R (verified: Heartless Act puzzle loaded Fire Sages)
 - [x] Enters as 2/2 (verified: shown in battlefield as creature)
 - [x] Firebending 1 works - adds {R} on attack (verified: puzzles/test_fire_sages_ability.pzl)
-- [ ] Firebending interacts correctly with firebend sources
+- [x] Firebending interacts correctly with firebend sources (verified: test_firebend_sharing.pzl shows shared pool red:3 from 2+1)
 - [x] Activated ability costs {1}{R}{R} (verified: 3 mountains tapped)
 - [x] Activated ability puts +1/+1 counter (verified: Fire Sages became 3/3)
 - [x] Can activate multiple times per turn (verified: test_fire_sages_multiple_activations.pzl - 2x per turn, 4/4 on T1)
@@ -259,8 +259,8 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
-- [ ] Firebending creatures sharing firebend mana pool
-- [ ] Heartless Act vs creatures with +1/+1 counters (mode restrictions)
+- [x] Firebending creatures sharing firebend mana pool (verified: test_firebend_sharing.pzl - Zhao+Boiling Rock Rioter share pool)
+- [x] Heartless Act vs creatures with +1/+1 counters (mode restrictions) - verified: AffectedSelector.requires_no_counters flag + card.has_counters() method prevents Mode 1 from targeting creatures with counters
 - [ ] Ty Lee Prowess + Twin Blades Flash (combat tricks)
 - [x] Canyon Crawler Food token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Food is artifact permanent, sacrifice triggers work)
 - [x] Cunning Maneuver Clue token + Pirate Peddlers (sacrifice synergy) - Mode$ Sacrificed verified (Clue is artifact permanent, sacrifice triggers work)
