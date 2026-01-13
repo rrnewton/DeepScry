@@ -1282,19 +1282,9 @@ impl GameState {
 
             self.turn.next_turn(next_player);
 
-            // Log the turn change with RNG state from before the turn change and prior log size
-            let prior_log_size = self.logger.log_count();
-            self.undo_log.log(
-                crate::undo::GameAction::ChangeTurn {
-                    from_player,
-                    to_player: next_player,
-                    turn_number: old_turn_number + 1,
-                    rng_state,
-                },
-                prior_log_size,
-            );
-
-            // Log turn transfer indicator with life totals
+            // Log turn transfer indicator with life totals BEFORE logging ChangeTurn action.
+            // This ensures that when we rewind to turn start and truncate the log,
+            // the turn separator is preserved (since prior_log_size is captured AFTER it).
             let new_turn_num = old_turn_number + 1;
             let active_player_name = self
                 .get_player(next_player)
@@ -1320,6 +1310,19 @@ impl GameState {
                 new_turn_num, active_player_name, active_player_life, other_player_name, other_player_life
             );
             self.logger.turn_separator(&turn_msg);
+
+            // Log the turn change with RNG state from before the turn change.
+            // Capture prior_log_size AFTER logging turn separator so rewind preserves it.
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::ChangeTurn {
+                    from_player,
+                    to_player: next_player,
+                    turn_number: old_turn_number + 1,
+                    rng_state,
+                },
+                prior_log_size,
+            );
 
             // Reset per-turn state
             if let Ok(player) = self.get_player_mut(next_player) {
