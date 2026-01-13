@@ -407,6 +407,20 @@ impl<'a> GameLoop<'a> {
             self.game.persistent_effects.remove_many(&effects_to_remove);
         }
 
+        // Clean up delayed triggers that expire at end of turn (ThisTurn$ True)
+        // Example: Fatal Fissure's "when that creature dies this turn" expires if not triggered
+        let expired_triggers = self.game.delayed_triggers.cleanup_end_of_turn();
+        if !expired_triggers.is_empty() {
+            log::debug!(
+                target: "delayed_triggers",
+                "Cleaning up {} delayed triggers at end of turn",
+                expired_triggers.len()
+            );
+            for trigger in &expired_triggers {
+                log_if_verbose!(self, "Delayed trigger {} expired (end of turn)", trigger.id.as_u32());
+            }
+        }
+
         // TODO: Remove damage from creatures
 
         Ok(None)
