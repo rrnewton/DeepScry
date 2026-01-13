@@ -131,10 +131,10 @@ impl<'a> GameLoop<'a> {
             Effect::DealDamage { target, amount } => match target {
                 TargetRef::Player(target_player_id) => {
                     let target_name = self.get_player_name(*target_player_id);
-                    let old_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
-                    let new_life = old_life - *amount;
+                    let current_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
+                    let life_after = current_life - *amount;
                     let message = format!(
-                        "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {old_life} => {new_life}"
+                        "{source_name} ({source_id}) deals {amount} damage to {target_name} (life: {life_after})"
                     );
                     self.game.logger.gamelog(&message);
                 }
@@ -154,10 +154,10 @@ impl<'a> GameLoop<'a> {
                     // Target will be filled in by resolve_spell - log against opponent
                     if let Some(opponent_id) = self.game.players.iter().map(|p| p.id).find(|id| *id != _source_owner) {
                         let target_name = self.get_player_name(opponent_id);
-                        let old_life = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
-                        let new_life = old_life - *amount;
+                        let current_life = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
+                        let life_after = current_life - *amount;
                         let message = format!(
-                            "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {old_life} => {new_life}"
+                            "{source_name} ({source_id}) deals {amount} damage to {target_name} (life: {life_after})"
                         );
                         self.game.logger.gamelog(&message);
                     }

@@ -281,11 +281,14 @@ echo "GAMELOG comparison:"
 LOCAL_GAMELOG="$OUTPUT_DIR/local_gamelog.txt"
 NETWORK_GAMELOG="$OUTPUT_DIR/network_gamelog.txt"
 
-# Extract GAMELOG entries from LOCAL (excluding noise: Tap, resolves, takes damage)
+# Extract GAMELOG entries from LOCAL (excluding noise: Tap, resolves, damage messages)
+# Damage messages are filtered because SERVER logs damage from GameLoop while clients
+# may have slight timing differences in when damage is observed
 grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" 2>/dev/null | \
     grep -v 'Tap.*for {' | \
     grep -v 'resolves$' | \
-    grep -v 'takes.*damage.*life:' \
+    grep -v 'takes.*damage.*life:' | \
+    grep -v 'deals.*damage.*life:' \
     > "$LOCAL_GAMELOG" || true
 
 # Extract SERVER gamelogs (authoritative, has full card info)
@@ -294,7 +297,8 @@ grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" 2>/dev/null | \
 grep '\[GAMELOG' "$NETWORK_OUTPUT/server.log" 2>/dev/null | \
     grep -v 'Tap.*for {' | \
     grep -v 'resolves$' | \
-    grep -v 'takes.*damage.*life:' \
+    grep -v 'takes.*damage.*life:' | \
+    grep -v 'deals.*damage.*life:' \
     > "$NETWORK_GAMELOG" || true
 
 LOCAL_GAMELOG_COUNT=$(wc -l < "$LOCAL_GAMELOG" 2>/dev/null || echo "0")

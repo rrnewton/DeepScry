@@ -1202,15 +1202,28 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Check if the game has reached a win condition
-    fn check_win_condition(&self) -> Option<GameResult> {
+    fn check_win_condition(&mut self) -> Option<GameResult> {
         // Check for player death (life <= 0)
         for player in &self.game.players {
             if player.life <= 0 {
-                let winner = self.game.get_other_player_id(player.id);
+                let loser_id = player.id;
+                let loser_name = player.name.clone();
+                let loser_life = player.life;
+                let winner = self.game.get_other_player_id(loser_id);
+                let winner_name = winner
+                    .and_then(|id| self.game.get_player(id).ok())
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string().into());
+
+                // Log the game end
+                self.game.logger.gamelog(&format!(
+                    "{loser_name} has lost the game (life: {loser_life}). {winner_name} wins!"
+                ));
+
                 return Some(GameResult {
                     winner,
                     turns_played: self.turns_elapsed,
-                    end_reason: GameEndReason::PlayerDeath(player.id),
+                    end_reason: GameEndReason::PlayerDeath(loser_id),
                     action_count: self.game.action_count(),
                 });
             }
@@ -1220,11 +1233,23 @@ impl<'a> GameLoop<'a> {
         for player in &self.game.players {
             if let Some(zones) = self.game.get_player_zones(player.id) {
                 if zones.library.is_empty() {
-                    let winner = self.game.get_other_player_id(player.id);
+                    let loser_id = player.id;
+                    let loser_name = player.name.clone();
+                    let winner = self.game.get_other_player_id(loser_id);
+                    let winner_name = winner
+                        .and_then(|id| self.game.get_player(id).ok())
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string().into());
+
+                    // Log the game end
+                    self.game
+                        .logger
+                        .gamelog(&format!("{loser_name} has lost the game (decked). {winner_name} wins!"));
+
                     return Some(GameResult {
                         winner,
                         turns_played: self.turns_elapsed,
-                        end_reason: GameEndReason::Decking(player.id),
+                        end_reason: GameEndReason::Decking(loser_id),
                         action_count: self.game.action_count(),
                     });
                 }
@@ -1326,7 +1351,7 @@ mod tests {
         // Set Player2's life to 0
         game.get_player_mut(bob).unwrap().life = 0;
 
-        let game_loop = GameLoop::new(&mut game);
+        let mut game_loop = GameLoop::new(&mut game);
         let result = game_loop.check_win_condition();
 
         assert!(result.is_some());
