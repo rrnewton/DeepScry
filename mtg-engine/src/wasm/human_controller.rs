@@ -369,7 +369,7 @@ mod tests {
     use crate::core::EntityId;
 
     #[test]
-    fn test_human_controller_needs_input_without_pending() {
+    fn test_human_controller_auto_passes_with_no_available() {
         let player_id = EntityId::new(1);
         let mut controller = WasmHumanController::new(player_id);
 
@@ -377,8 +377,27 @@ mod tests {
         let game = crate::game::GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
         let view = crate::game::GameStateView::new(&game, player_id);
 
-        // Without pending choice, should return NeedInput
+        // When no abilities are available, should auto-pass (network optimization)
         let result = controller.choose_spell_ability_to_play(&view, &[]);
+        assert!(matches!(result, ChoiceResult::Ok(None)));
+    }
+
+    #[test]
+    fn test_human_controller_needs_input_with_available() {
+        use crate::core::SpellAbility;
+
+        let player_id = EntityId::new(1);
+        let mut controller = WasmHumanController::new(player_id);
+
+        // Create a minimal game state for testing
+        let game = crate::game::GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+        let view = crate::game::GameStateView::new(&game, player_id);
+
+        // With available abilities but no pending choice, should return NeedInput
+        let available = vec![SpellAbility::PlayLand {
+            card_id: EntityId::new(42),
+        }];
+        let result = controller.choose_spell_ability_to_play(&view, &available);
         assert!(matches!(result, ChoiceResult::NeedInput(_)));
     }
 

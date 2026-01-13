@@ -13,11 +13,20 @@ updated_at: 2026-01-13T15:09:09.537491408+00:00
 
 This issue tracks compatibility testing and bug fixes for the **gabriel_avatar_draft.dck** deck when played in the web GUI.
 
-## Priority Bug: Cracked Earth Technique "Card not in hand" Error
+## Priority Bug: Cracked Earth Technique "Card not in hand" Error [FIXED]
 
-**CRITICAL BUG** - Must fix first before other testing.
+**FIXED** in `wasm/fancy_tui.rs::rewind_to_turn_start()`
 
-When the opponent casts Cracked Earth Technique, the game throws an error:
+**Root Cause**: When the web GUI rewound to turn start, it extracted ALL players' choices
+from the undo log, including P2 (AI opponent) choices. When P1's ReplayController tried
+to replay these choices, it would attempt to execute P2's actions (like casting P2's spell),
+which failed with "Card not in hand" because P1 can't cast P2's cards.
+
+**Fix**: Filter extracted choices by player_id in `rewind_to_turn_start()` so only P1's
+choices are given to P1's ReplayController. P2's choices will be re-made by the AI
+controller during replay.
+
+Original error:
 ```
 P2 casts Cracked Earth Technique (48) (putting on stack)
 Cracked Earth Technique (48) resolves
@@ -25,14 +34,7 @@ P1 casts Cracked Earth Technique (48) (putting on stack)
 Error casting spell: Invalid game action: Card not in hand
 ```
 
-The card definition uses `SP$ Earthbend | SubAbility$ DBEarthbend` which chains:
-1. First earthbend 3
-2. SubAbility DBEarthbend (earthbend 3 again)
-3. SubAbility DBGainLife (gain 3 life)
-
-The error suggests the SubAbility chain is being misinterpreted as casting the spell again.
-
-- [ ] **FIX BUG**: Cracked Earth Technique SubAbility chain causes "Card not in hand" error
+- [x] **FIX BUG**: Cracked Earth Technique SubAbility chain causes "Card not in hand" error
 - [ ] Verify Cracked Earth Technique earthbends twice (two different lands)
 - [ ] Verify Cracked Earth Technique grants 3 life
 
