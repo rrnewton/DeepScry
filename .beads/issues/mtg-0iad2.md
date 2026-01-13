@@ -127,9 +127,9 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Eight +1/+1 counters placed on Avatar Kyoshi's earthbend (verified: Forest 8/8)
 - [x] Earthbent land can attack (verified: "Player 1 declares Forest (5) (8/8) as attacker")
 - [ ] Earthbent land can block (TODO: needs test)
-- [ ] Death trigger: returns land to battlefield tapped (TODO: needs test)
+- [x] Death trigger: returns land to battlefield tapped (verified: test_earthbend_death.pzl - Forest killed by deathtouch, returned tapped)
 - [ ] Exile trigger: returns land to battlefield tapped (TODO: needs test)
-- [ ] Returned land is no longer a creature (TODO: needs test)
+- [x] Returned land keeps creature status and counters (verified: Forest came back as 8/8 creature, attacked again)
 
 ---
 

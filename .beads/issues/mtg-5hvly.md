@@ -101,9 +101,9 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Turtle-Duck (x1) - small utility creature
 
 **Spells/Other (8):**
-- [ ] Barrels of Blasting Jelly (x1) - **BUG: FREEZE** - mana/damage artifact
-- [ ] Cracked Earth Technique (x1) - **BUG: CARD NOT IN HAND** - earthbend sorcery
-- [ ] Pillar Launch (x1) - combat trick/pump
+- [ ] Barrels of Blasting Jelly (x1) - **BUG: FREEZE** (web GUI only) - mana/damage artifact
+- [x] Cracked Earth Technique (x1) - **FIXED** - earthbend sorcery (was web GUI replay bug)
+- [ ] Pillar Launch (x1) - **BUG: EntityNotFound(0)** - SubAbility$ DBUntap with Defined$ Targeted fails
 - [ ] Rocky Rebuke (x1) - removal spell
 - [ ] Sandbenders' Storm (x2) - board effect
 - [ ] Seismic Sense (x1) - card selection/draw
