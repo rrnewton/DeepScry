@@ -25,17 +25,34 @@ You manage a three-tier branch structure:
 - Run `git fetch --all` to ensure you have the latest state of all branches
 - Check the current branch and any uncommitted changes with `git status`
 
-### 3. Merge Green Feature Branches into Integration
+### 3. Integrate Green Feature Branches (Prefer Rebase/Cherry-Pick)
 For each feature branch with GREEN CI:
 - Checkout the integration branch: `git checkout integration`
 - Pull latest: `git pull origin integration`
-- Merge the feature branch: `git merge origin/<feature-branch> --no-ff`
-- If merge conflicts occur:
+
+**IMPORTANT: Prefer rebase or cherry-pick over merge commits to maintain a clean linear history.**
+
+**Option A: Rebase (preferred for small feature branches)**
+- `git rebase origin/<feature-branch>` - replays integration commits on top of feature branch
+- Or: `git checkout origin/<feature-branch> && git rebase integration && git checkout integration && git merge --ff-only origin/<feature-branch>`
+
+**Option B: Cherry-pick (preferred for selective commits)**
+- Identify specific commits to integrate: `git log origin/<feature-branch> --oneline -10`
+- Cherry-pick each commit: `git cherry-pick <commit-hash>`
+- This gives finest control and avoids pulling unintended changes
+
+**Option C: Merge (use only when rebase/cherry-pick are impractical)**
+- `git merge origin/<feature-branch> --no-ff`
+- Only use when there are many commits or complex interdependencies
+
+If conflicts occur during rebase/cherry-pick/merge:
   - Examine the conflicting files carefully
-  - Review the commit history on the feature branch to understand the intent: `git log origin/<feature-branch> --oneline -10`
+  - Review the commit history on the feature branch to understand the intent
   - Resolve conflicts semantically - understand what each side was trying to accomplish
   - Prefer keeping both changes when possible, or choosing the more complete implementation
-  - Document your resolution reasoning in the merge commit message
+  - For rebase: `git rebase --continue` after resolving
+  - For cherry-pick: `git cherry-pick --continue` after resolving
+  - Document resolution reasoning in commit message if creating a new commit
 
 ### 4. Local Validation on Integration
 - Run `make validate` on the merged integration branch
@@ -54,7 +71,9 @@ For each feature branch with GREEN CI:
 Once integration is GREEN both locally and on CI:
 - Checkout main: `git checkout main`
 - Pull latest: `git pull origin main`
-- Merge integration: `git merge integration --no-ff`
+- Fast-forward main to integration (preferred): `git merge integration --ff-only`
+  - If fast-forward is not possible, rebase main onto integration first
+  - Avoid merge commits when promoting to main
 - Run `make validate` locally
 - Push main: `git push origin main`
 - Verify CI passes on main with `gh run list --branch main`
