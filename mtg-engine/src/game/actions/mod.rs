@@ -2293,6 +2293,7 @@ impl GameState {
             source_card_id: CardId,
             effects: Vec<Effect>,
             sacrifice_target: Option<CardId>, // Card to sacrifice for the cost
+            sacrificed_power: u8,             // Power of sacrifice target (for Firebend effects)
         }
 
         // Phase 1: Collect matching triggers with their metadata
@@ -2353,6 +2354,7 @@ impl GameState {
             .into_iter()
             .filter_map(|info| {
                 let mut sacrifice_target: Option<CardId> = None;
+                let mut sacrificed_power: u8 = 0;
 
                 // For optional triggers with costs, check payability and choose targets
                 if info.trigger.optional {
@@ -2371,6 +2373,13 @@ impl GameState {
 
                             // Choose which permanent to sacrifice (AI heuristic: pick lowest P/T creature or artifact)
                             sacrifice_target = self.choose_sacrifice_target(pattern, info.card_id, info.controller);
+
+                            // Capture power of sacrifice target for Firebend effects (Fire Lord Ozai)
+                            if let Some(sac_id) = sacrifice_target {
+                                if let Ok(sac_card) = self.cards.get(sac_id) {
+                                    sacrificed_power = sac_card.current_power().max(0) as u8;
+                                }
+                            }
                         }
                         // TODO: Check other cost types (mana, life, etc.)
                     }
@@ -2389,13 +2398,19 @@ impl GameState {
                     }
                     if let Some(sac_id) = sacrifice_target {
                         if let Ok(sac_card) = self.cards.get(sac_id) {
-                            log::debug!("  Will sacrifice: {} ({})", sac_card.name, sac_id.as_u32());
+                            log::debug!(
+                                "  Will sacrifice: {} ({}) power={}",
+                                sac_card.name,
+                                sac_id.as_u32(),
+                                sacrificed_power
+                            );
                         }
                     }
                     Some(TriggerToExecute {
                         source_card_id: info.card_id,
                         effects: info.trigger.effects,
                         sacrifice_target,
+                        sacrificed_power,
                     })
                 } else {
                     None
@@ -2406,6 +2421,7 @@ impl GameState {
         // Phase 3: Execute sacrifices and triggered effects
         for trigger_to_exec in triggered_effects {
             let trigger_source = trigger_to_exec.source_card_id;
+            let sacrificed_power = trigger_to_exec.sacrificed_power;
 
             // Execute sacrifice cost first (if any)
             if let Some(sac_target) = trigger_to_exec.sacrifice_target {
@@ -2654,6 +2670,30 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                         };
+                    }
+                    Effect::Firebend {
+                        controller: ctrl,
+                        amount,
+                    } if ctrl.as_u32() == 0 => {
+                        // Resolve placeholder controller to the actual creature controller
+                        // amount=254 means "use sacrificed creature's power" (Fire Lord Ozai)
+                        let source_controller = self.cards.get(trigger_source)?.controller;
+                        let actual_amount = if *amount == 254 { sacrificed_power } else { *amount };
+
+                        effect = Effect::Firebend {
+                            controller: source_controller,
+                            amount: actual_amount,
+                        };
+
+                        // Log the firebend trigger
+                        if actual_amount > 0 {
+                            if let Ok(card) = self.cards.get(trigger_source) {
+                                self.logger.gamelog(&format!(
+                                    "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                                    card.name, actual_amount, actual_amount
+                                ));
+                            }
+                        }
                     }
                     _ => {}
                 }

@@ -256,7 +256,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 - [x] Beetle-Headed Merchants + Pirate Peddlers (sacrifice triggers both) - VERIFIED (test_pirate_peddlers_sacrifice_synergy.pzl - Beetle 6/5, Pirate 3/3)
 - [x] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - VERIFIED (test_zhao_beetle_sacrifice_synergy.pzl - PumpAllCreatures implemented)
-- [ ] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers)
+- [x] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers) - VERIFIED (fixed sentinel 254 → actual creature power)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
 - [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell)
 - [x] Firebending creatures sharing firebend mana pool (verified: test_firebend_sharing.pzl - Zhao+Boiling Rock Rioter share pool)
@@ -276,7 +276,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 
 ---
 
-**Progress:** 125 items verified as of 2026-01-13_#1641(b44d36a)
+**Progress:** 126 items verified as of 2026-01-13_#1642
 - All blocking bugs fixed! (mtg-6ph0z, mtg-hl300, mtg-oyvdh)
 - Yuyan Archers ETB looting now works
 - Boar-q-pine SpellCast triggers now work
@@ -324,6 +324,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - Cycling/Typecycling from hand COMPLETE - SpellAbility::Cycle, push_cycling_abilities(), library search (puzzles/test_mountaincycling.pzl)
 - Earthbent land can block (get_available_blocker_creatures uses is_creature())
 - Earthbend exile trigger verified (DelayedTriggerCondition::to_zones includes Zone::Exile)
+- Fire Lord Ozai Sacrificed$CardPower sentinel 254 fixed (check_triggers now resolves to sacrificed creature's power)
 
 **Not Yet Implemented (found during verification):**
 - Fatal Fissure (SP$ DelayedTrigger) - delayed trigger spell ability not parsed
