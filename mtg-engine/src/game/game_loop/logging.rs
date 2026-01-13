@@ -506,6 +506,26 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::PumpAllCreatures {
+                controller,
+                filter,
+                power_bonus,
+                toughness_bonus,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let target_desc = if filter.contains("YouCtrl") {
+                    format!("{}'s creatures", controller_name)
+                } else if filter.contains("OppCtrl") {
+                    "opponent's creatures".to_string()
+                } else {
+                    "all creatures".to_string()
+                };
+                let message = format!(
+                    "{source_name} ({source_id}) pumps {} (+{}/+{} until end of turn)",
+                    target_desc, power_bonus, toughness_bonus
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }
