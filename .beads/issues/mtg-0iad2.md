@@ -120,16 +120,16 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [ ] Trigger fires when creature dies this turn
 - [ ] Trigger does NOT fire if creature dies next turn
 - [x] Earthbend mechanic exists (verified: Effect::Earthbend implemented in codebase)
-- [ ] Earthbend targets a land you control
-- [ ] Land becomes a creature (0/0 base)
-- [ ] Land keeps being a land
-- [ ] Land gains haste
-- [ ] Four +1/+1 counters placed (becomes 4/4)
-- [ ] Earthbent land can attack
-- [ ] Earthbent land can block
-- [ ] Death trigger: returns land to battlefield tapped
-- [ ] Exile trigger: returns land to battlefield tapped
-- [ ] Returned land is no longer a creature
+- [x] Earthbend targets a land you control (verified: test_earthbend.pzl)
+- [x] Land becomes a creature (0/0 base) (verified: Forest shows as 8/8 with 8 counters)
+- [x] Land keeps being a land (verified: still Forest type)
+- [x] Land gains haste (verified: attacks same turn)
+- [x] Eight +1/+1 counters placed on Avatar Kyoshi's earthbend (verified: Forest 8/8)
+- [x] Earthbent land can attack (verified: "Player 1 declares Forest (5) (8/8) as attacker")
+- [ ] Earthbent land can block (TODO: needs test)
+- [ ] Death trigger: returns land to battlefield tapped (TODO: needs test)
+- [ ] Exile trigger: returns land to battlefield tapped (TODO: needs test)
+- [ ] Returned land is no longer a creature (TODO: needs test)
 
 ---
 

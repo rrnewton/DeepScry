@@ -1,0 +1,23 @@
+# Test Earthbend Mechanic
+# Avatar Kyoshi: "At the beginning of combat on your turn, earthbend 8, then untap that land"
+# Expected: A land becomes a 8/8 creature with haste (0/0 base + 8 +1/+1 counters)
+# The land should be able to attack since it has haste
+
+[metadata]
+Name:Earthbend Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+
+[state]
+# Player 0 - Avatar Kyoshi with lands to earthbend
+p0life=20
+p0hand=Forest
+p0library=Mountain; Forest; Swamp; Island; Mountain
+p0battlefield=Avatar Kyoshi, Earthbender; Forest; Forest; Forest; Mountain; Swamp
+
+# Player 1 - minimal setup
+p1life=20
+p1hand=Island
+p1library=Island; Island; Island; Island; Island
+p1battlefield=Forest; Forest
