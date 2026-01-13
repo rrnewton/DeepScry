@@ -143,9 +143,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Untap => {
-            Some(Effect::UntapPermanent {
-                target: CardId::new(0), // Placeholder
-            })
+            // Check for Defined$ Targeted - use reuse_previous sentinel to share target with parent ability
+            let target = if params.get("Defined") == Some("Targeted") {
+                CardId::reuse_previous()
+            } else {
+                CardId::new(0) // Placeholder for independent targeting
+            };
+            Some(Effect::UntapPermanent { target })
         }
 
         ApiType::Mill => {

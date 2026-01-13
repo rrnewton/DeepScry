@@ -170,6 +170,7 @@ impl GameState {
             // Execute effects by index, resolving targets at execution time
             // This avoids cloning the entire Vec<Effect>
             let mut target_index = 0;
+            let mut last_resolved_target: Option<CardId> = None;
             for effect_index in 0..effects_len {
                 // Re-fetch effect each iteration (card ref can't be held across execute calls)
                 let effect = self.cards.get(card_id)?.effects.get(effect_index).cloned();
@@ -177,8 +178,14 @@ impl GameState {
                 if let Some(effect) = effect {
                     log::debug!(target: "resolve_spell", "Effect[{}] before resolve: {:?}", effect_index, effect);
                     // Resolve the effect with context, advancing target_index as needed
-                    let resolved =
-                        self.resolve_effect_target(&effect, chosen_targets, &mut target_index, card_owner, opponent_id);
+                    let resolved = self.resolve_effect_target(
+                        &effect,
+                        chosen_targets,
+                        &mut target_index,
+                        card_owner,
+                        opponent_id,
+                        &mut last_resolved_target,
+                    );
                     log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
                     self.execute_effect(&resolved)?;
                 }
@@ -833,6 +840,8 @@ impl GameState {
     /// - `target_index`: Mutable index tracking which target to consume next
     /// - `card_owner`: The controller of the spell (for "you" player references)
     /// - `opponent_id`: Pre-computed opponent ID for untargeted damage effects
+    /// - `last_resolved_target`: Tracks the most recently resolved target for SubAbility chains
+    ///   with `Defined$ Targeted` (reuse_previous sentinel)
     ///
     /// Note: Wildcard match is intentional - effects without placeholder targets
     /// are returned unchanged. New Effect variants should be reviewed for target
@@ -846,6 +855,7 @@ impl GameState {
         target_index: &mut usize,
         card_owner: PlayerId,
         opponent_id: Option<PlayerId>,
+        last_resolved_target: &mut Option<CardId>,
     ) -> Effect {
         match effect {
             // Target resolution for permanent-targeting effects
@@ -856,6 +866,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(target);
                     Effect::DealDamage {
                         target: TargetRef::Permanent(target),
                         amount: *amount,
@@ -874,6 +885,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::DestroyPermanent {
                         target: resolved_target,
                         restriction: restriction.clone(),
@@ -890,6 +902,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::PumpCreature {
                         target: resolved_target,
                         power_bonus: *power_bonus,
@@ -903,6 +916,7 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::TapPermanent {
                         target: resolved_target,
                     }
@@ -910,10 +924,21 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // Handle UntapPermanent with reuse_previous sentinel (from Defined$ Targeted)
+            Effect::UntapPermanent { target } if target.is_reuse_previous() => {
+                // Reuse the target from the previous effect in the chain
+                if let Some(prev_target) = *last_resolved_target {
+                    Effect::UntapPermanent { target: prev_target }
+                } else {
+                    log::warn!(target: "resolve_effect", "UntapPermanent has reuse_previous but no previous target");
+                    effect.clone()
+                }
+            }
             Effect::UntapPermanent { target } if target.as_u32() == 0 => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
                     Effect::UntapPermanent {
                         target: resolved_target,
                     }

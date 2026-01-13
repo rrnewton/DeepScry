@@ -54,6 +54,10 @@ impl<T> std::hash::Hash for EntityId<T> {
     }
 }
 
+/// Sentinel value indicating "reuse the previous target" in SubAbility chains.
+/// Used when parsing `Defined$ Targeted` to avoid consuming a new target.
+pub const REUSE_PREVIOUS_TARGET: u32 = u32::MAX;
+
 impl<T> EntityId<T> {
     pub fn new(id: u32) -> Self {
         EntityId {
@@ -64,6 +68,18 @@ impl<T> EntityId<T> {
 
     pub fn as_u32(&self) -> u32 {
         self.id
+    }
+
+    /// Check if this ID is the "reuse previous target" sentinel.
+    /// Used in SubAbility chains where `Defined$ Targeted` means
+    /// "use the same target as the parent ability".
+    pub fn is_reuse_previous(&self) -> bool {
+        self.id == REUSE_PREVIOUS_TARGET
+    }
+
+    /// Create a sentinel ID meaning "reuse the previous target".
+    pub fn reuse_previous() -> Self {
+        EntityId::new(REUSE_PREVIOUS_TARGET)
     }
 }
 

@@ -40,6 +40,34 @@ Error casting spell: Invalid game action: Card not in hand
 
 ---
 
+## Bug: Pillar Launch EntityNotFound(0) [FIXED]
+
+**FIXED** in `mtg-engine/src/game/actions/mod.rs` and related files.
+
+**Root Cause**: SubAbility chains with `Defined$ Targeted` (like Pillar Launch's `SP$ Pump | SubAbility$ DBUntap`)
+expected to reuse the parent ability's target, but the effect converter created a placeholder CardId(0). When resolving,
+the code tried to consume a NEW target from `chosen_targets`, but only one target was provided for the whole chain.
+
+**Fix**: Implemented `REUSE_PREVIOUS_TARGET` sentinel (u32::MAX) to indicate "reuse previous target":
+- `mtg-engine/src/core/entity.rs`: Added `REUSE_PREVIOUS_TARGET` constant and `is_reuse_previous()`/`reuse_previous()` methods
+- `mtg-engine/src/loader/effect_converter.rs`: Detect `Defined$ Targeted` and use `CardId::reuse_previous()` sentinel
+- `mtg-engine/src/game/actions/mod.rs`: Track `last_resolved_target` through effect chain, reuse it for sentinel targets
+
+Original error:
+```
+Entity not found: 0
+```
+
+Now works correctly:
+```
+Pillar Launch (62) gives Raucous Audience (72) +2/+2 until end of turn
+Pillar Launch (62) untaps <target>
+```
+
+- [x] **FIX BUG**: Pillar Launch SubAbility with Defined$ Targeted causes EntityNotFound(0)
+
+---
+
 ## Priority Bug: Barrels of Blasting Jelly Freeze
 
 **CRITICAL BUG** - Causes game freeze/infinite loop.
@@ -103,7 +131,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 **Spells/Other (8):**
 - [ ] Barrels of Blasting Jelly (x1) - **BUG: FREEZE** (web GUI only) - mana/damage artifact
 - [x] Cracked Earth Technique (x1) - **FIXED** - earthbend sorcery (was web GUI replay bug)
-- [ ] Pillar Launch (x1) - **BUG: EntityNotFound(0)** - SubAbility$ DBUntap with Defined$ Targeted fails
+- [x] Pillar Launch (x1) - **FIXED** - SubAbility$ DBUntap with Defined$ Targeted now works
 - [ ] Rocky Rebuke (x1) - removal spell
 - [ ] Sandbenders' Storm (x2) - board effect
 - [ ] Seismic Sense (x1) - card selection/draw
