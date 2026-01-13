@@ -141,47 +141,29 @@ DURING GameLoop execution where the timing is controlled by ChoiceRequest/Choice
 - [x] Same player names ("Ryan", "Gabriel") used in both modes
 
 ### Test Results
-- Both games run to completion with identical CardIDs
-- Gamelogs are nearly identical (86-88 entries)
-- 2-line difference at Turn 18 due to earthbend shadow state desync
+- [x] Both games run to completion with identical CardIDs
+- [x] Gamelogs are IDENTICAL (88 entries each)
+- [x] Earthbend trigger now fires correctly on all CLIENT shadow states
 
-### Known Issue: Triggered Ability Desync (UPDATED 2026-01-13)
+### FIXED: Triggered Ability Desync (2026-01-13)
 
-**Symptoms observed:**
-- LOCAL has 4 attackers including Thriving Grove (2/2) and Master Piandao
-- SERVER has 3 attackers including Thriving Grove (2/2) but NO Master Piandao
-- CLIENT has 3 attackers with Master Piandao but NO Thriving Grove
+**Root cause identified**: `parsed_svars` field in CardDefinition had `#[serde(skip)]`
 
-**Root cause: CLIENT doesn't execute ETB triggers with targeting**
+The `parsed_svars` HashMap contains pre-parsed SVar parameters needed for trigger/ability
+construction. When CardDefinition was serialized and sent over the network, this field
+was skipped (because AbilityParams doesn't implement Serialize). The CLIENT's
+`parse_triggers()` function looks up SVars in `parsed_svars`, but found an empty HashMap.
 
-When Badgermole enters the battlefield:
-1. **SERVER**: Executes earthbend trigger → Thriving Grove becomes 2/2 creature
-2. **CLIENT**: GameLoop **skips the earthbend trigger entirely** - Thriving Grove stays a land
-3. **INDEX MISMATCH**: CLIENT's `available_creatures` differs from SERVER's
-   - SERVER: `[65, 67, 76, 77]` (includes Thriving Grove 76)
-   - CLIENT: `[65, 67, 77]` (missing Thriving Grove)
-4. When CLIENT sends choice index 2 (Master Piandao in CLIENT's list),
-   SERVER interprets it as index 2 (Thriving Grove in SERVER's list)
-
-**Debug evidence:**
+Result: Trigger had correct event type but **empty effects array** on CLIENT:
 ```
-LOCAL:    HEURISTIC ATTACKERS available=["65", "67", "76", "77"]
-CLIENT:   HEURISTIC ATTACKERS available=["65", "67", "77"]      ← missing 76!
+SERVER: effects=["Earthbend { target: 0, num_counters: 2 }"]
+CLIENT: effects=[]  ← EMPTY!
 ```
 
-**Why CLIENT skips the trigger:**
-The earthbend ETB trigger requires targeting (choosing a land). The CLIENT's GameLoop
-needs to coordinate with the SERVER for this choice, but currently:
-- Either the trigger isn't firing on the CLIENT
-- Or the trigger fires but the target choice isn't being synchronized
-- The trigger resolution gets skipped because it requires a choice the CLIENT can't make
+**Fix applied**: Added `CardDefinition::rebuild_parsed_svars()` method that rebuilds the
+parsed_svars HashMap from the raw svars. This is called in `get_card_def_from_reveal()`
+after deserializing a CardDefinition from the network.
 
-**CardRevealed is NOT the fix** (correcting earlier analysis):
-Thriving Grove is already revealed. The issue is that the CLIENT doesn't EXECUTE the
-earthbend effect that transforms it into a creature. This is a trigger coordination
-issue, not a reveal issue.
-
-**Fix needed**: Ensure triggered abilities with targeting requirements are properly
-coordinated between server and client GameLoops. The SERVER should either:
-1. Send the target choice to the CLIENT so it can execute the same trigger
-2. Or broadcast state changes so CLIENT's shadow state reflects trigger effects
+**Files changed**:
+- `mtg-engine/src/loader/card.rs`: Added `rebuild_parsed_svars()` method
+- `mtg-engine/src/network/client.rs`: Call `rebuild_parsed_svars()` after cloning card_def

@@ -79,7 +79,11 @@ pub enum GameLoopMessage {
 fn get_card_def_from_reveal(reveal: &CardReveal, card_db: &AsyncCardDatabase) -> CardDefinition {
     // Prefer the CardDefinition sent by the server - this enables DB-free clients
     if let Some(ref card_def) = reveal.card_def {
-        return card_def.clone();
+        let mut def = card_def.clone();
+        // Rebuild parsed_svars which is skipped during serialization (AbilityParams doesn't impl Serialize).
+        // Without this, trigger effects that reference SVars (like earthbend) won't be parsed.
+        def.rebuild_parsed_svars();
+        return def;
     }
 
     // Fallback to local database lookup

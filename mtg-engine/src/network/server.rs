@@ -884,7 +884,14 @@ async fn run_game(
     let verbosity = config.verbosity;
     let no_color_logs = config.no_color_logs;
     let game_loop_handle = tokio::task::spawn_blocking(move || {
-        run_game_loop(game_clone, p1_controller, p2_controller, tag_gamelogs, verbosity, no_color_logs)
+        run_game_loop(
+            game_clone,
+            p1_controller,
+            p2_controller,
+            tag_gamelogs,
+            verbosity,
+            no_color_logs,
+        )
     });
 
     // Wait for game to complete, OR for any critical task to fail

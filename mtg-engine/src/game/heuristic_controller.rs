@@ -4160,7 +4160,10 @@ impl PlayerController for HeuristicController {
         let is_lethal_push = self.is_lethal_opportunity(view, available_creatures);
 
         // DEBUG: Log attacker evaluation context for network equivalence debugging
-        let creature_names: Vec<_> = creatures.iter().map(|c| format!("{}({})", c.name, c.id.as_u32())).collect();
+        let creature_names: Vec<_> = creatures
+            .iter()
+            .map(|c| format!("{}({})", c.name, c.id.as_u32()))
+            .collect();
         log::debug!(
             "HEURISTIC ATTACKERS [P{} Turn{}]: opp_life={}, is_lethal={}, blockers={}, available={:?}",
             self.player_id.as_u32(),

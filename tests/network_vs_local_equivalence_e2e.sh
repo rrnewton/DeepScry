@@ -266,7 +266,8 @@ echo "  Network:      action_count=$NETWORK_ACTION_COUNT (max turn in gamelog: $
 
 # Extract winners
 LOCAL_WINNER=$(grep -o "Winner: [A-Za-z0-9_-]*" "$LOCAL_OUTPUT/game.log" | head -1 | sed 's/Winner: //' || echo "?")
-NETWORK_WINNER=$(grep -o "winner: Some([0-9])" "$NETWORK_OUTPUT/client1.log" | tail -1 | grep -o "[0-9]" || echo "?")
+# Network client logs format: "winner=Some(1)"
+NETWORK_WINNER=$(grep -o "winner=Some([0-9])" "$NETWORK_OUTPUT/client1.log" | tail -1 | grep -o "[0-9]" || echo "?")
 
 echo
 echo "Winners:"
@@ -334,7 +335,11 @@ if [ "$LOCAL_GAMELOG_COUNT" -gt 0 ] && [ "$NETWORK_GAMELOG_COUNT" -gt 0 ]; then
 
     # Compare LOCAL vs SERVER gamelogs - STRICT: must be identical
     DIFF_OUTPUT=$(diff "$LOCAL_GAMELOG" "$NETWORK_GAMELOG" 2>/dev/null || true)
-    DIFF_COUNT=$(echo "$DIFF_OUTPUT" | grep -c '^[<>]' 2>/dev/null || echo "0")
+    if [ -z "$DIFF_OUTPUT" ]; then
+        DIFF_COUNT=0
+    else
+        DIFF_COUNT=$(echo "$DIFF_OUTPUT" | grep -c '^[<>]' 2>/dev/null || echo "0")
+    fi
 
     if [ "$DIFF_COUNT" -eq 0 ]; then
         echo -e "${GREEN}✓ LOCAL and SERVER gamelogs are IDENTICAL${NC}"
