@@ -662,7 +662,7 @@ mod tests {
         let mode2 = ModalMode {
             effect: Box::new(Effect::RemoveCounter {
                 target: CardId::new(0),
-                counter_type: crate::core::CounterType::P1P1,
+                counter_type: Some(crate::core::CounterType::P1P1),
                 amount: 3,
             }),
             description: "Remove up to three counters from target creature.".to_string(),
@@ -781,7 +781,7 @@ mod tests {
         let mode2 = ModalMode {
             effect: Box::new(Effect::RemoveCounter {
                 target: CardId::new(0),
-                counter_type: CounterType::P1P1,
+                counter_type: Some(CounterType::P1P1),
                 amount: 3,
             }),
             description: "Remove up to three counters from target creature.".to_string(),

@@ -297,9 +297,11 @@ pub enum Effect {
 
     /// Remove counters from a permanent
     /// Example: "Remove a +1/+1 counter from target creature"
+    /// When counter_type is None, removes counters of any type (CounterType$ Any)
     RemoveCounter {
         target: CardId,
-        counter_type: crate::core::CounterType,
+        /// None means "any counter type" (CounterType$ Any)
+        counter_type: Option<crate::core::CounterType>,
         amount: u8,
     },
 

@@ -51,7 +51,7 @@ fn test_remove_counter_effect() {
     // Execute a RemoveCounter effect
     let effect = Effect::RemoveCounter {
         target: creature_id,
-        counter_type: CounterType::P1P1,
+        counter_type: Some(CounterType::P1P1),
         amount: 2,
     };
 
