@@ -117,5 +117,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 4. Run full deck vs deck games
 5. Verify web GUI compatibility
 
+**NOTE**: When starting work on compatibility for a SPECIFIC CARD, expand its checklist entry into a detailed list with subtasks for each card ability (parsing, execution, targeting, triggers, etc.) - same format as mtg-0iad2 (Ryan Avatar Deck tracking issue). This ensures thorough verification of all card behaviors.
+
 ## Related Issues
 - mtg-0iad2: Ryan Avatar Deck Compatibility (similar tracking issue)
