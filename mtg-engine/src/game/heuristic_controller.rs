@@ -711,9 +711,9 @@ impl HeuristicController {
                     // Check if this is a pump spell (has PumpCreature effect)
                     for effect in &spell_card.effects {
                         if let crate::core::Effect::PumpCreature {
-                            target: _,
                             power_bonus,
                             toughness_bonus,
+                            ..
                         } = effect
                         {
                             // Check phase restrictions for instant pumps
@@ -4159,6 +4159,21 @@ impl PlayerController for HeuristicController {
         // Check if we can go for lethal
         let is_lethal_push = self.is_lethal_opportunity(view, available_creatures);
 
+        // DEBUG: Log attacker evaluation context for network equivalence debugging
+        let creature_names: Vec<_> = creatures
+            .iter()
+            .map(|c| format!("{}({})", c.name, c.id.as_u32()))
+            .collect();
+        log::debug!(
+            "HEURISTIC ATTACKERS [P{} Turn{}]: opp_life={}, is_lethal={}, blockers={}, available={:?}",
+            self.player_id.as_u32(),
+            view.turn_number(),
+            view.opponent_life(),
+            is_lethal_push,
+            opponent_blockers,
+            creature_names
+        );
+
         // Evaluate each creature for attacking
         for creature in creatures {
             if self.should_attack_with_context(
@@ -5494,6 +5509,7 @@ mod tests {
                 target: CardId::new(0),
                 power_bonus: 1,
                 toughness_bonus: 0,
+                keywords_granted: smallvec::SmallVec::new(),
             }],
             "{R}: +1/+0 until end of turn".to_string(),
             false,

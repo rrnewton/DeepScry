@@ -4,7 +4,8 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{CardId, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 /// Convert ability parameters to an Effect
@@ -87,12 +88,25 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 toughness_bonus = def;
             }
 
-            // Only create effect if at least one bonus is non-zero
-            if power_bonus != 0 || toughness_bonus != 0 {
+            // Extract keywords to grant (KW$) - optional
+            // Format: "KW$ Double Strike" or "KW$ Flying & Haste" (multiple separated by &)
+            let keywords_granted: SmallVec<[Keyword; 2]> = params
+                .get("KW")
+                .map(|kw_str| {
+                    kw_str
+                        .split(" & ")
+                        .filter_map(|kw| Keyword::from_string(kw.trim()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Create effect if at least one bonus is non-zero OR keywords are granted
+            if power_bonus != 0 || toughness_bonus != 0 || !keywords_granted.is_empty() {
                 Some(Effect::PumpCreature {
                     target: CardId::new(0), // Placeholder - filled in at cast time
                     power_bonus,
                     toughness_bonus,
+                    keywords_granted,
                 })
             } else {
                 None
@@ -592,6 +606,87 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::DelayedTrigger => {
+            // Delayed trigger: SP$ DelayedTrigger | Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard
+            //                  | ValidTgts$ Creature | RememberObjects$ Targeted | ThisTurn$ True | Execute$ TrigEarthbend
+            //
+            // Creates a delayed trigger that fires when a condition is met.
+            // Fatal Fissure: "Choose target creature. When that creature dies this turn, you earthbend 4."
+            //
+            // Parameters:
+            // - Mode$: Trigger condition (ChangesZone, SpellCast, etc.)
+            // - Origin$: Source zone for zone change (Battlefield, Any)
+            // - Destination$: Destination zone for zone change (Graveyard, Exile)
+            // - ValidTgts$: What can be targeted (Creature, Permanent)
+            // - RememberObjects$: What to remember (Targeted)
+            // - ThisTurn$: If True, trigger expires at end of turn
+            // - Execute$: SVar to execute when trigger fires
+            //
+            // Note: This only creates a placeholder effect. The actual effect needs
+            // SVar resolution via params_to_delayed_trigger_with_svars().
+
+            let mode = params.get("Mode").unwrap_or("ChangesZone");
+
+            // Parse zone change condition (most common for delayed triggers)
+            let condition = if mode == "ChangesZone" {
+                let from_zone = match params.get("Origin") {
+                    Some("Battlefield") => crate::zones::Zone::Battlefield,
+                    Some("Hand") => crate::zones::Zone::Hand,
+                    Some("Library") => crate::zones::Zone::Library,
+                    Some("Graveyard") => crate::zones::Zone::Graveyard,
+                    _ => crate::zones::Zone::Battlefield, // Default for death triggers
+                };
+
+                let to_zone = match params.get("Destination") {
+                    Some("Graveyard") => crate::zones::Zone::Graveyard,
+                    Some("Exile") => crate::zones::Zone::Exile,
+                    Some("Hand") => crate::zones::Zone::Hand,
+                    Some("Battlefield") => crate::zones::Zone::Battlefield,
+                    _ => crate::zones::Zone::Graveyard, // Default for death triggers
+                };
+
+                crate::core::DelayedTriggerCondition::ZoneChange {
+                    from_zones: smallvec::smallvec![from_zone],
+                    to_zones: smallvec::smallvec![to_zone],
+                }
+            } else {
+                // Other modes (SpellCast, etc.) not yet supported
+                log::debug!(
+                    target: "effect_converter",
+                    "DelayedTrigger Mode$ '{}' not yet implemented",
+                    mode
+                );
+                return None;
+            };
+
+            // Parse expiry - ThisTurn$ True means expire at end of turn
+            let expiry = if params.get("ThisTurn") == Some("True") {
+                Some(crate::core::DelayedTriggerExpiry::EndOfTurn)
+            } else {
+                None
+            };
+
+            // Placeholder effect - the actual effect needs SVar resolution
+            // This will be replaced by params_to_delayed_trigger_with_svars()
+            let placeholder_effect = Effect::DrawCards {
+                player: PlayerId::new(0),
+                count: 0,
+            };
+
+            log::debug!(
+                target: "effect_converter",
+                "DelayedTrigger: mode={}, condition={:?}, expiry={:?}, execute={:?}",
+                mode, condition, expiry, params.get("Execute")
+            );
+
+            Some(Effect::CreateDelayedTrigger {
+                tracked_card: CardId::new(0), // Placeholder - filled in at cast time
+                condition,
+                effect: Box::new(placeholder_effect),
+                expiry,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -800,6 +895,91 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
     params_to_effect(params)
 }
 
+/// Convert DelayedTrigger ability parameters to a CreateDelayedTrigger Effect with SVar resolution.
+///
+/// This resolves the Execute$ SVar to get the actual effect to execute when triggered.
+///
+/// # Arguments
+///
+/// * `params` - The parsed ability parameters (must be ApiType::DelayedTrigger)
+/// * `svars` - The card's SVar definitions (name -> body)
+///
+/// # Example
+///
+/// ```ignore
+/// // Card has: A:SP$ DelayedTrigger | Mode$ ChangesZone | Execute$ TrigEarthbend
+/// // And SVar:TrigEarthbend:DB$ Earthbend | Num$ 4
+/// let params = AbilityParams::parse("A:SP$ DelayedTrigger | ...")?;
+/// let effect = params_to_delayed_trigger_with_svars(&params, &card.svars);
+/// // Returns Effect::CreateDelayedTrigger with Effect::Earthbend inside
+/// ```
+pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &HashMap<String, String>) -> Option<Effect> {
+    if params.api_type != ApiType::DelayedTrigger {
+        return None;
+    }
+
+    let mode = params.get("Mode").unwrap_or("ChangesZone");
+
+    // Parse zone change condition (most common for delayed triggers)
+    let condition = if mode == "ChangesZone" {
+        let from_zone = match params.get("Origin") {
+            Some("Battlefield") => crate::zones::Zone::Battlefield,
+            Some("Hand") => crate::zones::Zone::Hand,
+            Some("Library") => crate::zones::Zone::Library,
+            Some("Graveyard") => crate::zones::Zone::Graveyard,
+            _ => crate::zones::Zone::Battlefield, // Default for death triggers
+        };
+
+        let to_zone = match params.get("Destination") {
+            Some("Graveyard") => crate::zones::Zone::Graveyard,
+            Some("Exile") => crate::zones::Zone::Exile,
+            Some("Hand") => crate::zones::Zone::Hand,
+            Some("Battlefield") => crate::zones::Zone::Battlefield,
+            _ => crate::zones::Zone::Graveyard, // Default for death triggers
+        };
+
+        crate::core::DelayedTriggerCondition::ZoneChange {
+            from_zones: smallvec::smallvec![from_zone],
+            to_zones: smallvec::smallvec![to_zone],
+        }
+    } else {
+        log::debug!(
+            target: "effect_converter",
+            "DelayedTrigger Mode$ '{}' not yet supported with SVar resolution",
+            mode
+        );
+        return None;
+    };
+
+    // Parse expiry
+    let expiry = if params.get("ThisTurn") == Some("True") {
+        Some(crate::core::DelayedTriggerExpiry::EndOfTurn)
+    } else {
+        None
+    };
+
+    // Resolve Execute$ SVar to get the actual effect
+    let execute_svar = params.get("Execute")?;
+    let svar_body = svars.get(execute_svar)?;
+
+    // Parse the SVar as an ability
+    let execute_params = AbilityParams::parse(&format!("A:{}", svar_body)).ok()?;
+    let execute_effect = params_to_effect(&execute_params)?;
+
+    log::debug!(
+        target: "effect_converter",
+        "DelayedTrigger with SVar resolution: mode={}, execute_svar={}, effect={:?}",
+        mode, execute_svar, execute_effect
+    );
+
+    Some(Effect::CreateDelayedTrigger {
+        tracked_card: CardId::new(0), // Placeholder - filled in at cast time
+        condition,
+        effect: Box::new(execute_effect),
+        expiry,
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
@@ -839,12 +1019,70 @@ mod tests {
 
         match effect {
             Effect::PumpCreature {
-                target: _,
                 power_bonus,
                 toughness_bonus,
+                ..
             } => {
                 assert_eq!(power_bonus, 3);
                 assert_eq!(toughness_bonus, 2);
+            }
+            _ => panic!("Expected PumpCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_pump_with_keyword() {
+        use crate::core::Keyword;
+
+        // KW$ Double Strike only (no stat bonuses)
+        let params = AbilityParams::parse("A:DB$ Pump | Defined$ Targeted | KW$ Double Strike").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::PumpCreature {
+                power_bonus,
+                toughness_bonus,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(power_bonus, 0, "Power bonus should be 0");
+                assert_eq!(toughness_bonus, 0, "Toughness bonus should be 0");
+                assert_eq!(keywords_granted.len(), 1, "Should have 1 keyword");
+                assert!(
+                    keywords_granted.contains(&Keyword::DoubleStrike),
+                    "Should grant Double Strike"
+                );
+            }
+            _ => panic!("Expected PumpCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_pump_with_multiple_keywords() {
+        use crate::core::Keyword;
+
+        // KW$ Flying & Haste (multiple keywords)
+        let params = AbilityParams::parse("A:SP$ Pump | NumAtt$ +1 | NumDef$ +1 | KW$ Flying & Haste").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::PumpCreature {
+                power_bonus,
+                toughness_bonus,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(power_bonus, 1, "Power bonus should be +1");
+                assert_eq!(toughness_bonus, 1, "Toughness bonus should be +1");
+                assert_eq!(keywords_granted.len(), 2, "Should have 2 keywords");
+                assert!(
+                    keywords_granted.contains(&Keyword::Flying),
+                    "Should grant Flying"
+                );
+                assert!(
+                    keywords_granted.contains(&Keyword::Haste),
+                    "Should grant Haste"
+                );
             }
             _ => panic!("Expected PumpCreature effect"),
         }
@@ -881,6 +1119,7 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 target,
                 power_bonus,
                 toughness_bonus,
+                ..
             } => {
                 assert_eq!(target.as_u32(), 0, "Target should be placeholder 0");
                 assert_eq!(*power_bonus, 3, "Power bonus should be +3");

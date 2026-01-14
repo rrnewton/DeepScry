@@ -192,8 +192,10 @@ impl<'a> GameLoop<'a> {
                     // Check if card is castable (not a land)
                     if !card.is_land() {
                         // Check timing restrictions
-                        let can_cast_now = if card.is_instant() {
-                            // Instants can be cast anytime with priority
+                        // CR 702.8a: Flash allows a permanent to be cast anytime you could cast an instant
+                        let has_flash = card.has_keyword(crate::core::Keyword::Flash);
+                        let can_cast_now = if card.is_instant() || has_flash {
+                            // Instants and cards with Flash can be cast anytime with priority
                             true
                         } else {
                             // Creatures and sorceries require:

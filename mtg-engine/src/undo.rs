@@ -3,7 +3,7 @@
 //! This module provides a transaction log of game actions that can be
 //! rewound to efficiently explore the game tree without expensive deep copies.
 
-use crate::core::{CardId, CounterType, PlayerId};
+use crate::core::{CardId, CounterType, Keyword, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -90,11 +90,13 @@ pub enum GameAction {
         rng_state: Option<SmallVec<[u8; 64]>>,
     },
 
-    /// Pump creature (temporary stat modification)
+    /// Pump creature (temporary stat modification and/or keyword grant)
     PumpCreature {
         card_id: CardId,
         power_delta: i32,
         toughness_delta: i32,
+        /// Keywords granted by this pump effect (for undo)
+        keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
     },
 
     /// Set turn_entered_battlefield field (for summoning sickness tracking)
@@ -200,6 +202,25 @@ pub enum GameAction {
         /// New mask value
         new_value: u8,
     },
+
+    /// Shuffle a player's library
+    ///
+    /// Stores the previous order of CardIds so it can be restored on undo.
+    /// This is essential for deterministic replay and game tree search when
+    /// tutor effects (search library, then shuffle) are involved.
+    ///
+    /// ## Network Considerations
+    ///
+    /// In network mode, after shuffling the server sends a LibraryReordered
+    /// message to clients with the new order. The previous_order stored here
+    /// is the order BEFORE shuffling, which is only known to the server.
+    ShuffleLibrary {
+        /// Which player's library was shuffled
+        player: PlayerId,
+        /// Previous order of CardIds (for undo)
+        /// Stored as Vec since library size varies and SmallVec wouldn't help
+        previous_order: Vec<CardId>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -263,7 +284,21 @@ impl fmt::Display for GameAction {
                 card_id,
                 power_delta,
                 toughness_delta,
-            } => write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta),
+                keywords_granted,
+            } => {
+                if keywords_granted.is_empty() {
+                    write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta)
+                } else {
+                    write!(
+                        f,
+                        "Pump({} {:+}/{:+} +{:?})",
+                        card_id.as_u32(),
+                        power_delta,
+                        toughness_delta,
+                        keywords_granted
+                    )
+                }
+            }
             GameAction::SetTurnEnteredBattlefield { card_id, new_value, .. } => {
                 write!(f, "SetETB({} turn={:?})", card_id.as_u32(), new_value)
             }
@@ -319,6 +354,9 @@ impl fmt::Display for GameAction {
                 old_value,
                 new_value
             ),
+            GameAction::ShuffleLibrary { player, previous_order } => {
+                write!(f, "ShuffleLibrary(P{} {} cards)", player.as_u32(), previous_order.len())
+            }
         }
     }
 }
@@ -460,12 +498,17 @@ impl GameAction {
                 card_id,
                 power_delta,
                 toughness_delta,
+                keywords_granted,
             } => {
                 // Reverse the pump by applying negative deltas
                 if let Ok(card) = game.cards.get_mut(*card_id) {
-                    // Handle Option<i8> by mapping to subtract the delta
-                    card.set_base_power(card.base_power().map(|p| p.saturating_sub(*power_delta as i8)));
-                    card.set_base_toughness(card.base_toughness().map(|t| t.saturating_sub(*toughness_delta as i8)));
+                    // Reverse the power/toughness bonus
+                    card.power_bonus -= power_delta;
+                    card.toughness_bonus -= toughness_delta;
+                    // Remove granted keywords
+                    for keyword in keywords_granted {
+                        card.keywords.remove(*keyword);
+                    }
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
                 }
@@ -560,6 +603,23 @@ impl GameAction {
                     return Err(format!(
                         "Card {} not found for SetRevealedToMask undo",
                         card_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::ShuffleLibrary { player, previous_order } => {
+                // Restore the library to its previous order
+                if let Some(zones) = game
+                    .player_zones
+                    .iter_mut()
+                    .find(|(id, _)| *id == *player)
+                    .map(|(_, z)| z)
+                {
+                    zones.library.cards = previous_order.clone();
+                } else {
+                    return Err(format!(
+                        "Player {} zones not found for ShuffleLibrary undo",
+                        player.as_u32()
                     ));
                 }
             }

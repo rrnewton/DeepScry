@@ -124,11 +124,13 @@ impl<'a> GameLoop<'a> {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        keywords_granted,
                     } if target.as_u32() == 0 && target_index < targets.len() => {
                         let replaced = Effect::PumpCreature {
                             target: targets[target_index],
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
+                            keywords_granted: keywords_granted.clone(),
                         };
                         target_index += 1;
                         replaced
@@ -900,11 +902,13 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 power_bonus,
                                                 toughness_bonus,
+                                                keywords_granted,
                                             } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: chosen_targets_vec[0],
                                                     power_bonus: *power_bonus,
                                                     toughness_bonus: *toughness_bonus,
+                                                    keywords_granted: keywords_granted.clone(),
                                                 }
                                             }
                                             // Self-targeting pump: "This creature gets +X/+Y"
@@ -913,11 +917,13 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 power_bonus,
                                                 toughness_bonus,
+                                                keywords_granted,
                                             } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power_bonus: *power_bonus,
                                                     toughness_bonus: *toughness_bonus,
+                                                    keywords_granted: keywords_granted.clone(),
                                                 }
                                             }
                                             // Self-targeting PutCounter: "Put counter on this creature"

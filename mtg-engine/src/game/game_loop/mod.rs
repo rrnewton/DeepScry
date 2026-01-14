@@ -818,21 +818,86 @@ impl<'a> GameLoop<'a> {
 
         if !is_resuming_from_snapshot && !is_puzzle_game {
             if self.skip_opening_hands {
-                // Network mode: server already shuffled and drew cards.
-                // We need to draw from pre-queued reveals to create matching undo_log entries.
-                // Drain reveals first to populate the reveal queue.
+                // Positional ID mode or network mode: library already shuffled.
+                // Skip the shuffle but still handle controlled hand setup if specified.
                 self.drain_reveals();
 
-                log::debug!("Network mode: undo_log before draws = {}", self.game.undo_log.len());
+                log::debug!(
+                    "Skip opening hands mode: undo_log before draws = {}",
+                    self.game.undo_log.len()
+                );
 
-                // Draw 7 cards for each player from the reveal queue
-                for &player_id in &[player1_id, player2_id] {
-                    for _ in 0..7 {
-                        self.game.draw_card(player_id)?;
+                // Handle controlled hands if configured, otherwise draw 7 randomly
+                if self.p1_hand_setup.is_some() || self.p2_hand_setup.is_some() {
+                    // Use controlled hand setup (without shuffle)
+                    for (idx, &player_id) in [player1_id, player2_id].iter().enumerate() {
+                        let setup = match idx {
+                            0 => self.p1_hand_setup.as_ref(),
+                            1 => self.p2_hand_setup.as_ref(),
+                            _ => None,
+                        };
+
+                        if let Some(hand_setup) = setup {
+                            // Find and move specific cards from library to hand
+                            for card_name in &hand_setup.specific_cards {
+                                let card_id = {
+                                    let zones = self.game.get_player_zones(player_id).ok_or_else(|| {
+                                        crate::MtgError::InvalidAction(format!("Player {:?} not found", player_id))
+                                    })?;
+
+                                    let matching_card = zones.library.cards.iter().find(|&&cid| {
+                                        self.game
+                                            .cards
+                                            .get(cid)
+                                            .map(|card| card.name.as_str() == card_name.as_str())
+                                            .unwrap_or(false)
+                                    });
+
+                                    match matching_card {
+                                        Some(&id) => id,
+                                        None => {
+                                            return Err(crate::MtgError::InvalidAction(format!(
+                                                "Card '{}' not found in player {:?}'s library",
+                                                card_name, player_id
+                                            )));
+                                        }
+                                    }
+                                };
+
+                                // Remove from library and add to hand
+                                let zones = self.game.get_player_zones_mut(player_id).ok_or_else(|| {
+                                    crate::MtgError::InvalidAction(format!("Player {:?} not found", player_id))
+                                })?;
+                                zones.library.remove(card_id);
+                                zones.hand.add(card_id);
+                            }
+
+                            // Draw remaining cards randomly to reach 7 total
+                            let cards_in_hand = hand_setup.specific_cards.len();
+                            let remaining_to_draw = 7usize.saturating_sub(cards_in_hand);
+                            for _ in 0..remaining_to_draw {
+                                self.game.draw_card(player_id)?;
+                            }
+                        } else {
+                            // No controlled setup, draw 7 cards normally
+                            for _ in 0..7 {
+                                self.game.draw_card(player_id)?;
+                            }
+                        }
+                    }
+                } else {
+                    // No controlled hand setup, just draw 7 cards for each player
+                    for &player_id in &[player1_id, player2_id] {
+                        for _ in 0..7 {
+                            self.game.draw_card(player_id)?;
+                        }
                     }
                 }
 
-                log::debug!("Network mode: undo_log after draws = {}", self.game.undo_log.len());
+                log::debug!(
+                    "Skip opening hands mode: undo_log after draws = {}",
+                    self.game.undo_log.len()
+                );
             } else {
                 // Normal mode: shuffle and draw opening hands locally
 
@@ -1137,15 +1202,28 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Check if the game has reached a win condition
-    fn check_win_condition(&self) -> Option<GameResult> {
+    fn check_win_condition(&mut self) -> Option<GameResult> {
         // Check for player death (life <= 0)
         for player in &self.game.players {
             if player.life <= 0 {
-                let winner = self.game.get_other_player_id(player.id);
+                let loser_id = player.id;
+                let loser_name = player.name.clone();
+                let loser_life = player.life;
+                let winner = self.game.get_other_player_id(loser_id);
+                let winner_name = winner
+                    .and_then(|id| self.game.get_player(id).ok())
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string().into());
+
+                // Log the game end
+                self.game.logger.gamelog(&format!(
+                    "{loser_name} has lost the game (life: {loser_life}). {winner_name} wins!"
+                ));
+
                 return Some(GameResult {
                     winner,
                     turns_played: self.turns_elapsed,
-                    end_reason: GameEndReason::PlayerDeath(player.id),
+                    end_reason: GameEndReason::PlayerDeath(loser_id),
                     action_count: self.game.action_count(),
                 });
             }
@@ -1155,11 +1233,23 @@ impl<'a> GameLoop<'a> {
         for player in &self.game.players {
             if let Some(zones) = self.game.get_player_zones(player.id) {
                 if zones.library.is_empty() {
-                    let winner = self.game.get_other_player_id(player.id);
+                    let loser_id = player.id;
+                    let loser_name = player.name.clone();
+                    let winner = self.game.get_other_player_id(loser_id);
+                    let winner_name = winner
+                        .and_then(|id| self.game.get_player(id).ok())
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string().into());
+
+                    // Log the game end
+                    self.game
+                        .logger
+                        .gamelog(&format!("{loser_name} has lost the game (decked). {winner_name} wins!"));
+
                     return Some(GameResult {
                         winner,
                         turns_played: self.turns_elapsed,
-                        end_reason: GameEndReason::Decking(player.id),
+                        end_reason: GameEndReason::Decking(loser_id),
                         action_count: self.game.action_count(),
                     });
                 }
@@ -1261,7 +1351,7 @@ mod tests {
         // Set Player2's life to 0
         game.get_player_mut(bob).unwrap().life = 0;
 
-        let game_loop = GameLoop::new(&mut game);
+        let mut game_loop = GameLoop::new(&mut game);
         let result = game_loop.check_win_condition();
 
         assert!(result.is_some());

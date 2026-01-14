@@ -131,10 +131,10 @@ impl<'a> GameLoop<'a> {
             Effect::DealDamage { target, amount } => match target {
                 TargetRef::Player(target_player_id) => {
                     let target_name = self.get_player_name(*target_player_id);
-                    let old_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
-                    let new_life = old_life - *amount;
+                    let current_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
+                    let life_after = current_life - *amount;
                     let message = format!(
-                        "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {old_life} => {new_life}"
+                        "{source_name} ({source_id}) deals {amount} damage to {target_name} (life: {life_after})"
                     );
                     self.game.logger.gamelog(&message);
                 }
@@ -154,10 +154,10 @@ impl<'a> GameLoop<'a> {
                     // Target will be filled in by resolve_spell - log against opponent
                     if let Some(opponent_id) = self.game.players.iter().map(|p| p.id).find(|id| *id != _source_owner) {
                         let target_name = self.get_player_name(opponent_id);
-                        let old_life = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
-                        let new_life = old_life - *amount;
+                        let current_life = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
+                        let life_after = current_life - *amount;
                         let message = format!(
-                            "{source_name} ({source_id}) deals {amount} damage to {target_name} - life: {old_life} => {new_life}"
+                            "{source_name} ({source_id}) deals {amount} damage to {target_name} (life: {life_after})"
                         );
                         self.game.logger.gamelog(&message);
                     }
@@ -222,6 +222,7 @@ impl<'a> GameLoop<'a> {
                 target,
                 power_bonus,
                 toughness_bonus,
+                keywords_granted,
             } => {
                 let target_name = self
                     .game
@@ -229,9 +230,21 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                let message = format!(
-                    "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
-                );
+                let message = if keywords_granted.is_empty() {
+                    format!(
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
+                    )
+                } else if *power_bonus == 0 && *toughness_bonus == 0 {
+                    format!(
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {:?} until end of turn",
+                        keywords_granted
+                    )
+                } else {
+                    format!(
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} and {:?} until end of turn",
+                        keywords_granted
+                    )
+                };
                 self.game.logger.gamelog(&message);
             }
             Effect::Mill { player, count } => {
@@ -523,6 +536,23 @@ impl<'a> GameLoop<'a> {
                 let message = format!(
                     "{source_name} ({source_id}) pumps {} (+{}/+{} until end of turn)",
                     target_desc, power_bonus, toughness_bonus
+                );
+                self.game.logger.gamelog(&message);
+            }
+            Effect::CreateDelayedTrigger {
+                tracked_card,
+                effect: delayed_effect,
+                ..
+            } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*tracked_card)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) creates delayed trigger on {} (effect: {:?})",
+                    target_name, delayed_effect
                 );
                 self.game.logger.gamelog(&message);
             }

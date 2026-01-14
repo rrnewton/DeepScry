@@ -898,6 +898,7 @@ impl GameState {
                 target,
                 power_bonus,
                 toughness_bonus,
+                keywords_granted,
             } if target.as_u32() == 0 => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -907,6 +908,7 @@ impl GameState {
                         target: resolved_target,
                         power_bonus: *power_bonus,
                         toughness_bonus: *toughness_bonus,
+                        keywords_granted: keywords_granted.clone(),
                     }
                 } else {
                     effect.clone()
@@ -1192,6 +1194,7 @@ impl GameState {
                 target,
                 power_bonus,
                 toughness_bonus,
+                keywords_granted,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
@@ -1199,13 +1202,17 @@ impl GameState {
                     log::warn!(target: "pump", "PumpCreature fizzled: target is still placeholder 0");
                     return Ok(());
                 }
-                log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}", target.as_u32(), power_bonus, toughness_bonus);
+                log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted);
                 // Capture log size before pump
                 let prior_log_size = self.logger.log_count();
 
                 let card = self.cards.get_mut(*target)?;
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
+                // Grant keywords
+                for keyword in keywords_granted.iter() {
+                    card.keywords.insert(*keyword);
+                }
 
                 // Log the pump effect
                 self.undo_log.log(
@@ -1213,6 +1220,7 @@ impl GameState {
                         card_id: *target,
                         power_delta: *power_bonus,
                         toughness_delta: *toughness_bonus,
+                        keywords_granted: keywords_granted.clone(),
                     },
                     prior_log_size,
                 );
@@ -1268,6 +1276,7 @@ impl GameState {
                             card_id: target,
                             power_delta: *power_bonus,
                             toughness_delta: *toughness_bonus,
+                            keywords_granted: smallvec::SmallVec::new(),
                         },
                         prior_log_size,
                     );
@@ -1730,6 +1739,80 @@ impl GameState {
                 // Log the effect
                 self.logger
                     .gamelog(&format!("{} can't be blocked this turn", card_name));
+            }
+
+            Effect::CreateDelayedTrigger {
+                tracked_card,
+                condition,
+                effect: delayed_effect,
+                expiry,
+            } => {
+                // CreateDelayedTrigger effect: Register a delayed trigger that fires on a condition
+                // Created by SP$ DelayedTrigger spells (e.g., Fatal Fissure)
+                //
+                // Implementation:
+                // 1. Verify the tracked card is still on battlefield (target still valid)
+                // 2. Create a DelayedTrigger with the specified condition
+                // 3. Store the effect to execute when triggered
+                // 4. Register the trigger in the delayed_triggers store
+
+                // Skip if tracked_card is still placeholder (0) - no valid targets found
+                if tracked_card.as_u32() == 0 {
+                    // Spell fizzles - no valid targets
+                    log::debug!(target: "actions", "CreateDelayedTrigger: tracked_card is placeholder, spell fizzles");
+                    return Ok(());
+                }
+
+                // Verify the target is still on battlefield
+                if !self.battlefield.contains(*tracked_card) {
+                    log::debug!(target: "actions", "CreateDelayedTrigger: target no longer on battlefield, spell fizzles");
+                    return Ok(());
+                }
+
+                // Get card name for logging
+                let card_name = self
+                    .cards
+                    .get(*tracked_card)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+
+                // Get the spell controller
+                let controller = self.turn.active_player;
+
+                // Create the delayed trigger
+                use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerId};
+
+                let trigger = DelayedTrigger::new(
+                    DelayedTriggerId::new(0), // ID will be assigned by store
+                    *tracked_card,            // tracked_card - the creature that needs to die
+                    *tracked_card,            // source_card - same as tracked for spell-created triggers
+                    controller,
+                    condition.clone(),
+                    DelayedEffect::ExecuteEffect {
+                        effect: delayed_effect.clone(),
+                    },
+                );
+
+                // Apply expiry if specified
+                let trigger = match expiry {
+                    Some(exp) => trigger.with_expiry(exp.clone()),
+                    None => trigger,
+                };
+
+                let trigger_id = self.delayed_triggers.add(trigger);
+
+                // Log the delayed trigger creation
+                self.logger.gamelog(&format!(
+                    "Delayed trigger {} created: watching {} for death",
+                    trigger_id.as_u32(),
+                    card_name
+                ));
+
+                log::debug!(
+                    target: "actions",
+                    "CreateDelayedTrigger: trigger {} for {} with effect {:?}",
+                    trigger_id.as_u32(), card_name, delayed_effect
+                );
             }
 
             Effect::ModalChoice { modes, .. } => {
@@ -2568,6 +2651,7 @@ impl GameState {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        keywords_granted,
                     } if target.as_u32() == 0 => {
                         // Find a valid target (any creature on battlefield)
                         if let Some(target_id) = self
@@ -2587,6 +2671,7 @@ impl GameState {
                                 target: target_id,
                                 power_bonus: *power_bonus,
                                 toughness_bonus: *toughness_bonus,
+                                keywords_granted: keywords_granted.clone(),
                             };
                         }
                     }
@@ -2997,6 +3082,7 @@ impl GameState {
                         target,
                         power_bonus,
                         toughness_bonus,
+                        keywords_granted,
                     } if target.as_u32() == 0 => {
                         // Placeholder CardId 0 means "pump self" (for Prowess-like effects)
                         self.logger.normal(&format!(
@@ -3008,6 +3094,7 @@ impl GameState {
                             target: trigger.source_card_id,
                             power_bonus,
                             toughness_bonus,
+                            keywords_granted,
                         }
                     }
                     other => other,
