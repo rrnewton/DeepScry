@@ -1051,6 +1051,10 @@ impl<'a> GameLoop<'a> {
                                                 let chosen_card_opt =
                                                     handle_choice_result_break!(choice, self.game, current_priority);
 
+                                                // Drain reveals to process CardRevealed from server (network mode)
+                                                // This ensures the searched card is instantiated before we try to move it
+                                                self.drain_reveals();
+
                                                 // Log the choice for replay
                                                 let replay_choice =
                                                     crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
@@ -1107,6 +1111,8 @@ impl<'a> GameLoop<'a> {
                                                 // Shuffle library if required
                                                 if *shuffle {
                                                     self.game.shuffle_library(search_player);
+                                                    // Push new library order to network clients
+                                                    self.push_library_order(search_player);
                                                 }
 
                                                 // Skip execute_effect for SearchLibrary - we handled it above
@@ -1344,6 +1350,10 @@ impl<'a> GameLoop<'a> {
                                         let chosen_card_opt =
                                             handle_choice_result_break!(choice, self.game, current_priority);
 
+                                        // Drain reveals to process CardRevealed from server (network mode)
+                                        // This ensures the searched card is instantiated before we try to move it
+                                        self.drain_reveals();
+
                                         // Log the choice for replay
                                         let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
@@ -1366,6 +1376,8 @@ impl<'a> GameLoop<'a> {
 
                                         // Shuffle library after searching (MTG CR 702.29)
                                         self.game.shuffle_library(current_priority);
+                                        // Push new library order to network clients
+                                        self.push_library_order(current_priority);
                                     }
                                     None => {
                                         // Regular cycling: Draw a card

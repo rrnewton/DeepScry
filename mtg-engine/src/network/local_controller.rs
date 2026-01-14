@@ -134,6 +134,11 @@ pub struct NetworkLocalController<C: PlayerController> {
     /// When the server reveals a card from a library search, we track it here
     /// so choose_from_library can return the correct CardId.
     library_search_revealed_card: Option<CardId>,
+    /// Callback to drain reveals after receiving ChoiceRequest.
+    /// This is set by the game loop to ensure reveals are processed before
+    /// the inner controller evaluates available actions.
+    /// The callback must be safe to call multiple times (idempotent).
+    reveal_drainer: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -157,7 +162,18 @@ impl<C: PlayerController> NetworkLocalController<C> {
             server_action_count: None,
             server_choice_seq: None,
             library_search_revealed_card: None,
+            reveal_drainer: None,
         }
+    }
+
+    /// Set a callback to drain reveals after receiving ChoiceRequest
+    ///
+    /// This callback is called after wait_for_choice_request() returns,
+    /// ensuring that any CardRevealed messages that arrived during the wait
+    /// are processed before the inner controller evaluates available actions.
+    pub fn with_reveal_drainer<F: Fn() + Send + Sync + 'static>(mut self, drainer: F) -> Self {
+        self.reveal_drainer = Some(std::sync::Arc::new(drainer));
+        self
     }
 
     /// Enable network debug mode for action log transmission
@@ -428,8 +444,35 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             return ChoiceResult::ExitGame;
         }
 
+        // Log available actions for debugging desync
+        log::debug!(
+            "NetworkLocalController: choose_spell_ability_to_play called with {} available actions",
+            available.len()
+        );
+        if !available.is_empty() {
+            for (i, ability) in available.iter().take(5).enumerate() {
+                log::debug!("  available[{}]: {:?}", i, ability);
+            }
+        }
+
         // Delegate to inner controller
         let result = self.inner.choose_spell_ability_to_play(view, available);
+
+        // Log what the inner controller chose
+        match &result {
+            ChoiceResult::Ok(Some(ability)) => {
+                let idx = available.iter().position(|a| a == ability).unwrap_or(999);
+                log::debug!(
+                    "NetworkLocalController: inner chose ability at index {} (sending {})",
+                    idx,
+                    idx + 1
+                );
+            }
+            ChoiceResult::Ok(None) => {
+                log::debug!("NetworkLocalController: inner chose to pass (sending 0)");
+            }
+            _ => {}
+        }
 
         // Send choice to server using server's action_count if available
         let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);

@@ -60,6 +60,12 @@ pub struct ChoiceRequest {
     /// The server should send `CardRevealed` messages for these before
     /// sending the `ChoiceRequest` to the client.
     pub reveals: Vec<CardRevealInfo>,
+    /// Library reorders since this player's last choice
+    ///
+    /// Each entry is (player_id, new_library_order) where the library order
+    /// is the CardIds from top to bottom. The server should send
+    /// `LibraryReordered` messages for these before sending the ChoiceRequest.
+    pub library_reorders: Vec<(PlayerId, Vec<CardId>)>,
     /// Debug synchronization info (only when network_debug is enabled)
     pub debug_info: Option<super::DebugSyncInfo>,
     /// For Priority choices, the actual SpellAbility for each option.
@@ -225,6 +231,20 @@ impl NetworkController {
             }
         }
 
+        // Collect library reorders (shuffles) since last choice
+        // These must be sent to clients so their shadow GameLoop stays synchronized
+        let library_reorders = self.collect_library_reorders_since_last_choice(view);
+        if !library_reorders.is_empty() {
+            log::debug!(
+                "NetworkController {:?}: Found {} library reorders to send",
+                self.player_id,
+                library_reorders.len()
+            );
+            for (player, order) in &library_reorders {
+                log::debug!("  Reorder for {:?}: {} cards", player, order.len());
+            }
+        }
+
         // Get action count from GameState undo log for synchronization
         let action_count = view.action_count() as u64;
 
@@ -242,6 +262,7 @@ impl NetworkController {
             state_hash,
             action_count,
             reveals,
+            library_reorders,
             debug_info,
             abilities,
         };
@@ -433,6 +454,63 @@ impl NetworkController {
         // Reverse to get chronological order
         reveals.reverse();
         reveals
+    }
+
+    /// Collect library reorders since this player's last choice
+    ///
+    /// Scans the undo log for ShuffleLibrary actions and returns the current
+    /// library order for each shuffled library. This must be sent to clients
+    /// as LibraryReordered messages BEFORE the ChoiceRequest so the client's
+    /// shadow GameLoop stays synchronized with the server.
+    ///
+    /// Note: Wildcard is intentional - GameAction has many variants;
+    /// we only collect ShuffleLibrary actions.
+    ///
+    /// IMPORTANT: Unlike reveals, shuffles don't use shared_reveal_index.
+    /// We scan back to this player's last ChoicePoint only.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn collect_library_reorders_since_last_choice(&self, view: &GameStateView) -> Vec<(PlayerId, Vec<CardId>)> {
+        use crate::undo::GameAction;
+
+        let actions = view.undo_log_actions();
+        let mut shuffled_players: HashMap<PlayerId, ()> = HashMap::new();
+
+        // Scan backwards from the end of the log until we hit this player's last ChoicePoint
+        // Unlike reveals, we don't use shared_reveal_index because shuffles are independent
+        for action in actions.iter().rev() {
+            match action {
+                // Stop when we hit this player's last choice
+                GameAction::ChoicePoint { player_id, .. } if *player_id == self.player_id => {
+                    break;
+                }
+                // Track which players had their library shuffled
+                GameAction::ShuffleLibrary { player, .. } => {
+                    shuffled_players.insert(*player, ());
+                }
+                _ => {}
+            }
+        }
+
+        // For each shuffled player, get the current library order from the view
+        let mut reorders = Vec::new();
+        for (player_id, _) in shuffled_players {
+            let library_order = view.player_library(player_id);
+            if !library_order.is_empty() {
+                // library_order is bottom-to-top, we need top-to-bottom for the client
+                let mut top_to_bottom: Vec<CardId> = library_order.to_vec();
+                top_to_bottom.reverse();
+                let len = top_to_bottom.len();
+                reorders.push((player_id, top_to_bottom));
+                log::debug!(
+                    "NetworkController {:?}: Library shuffled for {:?}, new order has {} cards",
+                    self.player_id,
+                    player_id,
+                    len
+                );
+            }
+        }
+
+        reorders
     }
 
     /// Compute a network-safe state hash for verification

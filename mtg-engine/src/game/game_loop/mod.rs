@@ -63,6 +63,15 @@ type RevealDrainer = Box<dyn Fn(&mut GameState) + Send>;
 /// Used by network servers to push reveals to clients without waiting for ChoiceRequests.
 type RevealPusher = Box<dyn Fn(&GameState, PlayerId) + Send>;
 
+/// Callback type for pushing library order after shuffles.
+///
+/// This function is called after shuffle_library to sync client library order.
+/// It receives the game state and the player whose library was shuffled.
+/// The callback should extract the new library CardId order and broadcast it.
+///
+/// Used by network servers to send LibraryReordered messages to clients.
+type LibraryOrderPusher = Box<dyn Fn(&GameState, PlayerId) + Send>;
+
 // Module structure
 mod actions;
 mod combat;
@@ -205,6 +214,11 @@ pub struct GameLoop<'a> {
     /// When set, this function is called after automatic actions (like draws) to
     /// push reveals to clients immediately without waiting for ChoiceRequests.
     reveal_pusher: Option<RevealPusher>,
+    /// Optional library order pusher for network mode (server-side)
+    ///
+    /// When set, this function is called after shuffle_library to sync the
+    /// client's library order with the server's authoritative order.
+    library_order_pusher: Option<LibraryOrderPusher>,
     /// Skip opening hand setup (for network clients)
     ///
     /// When true, run_game skips shuffling and drawing opening hands.
@@ -255,6 +269,7 @@ impl<'a> GameLoop<'a> {
             game_seed: None,
             reveal_drainer: None,
             reveal_pusher: None,
+            library_order_pusher: None,
             skip_opening_hands: false,
             debug_validate_reveals: false,
             local_player_id: None,
@@ -468,6 +483,23 @@ impl<'a> GameLoop<'a> {
         self
     }
 
+    /// Set a library order pusher for network mode (server-side)
+    ///
+    /// When set, this function is called after every shuffle_library to
+    /// broadcast the new library order to clients. This ensures clients
+    /// stay synchronized with the server's authoritative library order.
+    ///
+    /// # Arguments
+    /// * `pusher` - Function that receives game state and player ID, and should
+    ///   send the new library order to clients via WebSocket/network.
+    pub fn with_library_order_pusher<F>(mut self, pusher: F) -> Self
+    where
+        F: Fn(&GameState, PlayerId) + Send + 'static,
+    {
+        self.library_order_pusher = Some(Box::new(pusher));
+        self
+    }
+
     /// Skip opening hand setup (for network clients)
     ///
     /// When enabled, `run_game` will not shuffle libraries or draw opening hands.
@@ -504,6 +536,16 @@ impl<'a> GameLoop<'a> {
     /// performed the action.
     pub(super) fn push_reveals(&self, player: PlayerId) {
         if let Some(ref pusher) = self.reveal_pusher {
+            pusher(self.game, player);
+        }
+    }
+
+    /// Push library order after a shuffle if a pusher is configured
+    ///
+    /// This is called after shuffle_library to sync client library order.
+    /// The player parameter indicates whose library was shuffled.
+    pub(super) fn push_library_order(&self, player: PlayerId) {
+        if let Some(ref pusher) = self.library_order_pusher {
             pusher(self.game, player);
         }
     }

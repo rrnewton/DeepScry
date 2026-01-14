@@ -792,7 +792,45 @@ impl NetworkClient {
             }
         }
 
-        log::info!("Received {} opening hand reveals, shadow state ready", reveals_received);
+        log::info!("Received {} opening hand reveals", reveals_received);
+
+        // Third phase: receive LibraryReordered messages for both players
+        // The server shuffles the libraries, and we need to know the order
+        // so our shadow GameLoop draws the same cards as the server.
+        let mut library_reorders_received = 0;
+        while library_reorders_received < 2 {
+            let msg = self.receive_message().await?;
+            match msg {
+                ServerMessage::LibraryReordered { player, new_order } => {
+                    log::info!(
+                        "Received initial library order for {:?}: {} cards",
+                        player,
+                        new_order.len()
+                    );
+                    // Apply to shadow game state
+                    if let Some(ref mut state) = self.state {
+                        if let Some(zones) = state.game.get_player_zones_mut(player) {
+                            // new_order is top-to-bottom, library stores bottom-to-top
+                            let mut bottom_to_top = new_order;
+                            bottom_to_top.reverse();
+                            zones.library.cards = bottom_to_top;
+                        }
+                    }
+                    library_reorders_received += 1;
+                }
+                ServerMessage::Error { message, fatal } => {
+                    if fatal {
+                        return Err(anyhow!("Server error: {}", message));
+                    }
+                    log::warn!("Server warning: {}", message);
+                }
+                _ => {
+                    log::debug!("Unexpected message while waiting for library orders: {:?}", msg);
+                }
+            }
+        }
+
+        log::info!("Shadow state ready (hand reveals + library orders applied)");
         Ok(())
     }
 
@@ -956,6 +994,10 @@ impl NetworkClient {
         // Using std::sync::mpsc so game thread can do blocking recv_timeout
         let (reveal_tx, reveal_rx) = mpsc::channel::<RevealMsg>();
 
+        // Channel for library reorders (WebSocket handler -> Game thread)
+        // When server shuffles a library, it sends the new order so client stays in sync
+        let (library_reorder_tx, library_reorder_rx) = mpsc::channel::<(PlayerId, Vec<CardId>)>();
+
         // Debug mode flag for sync validation
         let network_debug = self.network_debug;
 
@@ -1050,14 +1092,15 @@ impl NetworkClient {
                                         });
                                     }
                                     Ok(ServerMessage::LibraryReordered { player, new_order }) => {
-                                        // Library was shuffled after a search - update shadow state
-                                        // TODO(mtg-library-sync): Apply this to the shadow GameLoop's library zone
-                                        // For now, just log it. The name-based search protocol doesn't
-                                        // require the client to know card positions in library.
+                                        // Library was shuffled after a search - send to game thread
+                                        // to update shadow state
                                         log::debug!(
                                             "WebSocket: Library reordered for player {:?}, new size: {}",
                                             player, new_order.len()
                                         );
+                                        if let Err(e) = library_reorder_tx.send((player, new_order)) {
+                                            log::error!("WebSocket: Failed to send library reorder: {:?}", e);
+                                        }
                                     }
                                     Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
                                         // SINGLE-CHANNEL FIX: No bundled reveals - they're already in reveal_tx.
@@ -1370,8 +1413,33 @@ impl NetworkClient {
                                     log::debug!("Created token for {:?}: {} ({:?})", owner, card_reveal.name, card_id);
                                 }
                             }
+                            RevealReason::Searched => {
+                                // Library search result - instantiate the card so move_card works
+                                // This is critical for the shadow GameLoop to properly track the searched card
+                                // including applying "enters tapped" status correctly.
+                                let card_already_known = game.cards.get(card_id).is_ok();
+                                log::debug!(
+                                    "RevealReason::Searched: {} (id={}) for {:?} card_already_known={}",
+                                    card_reveal.name,
+                                    card_id.as_u32(),
+                                    owner,
+                                    card_already_known
+                                );
+
+                                if !card_already_known {
+                                    let card_def = get_card_def_from_reveal(&card_reveal, &card_db_clone);
+                                    let card_instance = card_def.instantiate(card_id, owner);
+                                    game.cards.insert(card_id, card_instance);
+                                    log::debug!(
+                                        "Instantiated searched card for {:?}: {} ({:?})",
+                                        owner,
+                                        card_reveal.name,
+                                        card_id
+                                    );
+                                }
+                            }
                             _ => {
-                                // Other reveal reasons (Effect, Searched, etc.) - just track the card
+                                // Other reveal reasons (Effect, etc.) - just track the card
                                 log::debug!(
                                     "Received {:?} reveal for {:?}: {} ({:?})",
                                     reason,
@@ -1448,6 +1516,31 @@ impl NetworkClient {
                 // Non-blocking drain: get all reveals currently in the channel
                 while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
                     process_reveal(game, owner, card_reveal, reason);
+                }
+
+                // Non-blocking drain: get all library reorders currently in the channel
+                // This syncs client library order with server after shuffles
+                while let Ok((player, new_order)) = library_reorder_rx.try_recv() {
+                    log::debug!(
+                        "Applying LibraryReordered for {:?}: {} cards (top-to-bottom)",
+                        player,
+                        new_order.len()
+                    );
+
+                    // Get the player's library zone and replace its cards
+                    if let Some(zones) = game.get_player_zones_mut(player) {
+                        // new_order is top-to-bottom, but library.cards stores bottom-to-top
+                        let mut bottom_to_top = new_order;
+                        bottom_to_top.reverse();
+                        zones.library.cards = bottom_to_top;
+                        log::debug!(
+                            "Library for {:?} updated to {} cards",
+                            player,
+                            zones.library.cards.len()
+                        );
+                    } else {
+                        log::error!("Failed to get zones for player {:?} during library reorder", player);
+                    }
                 }
             };
 
@@ -1615,6 +1708,7 @@ impl NetworkClient {
         let (local_msg_tx, local_msg_rx) = mpsc::channel::<LocalControllerMessage>();
         let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteMessage>();
         let (reveal_tx, reveal_rx) = mpsc::channel::<RevealMsg>();
+        let (library_reorder_tx, library_reorder_rx) = mpsc::channel::<(PlayerId, Vec<CardId>)>();
         let (game_end_tx, game_end_rx) = mpsc::channel::<(Option<PlayerId>, u64)>();
         // Fatal error signal from WebSocket handler
         let (fatal_error_tx, fatal_error_rx) = mpsc::channel::<String>();
@@ -1660,12 +1754,14 @@ impl NetworkClient {
                                             });
                                         }
                                         Ok(ServerMessage::LibraryReordered { player, new_order }) => {
-                                            // Library was shuffled after a search - update shadow state
-                                            // TODO(mtg-library-sync): Apply this to the shadow GameLoop's library zone
+                                            // Library was shuffled - send to game thread to update shadow state
                                             log::debug!(
                                                 "Library reordered for player {:?}, new size: {}",
                                                 player, new_order.len()
                                             );
+                                            if let Err(e) = library_reorder_tx.send((player, new_order)) {
+                                                log::error!("Failed to send library reorder: {:?}", e);
+                                            }
                                         }
                                         Ok(ServerMessage::OpponentChoice { choice_indices, description, spell_ability, .. }) => {
                                             log::debug!("Opponent chose: {} (indices={:?})", description, choice_indices);
@@ -1808,6 +1904,27 @@ impl NetworkClient {
                         }
                     }
                     _ => {}
+                }
+            }
+
+            // Non-blocking drain: get all library reorders currently in the channel
+            // This syncs client library order with server after shuffles
+            while let Ok((player, new_order)) = library_reorder_rx.try_recv() {
+                log::debug!("Applying LibraryReordered for {:?}: {} cards", player, new_order.len());
+
+                // Get the player's library zone and replace its cards
+                if let Some(zones) = game.get_player_zones_mut(player) {
+                    // new_order is top-to-bottom, but library.cards stores bottom-to-top
+                    let mut bottom_to_top = new_order;
+                    bottom_to_top.reverse();
+                    zones.library.cards = bottom_to_top;
+                    log::debug!(
+                        "Library for {:?} updated to {} cards",
+                        player,
+                        zones.library.cards.len()
+                    );
+                } else {
+                    log::error!("Failed to get zones for player {:?} during library reorder", player);
                 }
             }
         };

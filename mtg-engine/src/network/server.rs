@@ -824,6 +824,39 @@ async fn run_game(
 
     log::info!("Game {}: Sent opening hand CardRevealed messages", game_id);
 
+    // Send initial library orders to clients
+    // The server shuffled the libraries during game initialization, and clients
+    // need to know the order so their shadow GameLoop draws the same cards.
+    let p1_library_order: Vec<CardId> = game.player_zones[0]
+        .1
+        .library
+        .cards
+        .iter()
+        .rev() // library stores bottom-to-top, we send top-to-bottom
+        .copied()
+        .collect();
+    let p2_library_order: Vec<CardId> = game.player_zones[1].1.library.cards.iter().rev().copied().collect();
+
+    // Send to both players (both need to know both library orders for shadow sync)
+    for conn in [&mut p1_conn, &mut p2_conn] {
+        conn.send(&ServerMessage::LibraryReordered {
+            player: p1_id,
+            new_order: p1_library_order.clone(),
+        })
+        .await?;
+        conn.send(&ServerMessage::LibraryReordered {
+            player: p2_id,
+            new_order: p2_library_order.clone(),
+        })
+        .await?;
+    }
+    log::info!(
+        "Game {}: Sent initial library orders (P1: {} cards, P2: {} cards)",
+        game_id,
+        p1_library_order.len(),
+        p2_library_order.len()
+    );
+
     // Calculate baseline reveal index to skip the opening hand draws
     // The undo_log will have p1_hand.len() + p2_hand.len() MoveCard entries
     // after GameLoop draws the opening hands. We've already sent these reveals.
@@ -1326,6 +1359,19 @@ async fn handle_player_websocket(
                                     }).await?;
                                 }
                             }
+                        }
+
+                        // Send LibraryReordered messages for any shuffles since last choice
+                        // This keeps the client's shadow library in sync with the server
+                        for (player, new_order) in &choice_request.library_reorders {
+                            log::debug!(
+                                "Handler P{}: Sending LibraryReordered for P{} ({} cards)",
+                                conn.player_id, player.as_u32(), new_order.len()
+                            );
+                            conn.send(&ServerMessage::LibraryReordered {
+                                player: *player,
+                                new_order: new_order.clone(),
+                            }).await?;
                         }
 
                         // Check if client already sent a choice (pending_choice)
