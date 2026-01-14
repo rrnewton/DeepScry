@@ -134,7 +134,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Thriving Grove (x1) - enters tapped, choose color
 
 **Creatures (16):**
-- [ ] Badgermole (x1) - ETB earthbend 2, trample to countered creatures
+- [x] Badgermole (x1) - ETB earthbend 2, trample to countered creatures (VERIFIED 2026-01-14: earthbend works, makes 2/2 land creature)
 - [x] Cat-Owl (x1) - flying 3/3, attack trigger untap (FIXED 2026-01-14)
 - [ ] Earth Kingdom Soldier (x1) - 2/2 baseline
 - [ ] Foggy Swamp Vinebender (x1) - waterbend effects
