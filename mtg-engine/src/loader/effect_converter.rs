@@ -174,6 +174,16 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Scry => {
+            // Scry N - look at top N cards, put any on bottom
+            // Example: "DB$ Scry | ScryNum$ 1"
+            let count = params.get_u8("ScryNum").unwrap_or(1);
+            Some(Effect::Scry {
+                player: PlayerId::new(0), // Placeholder - filled in at trigger execution
+                count,
+            })
+        }
+
         ApiType::Counter => {
             Some(Effect::CounterSpell {
                 target: CardId::new(0), // Placeholder
