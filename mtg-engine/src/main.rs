@@ -752,44 +752,7 @@ async fn main() -> Result<()> {
             p2,
             seed,
             mirror_only,
-        } => {
-            // Convert ControllerType to tournament::ControllerType
-            // Note: Wildcards are intentional - ControllerType has Human/Fixed/etc
-            // variants that aren't supported for tournament mode.
-            #[allow(clippy::wildcard_enum_match_arm)]
-            let p1_tourney = match p1 {
-                ControllerType::Zero => mtg_forge_rs::tournament::ControllerType::Zero,
-                ControllerType::Random => mtg_forge_rs::tournament::ControllerType::Random,
-                ControllerType::Heuristic => mtg_forge_rs::tournament::ControllerType::Heuristic,
-                _ => {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(
-                        "Tournament mode only supports Zero, Random, and Heuristic controllers".to_string(),
-                    ))
-                }
-            };
-            #[allow(clippy::wildcard_enum_match_arm)]
-            let p2_tourney = match p2 {
-                ControllerType::Zero => mtg_forge_rs::tournament::ControllerType::Zero,
-                ControllerType::Random => mtg_forge_rs::tournament::ControllerType::Random,
-                ControllerType::Heuristic => mtg_forge_rs::tournament::ControllerType::Heuristic,
-                _ => {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(
-                        "Tournament mode only supports Zero, Random, and Heuristic controllers".to_string(),
-                    ))
-                }
-            };
-            let seed_resolved = seed.map(|s| s.resolve());
-            mtg_forge_rs::tournament::run_tourney(
-                decks,
-                games,
-                seconds,
-                p1_tourney,
-                p2_tourney,
-                seed_resolved,
-                mirror_only,
-            )
-            .await?
-        }
+        } => run_tourney_cmd(decks, games, seconds, p1, p2, seed, mirror_only).await?,
         Commands::Resume {
             snapshot_file,
             override_p1,
@@ -874,30 +837,19 @@ async fn main() -> Result<()> {
             network_debug,
             no_color_logs,
         } => {
-            use mtg_forge_rs::game::VerbosityLevel;
-            use mtg_forge_rs::network::{GameServer, ServerConfig};
-
-            let verbosity_level: VerbosityLevel = verbosity.into();
-
-            let config = ServerConfig {
+            run_server(
                 port,
-                password: password.unwrap_or_default(),
+                password,
                 cardsfolder,
                 starting_life,
                 deck_visibility,
                 seed,
                 tag_gamelogs,
-                verbosity: verbosity_level,
+                verbosity,
                 network_debug,
                 no_color_logs,
-                ..Default::default()
-            };
-
-            let mut server = GameServer::new(config);
-            server
-                .run()
-                .await
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Server error: {}", e)))?;
+            )
+            .await?
         }
         #[cfg(feature = "network")]
         Commands::Connect {
@@ -914,113 +866,21 @@ async fn main() -> Result<()> {
             tag_gamelogs,
             gamelog_output,
         } => {
-            use mtg_forge_rs::core::PlayerId;
-            use mtg_forge_rs::game::{FancyTuiController, HeuristicController, RichInputController, VerbosityLevel};
-            use mtg_forge_rs::network::{ClientConfig, NetworkClient};
-
-            // Validate fixed controller has inputs
-            if matches!(controller_type, ControllerType::Fixed) && fixed_inputs.is_none() {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
-                    "--fixed-inputs is required when --controller=fixed".to_string(),
-                ));
-            }
-
-            // Resolve seed
-            let seed_resolved = seed_player.map(|s| s.resolve());
-
-            // Pass player name as-is (None = let server assign default with suffix)
-            // If user explicitly set --name, use that name exactly without suffix
-            let config = ClientConfig {
+            run_connect(
+                deck,
                 server,
-                password: password.unwrap_or_default(),
-                player_name: name, // None = server assigns; Some = use exactly as provided
-                deck_path: deck,
+                password,
+                name,
                 cardsfolder,
-            };
-
-            let verbosity_level: VerbosityLevel = verbosity.into();
-
-            let mut client = NetworkClient::new(config);
-            client.set_verbosity(verbosity_level);
-            client.set_visual_stacks(visual_stacks);
-            // Note: network_debug is set by server via GameStarted message
-            client.set_tag_gamelogs(tag_gamelogs);
-            if let Some(ref path) = gamelog_output {
-                client.set_gamelog_output(path.clone());
-            }
-
-            client
-                .connect()
-                .await
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Connection error: {}", e)))?;
-
-            client
-                .wait_for_game_start()
-                .await
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game start error: {}", e)))?;
-
-            // Get our player ID from the client state
-            let our_player_id = client.our_player_id().unwrap_or_else(|| PlayerId::new(0));
-
-            // Create controller based on type and run the synchronized GameLoop
-            let result: Option<PlayerId> = match controller_type {
-                ControllerType::Zero => {
-                    let ctrl = ZeroController::new(our_player_id);
-                    client.run_game(ctrl).await
-                }
-                ControllerType::Random => {
-                    let ctrl = if let Some(seed) = seed_resolved {
-                        RandomController::with_seed(our_player_id, seed)
-                    } else {
-                        let entropy_seed = SeedArg::FromEntropy.resolve();
-                        log::warn!(
-                            "No seed provided for Random controller, using entropy: {}",
-                            entropy_seed
-                        );
-                        RandomController::with_seed(our_player_id, entropy_seed)
-                    };
-                    client.run_game(ctrl).await
-                }
-                ControllerType::Tui => {
-                    let ctrl = InteractiveController::new(our_player_id);
-                    client.run_game(ctrl).await
-                }
-                ControllerType::Heuristic => {
-                    let ctrl = HeuristicController::new(our_player_id);
-                    client.run_game(ctrl).await
-                }
-                ControllerType::Fixed => {
-                    let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap()).map_err(|e| {
-                        mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
-                    })?;
-                    let ctrl = RichInputController::new(our_player_id, script);
-                    client.run_game(ctrl).await
-                }
-                ControllerType::Fancy | ControllerType::FancyFixed => {
-                    // Fancy TUI controller is not Send (terminal handles are thread-local)
-                    // Use run_game_sync which runs the game loop on the main thread
-                    let ctrl = FancyTuiController::new(our_player_id, visual_stacks).map_err(|e| {
-                        mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e))
-                    })?;
-                    // Note: FancyFixed would need additional setup for scripted inputs
-                    // For now, both use the same controller - FancyFixed support TODO
-                    client.run_game_sync(ctrl)
-                }
-            }
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
-
-            match result {
-                Some(winner) => {
-                    if winner == our_player_id {
-                        log::info!("Game ended. You won!");
-                    } else {
-                        log::info!("Game ended. You lost.");
-                    }
-                }
-                None => log::info!("Game ended in a draw"),
-            }
-
-            client.disconnect().await.ok();
+                controller_type,
+                fixed_inputs,
+                seed_player,
+                visual_stacks,
+                verbosity,
+                tag_gamelogs,
+                gamelog_output,
+            )
+            .await?
         }
     }
 
@@ -1047,6 +907,209 @@ fn should_print(verbosity: VerbosityLevel, level: VerbosityLevel, suppress: bool
 }
 
 // StopCondition is now imported from mtg_forge_rs::game module
+
+/// Convert CLI ControllerType to tournament ControllerType
+///
+/// Note: Wildcard is intentional - ControllerType has Human/Fixed/etc variants
+/// that aren't supported for tournament mode.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn to_tourney_controller(ct: ControllerType) -> Result<mtg_forge_rs::tournament::ControllerType> {
+    use mtg_forge_rs::tournament::ControllerType as TourneyController;
+
+    match ct {
+        ControllerType::Zero => Ok(TourneyController::Zero),
+        ControllerType::Random => Ok(TourneyController::Random),
+        ControllerType::Heuristic => Ok(TourneyController::Heuristic),
+        _ => Err(mtg_forge_rs::MtgError::InvalidAction(
+            "Tournament mode only supports Zero, Random, and Heuristic controllers".to_string(),
+        )),
+    }
+}
+
+/// Run tournament mode
+async fn run_tourney_cmd(
+    decks: Vec<PathBuf>,
+    games: Option<usize>,
+    seconds: Option<u64>,
+    p1: ControllerType,
+    p2: ControllerType,
+    seed: Option<SeedArg>,
+    mirror_only: bool,
+) -> Result<()> {
+    let p1_tourney = to_tourney_controller(p1)?;
+    let p2_tourney = to_tourney_controller(p2)?;
+    let seed_resolved = seed.map(|s| s.resolve());
+    mtg_forge_rs::tournament::run_tourney(
+        decks,
+        games,
+        seconds,
+        p1_tourney,
+        p2_tourney,
+        seed_resolved,
+        mirror_only,
+    )
+    .await
+}
+
+/// Run game server
+#[cfg(feature = "network")]
+#[allow(clippy::too_many_arguments)]
+async fn run_server(
+    port: u16,
+    password: Option<String>,
+    cardsfolder: PathBuf,
+    starting_life: i32,
+    deck_visibility: bool,
+    seed: Option<u64>,
+    tag_gamelogs: bool,
+    verbosity: VerbosityArg,
+    network_debug: bool,
+    no_color_logs: bool,
+) -> Result<()> {
+    use mtg_forge_rs::network::{GameServer, ServerConfig};
+
+    let verbosity_level: VerbosityLevel = verbosity.into();
+
+    let config = ServerConfig {
+        port,
+        password: password.unwrap_or_default(),
+        cardsfolder,
+        starting_life,
+        deck_visibility,
+        seed,
+        tag_gamelogs,
+        verbosity: verbosity_level,
+        network_debug,
+        no_color_logs,
+        ..Default::default()
+    };
+
+    let mut server = GameServer::new(config);
+    server
+        .run()
+        .await
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Server error: {}", e)))?;
+    Ok(())
+}
+
+/// Run network client
+#[cfg(feature = "network")]
+#[allow(clippy::too_many_arguments)]
+async fn run_connect(
+    deck: PathBuf,
+    server: String,
+    password: Option<String>,
+    name: Option<String>,
+    cardsfolder: PathBuf,
+    controller_type: ControllerType,
+    fixed_inputs: Option<String>,
+    seed_player: Option<SeedArg>,
+    visual_stacks: bool,
+    verbosity: VerbosityArg,
+    tag_gamelogs: bool,
+    gamelog_output: Option<PathBuf>,
+) -> Result<()> {
+    use mtg_forge_rs::core::PlayerId;
+    use mtg_forge_rs::network::{ClientConfig, NetworkClient};
+
+    // Validate fixed controller has inputs
+    if matches!(controller_type, ControllerType::Fixed) && fixed_inputs.is_none() {
+        return Err(mtg_forge_rs::MtgError::InvalidAction(
+            "--fixed-inputs is required when --controller=fixed".to_string(),
+        ));
+    }
+
+    // Resolve seed
+    let seed_resolved = seed_player.map(|s| s.resolve());
+
+    let config = ClientConfig {
+        server,
+        password: password.unwrap_or_default(),
+        player_name: name,
+        deck_path: deck,
+        cardsfolder,
+    };
+
+    let verbosity_level: VerbosityLevel = verbosity.into();
+
+    let mut client = NetworkClient::new(config);
+    client.set_verbosity(verbosity_level);
+    client.set_visual_stacks(visual_stacks);
+    client.set_tag_gamelogs(tag_gamelogs);
+    if let Some(ref path) = gamelog_output {
+        client.set_gamelog_output(path.clone());
+    }
+
+    client
+        .connect()
+        .await
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Connection error: {}", e)))?;
+
+    client
+        .wait_for_game_start()
+        .await
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game start error: {}", e)))?;
+
+    // Get our player ID from the client state
+    let our_player_id = client.our_player_id().unwrap_or_else(|| PlayerId::new(0));
+
+    // Create controller based on type and run the synchronized GameLoop
+    let result: Option<PlayerId> = match controller_type {
+        ControllerType::Zero => {
+            let ctrl = ZeroController::new(our_player_id);
+            client.run_game(ctrl).await
+        }
+        ControllerType::Random => {
+            let ctrl = if let Some(seed) = seed_resolved {
+                RandomController::with_seed(our_player_id, seed)
+            } else {
+                let entropy_seed = SeedArg::FromEntropy.resolve();
+                log::warn!(
+                    "No seed provided for Random controller, using entropy: {}",
+                    entropy_seed
+                );
+                RandomController::with_seed(our_player_id, entropy_seed)
+            };
+            client.run_game(ctrl).await
+        }
+        ControllerType::Tui => {
+            let ctrl = InteractiveController::new(our_player_id);
+            client.run_game(ctrl).await
+        }
+        ControllerType::Heuristic => {
+            let ctrl = HeuristicController::new(our_player_id);
+            client.run_game(ctrl).await
+        }
+        ControllerType::Fixed => {
+            let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap())
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e)))?;
+            let ctrl = RichInputController::new(our_player_id, script);
+            client.run_game(ctrl).await
+        }
+        ControllerType::Fancy | ControllerType::FancyFixed => {
+            return Err(mtg_forge_rs::MtgError::InvalidAction(
+                "Fancy TUI controller is not yet supported in network mode. \
+                 Use --controller=interactive or --controller=heuristic instead."
+                    .to_string(),
+            ));
+        }
+    }
+    .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
+
+    match result {
+        Some(winner) => {
+            if winner == our_player_id {
+                log::info!("Game ended. You won!");
+            } else {
+                log::info!("Game ended. You lost.");
+            }
+        }
+        None => log::info!("Game ended in a draw"),
+    }
+
+    client.disconnect().await.ok();
+    Ok(())
+}
 
 /// Run TUI with async card loading
 #[allow(clippy::too_many_arguments)] // CLI parameters naturally map to function args

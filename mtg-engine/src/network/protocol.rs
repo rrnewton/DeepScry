@@ -549,12 +549,6 @@ pub enum ChoiceType {
         /// Number of cards to discard
         count: usize,
     },
-    /// Choose a card from library (tutor/search effect) - DEPRECATED
-    /// Use LibrarySearchByName instead for network mode to avoid revealing CardIds
-    LibrarySearch {
-        /// Number of valid cards that can be chosen
-        valid_count: usize,
-    },
     /// Choose a card from library by NAME (tutor/search effect)
     ///
     /// This variant sends unique card names instead of CardIds, allowing
@@ -1215,7 +1209,10 @@ mod tests {
                 blocker_count: 2,
             },
             ChoiceType::Discard { count: 2 },
-            ChoiceType::LibrarySearch { valid_count: 10 },
+            ChoiceType::LibrarySearchByName {
+                unique_names: vec!["Island".to_string(), "Swamp".to_string()],
+                filter_description: "a basic land".to_string(),
+            },
             ChoiceType::Sacrifice {
                 valid_count: 5,
                 count: 2,

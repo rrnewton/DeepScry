@@ -4,7 +4,7 @@ use crate::core::{
     Card, CardId, CardName, Color, DelayedTriggerStore, EntityId, EntityStore, PersistentEffectStore, Player, PlayerId,
 };
 use crate::game::{CombatState, GameLogger, ManaSourceCache, TurnStructure};
-use crate::undo::UndoLog;
+use crate::undo::{GameAction, UndoLog};
 use crate::zones::{CardZone, PlayerZones, Zone};
 use crate::Result;
 use bumpalo::Bump;
@@ -331,18 +331,38 @@ impl GameState {
 
     /// Shuffle a player's library using the game's RNG
     ///
-    /// This is a convenience method to avoid borrow checker issues when
-    /// accessing both the RNG and player zones.
+    /// This logs a ShuffleLibrary action to the undo log with the previous
+    /// order, enabling proper undo for tutor effects and game tree search.
+    ///
+    /// ## Network Considerations
+    ///
+    /// After calling this, the server should send a LibraryReordered message
+    /// to clients so their shadow states stay synchronized.
     pub fn shuffle_library(&mut self, player_id: PlayerId) {
         use rand::seq::SliceRandom;
-        // First, get a mutable reference to the library cards
+
+        // Get the library and store previous order before shuffling
         if let Some(zones) = self
             .player_zones
             .iter_mut()
             .find(|(id, _)| *id == player_id)
             .map(|(_, z)| z)
         {
+            // Capture the previous order for undo
+            let previous_order = zones.library.cards.clone();
+
+            // Perform the shuffle
             zones.library.cards.shuffle(&mut *self.rng.borrow_mut());
+
+            // Log the action with the previous order and prior log size
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                GameAction::ShuffleLibrary {
+                    player: player_id,
+                    previous_order,
+                },
+                prior_log_size,
+            );
         }
     }
 
@@ -1945,6 +1965,13 @@ impl GameState {
                     // Restore the previous revealed_to_mask value
                     if let Ok(card) = self.cards.get_mut(card_id) {
                         card.revealed_to_mask = old_value;
+                    }
+                }
+
+                crate::undo::GameAction::ShuffleLibrary { player, previous_order } => {
+                    // Restore the library to its previous order
+                    if let Some(zones) = self.get_player_zones_mut(player) {
+                        zones.library.cards = previous_order;
                     }
                 }
             }
