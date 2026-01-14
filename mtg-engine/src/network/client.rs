@@ -1036,9 +1036,18 @@ impl NetworkClient {
                                             "WebSocket: Sending reveal to game thread: {} (id={}) for {:?} ({:?})",
                                             card.name, card.card_id.as_u32(), owner, reason
                                         );
+                                        let card_id = card.card_id;
                                         if let Err(e) = reveal_tx.send((owner, card, reason)) {
                                             log::error!("WebSocket: Failed to send reveal: {:?}", e);
                                         }
+
+                                        // Also notify local controller for library search tracking
+                                        // This allows NetworkLocalController to return the correct CardId
+                                        // when a library search result is revealed.
+                                        let _ = local_msg_tx.send(LocalControllerMessage::CardRevealed {
+                                            owner,
+                                            card_id,
+                                        });
                                     }
                                     Ok(ServerMessage::LibraryReordered { player, new_order }) => {
                                         // Library was shuffled after a search - update shadow state
@@ -1639,9 +1648,16 @@ impl NetworkClient {
                                     match serde_json::from_str::<ServerMessage>(&text) {
                                         Ok(ServerMessage::CardRevealed { owner, card, reason }) => {
                                             log::debug!("Card revealed: {:?} for {:?} ({:?})", card.name, owner, reason);
+                                            let card_id = card.card_id;
                                             if let Err(e) = reveal_tx.send((owner, card, reason)) {
                                                 log::error!("Failed to send reveal: {:?}", e);
                                             }
+
+                                            // Also notify local controller for library search tracking
+                                            let _ = local_msg_tx.send(LocalControllerMessage::CardRevealed {
+                                                owner,
+                                                card_id,
+                                            });
                                         }
                                         Ok(ServerMessage::LibraryReordered { player, new_order }) => {
                                             // Library was shuffled after a search - update shadow state

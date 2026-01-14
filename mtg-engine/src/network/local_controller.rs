@@ -130,6 +130,10 @@ pub struct NetworkLocalController<C: PlayerController> {
     server_action_count: Option<u64>,
     /// Last received server choice sequence (from ChoiceRequest)
     server_choice_seq: Option<u32>,
+    /// CardId revealed during library search (for late-binding return value)
+    /// When the server reveals a card from a library search, we track it here
+    /// so choose_from_library can return the correct CardId.
+    library_search_revealed_card: Option<CardId>,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -152,6 +156,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             network_debug: false,
             server_action_count: None,
             server_choice_seq: None,
+            library_search_revealed_card: None,
         }
     }
 
@@ -293,6 +298,48 @@ impl<C: PlayerController> NetworkLocalController<C> {
             match self.message_rx.recv() {
                 Ok(LocalControllerMessage::ChoiceAcknowledged) => {
                     log::trace!("NetworkLocalController: choice acknowledged");
+
+                    // After receiving ack, briefly check for any CardRevealed messages
+                    // that might arrive shortly after (for library search results).
+                    // Use a short timeout since the reveal should arrive very quickly.
+                    use std::time::Duration;
+                    loop {
+                        match self.message_rx.recv_timeout(Duration::from_millis(50)) {
+                            Ok(LocalControllerMessage::CardRevealed { owner, card_id }) => {
+                                log::debug!(
+                                    "NetworkLocalController: received late CardRevealed after ack: owner={:?}, card={:?}",
+                                    owner,
+                                    card_id
+                                );
+                                self.library_search_revealed_card = Some(card_id);
+                                // Got a reveal, we can return now
+                                break;
+                            }
+                            Ok(LocalControllerMessage::ChoiceRequest {
+                                action_count,
+                                choice_seq,
+                                reveals: _,
+                            }) => {
+                                // Next choice request arrived - store it and return
+                                self.server_action_count = Some(action_count);
+                                self.server_choice_seq = Some(choice_seq);
+                                received_early_request = true;
+                                break;
+                            }
+                            Ok(msg) => {
+                                log::trace!("NetworkLocalController: ignoring message after ack: {:?}", msg);
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                // No more messages - return
+                                break;
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                self.disconnected = true;
+                                return Err("Lost connection to server".to_string());
+                            }
+                        }
+                    }
+
                     // Only clear server state if we didn't receive an early request for the next choice
                     if !received_early_request {
                         self.server_action_count = None;
@@ -306,12 +353,16 @@ impl<C: PlayerController> NetworkLocalController<C> {
                     return Err("Game ended".to_string());
                 }
                 Ok(LocalControllerMessage::CardRevealed { owner, card_id }) => {
-                    // Card reveals can come while waiting for acknowledgment
+                    // Card reveals can come while waiting for acknowledgment.
+                    // For library searches, track the revealed card so choose_from_library
+                    // can return it (late-binding architecture fix).
                     log::debug!(
-                        "NetworkLocalController: processing card reveal while waiting for ack: {:?} -> {:?}",
+                        "NetworkLocalController: processing card reveal while waiting for ack: owner={:?}, card={:?}",
                         owner,
                         card_id
                     );
+                    // Store the most recent reveal for library search return value
+                    self.library_search_revealed_card = Some(card_id);
                     // Continue waiting for ack
                 }
                 Ok(LocalControllerMessage::ChoiceRequest {
@@ -662,14 +713,66 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             return ChoiceResult::ExitGame;
         }
 
+        // In network synchronized mode with late-binding, the client's library
+        // may not have card instances (only CardIds without card data).
+        // The server has the real card data and sends options via ChoiceRequest.
+        //
+        // If valid_cards is empty but the library has cards, we can't properly
+        // delegate to the inner controller. Instead, we use a simple heuristic:
+        // - ZeroController would pick first card if available
+        // - So we send index 1 (first card option) instead of index 0 (decline)
+        //
+        // This is a workaround for late-binding architecture where the client
+        // doesn't know library contents until cards are revealed.
+        let library_size = view.player_library_size(view.player_id());
+        let has_unrevealed_library = valid_cards.is_empty() && library_size > 0;
+
+        // Clear any previously tracked reveal (we'll capture the new one from server)
+        self.library_search_revealed_card = None;
+
         let result = self.inner.choose_from_library(view, valid_cards);
 
         if let ChoiceResult::Ok(card) = &result {
-            // Single-select from library
-            let idx = match card {
-                Some(c) => valid_cards.iter().position(|&v| v == *c).unwrap_or(valid_cards.len()),
-                None => valid_cards.len(),
+            // Server's LibrarySearchByName protocol uses:
+            //   Index 0 = "Decline to find"
+            //   Index 1+ = unique card names (sorted alphabetically)
+
+            let idx = if has_unrevealed_library {
+                // Client can't see library contents, but server has options.
+                // ZeroController always picks first valid card, so pick index 1.
+                // (If server had no valid cards, it wouldn't send a ChoiceRequest)
+                log::debug!(
+                    "NetworkLocalController.choose_from_library: using fallback (library={}, valid_cards=0)",
+                    library_size
+                );
+                1 // Pick first card (not decline)
+            } else {
+                // Build sorted unique names (matching server's logic)
+                let mut unique_names: Vec<String> = valid_cards
+                    .iter()
+                    .filter_map(|&card_id| view.card_name(card_id))
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                unique_names.sort();
+
+                match card {
+                    Some(c) => {
+                        // Look up the card's name and find its position in unique_names
+                        if let Some(name) = view.card_name(*c) {
+                            unique_names
+                                .iter()
+                                .position(|n| *n == name)
+                                .map(|pos| pos + 1) // +1 because index 0 is "Decline"
+                                .unwrap_or(0)
+                        } else {
+                            0 // Card has no name - decline
+                        }
+                    }
+                    None => 0, // Decline to find = index 0
+                }
             };
+
             let desc = format!("From library: {:?}", card);
             let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
             let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
@@ -683,6 +786,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             ) {
                 log::error!("Failed to send choice: {}", e);
                 return ChoiceResult::ExitGame;
+            }
+        }
+
+        // For late-binding architecture: if server revealed a card during send_choice,
+        // return that CardId instead of the inner controller's result.
+        // This ensures client's shadow GameLoop moves the same card as server.
+        if has_unrevealed_library {
+            if let Some(revealed_card) = self.library_search_revealed_card.take() {
+                log::debug!(
+                    "NetworkLocalController.choose_from_library: returning server-revealed card {:?}",
+                    revealed_card
+                );
+                return ChoiceResult::Ok(Some(revealed_card));
             }
         }
 

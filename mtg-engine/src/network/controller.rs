@@ -407,12 +407,13 @@ impl NetworkController {
 
                     // Only include reveals with actual card names (not dummy reveals for opponents)
                     if should_reveal && name.is_some() {
-                        // Use placeholder zone info - CardRevealInfo may need updating
-                        // to better match the RevealCard architecture
+                        // Look up the actual card owner from the view
+                        let actual_owner = view.card_owner(*card_id).unwrap_or(self.player_id);
+
                         reveals.push(CardRevealInfo {
                             card_id: *card_id,
-                            owner: self.player_id,    // Placeholder
-                            from_zone: Zone::Library, // Placeholder
+                            owner: actual_owner,
+                            from_zone: Zone::Library, // Placeholder (zone info not in RevealCard action)
                             to_zone: Zone::Hand,      // Placeholder
                         });
                     }
@@ -786,17 +787,31 @@ impl PlayerController for NetworkController {
         //
         // This avoids revealing CardId<->name bindings for unselected cards.
 
+        log::debug!(
+            "choose_from_library called with {} valid cards: {:?}",
+            valid_cards.len(),
+            valid_cards.iter().take(5).collect::<Vec<_>>()
+        );
+
         // Build name -> [CardId] mapping
         let mut name_to_cards: HashMap<String, Vec<CardId>> = HashMap::new();
         for &card_id in valid_cards {
             if let Some(name) = view.card_name(card_id) {
                 name_to_cards.entry(name.to_string()).or_default().push(card_id);
+            } else {
+                log::warn!("choose_from_library: card_id {:?} has no name!", card_id);
             }
         }
 
         // Extract unique names (sorted for determinism)
         let mut unique_names: Vec<String> = name_to_cards.keys().cloned().collect();
         unique_names.sort();
+
+        log::debug!(
+            "choose_from_library: found {} unique names: {:?}",
+            unique_names.len(),
+            unique_names
+        );
 
         // Build options for display: [0] = Decline, [1..] = card names
         let mut options = vec!["Decline to find".to_string()];

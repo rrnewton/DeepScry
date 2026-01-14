@@ -1062,6 +1062,30 @@ impl<'a> GameLoop<'a> {
 
                                                 // If a card was chosen, move it to destination
                                                 if let Some(chosen_card) = chosen_card_opt {
+                                                    // Reveal the chosen card before moving (per NETWORK_ARCHITECTURE.md)
+                                                    // This ensures client knows which CardId was picked from the search
+                                                    let reveal_log_size = self.game.logger.log_count();
+                                                    match *destination {
+                                                        crate::zones::Zone::Battlefield
+                                                        | crate::zones::Zone::Graveyard
+                                                        | crate::zones::Zone::Stack => {
+                                                            // Public zones - reveal to all
+                                                            self.game.maybe_reveal_to_all(chosen_card, reveal_log_size);
+                                                        }
+                                                        crate::zones::Zone::Hand => {
+                                                            // Hand - reveal to owner only
+                                                            self.game.maybe_reveal_to_player(
+                                                                chosen_card,
+                                                                search_player,
+                                                                reveal_log_size,
+                                                            );
+                                                        }
+                                                        _ => {
+                                                            // Exile and other zones - reveal to all for safety
+                                                            self.game.maybe_reveal_to_all(chosen_card, reveal_log_size);
+                                                        }
+                                                    }
+
                                                     if let Err(e) = self.game.move_card(
                                                         chosen_card,
                                                         crate::zones::Zone::Library,

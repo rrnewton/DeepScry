@@ -608,6 +608,11 @@ impl<'a> GameStateView<'a> {
         self.game.cards.try_get(card_id).map(|c| c.name.to_string())
     }
 
+    /// Get a card's owner
+    pub fn card_owner(&self, card_id: CardId) -> Option<PlayerId> {
+        self.game.cards.try_get(card_id).map(|c| c.owner)
+    }
+
     /// Check if a card is a land
     pub fn is_land(&self, card_id: CardId) -> bool {
         self.game.cards.try_get(card_id).is_some_and(|c| c.is_land())
