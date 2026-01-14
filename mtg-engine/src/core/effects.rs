@@ -595,6 +595,86 @@ pub enum Effect {
     },
 }
 
+/// Categorization of effects for targeting purposes.
+///
+/// Used by targeting.rs to determine what targets need to be collected for spells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectTargetCategory {
+    /// Effect targets players or has no targeting requirements.
+    /// Examples: DrawCards, GainLife, Mill, Scry, CreateToken
+    NoTargetNeeded,
+
+    /// Effect requires a creature or permanent target.
+    /// Examples: DestroyPermanent, TapPermanent, PumpCreature, ExilePermanent
+    RequiresTarget,
+
+    /// Effect uses filters to affect multiple permanents (no explicit targeting).
+    /// Examples: PumpAllCreatures
+    UsesFilter,
+
+    /// Effect contains inner effects with their own targeting (modal spells).
+    /// Examples: ModalChoice
+    HasInnerTargeting,
+}
+
+impl Effect {
+    /// Returns the targeting category for this effect.
+    ///
+    /// This is used to avoid duplicating effect categorization across targeting.rs.
+    /// When a new Effect variant is added, this method must be updated.
+    pub fn target_category(&self) -> EffectTargetCategory {
+        match self {
+            // Effects targeting players or with no target
+            Effect::DrawCards { .. }
+            | Effect::Loot { .. }
+            | Effect::GainLife { .. }
+            | Effect::Mill { .. }
+            | Effect::Scry { .. }
+            | Effect::AddMana { .. }
+            | Effect::Balance { .. }
+            | Effect::CreateToken { .. }
+            | Effect::Dig { .. }
+            | Effect::SearchLibrary { .. }
+            | Effect::Firebend { .. }
+            | Effect::CopySpellAbility { .. } => EffectTargetCategory::NoTargetNeeded,
+
+            // Effects using filters (affect multiple permanents)
+            Effect::PumpAllCreatures { .. } => EffectTargetCategory::UsesFilter,
+
+            // Modal spells have inner targeting
+            Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,
+
+            // Effects requiring creature/permanent/spell targets
+            Effect::DealDamage { .. }
+            | Effect::DestroyPermanent { .. }
+            | Effect::TapPermanent { .. }
+            | Effect::UntapPermanent { .. }
+            | Effect::PumpCreature { .. }
+            | Effect::CounterSpell { .. }
+            | Effect::PutCounter { .. }
+            | Effect::RemoveCounter { .. }
+            | Effect::ExilePermanent { .. }
+            | Effect::AttachEquipment { .. }
+            | Effect::CopyPermanent { .. }
+            | Effect::SetBasePowerToughness { .. }
+            | Effect::Airbend { .. }
+            | Effect::Earthbend { .. }
+            | Effect::GrantCantBeBlocked { .. }
+            | Effect::CreateDelayedTrigger { .. } => EffectTargetCategory::RequiresTarget,
+        }
+    }
+
+    /// Returns true if this effect needs no explicit targeting (targets players, uses filters, etc.)
+    ///
+    /// This is a convenience helper combining NoTargetNeeded and UsesFilter categories.
+    pub fn needs_no_creature_target(&self) -> bool {
+        matches!(
+            self.target_category(),
+            EffectTargetCategory::NoTargetNeeded | EffectTargetCategory::UsesFilter
+        )
+    }
+}
+
 /// A single mode in a modal spell.
 ///
 /// Contains the effect to execute and metadata for display/targeting.
