@@ -205,7 +205,18 @@ Branches and pushing
 
 You may push after validation and can check CI status with github MCP. Don't force push unless you're asked to or ask permission.
 
-We merge feature branches into main when they're completed and validating. ARCHIVE completed feature braches. Upon merging a feature branch X, archive it as tag `X.v1` or `X.(N+1)` if that tag is taken.
+**IMPORTANT: The `main` branch is protected.** Do NOT merge directly to main. We use a three-tier branch structure:
+- **main**: Stable branch - only receives merges from `integration` after CI passes
+- **integration**: Staging branch - receives merges from feature branches with green CI
+- **Feature branches**: Active development (e.g., `avatar4`, `network2`)
+
+To get changes into main, use the `ci-integration-monitor` agent (see `.claude/agents/ci-integration-monitor.md`) which handles:
+1. Checking CI status on feature branches
+2. Merging green feature branches into `integration`
+3. Running local validation on `integration`
+4. Promoting `integration` to `main` after CI passes
+
+ARCHIVE completed feature branches. Upon merging a feature branch X, archive it as tag `X.v1` or `X.(N+1)` if that tag is taken.
 
 **CRITICAL**: NEVER use `git clean` commands (`git clean -f`, `git clean -fd`, `git clean -fxd`, etc.) in this repository. The `.devcontainer/` directory contains valuable container home directory configuration that must not be deleted. To clean working directory, use ONLY `git reset --hard HEAD` which resets tracked files without removing untracked files/directories.
 
