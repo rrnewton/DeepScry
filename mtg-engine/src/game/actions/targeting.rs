@@ -356,7 +356,8 @@ impl GameState {
                             | Effect::AttachEquipment { .. }
                             | Effect::ModalChoice { .. }
                             | Effect::PumpAllCreatures { .. }
-                            | Effect::CreateDelayedTrigger { .. } => {
+                            | Effect::CreateDelayedTrigger { .. }
+                            | Effect::CopySpellAbility { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -411,11 +412,13 @@ impl GameState {
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::PumpAllCreatures { .. }
-                | Effect::CreateDelayedTrigger { .. } => {
+                | Effect::CreateDelayedTrigger { .. }
+                | Effect::CopySpellAbility { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // This means the effect has a concrete target already assigned
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // CreateDelayedTrigger with non-zero tracked_card already has target
+                    // CopySpellAbility doesn't use explicit targets - copies triggering spell
                 }
             }
         }
@@ -710,9 +713,11 @@ impl GameState {
                 | Effect::SetBasePowerToughness { .. }
                 | Effect::Earthbend { .. }
                 | Effect::ModalChoice { .. }
-                | Effect::CreateDelayedTrigger { .. } => {
+                | Effect::CreateDelayedTrigger { .. }
+                | Effect::CopySpellAbility { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
+                    // CopySpellAbility doesn't need explicit targets - copies triggering spell
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. } => {
@@ -920,7 +925,8 @@ impl GameState {
             | Effect::AttachEquipment { .. }
             | Effect::ModalChoice { .. }
             | Effect::PumpAllCreatures { .. }
-            | Effect::CreateDelayedTrigger { .. } => true, // PumpAllCreatures uses filter, not explicit targets
+            | Effect::CreateDelayedTrigger { .. }
+            | Effect::CopySpellAbility { .. } => true, // PumpAllCreatures uses filter, not explicit targets
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

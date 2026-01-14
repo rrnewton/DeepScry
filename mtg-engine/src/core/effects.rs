@@ -571,6 +571,21 @@ pub enum Effect {
         /// When the trigger expires (usually EndOfTurn for ThisTurn$ True)
         expiry: Option<crate::core::DelayedTriggerExpiry>,
     },
+
+    /// Copy a spell on the stack
+    ///
+    /// Corresponds to: `DB$ CopySpellAbility | Defined$ TriggeredSpellAbility | MayChooseTarget$ True`
+    ///
+    /// This effect is typically used as the Execute$ target of a DB$ DelayedTrigger
+    /// with Mode$ SpellCast. When the trigger fires (e.g., "When you cast a Lesson spell"),
+    /// this effect copies the triggering spell.
+    ///
+    /// Cards using this:
+    /// - Jeong Jeong: "copy it and you may choose new targets for the copy"
+    CopySpellAbility {
+        /// Whether the player may choose new targets for the copy
+        may_choose_targets: bool,
+    },
 }
 
 /// A single mode in a modal spell.

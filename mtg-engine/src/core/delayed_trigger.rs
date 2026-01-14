@@ -92,7 +92,43 @@ impl DelayedTrigger {
                 let to_matches = to_zones.is_empty() || to_zones.contains(&to_zone);
                 from_matches && to_matches
             }
-            DelayedTriggerCondition::Phase { .. } | DelayedTriggerCondition::LastCounterRemoved { .. } => false,
+            DelayedTriggerCondition::Phase { .. }
+            | DelayedTriggerCondition::LastCounterRemoved { .. }
+            | DelayedTriggerCondition::SpellCast { .. } => false,
+        }
+    }
+
+    /// Check if this trigger should fire when a spell is cast
+    ///
+    /// # Parameters
+    /// - `caster`: The player who cast the spell
+    /// - `spell_types`: Types of the spell being cast (e.g., ["Sorcery", "Lesson"])
+    ///
+    /// # Returns
+    /// `true` if this delayed trigger should fire for this spell cast
+    pub fn matches_spell_cast(&self, caster: super::PlayerId, spell_types: &[&str]) -> bool {
+        match &self.trigger_condition {
+            DelayedTriggerCondition::SpellCast {
+                valid_card_type,
+                you_only,
+            } => {
+                // Check if the caster matches
+                if *you_only && caster != self.controller {
+                    return false;
+                }
+
+                // Check if the spell type matches
+                match valid_card_type {
+                    Some(required_type) => {
+                        // Check if any of the spell's types match the required type
+                        spell_types.iter().any(|t| t.eq_ignore_ascii_case(required_type))
+                    }
+                    None => true, // No type restriction
+                }
+            }
+            DelayedTriggerCondition::ZoneChange { .. }
+            | DelayedTriggerCondition::Phase { .. }
+            | DelayedTriggerCondition::LastCounterRemoved { .. } => false,
         }
     }
 }
@@ -120,6 +156,15 @@ pub enum DelayedTriggerCondition {
     /// Fire when the last counter of a type is removed
     /// Example: Suspend - when last time counter is removed
     LastCounterRemoved { counter_type: super::CounterType },
+
+    /// Fire when a spell is cast matching certain criteria
+    /// Example: Jeong Jeong - "When you next cast a Lesson spell this turn"
+    SpellCast {
+        /// Valid card types that trigger this (e.g., "Lesson", "Creature", "Noncreature")
+        valid_card_type: Option<String>,
+        /// Only trigger for spells cast by the trigger's controller
+        you_only: bool,
+    },
 }
 
 /// Which phase triggers the delayed trigger
@@ -177,6 +222,16 @@ pub enum DelayedEffect {
         /// The effect to execute when the trigger fires
         effect: Box<super::effects::Effect>,
     },
+
+    /// Copy a spell on the stack (triggered by SpellCast condition)
+    /// Used by: Jeong Jeong - "copy it and you may choose new targets for the copy"
+    ///
+    /// This effect copies the spell that triggered the delayed trigger
+    /// and puts the copy on the stack (potentially with new targets).
+    CopySpellAbility {
+        /// Whether the player may choose new targets for the copy
+        may_choose_targets: bool,
+    },
 }
 
 /// When to remove the trigger (even if it hasn't fired)
@@ -230,6 +285,18 @@ impl DelayedTriggerStore {
         self.triggers
             .iter()
             .filter(|t| t.matches_zone_change(card, from_zone, to_zone))
+            .map(|t| t.id)
+            .collect()
+    }
+
+    /// Find triggers that match a spell cast event
+    ///
+    /// Returns IDs of delayed triggers that fire for this spell cast.
+    /// Used by: Jeong Jeong and similar "when you next cast X" effects.
+    pub fn get_matching_spellcast_trigger_ids(&self, caster: PlayerId, spell_types: &[&str]) -> Vec<DelayedTriggerId> {
+        self.triggers
+            .iter()
+            .filter(|t| t.matches_spell_cast(caster, spell_types))
             .map(|t| t.id)
             .collect()
     }

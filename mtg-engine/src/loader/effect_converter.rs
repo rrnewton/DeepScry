@@ -686,6 +686,25 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::CopySpellAbility => {
+            // Copy a spell on the stack
+            // Example: DB$ CopySpellAbility | Defined$ TriggeredSpellAbility | MayChooseTarget$ True
+            //
+            // This is typically used as the Execute$ target of a DB$ DelayedTrigger
+            // Parameters:
+            // - Defined$: What to copy (TriggeredSpellAbility = the spell that triggered this)
+            // - MayChooseTarget$: Can choose new targets for the copy
+            let may_choose_targets = params.get("MayChooseTarget") == Some("True");
+
+            log::debug!(
+                target: "effect_converter",
+                "CopySpellAbility: may_choose_targets={}",
+                may_choose_targets
+            );
+
+            Some(Effect::CopySpellAbility { may_choose_targets })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -919,7 +938,7 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
 
     let mode = params.get("Mode").unwrap_or("ChangesZone");
 
-    // Parse zone change condition (most common for delayed triggers)
+    // Parse trigger condition based on Mode$
     let condition = if mode == "ChangesZone" {
         let from_zone = match params.get("Origin") {
             Some("Battlefield") => crate::zones::Zone::Battlefield,
@@ -940,6 +959,19 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
         crate::core::DelayedTriggerCondition::ZoneChange {
             from_zones: smallvec::smallvec![from_zone],
             to_zones: smallvec::smallvec![to_zone],
+        }
+    } else if mode == "SpellCast" {
+        // SpellCast trigger: fires when a matching spell is cast
+        // Example: "When you next cast a Lesson spell this turn"
+        // Parameters:
+        // - ValidCard$: Card type filter (e.g., "Lesson", "Creature", "Noncreature")
+        // - ValidActivatingPlayer$: Who can trigger (You, Opponent, Any)
+        let valid_card_type = params.get("ValidCard").map(|s| s.to_string());
+        let you_only = params.get("ValidActivatingPlayer") == Some("You");
+
+        crate::core::DelayedTriggerCondition::SpellCast {
+            valid_card_type,
+            you_only,
         }
     } else {
         log::debug!(

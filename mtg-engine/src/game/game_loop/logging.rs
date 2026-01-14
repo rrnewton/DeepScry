@@ -556,6 +556,17 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::CopySpellAbility { may_choose_targets } => {
+                let message = format!(
+                    "{source_name} ({source_id}) copies spell{}",
+                    if *may_choose_targets {
+                        " (may choose new targets)"
+                    } else {
+                        ""
+                    }
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

@@ -146,6 +146,12 @@ pub enum ApiType {
     PlayLandVariant,
     Effect,
     DelayedTrigger,
+    /// Copy a spell on the stack
+    /// Used by Jeong Jeong: "copy it and you may choose new targets"
+    /// Parameters:
+    ///   Defined$ - what to copy (TriggeredSpellAbility = the triggering spell)
+    ///   MayChooseTarget$ - can choose new targets for the copy
+    CopySpellAbility,
 
     // === Information ===
     Scry,
@@ -270,6 +276,7 @@ impl ApiType {
             "PlayLandVariant" => Self::PlayLandVariant,
             "Effect" => Self::Effect,
             "DelayedTrigger" => Self::DelayedTrigger,
+            "CopySpellAbility" => Self::CopySpellAbility,
 
             // Information
             "Scry" => Self::Scry,
@@ -355,6 +362,7 @@ impl ApiType {
             Self::PlayLandVariant => "PlayLandVariant",
             Self::Effect => "Effect",
             Self::DelayedTrigger => "DelayedTrigger",
+            Self::CopySpellAbility => "CopySpellAbility",
             Self::Scry => "Scry",
             Self::Surveil => "Surveil",
             Self::Protection => "Protection",
