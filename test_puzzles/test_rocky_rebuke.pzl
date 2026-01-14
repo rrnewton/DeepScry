@@ -1,0 +1,21 @@
+[metadata]
+Name=Rocky Rebuke Fight Spell Test
+Goal=Win
+Turns=5
+Difficulty=Easy
+Description=Test that Rocky Rebuke deals damage equal to your creature's power to opponent creature
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Rocky Rebuke
+p0battlefield=Grizzly Bears;Forest;Forest
+p0library=Plains;Plains
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Eager Cadet;Mountain;Mountain
+p1library=Forest;Forest
+p1graveyard=

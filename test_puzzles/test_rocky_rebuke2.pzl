@@ -1,0 +1,21 @@
+[metadata]
+Name=Rocky Rebuke Fight Spell Test 2
+Goal=Win
+Turns=5
+Difficulty=Easy
+Description=Test Rocky Rebuke with larger creatures
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Rocky Rebuke
+p0battlefield=Craw Wurm;Forest;Forest
+p0library=Plains;Plains
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Hill Giant;Mountain;Mountain
+p1library=Forest;Forest
+p1graveyard=

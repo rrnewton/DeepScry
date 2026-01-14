@@ -136,27 +136,42 @@ Currently no way to see card details for unknown opponent cards on the stack.
 **Creatures (16):**
 - [x] Badgermole (x1) - ETB earthbend 2, trample to countered creatures (VERIFIED 2026-01-14: earthbend works, makes 2/2 land creature)
 - [x] Cat-Owl (x1) - flying 3/3, attack trigger untap (FIXED 2026-01-14)
-- [ ] Earth Kingdom Soldier (x1) - 2/2 baseline
-- [ ] Foggy Swamp Vinebender (x1) - waterbend effects
-- [ ] Glider Kids (x1) - flying, token generation
+- [ ] Earth Kingdom Soldier (x1) - ETB put counters needs multi-target support
+- [ ] Foggy Swamp Vinebender (x1) - waterbend effects (GAP: waterbend not implemented)
+- [ ] Glider Kids (x1) - flying (works), ETB scry (GAP: Scry not implemented)
 - [ ] Master Piandao (x1) - equipment synergy
-- [ ] Ostrich-Horse (x2) - haste, attack trigger
+- [ ] Ostrich-Horse (x2) - basic creature works, ETB mill+choose land (GAP: Mill not in ETB triggers)
 - [ ] Rabaroo Troop (x1) - token/creature synergy
-- [ ] Raucous Audience (x3) - pump/anthem effects
-- [ ] Suki, Kyoshi Warrior (x1) - legendary, combat abilities
-- [ ] The Boulder, Ready to Rumble (x2) - fight/combat abilities
-- [ ] Turtle-Duck (x1) - small utility creature
+- [ ] Raucous Audience (x3) - mana ability with conditional (GAP: Count$Compare not fully implemented)
+- [ ] Suki, Kyoshi Warrior (x1) - */4 CharacteristicDefining, attack trigger token (GAP: CharacteristicDefining)
+- [ ] The Boulder, Ready to Rumble (x2) - attack earthbend X (GAP: variable X from Count$Valid)
+- [ ] Turtle-Duck (x1) - AB$ Animate (GAP: Animate not implemented)
 
 **Spells/Other (8):**
-- [ ] Barrels of Blasting Jelly (x1) - **BUG: FREEZE** (web GUI only) - mana/damage artifact
+- [x] Barrels of Blasting Jelly (x1) - Engine works (verified via agentplay), web GUI rewind bug
 - [x] Cracked Earth Technique (x1) - **FIXED** - earthbend sorcery (was web GUI replay bug)
 - [x] Pillar Launch (x1) - **FIXED** - SubAbility$ DBUntap with Defined$ Targeted now works
-- [ ] Rocky Rebuke (x1) - removal spell
-- [ ] Sandbenders' Storm (x2) - board effect
-- [ ] Seismic Sense (x1) - card selection/draw
-- [ ] White Lotus Reinforcements (x1) - token generation
+- [ ] Rocky Rebuke (x1) - GAP: DamageSource$ ParentTarget not implemented
+- [ ] Sandbenders' Storm (x2) - GAP: SP$ Charm modal spells not implemented
+- [ ] Seismic Sense (x1) - GAP: SP$ Dig library manipulation not implemented
+- [ ] White Lotus Reinforcements (x1) - 2/3 Vigilance creature with Ally anthem (should work)
 
 ---
+
+## Engine Implementation Gaps (2026-01-14)
+
+The following mechanics are NOT YET IMPLEMENTED in the engine:
+
+- **Scry**: `ApiType::Scry` / `DB$ Scry` not implemented (affects Glider Kids)
+- **Waterbend**: Avatar-specific mechanic not implemented (affects Foggy Swamp Vinebender)
+- **Dig**: `SP$ Dig` library manipulation not implemented (affects Seismic Sense)
+- **Charm**: `SP$ Charm` modal spells not implemented (affects Sandbenders' Storm)
+- **Animate**: `AB$ Animate` power/keyword grant not implemented (affects Turtle-Duck)
+- **DamageSource$ ParentTarget**: Fight-style damage from targeted creature (affects Rocky Rebuke)
+- **CharacteristicDefining**: `*/*` power/toughness from formula (affects Suki, Kyoshi Warrior)
+- **Count$Valid X**: Variable amounts from creature counts (affects The Boulder)
+- **Mill in ETB triggers**: `DB$ Mill` not parsed for ChangesZone triggers (affects Ostrich-Horse)
+- **Multi-target PutCounter**: ETB put counters on up to N targets (affects Earth Kingdom Soldier)
 
 ## AI Heuristic Gaps (2026-01-14)
 
