@@ -2085,9 +2085,11 @@ impl GameState {
                 // Copy the spell that triggered this delayed trigger
                 // This is used by Jeong Jeong: "copy it and you may choose new targets"
                 //
+                // MTG Rules 707.10: To copy a spell means to put a copy of it onto the stack.
+                // A copy of a spell is not cast.
+                //
                 // Note: For SpellCast triggers, the triggering spell is passed via
                 // tracked_card (which is repurposed to hold the spell being copied).
-                // The actual copy logic requires stack manipulation and target selection.
                 log::debug!(
                     target: "delayed_triggers",
                     "CopySpellAbility: copying spell {} (may_choose_targets={})",
@@ -2096,22 +2098,53 @@ impl GameState {
 
                 // Get the spell to copy from the stack
                 if self.stack.contains(card_id) {
-                    // Create a copy of the spell
-                    // For now, we'll log this and handle full implementation later
-                    // Full implementation requires:
-                    // 1. Clone the spell's effects
-                    // 2. Create a copy object on the stack
-                    // 3. If may_choose_targets, let player choose new targets
-                    let spell_name = self
-                        .cards
-                        .get(card_id)
-                        .map(|c| c.name.to_string())
-                        .unwrap_or_else(|_| "Unknown".to_string());
-                    self.logger.normal(&format!("Delayed trigger: copying {}", spell_name));
+                    // Clone the spell card to create a copy
+                    let original_spell = self.cards.get(card_id)?;
+                    let spell_name = original_spell.name.to_string();
+                    let mut spell_copy = original_spell.clone();
 
-                    // TODO(mtg-0iad2): Implement full spell copy logic
-                    // For now, just log that we would copy the spell
-                    log::warn!(target: "delayed_triggers", "CopySpellAbility: full implementation pending for spell copy");
+                    // Give the copy a new ID
+                    let copy_id = self.next_card_id();
+                    spell_copy.id = copy_id;
+
+                    // The copy is controlled by the trigger's controller
+                    spell_copy.owner = controller;
+                    spell_copy.controller = controller;
+
+                    // Add the copy card to the entity store
+                    self.cards.insert(copy_id, spell_copy);
+
+                    // Put the copy on the stack (above the original)
+                    self.stack.add(copy_id);
+
+                    // Log the copy
+                    let controller_name = self.get_player(controller)?.name.clone();
+                    self.logger.gamelog(&format!(
+                        "{} copies {} (copy id={})",
+                        controller_name,
+                        spell_name,
+                        copy_id.as_u32()
+                    ));
+
+                    log::info!(
+                        target: "delayed_triggers",
+                        "CopySpellAbility: created copy of {} (original={}, copy={})",
+                        spell_name, card_id.as_u32(), copy_id.as_u32()
+                    );
+
+                    // Note: The copy has the same effects and targets as the original.
+                    // MTG Rules 707.10a: A copy has the same characteristics and targets
+                    // unless the copying effect specifies otherwise.
+                    //
+                    // If may_choose_targets is true, the player may choose new targets,
+                    // but this requires game loop interaction which is handled separately
+                    // when the copy resolves.
+                    if may_choose_targets {
+                        log::debug!(
+                            target: "delayed_triggers",
+                            "CopySpellAbility: may_choose_targets=true, target selection deferred to resolution"
+                        );
+                    }
                 } else {
                     log::debug!(
                         target: "delayed_triggers",

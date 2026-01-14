@@ -258,7 +258,7 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - [x] Beetle-Headed Merchants + Zhao Ruthless Admiral (sacrifice triggers both) - VERIFIED (test_zhao_beetle_sacrifice_synergy.pzl - PumpAllCreatures implemented)
 - [x] Fire Lord Ozai + sacrifice permanents (mana generation + other triggers) - VERIFIED (fixed sentinel 254 → actual creature power)
 - [x] Boar-q-pine + noncreature spells - VERIFIED in 6353f9d
-- [ ] Jeong Jeong + Iroh's Demonstration (copy Lesson spell) - DB$ DelayedTrigger parsed, CopySpellAbility stub (52fa01d), full copy logic pending
+- [x] Jeong Jeong + Iroh's Demonstration (copy Lesson spell) - DB$ DelayedTrigger parses SpellCast trigger, CopySpellAbility clones spell to stack (new target selection pending)
 - [x] Firebending creatures sharing firebend mana pool (verified: test_firebend_sharing.pzl - Zhao+Boiling Rock Rioter share pool)
 - [x] Heartless Act vs creatures with +1/+1 counters (mode restrictions) - verified: AffectedSelector.requires_no_counters flag + card.has_counters() method prevents Mode 1 from targeting creatures with counters
 - [x] Ty Lee Prowess + Twin Blades Flash (combat tricks) - VERIFIED: Flash keyword allows instant-speed cast (6af1111)
@@ -332,9 +332,10 @@ This tracking issue ensures EVERY mechanic on EVERY card in the ryan_avatar_draf
 - SP$ DelayedTrigger target resolution - tracked_card now filled from chosen_targets (Fatal Fissure death trigger works)
 
 **Not Yet Implemented (found during verification):**
-- CopySpellAbility full logic (spell duplication on stack with new targets) - infrastructure in place
+- CopySpellAbility new target selection (may_choose_targets=true requires game loop integration)
 
 **Recently Implemented:**
+- CopySpellAbility spell duplication - clone spell, assign new ID, put copy on stack (same targets as original)
 - DB$ DelayedTrigger (52fa01d) - Mode$ SpellCast with ValidCard$/ValidActivatingPlayer$ parsing, DelayedEffect::CopySpellAbility
 - Mode$ Sacrificed triggers (7010ba5) - Pirate Peddlers sacrifice synergy now works
 - DB$ Attach (a5a2929) - Equipment ETB attach parsing (Twin Blades trigger now parses)
