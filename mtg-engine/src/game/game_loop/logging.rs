@@ -252,6 +252,11 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) causes {player_name} to mill {count} card(s)");
                 self.game.logger.gamelog(&message);
             }
+            Effect::Scry { player, count } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) causes {player_name} to scry {count}");
+                self.game.logger.gamelog(&message);
+            }
             Effect::CounterSpell { target } => {
                 let target_name = self
                     .game

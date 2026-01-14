@@ -336,6 +336,7 @@ impl GameState {
                             | Effect::Loot { .. }
                             | Effect::GainLife { .. }
                             | Effect::Mill { .. }
+                            | Effect::Scry { .. }
                             | Effect::AddMana { .. }
                             | Effect::Balance { .. }
                             | Effect::CreateToken { .. }
@@ -382,6 +383,7 @@ impl GameState {
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
                 | Effect::Mill { .. }
+                | Effect::Scry { .. }
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
@@ -704,6 +706,7 @@ impl GameState {
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
                 | Effect::Mill { .. }
+                | Effect::Scry { .. }
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
@@ -914,6 +917,7 @@ impl GameState {
             | Effect::Loot { .. }
             | Effect::GainLife { .. }
             | Effect::Mill { .. }
+            | Effect::Scry { .. }
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }

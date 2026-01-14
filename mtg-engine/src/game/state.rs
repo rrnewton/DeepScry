@@ -1003,6 +1003,123 @@ impl GameState {
         Ok(milled_cards)
     }
 
+    /// Scry - look at top N cards and put any number on bottom of library
+    ///
+    /// This implements the scry mechanic: look at the top N cards of your library,
+    /// then put any number of them on the bottom in any order and the rest on top
+    /// in any order.
+    ///
+    /// AI Heuristic: Keep spells (non-lands) on top, put excess lands on bottom.
+    /// If we already have enough lands in hand (2-3), we prefer keeping spells.
+    ///
+    /// # Errors
+    ///
+    /// Returns Ok(()) even if library has fewer than N cards.
+    pub fn scry_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
+        // Get the top N cards from library (without removing them yet)
+        let top_cards: SmallVec<[CardId; 4]> = {
+            let zones = self
+                .get_player_zones(player_id)
+                .ok_or_else(|| crate::MtgError::InvalidAction("Player zones not found".to_string()))?;
+
+            zones
+                .library
+                .cards
+                .iter()
+                .rev() // Top of library is last in vec
+                .take(count as usize)
+                .copied()
+                .collect()
+        };
+
+        if top_cards.is_empty() {
+            // Nothing to scry
+            return Ok(());
+        }
+
+        // AI heuristic: Decide which cards to keep on top vs put on bottom
+        // Simple heuristic: keep spells (non-lands) on top, put lands on bottom
+        // unless we're short on lands
+        let mut keep_on_top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut put_on_bottom: SmallVec<[CardId; 4]> = SmallVec::new();
+
+        // Count lands in hand to decide if we want more lands
+        let lands_in_hand = self
+            .get_player_zones(player_id)
+            .map(|z| {
+                z.hand
+                    .cards
+                    .iter()
+                    .filter(|&cid| self.cards.get(*cid).map(|c| c.is_land()).unwrap_or(false))
+                    .count()
+            })
+            .unwrap_or(0);
+
+        // If we have 3+ lands in hand, we probably don't need more
+        let want_lands = lands_in_hand < 3;
+
+        for card_id in &top_cards {
+            let is_land = self.cards.get(*card_id).map(|c| c.is_land()).unwrap_or(false);
+            if is_land && !want_lands {
+                // Put excess lands on bottom
+                put_on_bottom.push(*card_id);
+            } else {
+                // Keep spells and needed lands on top
+                keep_on_top.push(*card_id);
+            }
+        }
+
+        // Log the scry action
+        let card_name = self.cards.get(top_cards[0]).map(|c| c.name.clone()).ok();
+
+        if top_cards.len() == 1 {
+            let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
+            if put_on_bottom.is_empty() {
+                self.logger
+                    .normal(&format!("P{} scries 1, keeps {} on top", player_id.as_u32() + 1, name));
+            } else {
+                self.logger.normal(&format!(
+                    "P{} scries 1, puts {} on bottom",
+                    player_id.as_u32() + 1,
+                    name
+                ));
+            }
+        } else {
+            self.logger.normal(&format!(
+                "P{} scries {}, keeps {} on top, puts {} on bottom",
+                player_id.as_u32() + 1,
+                top_cards.len(),
+                keep_on_top.len(),
+                put_on_bottom.len()
+            ));
+        }
+
+        // Now rearrange the library:
+        // 1. Remove all scried cards from their positions
+        // 2. Put "bottom" cards at the actual bottom of library
+        // 3. Put "top" cards back at the top
+
+        if let Some(zones) = self.get_player_zones_mut(player_id) {
+            // Remove all scried cards from library
+            for card_id in &top_cards {
+                zones.library.remove(*card_id);
+            }
+
+            // Put "bottom" cards at the beginning (bottom of library)
+            // Insert at position 0 to put at bottom
+            for card_id in put_on_bottom.iter().rev() {
+                zones.library.cards.insert(0, *card_id);
+            }
+
+            // Put "top" cards at the end (top of library)
+            for card_id in keep_on_top {
+                zones.library.cards.push(card_id);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Counter a spell on the stack
     ///
     /// This removes the spell from the stack and moves it to its owner's graveyard.
@@ -2281,6 +2398,7 @@ impl GameState {
                     | crate::core::Effect::PumpCreature { .. }
                     | crate::core::Effect::PumpAllCreatures { .. }
                     | crate::core::Effect::Mill { .. }
+                    | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::CounterSpell { .. }
                     | crate::core::Effect::AddMana { .. }
                     | crate::core::Effect::PutCounter { .. }

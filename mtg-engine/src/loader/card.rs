@@ -1643,6 +1643,19 @@ impl CardDefinition {
                             });
                         }
 
+                        // DB$ Scry effects (look at top N cards, put any on bottom)
+                        // Example: "DB$ Scry | ScryNum$ 1" (Glider Kids)
+                        if svar_params.api_type == ApiType::Scry {
+                            let scry_count = svar_params
+                                .get("ScryNum")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::Scry {
+                                player: PlayerId::new(0), // Placeholder - filled in at trigger execution
+                                count: scry_count,
+                            });
+                        }
+
                         // DB$ Attach effects (equipment ETB attachment)
                         // Example: "DB$ Attach | ValidTgts$ Creature.YouCtrl | SubAbility$ DBPump"
                         // Used by Twin Blades: attach to creature, then grants double strike
@@ -2103,6 +2116,19 @@ impl CardDefinition {
                             effects.push(Effect::GainLife {
                                 player: PlayerId::new(0),
                                 amount: life_amount,
+                            });
+                        }
+
+                        // DB$ Scry effects (look at top N cards, put any on bottom)
+                        // Example: "DB$ Scry | ScryNum$ 1" on sacrifice triggers
+                        if svar_params.api_type == ApiType::Scry {
+                            let scry_count = svar_params
+                                .get("ScryNum")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::Scry {
+                                player: PlayerId::new(0), // Placeholder - filled in at trigger execution
+                                count: scry_count,
                             });
                         }
 
@@ -3788,6 +3814,56 @@ Oracle:Earthbend 3, then earthbend 3. You gain 3 life.
             gainlife_count >= 1,
             "Should have GainLife 3 effect from SubAbility chain. Effects: {:?}",
             effects
+        );
+    }
+
+    #[test]
+    fn test_parse_glider_kids_scry_etb() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Test Glider Kids ETB scry trigger:
+        // "When this creature enters, scry 1."
+        let content = r#"
+Name:Glider Kids
+ManaCost:2 W
+Types:Creature Human Pilot Ally
+PT:2/3
+K:Flying
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ DBScry | TriggerDescription$ When this creature enters, scry 1. (Look at the top card of your library. You may put it on the bottom.)
+SVar:DBScry:DB$ Scry | ScryNum$ 1
+Oracle:Flying\nWhen this creature enters, scry 1. (Look at the top card of your library. You may put it on the bottom.)
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify we have at least one trigger (the ETB scry trigger)
+        assert!(
+            !triggers.is_empty(),
+            "Should have at least one trigger. Got: {:?}",
+            triggers
+        );
+
+        // Find the ETB trigger
+        let etb_trigger = triggers.iter().find(|t| t.event == TriggerEvent::EntersBattlefield);
+
+        assert!(
+            etb_trigger.is_some(),
+            "Should have an EntersBattlefield trigger. Triggers: {:?}",
+            triggers
+        );
+
+        let trigger = etb_trigger.unwrap();
+
+        // Verify it has a Scry effect
+        let has_scry = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::Scry { count: 1, .. }));
+        assert!(
+            has_scry,
+            "Trigger should have Scry effect with count=1. Effects: {:?}",
+            trigger.effects
         );
     }
 }
