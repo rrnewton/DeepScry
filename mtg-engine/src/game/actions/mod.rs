@@ -2851,6 +2851,52 @@ impl GameState {
                             }
                         }
                     }
+                    Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                        // Placeholder CardId 0 means we need to target an artifact or creature
+                        // Cat-Owl trigger: "untap target artifact or creature"
+                        // Heuristic: prefer tapped friendly permanents
+                        let controller = self.cards.get(trigger_source)?.controller;
+
+                        // Find the best target to untap:
+                        // 1. Tapped friendly creatures (highest priority)
+                        // 2. Tapped friendly artifacts
+                        // 3. Any tapped creature/artifact (even opponent's, if allowed)
+                        let target_id = self
+                            .battlefield
+                            .cards
+                            .iter()
+                            .filter_map(|cid| {
+                                let card = self.cards.get(*cid).ok()?;
+                                // Must be artifact or creature
+                                if !card.is_artifact() && !card.is_creature() {
+                                    return None;
+                                }
+                                // Must be tapped (untapping untapped permanent is pointless)
+                                if !card.tapped {
+                                    return None;
+                                }
+                                // Skip the source card itself (can't untap self while attacking)
+                                if *cid == trigger_source {
+                                    return None;
+                                }
+                                // Check for hexproof/shroud
+                                if card.controller != controller && (card.has_hexproof() || card.has_shroud()) {
+                                    return None;
+                                }
+                                // Score: prefer friendly permanents
+                                let score = if card.controller == controller { 100 } else { 0 };
+                                Some((*cid, score))
+                            })
+                            .max_by_key(|(_, score)| *score)
+                            .map(|(id, _)| id);
+
+                        if let Some(target_id) = target_id {
+                            effect = Effect::UntapPermanent { target: target_id };
+                        } else {
+                            // No valid target - skip this trigger
+                            continue;
+                        }
+                    }
                     _ => {}
                 }
 

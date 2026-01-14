@@ -1,0 +1,21 @@
+[metadata]
+Name=Cat-Owl Attack Trigger Test
+Goal=Win
+Turns=5
+Difficulty=Easy
+Description=Test that Cat-Owl's attack trigger untaps target artifact or creature
+
+[state]
+turn=5
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Cat-Owl;Plains;Plains;Plains;Plains;Plains|Tapped;Grizzly Bears|Tapped
+p0library=Plains;Plains
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Forest;Forest;Mountain
+p1library=Forest;Forest
+p1graveyard=

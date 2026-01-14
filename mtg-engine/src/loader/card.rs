@@ -1936,6 +1936,13 @@ impl CardDefinition {
                                 });
                             }
                         }
+
+                        // DB$ Untap effects (untap target artifact or creature)
+                        // Cat-Owl: "Whenever this creature attacks, untap target artifact or creature"
+                        if svar_params.api_type == ApiType::Untap {
+                            // CardId::new(0) is placeholder - resolved at trigger execution time
+                            effects.push(Effect::UntapPermanent { target: CardId::new(0) });
+                        }
                     }
                 }
 
