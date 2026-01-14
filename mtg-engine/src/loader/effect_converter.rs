@@ -1075,14 +1075,8 @@ mod tests {
                 assert_eq!(power_bonus, 1, "Power bonus should be +1");
                 assert_eq!(toughness_bonus, 1, "Toughness bonus should be +1");
                 assert_eq!(keywords_granted.len(), 2, "Should have 2 keywords");
-                assert!(
-                    keywords_granted.contains(&Keyword::Flying),
-                    "Should grant Flying"
-                );
-                assert!(
-                    keywords_granted.contains(&Keyword::Haste),
-                    "Should grant Haste"
-                );
+                assert!(keywords_granted.contains(&Keyword::Flying), "Should grant Flying");
+                assert!(keywords_granted.contains(&Keyword::Haste), "Should grant Haste");
             }
             _ => panic!("Expected PumpCreature effect"),
         }
