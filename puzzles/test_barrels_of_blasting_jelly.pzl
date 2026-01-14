@@ -1,0 +1,28 @@
+# Test: Barrels of Blasting Jelly activated ability - sacrifice to deal 5 damage
+# Card: {5}, {T}, Sacrifice this artifact: It deals 5 damage to target creature.
+
+[metadata]
+name=Barrels of Blasting Jelly Test
+difficulty=1
+turn=1
+phase=precombat_main
+
+[player1]
+life=20
+hand=
+battlefield=Barrels of Blasting Jelly, Plains, Plains, Plains, Plains, Plains, Forest
+
+[player2]
+life=20
+battlefield=Grizzly Bears
+
+[actions]
+# Activate Barrels: tap 5 lands for {5}, tap and sacrifice artifact, target Grizzly Bears
+activate Barrels of Blasting Jelly targeting Grizzly Bears
+
+[expected]
+# After activation:
+# - Barrels should be in graveyard (sacrificed as part of cost)
+# - Grizzly Bears should be in graveyard (5 damage kills 2/2)
+# - No creatures on P2's battlefield
+player2.battlefield.creature_count=0

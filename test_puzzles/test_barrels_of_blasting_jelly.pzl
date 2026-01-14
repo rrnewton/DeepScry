@@ -1,0 +1,21 @@
+[metadata]
+Name=Barrels of Blasting Jelly Activated Ability
+Goal=Win
+Turns=1
+Difficulty=Easy
+Description=Test that Barrels of Blasting Jelly can sacrifice itself to deal 5 damage to a creature
+
+[state]
+turn=5
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Barrels of Blasting Jelly;Plains;Plains;Plains;Plains;Plains
+p0library=Plains;Plains
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Grizzly Bears;Forest;Forest
+p1library=Forest;Forest
+p1graveyard=

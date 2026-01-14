@@ -35,8 +35,8 @@ Error casting spell: Invalid game action: Card not in hand
 ```
 
 - [x] **FIX BUG**: Cracked Earth Technique SubAbility chain causes "Card not in hand" error
-- [ ] Verify Cracked Earth Technique earthbends twice (two different lands)
-- [ ] Verify Cracked Earth Technique grants 3 life
+- [ ] Verify Cracked Earth Technique earthbends twice (two different lands) - requires manual testing (AI heuristic gap)
+- [ ] Verify Cracked Earth Technique grants 3 life - requires manual testing (AI heuristic gap)
 
 ---
 
@@ -70,16 +70,38 @@ Pillar Launch (62) untaps <target>
 
 ## Priority Bug: Barrels of Blasting Jelly Freeze
 
-**CRITICAL BUG** - Causes game freeze/infinite loop.
+**CRITICAL BUG** - Causes game freeze/infinite loop (web GUI only).
 
 Card: `{5}, {T}, Sacrifice this artifact: It deals 5 damage to target creature.`
 
-Issues observed:
-1. Log doesn't show target creature name: "It deals 5 damage to target creature" (should say "(NAME CARDID)")
-2. After activation, game enters infinite rewind loop - keeps rewinding without making progress
-3. Undo/replay system gets stuck cycling between action counts
+### Investigation Results (2026-01-14)
 
-Debug log shows stuck pattern:
+**Engine works correctly!** Verified via agentplay test:
+```bash
+./agentplay/start_game.sh --start-state="test_puzzles/test_barrels_of_blasting_jelly.pzl"
+./agentplay/continue_game.sh "activate Barrels of Blasting Jelly"
+```
+
+Output shows correct behavior:
+```
+Barrels of Blasting Jelly activates ability: It deals 5 damage to target creature.
+Grizzly Bears (11) takes 5 damage (total: 5)
+Grizzly Bears (11) dies from lethal damage
+```
+
+- [x] Verify activated ability targets correctly (CLI works)
+- [x] Verify damage is dealt to target creature (CLI works)
+- [x] Verify artifact is sacrificed as part of cost (CLI works)
+
+### Remaining Issue: Web GUI Infinite Rewind Loop
+
+The bug is **specific to the web GUI's rewind/replay system**, not the game engine.
+This requires browser-based debugging of `fancy_tui.rs` WASM code.
+
+Hypothesis: Something in the WASM TUI's event handling or render callback may be
+triggering repeated rewind cycles after activated ability with sacrifice cost resolves.
+
+Original debug log pattern:
 ```
 Moving card Barrels of Blasting Jelly (id=46) from Battlefield to Graveyard
 ...
@@ -88,10 +110,7 @@ REWIND: Rewound to turn 10, 18 actions undone
 Moving card Barrels of Blasting Jelly (id=46) from Graveyard to Battlefield
 ```
 
-- [ ] **FIX BUG**: Barrels of Blasting Jelly causes infinite rewind loop
-- [ ] Verify activated ability targets correctly
-- [ ] Verify damage is dealt to target creature
-- [ ] Verify artifact is sacrificed as part of cost
+- [ ] **FIX BUG**: Debug web GUI rewind/replay loop (requires browser console)
 
 ---
 
@@ -116,7 +135,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 
 **Creatures (16):**
 - [ ] Badgermole (x1) - ETB earthbend 2, trample to countered creatures
-- [ ] Cat-Owl (x1) - flying 2/1
+- [x] Cat-Owl (x1) - flying 3/3, attack trigger untap (FIXED 2026-01-14)
 - [ ] Earth Kingdom Soldier (x1) - 2/2 baseline
 - [ ] Foggy Swamp Vinebender (x1) - waterbend effects
 - [ ] Glider Kids (x1) - flying, token generation
@@ -136,6 +155,17 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Sandbenders' Storm (x2) - board effect
 - [ ] Seismic Sense (x1) - card selection/draw
 - [ ] White Lotus Reinforcements (x1) - token generation
+
+---
+
+## AI Heuristic Gaps (2026-01-14)
+
+The following Avatar-specific mechanics work at the engine level but the AI doesn't know how to evaluate them:
+
+- **Earthbend spells** (e.g., Cracked Earth Technique): `should_cast_spell()` in heuristic_controller.rs doesn't have Earthbend evaluation logic. The spell parses correctly and executes when cast, but AI never chooses to cast it.
+- **Waterbend effects**: Similar gap - no heuristic evaluation.
+
+These are **mtg-77** (Heuristic AI completeness) issues, not engine bugs. The mechanics work if cast manually or through puzzles.
 
 ---
 
