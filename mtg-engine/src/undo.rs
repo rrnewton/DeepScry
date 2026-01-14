@@ -3,7 +3,7 @@
 //! This module provides a transaction log of game actions that can be
 //! rewound to efficiently explore the game tree without expensive deep copies.
 
-use crate::core::{CardId, CounterType, PlayerId};
+use crate::core::{CardId, CounterType, Keyword, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -90,11 +90,13 @@ pub enum GameAction {
         rng_state: Option<SmallVec<[u8; 64]>>,
     },
 
-    /// Pump creature (temporary stat modification)
+    /// Pump creature (temporary stat modification and/or keyword grant)
     PumpCreature {
         card_id: CardId,
         power_delta: i32,
         toughness_delta: i32,
+        /// Keywords granted by this pump effect (for undo)
+        keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
     },
 
     /// Set turn_entered_battlefield field (for summoning sickness tracking)
@@ -263,7 +265,21 @@ impl fmt::Display for GameAction {
                 card_id,
                 power_delta,
                 toughness_delta,
-            } => write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta),
+                keywords_granted,
+            } => {
+                if keywords_granted.is_empty() {
+                    write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta)
+                } else {
+                    write!(
+                        f,
+                        "Pump({} {:+}/{:+} +{:?})",
+                        card_id.as_u32(),
+                        power_delta,
+                        toughness_delta,
+                        keywords_granted
+                    )
+                }
+            }
             GameAction::SetTurnEnteredBattlefield { card_id, new_value, .. } => {
                 write!(f, "SetETB({} turn={:?})", card_id.as_u32(), new_value)
             }
@@ -460,12 +476,17 @@ impl GameAction {
                 card_id,
                 power_delta,
                 toughness_delta,
+                keywords_granted,
             } => {
                 // Reverse the pump by applying negative deltas
                 if let Ok(card) = game.cards.get_mut(*card_id) {
-                    // Handle Option<i8> by mapping to subtract the delta
-                    card.set_base_power(card.base_power().map(|p| p.saturating_sub(*power_delta as i8)));
-                    card.set_base_toughness(card.base_toughness().map(|t| t.saturating_sub(*toughness_delta as i8)));
+                    // Reverse the power/toughness bonus
+                    card.power_bonus -= power_delta;
+                    card.toughness_bonus -= toughness_delta;
+                    // Remove granted keywords
+                    for keyword in keywords_granted {
+                        card.keywords.remove(*keyword);
+                    }
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
                 }

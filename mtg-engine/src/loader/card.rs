@@ -551,6 +551,7 @@ impl CardDefinition {
                     target: CardId::new(0), // Placeholder - resolved at runtime to self
                     power_bonus: 1,
                     toughness_bonus: 1,
+                    keywords_granted: smallvec::SmallVec::new(),
                 }],
                 "[noncreature] Prowess (+1/+1 until end of turn)".to_string(),
             );
@@ -1341,7 +1342,9 @@ impl CardDefinition {
     /// Follows SubAbility$ chains to resolve all effects in a spell.
     fn parse_effects(&self) -> Vec<crate::core::Effect> {
         use super::ability_parser::{AbilityParams, ApiType};
-        use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect};
+        use super::effect_converter::{
+            params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect,
+        };
 
         let mut effects = Vec::new();
 
@@ -1367,8 +1370,11 @@ impl CardDefinition {
 
             // Convert parameters to Effect (if supported)
             // For Charm abilities, use SVar-aware conversion to resolve mode effects
+            // For DelayedTrigger abilities, use SVar-aware conversion to resolve Execute$ effect
             let effect = if params.api_type == ApiType::Charm {
                 params_to_charm_effect_with_svars(&params, &self.svars)
+            } else if params.api_type == ApiType::DelayedTrigger {
+                params_to_delayed_trigger_with_svars(&params, &self.svars)
             } else {
                 params_to_effect(&params)
             };
@@ -1564,6 +1570,7 @@ impl CardDefinition {
                         target: CardId::new(0),
                         power_bonus,
                         toughness_bonus,
+                        keywords_granted: smallvec::SmallVec::new(),
                     });
                 }
 
@@ -1653,17 +1660,18 @@ impl CardDefinition {
                                     // DB$ Pump with KW$ (keyword grant)
                                     // Example: "DB$ Pump | Defined$ Targeted | KW$ Double Strike"
                                     if sub_params.api_type == ApiType::Pump {
-                                        if let Some(kw) = sub_params.get("KW") {
-                                            // Parse keyword and add to effects
-                                            // Mark with "[KW]" prefix for runtime processing
+                                        if let Some(kw_str) = sub_params.get("KW") {
+                                            // Parse keywords (can be "Double Strike" or "Flying & Haste")
+                                            let keywords_granted: smallvec::SmallVec<[Keyword; 2]> = kw_str
+                                                .split(" & ")
+                                                .filter_map(|kw| Keyword::from_string(kw.trim()))
+                                                .collect();
                                             effects.push(Effect::PumpCreature {
                                                 target: CardId::new(0),
                                                 power_bonus: 0,
                                                 toughness_bonus: 0,
+                                                keywords_granted,
                                             });
-                                            // Store keyword in description for now
-                                            // Will be processed during effect resolution
-                                            let _ = kw; // TODO: Parse keyword properly
                                         }
                                     }
                                 }
@@ -2013,6 +2021,7 @@ impl CardDefinition {
                                 target: CardId::new(0),
                                 power_bonus,
                                 toughness_bonus,
+                                keywords_granted: smallvec::SmallVec::new(),
                             });
                         }
                     }
@@ -3604,6 +3613,7 @@ Oracle:Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 
             target,
             power_bonus,
             toughness_bonus,
+            ..
         }) = pump_effect
         {
             assert_eq!(target.as_u32(), 0, "Target should be placeholder 0 (self)");

@@ -1149,6 +1149,7 @@ mod tests {
             target: CardId::new(0),
             power_bonus: 3,
             toughness_bonus: 3,
+            keywords_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
 
@@ -1538,6 +1539,7 @@ mod tests {
             target: CardId::new(0),
             power_bonus: 3,
             toughness_bonus: 3,
+            keywords_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
         game.stack.add(pump_spell_id);
