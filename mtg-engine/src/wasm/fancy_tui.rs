@@ -403,6 +403,17 @@ struct WasmFancyTuiState {
     /// In network mode, P1 uses WasmNetworkLocalController and P2 uses WasmRemoteController
     #[cfg(feature = "wasm-network")]
     is_network_mode: bool,
+    /// High-water mark for action count (for monotonicity invariant checking)
+    /// This tracks the maximum action count seen during FORWARD progress.
+    /// During rewind/replay, action count is allowed to decrease, but after
+    /// replay completes, it should exceed this value.
+    high_water_action_count: usize,
+    /// High-water mark for log count (for monotonicity invariant checking)
+    /// Similar to action count - log should only grow during forward progress.
+    high_water_log_count: usize,
+    /// Whether we're currently in a rewind/replay cycle
+    /// Used to suppress monotonicity checks during replay
+    in_rewind_replay: bool,
 }
 
 impl WasmFancyTuiState {
@@ -486,7 +497,52 @@ impl WasmFancyTuiState {
             needs_redraw: true, // Initial draw required
             #[cfg(feature = "wasm-network")]
             is_network_mode,
+            high_water_action_count: 0,
+            high_water_log_count: 0,
+            in_rewind_replay: false,
         }
+    }
+
+    /// Check and update monotonicity invariants
+    ///
+    /// This verifies that action count and log count are monotonically increasing
+    /// during forward progress. Violations indicate a bug in the rewind/replay logic.
+    ///
+    /// Returns an error message if an invariant is violated, None otherwise.
+    fn check_monotonicity_invariants(&mut self) -> Option<String> {
+        // Skip checks during rewind/replay - values are expected to decrease
+        if self.in_rewind_replay {
+            return None;
+        }
+
+        let current_action_count = self.game.undo_log.len();
+        let current_log_count = self.game.logger.log_count();
+
+        // Check action count monotonicity
+        if current_action_count < self.high_water_action_count {
+            let msg = format!(
+                "MONOTONICITY VIOLATION: Action count decreased from {} to {} outside of rewind!",
+                self.high_water_action_count, current_action_count
+            );
+            log::error!(target: "wasm_tui", "{}", msg);
+            return Some(msg);
+        }
+
+        // Check log count monotonicity
+        if current_log_count < self.high_water_log_count {
+            let msg = format!(
+                "MONOTONICITY VIOLATION: Log count decreased from {} to {} outside of rewind!",
+                self.high_water_log_count, current_log_count
+            );
+            log::error!(target: "wasm_tui", "{}", msg);
+            return Some(msg);
+        }
+
+        // Update high-water marks
+        self.high_water_action_count = current_action_count;
+        self.high_water_log_count = current_log_count;
+
+        None
     }
 
     /// Rewind game state to turn start and return P1's choices made so far
@@ -775,6 +831,9 @@ impl WasmFancyTuiState {
                 // User just made a choice - rewind and replay
                 self.needs_replay = false;
 
+                // Mark that we're in rewind/replay mode (suppresses monotonicity checks)
+                self.in_rewind_replay = true;
+
                 let turn_before = self.game.turn.turn_number;
                 log::debug!(target: "wasm_tui", "REPLAY: Starting replay on turn {}", turn_before);
 
@@ -841,6 +900,18 @@ impl WasmFancyTuiState {
                 // 3. The self.p1_human_controller is used for getting the pending_choice,
                 //    but we've already extracted it above
 
+                // Replay complete - clear the rewind flag
+                self.in_rewind_replay = false;
+
+                // Check monotonicity invariants after replay
+                // After replay, we should have made forward progress
+                if let Some(violation_msg) = self.check_monotonicity_invariants() {
+                    self.error_message = Some(violation_msg);
+                    self.game_over = true;
+                    self.needs_redraw = true;
+                    return;
+                }
+
                 // Handle the game result - this may set pending_context for the next choice
                 self.handle_game_result(result);
                 self.needs_redraw = true; // State changed, need redraw
@@ -865,6 +936,15 @@ impl WasmFancyTuiState {
                             Err(_) => "Error",
                         }
                     );
+
+                    // Check monotonicity invariants after normal run
+                    if let Some(violation_msg) = self.check_monotonicity_invariants() {
+                        self.error_message = Some(violation_msg);
+                        self.game_over = true;
+                        self.needs_redraw = true;
+                        return;
+                    }
+
                     self.handle_game_result(result);
                     self.needs_redraw = true; // State changed, need redraw
                 } else {
@@ -1019,6 +1099,9 @@ impl WasmFancyTuiState {
             // User just made a choice - rewind and replay
             self.needs_replay = false;
 
+            // Mark that we're in rewind/replay mode (suppresses monotonicity checks)
+            self.in_rewind_replay = true;
+
             let turn_before = self.game.turn.turn_number;
             log::debug!(target: "wasm_tui", "NETWORK REPLAY: Starting replay on turn {}", turn_before);
 
@@ -1067,6 +1150,17 @@ impl WasmFancyTuiState {
                 self.game.turn.turn_number
             );
 
+            // Replay complete - clear the rewind flag
+            self.in_rewind_replay = false;
+
+            // Check monotonicity invariants after network replay
+            if let Some(violation_msg) = self.check_monotonicity_invariants() {
+                self.error_message = Some(violation_msg);
+                self.game_over = true;
+                self.needs_redraw = true;
+                return;
+            }
+
             self.handle_game_result(result);
             self.needs_redraw = true;
         } else {
@@ -1091,6 +1185,14 @@ impl WasmFancyTuiState {
                     "NETWORK NORMAL: Game loop returned on turn {}",
                     self.game.turn.turn_number
                 );
+
+                // Check monotonicity invariants after normal network run
+                if let Some(violation_msg) = self.check_monotonicity_invariants() {
+                    self.error_message = Some(violation_msg);
+                    self.game_over = true;
+                    self.needs_redraw = true;
+                    return;
+                }
 
                 self.handle_game_result(result);
                 self.needs_redraw = true;

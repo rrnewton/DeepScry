@@ -118,7 +118,6 @@ async fn test_puzzle_loading_with_zero_controller() -> Result<()> {
 ///
 /// This test uses log capture to verify that Royal Assassin can tap to destroy
 /// an attacking creature. It checks both the logged actions and the final game state.
-#[ignore] // TODO: Fix ability activation logging capture
 #[tokio::test]
 async fn test_royal_assassin_with_log_capture() -> Result<()> {
     let cardsfolder = require_cardsfolder();
@@ -236,7 +235,7 @@ async fn test_royal_assassin_with_log_capture() -> Result<()> {
     // Verify Royal Assassin activated its ability
     let has_royal_assassin_activation = logs
         .iter()
-        .any(|e| e.message.contains("ActivateAbility") && e.message.contains("card_id: 3"));
+        .any(|e| e.message.contains("Royal Assassin") && e.message.contains("activates ability"));
     assert!(
         has_royal_assassin_activation,
         "Royal Assassin should activate its ability"
