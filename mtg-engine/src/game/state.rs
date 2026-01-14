@@ -2006,7 +2006,11 @@ impl GameState {
     }
 
     /// Fire a delayed trigger, executing its effect.
-    fn fire_delayed_trigger(&mut self, trigger: crate::core::DelayedTrigger) -> Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found or zone movement fails.
+    pub fn fire_delayed_trigger(&mut self, trigger: crate::core::DelayedTrigger) -> Result<()> {
         use crate::core::DelayedEffect;
 
         let card_id = trigger.tracked_card;
@@ -2075,6 +2079,46 @@ impl GameState {
                 // TODO: Implement for Suspend mechanic
                 // This requires putting the spell on the stack without paying costs
                 log::warn!(target: "delayed_triggers", "CastWithoutPaying not yet implemented");
+            }
+
+            DelayedEffect::CopySpellAbility { may_choose_targets } => {
+                // Copy the spell that triggered this delayed trigger
+                // This is used by Jeong Jeong: "copy it and you may choose new targets"
+                //
+                // Note: For SpellCast triggers, the triggering spell is passed via
+                // tracked_card (which is repurposed to hold the spell being copied).
+                // The actual copy logic requires stack manipulation and target selection.
+                log::debug!(
+                    target: "delayed_triggers",
+                    "CopySpellAbility: copying spell {} (may_choose_targets={})",
+                    card_id.as_u32(), may_choose_targets
+                );
+
+                // Get the spell to copy from the stack
+                if self.stack.contains(card_id) {
+                    // Create a copy of the spell
+                    // For now, we'll log this and handle full implementation later
+                    // Full implementation requires:
+                    // 1. Clone the spell's effects
+                    // 2. Create a copy object on the stack
+                    // 3. If may_choose_targets, let player choose new targets
+                    let spell_name = self
+                        .cards
+                        .get(card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|_| "Unknown".to_string());
+                    self.logger.normal(&format!("Delayed trigger: copying {}", spell_name));
+
+                    // TODO(mtg-0iad2): Implement full spell copy logic
+                    // For now, just log that we would copy the spell
+                    log::warn!(target: "delayed_triggers", "CopySpellAbility: full implementation pending for spell copy");
+                } else {
+                    log::debug!(
+                        target: "delayed_triggers",
+                        "CopySpellAbility: spell {} no longer on stack, trigger fizzles",
+                        card_id.as_u32()
+                    );
+                }
             }
 
             DelayedEffect::ExecuteEffect { effect } => {
@@ -2190,8 +2234,11 @@ impl GameState {
                     | crate::core::Effect::GrantCantBeBlocked { .. }
                     | crate::core::Effect::ModalChoice { .. }
                     | crate::core::Effect::Dig { .. }
-                    | crate::core::Effect::CreateDelayedTrigger { .. } => {
+                    | crate::core::Effect::CreateDelayedTrigger { .. }
+                    | crate::core::Effect::CopySpellAbility { .. } => {
                         // Other effect types not yet implemented for delayed triggers
+                        // Note: CopySpellAbility inside ExecuteEffect is unusual;
+                        // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility
                         log::warn!(
                             target: "delayed_triggers",
                             "Delayed ExecuteEffect for {:?} not yet implemented",

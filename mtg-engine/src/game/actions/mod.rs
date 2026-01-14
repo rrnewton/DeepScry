@@ -1824,15 +1824,31 @@ impl GameState {
                 // Create the delayed trigger
                 use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerId};
 
+                // Check if the inner effect is CopySpellAbility - needs special handling
+                // Wildcard is appropriate: all non-CopySpellAbility effects wrap in ExecuteEffect
+                #[allow(clippy::wildcard_enum_match_arm)]
+                let delayed_effect_type = match **delayed_effect {
+                    Effect::CopySpellAbility { may_choose_targets } => {
+                        // For CopySpellAbility, use the specialized DelayedEffect variant
+                        // tracked_card will be repurposed to hold the spell being copied
+                        // (set at trigger fire time, not creation time)
+                        DelayedEffect::CopySpellAbility { may_choose_targets }
+                    }
+                    _ => {
+                        // For all other effects, wrap in ExecuteEffect
+                        DelayedEffect::ExecuteEffect {
+                            effect: delayed_effect.clone(),
+                        }
+                    }
+                };
+
                 let trigger = DelayedTrigger::new(
                     DelayedTriggerId::new(0), // ID will be assigned by store
-                    *tracked_card,            // tracked_card - the creature that needs to die
-                    *tracked_card,            // source_card - same as tracked for spell-created triggers
+                    *tracked_card, // tracked_card - for zone triggers: the creature to watch; for spell triggers: will be set at fire time
+                    *tracked_card, // source_card - same as tracked for spell-created triggers
                     controller,
                     condition.clone(),
-                    DelayedEffect::ExecuteEffect {
-                        effect: delayed_effect.clone(),
-                    },
+                    delayed_effect_type,
                 );
 
                 // Apply expiry if specified
@@ -2079,6 +2095,19 @@ impl GameState {
                         );
                     }
                 }
+            }
+
+            Effect::CopySpellAbility { may_choose_targets } => {
+                // CopySpellAbility is typically used inside a delayed trigger
+                // When encountered directly in execute_effect, it means the delayed trigger
+                // context is not set up correctly. For now, log a warning.
+                //
+                // In the future, this could be supported for instant spell copy effects.
+                log::warn!(
+                    target: "actions",
+                    "CopySpellAbility reached execute_effect outside delayed trigger context. may_choose_targets={}",
+                    may_choose_targets
+                );
             }
         }
         Ok(())
@@ -3143,6 +3172,67 @@ impl GameState {
                 };
 
                 self.execute_effect(&resolved_effect)?;
+            }
+        }
+
+        // Check delayed triggers with SpellCast condition
+        // These fire when matching spells are cast (e.g., Jeong Jeong's "When you next cast a Lesson spell")
+        self.check_delayed_spellcast_triggers(cast_spell_id, caster_id)?;
+
+        Ok(())
+    }
+
+    /// Check and execute delayed SpellCast triggers when a spell is cast
+    ///
+    /// This handles delayed triggers created by effects like Jeong Jeong:
+    /// "When you next cast a Lesson spell this turn, copy it"
+    ///
+    /// Unlike permanent triggers (which fire repeatedly), delayed triggers fire once
+    /// and are removed after firing.
+    fn check_delayed_spellcast_triggers(&mut self, cast_spell_id: CardId, caster_id: PlayerId) -> Result<()> {
+        // Get the spell's types for matching
+        let spell_types: smallvec::SmallVec<[String; 4]> = {
+            if let Ok(card) = self.cards.get(cast_spell_id) {
+                // Collect subtypes (like "Lesson", "Human", etc.) and card types (like "Sorcery", "Creature")
+                card.subtypes
+                    .iter()
+                    .map(|st| st.to_string())
+                    .chain(card.types.iter().map(|ct| format!("{:?}", ct)))
+                    .collect()
+            } else {
+                return Ok(()); // Card doesn't exist
+            }
+        };
+
+        // Convert to &str slices for matching
+        let spell_type_refs: smallvec::SmallVec<[&str; 4]> = spell_types.iter().map(String::as_str).collect();
+
+        // Find delayed triggers that match this spell cast
+        // Use get_matching_ids helper since DelayedTriggerStore doesn't expose iter()
+        let matching_trigger_ids: Vec<crate::core::DelayedTriggerId> = self
+            .delayed_triggers
+            .get_matching_spellcast_trigger_ids(caster_id, &spell_type_refs);
+
+        // Fire and remove matching triggers
+        for trigger_id in matching_trigger_ids {
+            // Remove the trigger (it fires once)
+            if let Some(mut trigger) = self.delayed_triggers.remove(trigger_id) {
+                // Update tracked_card to the spell being copied (for CopySpellAbility)
+                trigger.tracked_card = cast_spell_id;
+
+                // Log the trigger fire
+                let spell_name = self
+                    .cards
+                    .get(cast_spell_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                self.logger.gamelog(&format!(
+                    "Delayed trigger fires: spell {} triggers copy effect",
+                    spell_name
+                ));
+
+                // Execute the trigger
+                self.fire_delayed_trigger(trigger)?;
             }
         }
 
