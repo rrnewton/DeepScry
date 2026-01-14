@@ -273,6 +273,13 @@ pub enum Effect {
     /// Example: "Target player mills 3 cards"
     Mill { player: PlayerId, count: u8 },
 
+    /// Scry - look at top N cards and put any number on bottom
+    /// Example: "Scry 1" or "Scry 2"
+    /// Corresponds to: DB$ Scry | ScryNum$ N
+    ///
+    /// AI heuristic: Keep spells, put excess lands on bottom
+    Scry { player: PlayerId, count: u8 },
+
     /// Counter a spell on the stack
     /// Example: "Counter target spell"
     CounterSpell { target: CardId },

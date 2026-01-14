@@ -983,6 +983,10 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::Scry { player, count } if player.as_u32() == 0 => Effect::Scry {
+                player: card_owner,
+                count: *count,
+            },
             Effect::Loot {
                 player,
                 discard_count,
@@ -1308,6 +1312,10 @@ impl GameState {
             Effect::Mill { player, count } => {
                 // Mill cards from library to graveyard
                 self.mill_cards(*player, *count)?;
+            }
+            Effect::Scry { player, count } => {
+                // Scry - look at top N cards, put any number on bottom
+                self.scry_cards(*player, *count)?;
             }
             Effect::CounterSpell { target } => {
                 // Counter a spell on the stack

@@ -138,7 +138,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [x] Cat-Owl (x1) - flying 3/3, attack trigger untap (FIXED 2026-01-14)
 - [ ] Earth Kingdom Soldier (x1) - ETB put counters needs multi-target support
 - [ ] Foggy Swamp Vinebender (x1) - waterbend effects (GAP: waterbend not implemented)
-- [ ] Glider Kids (x1) - flying (works), ETB scry (GAP: Scry not implemented)
+- [x] Glider Kids (x1) - flying (works), ETB scry 1 (VERIFIED 2026-01-14: Scry implemented)
 - [ ] Master Piandao (x1) - equipment synergy
 - [ ] Ostrich-Horse (x2) - basic creature works, ETB mill+choose land (GAP: Mill not in ETB triggers)
 - [ ] Rabaroo Troop (x1) - token/creature synergy
@@ -162,7 +162,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 
 The following mechanics are NOT YET IMPLEMENTED in the engine:
 
-- **Scry**: `ApiType::Scry` / `DB$ Scry` not implemented (affects Glider Kids)
+- ~~**Scry**: `ApiType::Scry` / `DB$ Scry` not implemented (affects Glider Kids)~~ **IMPLEMENTED**
 - **Waterbend**: Avatar-specific mechanic not implemented (affects Foggy Swamp Vinebender)
 - **Dig**: `SP$ Dig` library manipulation not implemented (affects Seismic Sense)
 - **Charm**: `SP$ Charm` modal spells not implemented (affects Sandbenders' Storm)
