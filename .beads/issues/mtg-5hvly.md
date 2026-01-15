@@ -128,9 +128,9 @@ Currently no way to see card details for unknown opponent cards on the stack.
 ### Cards: gabriel_avatar_draft.dck
 
 **Lands (16):**
-- [ ] Ba Sing Se (x2) - activated earthbend 2 ability
-- [ ] Forest (x7) - basic land
-- [ ] Plains (x6) - basic land
+- [x] Ba Sing Se (x2) - activated earthbend 2 ability (VERIFIED 2026-01-15: SorcerySpeed$ parsing, Earthbend targeting, mana exclusion fixes)
+- [x] Forest (x7) - basic land
+- [x] Plains (x6) - basic land
 - [ ] Thriving Grove (x1) - enters tapped, choose color
 
 **Creatures (16):**
@@ -140,7 +140,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Foggy Swamp Vinebender (x1) - waterbend effects (GAP: waterbend not implemented)
 - [x] Glider Kids (x1) - flying (works), ETB scry 1 (VERIFIED 2026-01-14: Scry implemented)
 - [ ] Master Piandao (x1) - equipment synergy
-- [ ] Ostrich-Horse (x2) - basic creature works, ETB mill+choose land (GAP: Mill not in ETB triggers)
+- [x] Ostrich-Horse (x2) - ETB mill+choose land (VERIFIED 2026-01-15: Mill 3 works, +1/+1 counter added if no land chosen)
 - [ ] Rabaroo Troop (x1) - token/creature synergy
 - [ ] Raucous Audience (x3) - mana ability with conditional (GAP: Count$Compare not fully implemented)
 - [ ] Suki, Kyoshi Warrior (x1) - */4 CharacteristicDefining, attack trigger token (GAP: CharacteristicDefining)
@@ -154,7 +154,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Rocky Rebuke (x1) - GAP: DamageSource$ ParentTarget not implemented
 - [ ] Sandbenders' Storm (x2) - GAP: SP$ Charm modal spells not implemented
 - [ ] Seismic Sense (x1) - GAP: SP$ Dig library manipulation not implemented
-- [ ] White Lotus Reinforcements (x1) - 2/3 Vigilance creature with Ally anthem (should work)
+- [x] White Lotus Reinforcements (x1) - 2/3 Vigilance creature with Ally anthem (VERIFIED 2026-01-15: anthem gives +1/+1 to other allies)
 
 ---
 
@@ -170,7 +170,7 @@ The following mechanics are NOT YET IMPLEMENTED in the engine:
 - **DamageSource$ ParentTarget**: Fight-style damage from targeted creature (affects Rocky Rebuke)
 - **CharacteristicDefining**: `*/*` power/toughness from formula (affects Suki, Kyoshi Warrior)
 - **Count$Valid X**: Variable amounts from creature counts (affects The Boulder)
-- **Mill in ETB triggers**: `DB$ Mill` not parsed for ChangesZone triggers (affects Ostrich-Horse)
+- ~~**Mill in ETB triggers**: `DB$ Mill` not parsed for ChangesZone triggers (affects Ostrich-Horse)~~ **WORKS** - verified 2026-01-15
 - **Multi-target PutCounter**: ETB put counters on up to N targets (affects Earth Kingdom Soldier)
 
 ## AI Heuristic Gaps (2026-01-14)
