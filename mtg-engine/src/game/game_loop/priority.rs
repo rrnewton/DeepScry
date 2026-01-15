@@ -740,12 +740,26 @@ impl<'a> GameLoop<'a> {
                                     // This is the same logic as spell casting (step 6 of cast_spell_8_step)
                                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
                                         // Reuse self.mana_engine to avoid allocation on each activated ability
-                                        use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+                                        use crate::game::mana_payment::{
+                                            GreedyManaResolver, ManaPaymentResolver, ManaSource,
+                                        };
 
                                         self.mana_engine.update_mut(self.game, current_priority);
 
                                         // Get ManaSource list from engine (already built with proper production info)
-                                        let mana_sources = self.mana_engine.all_sources();
+                                        let all_sources = self.mana_engine.all_sources();
+
+                                        // If the ability cost includes tapping this card, we can't use it for mana
+                                        // because it will already be tapped as part of paying the activation cost.
+                                        // Filter out the source card in this case.
+                                        let filtered_sources: smallvec::SmallVec<[ManaSource; 8]>;
+                                        let mana_sources: &[ManaSource] = if ability.cost.includes_tap() {
+                                            filtered_sources =
+                                                all_sources.iter().filter(|s| s.card_id != card_id).cloned().collect();
+                                            &filtered_sources
+                                        } else {
+                                            all_sources
+                                        };
 
                                         // Use GreedyManaResolver to compute proper tap order
                                         // Reuse sources_to_tap_buffer to avoid allocation
@@ -1101,6 +1115,15 @@ impl<'a> GameLoop<'a> {
 
                                                 // Skip execute_effect for SearchLibrary - we handled it above
                                                 continue;
+                                            }
+                                            // Earthbend: Target land becomes 0/0 creature with haste and N +1/+1 counters
+                                            crate::core::Effect::Earthbend { target, num_counters }
+                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::Earthbend {
+                                                    target: chosen_targets_vec[0],
+                                                    num_counters: *num_counters,
+                                                }
                                             }
                                             _ => effect.clone(),
                                         };

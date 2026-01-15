@@ -2109,3 +2109,59 @@ fn test_flash_keyword_parsing() -> Result<()> {
 
     Ok(())
 }
+
+/// Test Ba Sing Se activated earthbend ability parsing (mtg-5hvly)
+#[test]
+fn test_ba_sing_se_earthbend_ability() -> Result<()> {
+    use mtg_forge_rs::core::Effect;
+
+    let path = PathBuf::from("cardsfolder/b/ba_sing_se.txt");
+    if !path.exists() {
+        eprintln!("Skipping test - cardsfolder not present");
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Ba Sing Se");
+    assert!(def.types.contains(&CardType::Land));
+
+    // Instantiate the card to get activated abilities
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // Should have at least 2 activated abilities: mana and earthbend
+    assert!(
+        card.activated_abilities.len() >= 2,
+        "Ba Sing Se should have at least 2 activated abilities. Got: {:?}",
+        card.activated_abilities
+    );
+
+    // Find the earthbend ability
+    let earthbend_ability = card
+        .activated_abilities
+        .iter()
+        .find(|a| a.effects.iter().any(|e| matches!(e, Effect::Earthbend { .. })));
+
+    assert!(
+        earthbend_ability.is_some(),
+        "Ba Sing Se should have an Earthbend activated ability. Abilities: {:?}",
+        card.activated_abilities
+    );
+
+    let ability = earthbend_ability.unwrap();
+
+    // Check the earthbend effect has 2 counters
+    let Effect::Earthbend { num_counters, .. } = &ability.effects[0] else {
+        panic!("Expected Earthbend effect, got {:?}", ability.effects[0]);
+    };
+    assert_eq!(*num_counters, 2, "Earthbend should put 2 counters");
+
+    // Check sorcery_speed is set
+    assert!(ability.sorcery_speed, "Earthbend ability should be sorcery-speed");
+
+    // Check tap cost
+    assert!(ability.cost.includes_tap(), "Earthbend ability should include tap cost");
+
+    Ok(())
+}

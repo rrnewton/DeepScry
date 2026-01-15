@@ -700,6 +700,22 @@ impl GameState {
                         }
                     }
                 }
+                Effect::Earthbend { target, .. } if target.as_u32() == 0 => {
+                    // Earthbend targets lands you control
+                    // CR 701.65: Earthbend makes a land into a creature with counters
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            // Must be a land we control
+                            let is_valid = card.is_land() && card.controller == ability_controller;
+
+                            // Note: Lands typically can't have shroud/hexproof,
+                            // but check anyway for completeness
+                            if is_valid && Self::is_legal_target(card, ability_controller) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
                 // Effects that don't need targets or have targets pre-specified
                 Effect::DrawCards { .. }
@@ -714,7 +730,6 @@ impl GameState {
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
-                | Effect::Earthbend { .. }
                 | Effect::ModalChoice { .. }
                 | Effect::CreateDelayedTrigger { .. }
                 | Effect::CopySpellAbility { .. } => {
@@ -738,9 +753,11 @@ impl GameState {
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::AttachEquipment { .. }
-                | Effect::PumpAllCreatures { .. } => {
+                | Effect::PumpAllCreatures { .. }
+                | Effect::Earthbend { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
+                    // Earthbend target was handled above when target.as_u32() == 0
                 }
             }
         }

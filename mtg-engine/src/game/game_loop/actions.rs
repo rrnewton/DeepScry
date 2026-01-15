@@ -412,8 +412,27 @@ impl<'a> GameLoop<'a> {
                     }
 
                     // Check mana cost - use can_pay_with_pool to consider floating mana
+                    // When the ability includes a tap cost and the source card is a mana source,
+                    // we can't use that card's mana ability to pay the cost (it's already being tapped).
                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
-                        if !self.mana_engine.can_pay_with_pool(mana_cost, &mana_pool) {
+                        let can_pay = if ability.cost.includes_tap() && card.cache.is_mana_source {
+                            // Filter out this card from mana sources and check affordability
+                            use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+                            let all_sources = self.mana_engine.all_sources();
+                            let filtered: smallvec::SmallVec<[_; 8]> =
+                                all_sources.iter().filter(|s| s.card_id != card_id).cloned().collect();
+                            let resolver = GreedyManaResolver::new();
+                            // First check if pool alone can pay
+                            if mana_pool.can_pay(mana_cost) {
+                                true
+                            } else {
+                                // Check if pool + filtered sources can pay
+                                resolver.can_pay(mana_cost, &filtered)
+                            }
+                        } else {
+                            self.mana_engine.can_pay_with_pool(mana_cost, &mana_pool)
+                        };
+                        if !can_pay {
                             can_activate = false;
                         }
                     }

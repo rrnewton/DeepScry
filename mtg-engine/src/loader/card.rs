@@ -2064,9 +2064,20 @@ impl CardDefinition {
                 .unwrap_or("Activated ability")
                 .to_string();
 
+            // Check for SorcerySpeed$ True parameter
+            let is_sorcery_speed = params
+                .get("SorcerySpeed")
+                .map(|s| s.eq_ignore_ascii_case("True"))
+                .unwrap_or(false);
+
             // Only add if we have effects
             if !effects.is_empty() {
-                abilities.push(ActivatedAbility::new(cost, effects, description, is_mana_ability));
+                let ability = if is_sorcery_speed {
+                    ActivatedAbility::new_sorcery_speed(cost, effects, description)
+                } else {
+                    ActivatedAbility::new(cost, effects, description, is_mana_ability)
+                };
+                abilities.push(ability);
             }
         }
 
@@ -3684,6 +3695,60 @@ Oracle:Flying\nWhen this creature enters, scry 1. (Look at the top card of your 
             has_scry,
             "Trigger should have Scry effect with count=1. Effects: {:?}",
             trigger.effects
+        );
+    }
+
+    #[test]
+    fn test_parse_ba_sing_se_earthbend_ability() {
+        use crate::core::Effect;
+
+        // Test Ba Sing Se activated earthbend ability:
+        // "{2}{G}, {T}: Earthbend 2. Activate only as a sorcery."
+        let content = r#"
+Name:Ba Sing Se
+ManaCost:no cost
+Types:Land
+A:AB$ Mana | Cost$ T | Produced$ G | SpellDescription$ Add {G}.
+A:AB$ Earthbend | Cost$ 2 G T | SorcerySpeed$ True | Num$ 2 | SpellDescription$ Earthbend 2. Activate only as a sorcery.
+Oracle:This land enters tapped unless you control a basic land.\n{T}: Add {G}.\n{2}{G}, {T}: Earthbend 2. Activate only as a sorcery.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // Should have 2 activated abilities: mana and earthbend
+        assert!(
+            abilities.len() >= 2,
+            "Ba Sing Se should have at least 2 activated abilities (mana + earthbend). Got: {:?}",
+            abilities
+        );
+
+        // Find the earthbend ability (not the mana ability)
+        let earthbend_ability = abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::Earthbend { .. })));
+
+        assert!(
+            earthbend_ability.is_some(),
+            "Should have an Earthbend activated ability. Abilities: {:?}",
+            abilities
+        );
+
+        let ability = earthbend_ability.unwrap();
+
+        // Check it has the correct effect
+        let Effect::Earthbend { num_counters, .. } = &ability.effects[0] else {
+            panic!("Expected Earthbend effect, got {:?}", ability.effects[0]);
+        };
+        assert_eq!(*num_counters, 2, "Earthbend should put 2 counters");
+
+        // Check the cost includes tap and mana
+        assert!(ability.cost.includes_tap(), "Earthbend ability should have tap cost");
+
+        // Check sorcery_speed flag is set
+        assert!(
+            ability.sorcery_speed,
+            "Earthbend ability should be sorcery-speed (activate only as a sorcery)"
         );
     }
 }
