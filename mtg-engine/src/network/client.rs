@@ -980,7 +980,6 @@ impl NetworkClient {
         use crate::game::game_loop::{PreChoiceResult, RawChoice};
         use crate::game::GameLoop;
         use crate::network::{NetworkLocalController, RemoteController};
-        use std::cell::RefCell;
 
         // Take ownership of WebSocket and state
         let ws = self.ws.take().ok_or_else(|| anyhow!("Not connected"))?;
@@ -1001,13 +1000,10 @@ impl NetworkClient {
         let network_debug = self.network_debug;
         let card_db = self.card_db.clone().expect("Card DB not loaded");
 
-        // Create controllers - simplified versions that don't block on channels
-        // NetworkLocalController: output-only (sends choices to server)
         // RemoteController: marker type (hook provides choices via UseChoice)
-        let mut local_controller =
-            NetworkLocalController::new(controller, send_tx.clone()).with_network_debug(network_debug);
-
         let mut remote_controller = RemoteController::new(opponent_id);
+
+        // Note: NetworkLocalController is created inside spawn_blocking to share choice_seq with hook
 
         // Configure game state
         let mut game = client_state.game;
@@ -1028,8 +1024,15 @@ impl NetworkClient {
         // Run game loop in spawn_blocking (works with both single and multi-threaded runtimes)
         // Note: This requires controllers to be Send + 'static
         let game_result = tokio::task::spawn_blocking(move || {
-            // Track choice sequence number (shared with local controller via RefCell)
-            let choice_seq = RefCell::new(0u32);
+            // Shared choice sequence number: hook updates it, controller reads it
+            let choice_seq = std::rc::Rc::new(std::cell::Cell::new(0u32));
+
+            // Create local controller inside spawn_blocking to share choice_seq with hook
+            let mut local_controller = NetworkLocalController::new(controller, send_tx.clone(), choice_seq.clone())
+                .with_network_debug(network_debug);
+
+            // Clone for hook capture
+            let hook_choice_seq = choice_seq.clone();
 
             // PRE-CHOICE HOOK: This is the core of the network architecture
             //
@@ -1063,9 +1066,8 @@ impl NetworkClient {
                             choice_seq: seq,
                         } => {
                             if is_our_choice {
-                                // Update choice_seq for NetworkLocalController
-                                *choice_seq.borrow_mut() = seq;
-                                local_controller.set_choice_seq(seq);
+                                // Update shared choice_seq (controller reads it when sending)
+                                hook_choice_seq.set(seq);
                                 return PreChoiceResult::AskController;
                             }
                             // Server is asking US for a choice but this is opponent's turn?
