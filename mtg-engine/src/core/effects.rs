@@ -403,10 +403,19 @@ pub enum Effect {
     /// Set base power and toughness until end of turn
     /// Example: Flexible Waterbender - "This creature has base power and toughness 5/2 until end of turn"
     /// Corresponds to: AB$ Animate | Defined$ Self | Power$ 5 | Toughness$ 2
+    /// Also: AB$ Animate | Defined$ Self | Power$ 4 | Keywords$ Trample
     ///
     /// This effect sets the creature's base P/T (not a modifier), which then has +1/+1 counters added on top.
     /// The effect lasts until end of turn.
-    SetBasePowerToughness { target: CardId, power: i32, toughness: i32 },
+    /// Power and Toughness are optional - None means "don't change".
+    /// Keywords can be granted along with P/T changes.
+    SetBasePowerToughness {
+        target: CardId,
+        power: Option<i32>,
+        toughness: Option<i32>,
+        /// Keywords to grant (e.g., Trample from Keywords$ parameter)
+        keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+    },
 
     /// Airbend: Exile a permanent and grant its owner permission to cast it for {2}.
     ///

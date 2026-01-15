@@ -348,16 +348,43 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Animate => {
             // Animate effect: AB$ Animate | Defined$ Self | Power$ 5 | Toughness$ 2
             // Example: Flexible Waterbender - "This creature has base power and toughness 5/2 until end of turn"
+            // Also: AB$ Animate | Power$ 4 | Keywords$ Trample
+            // Example: Turtle-Duck - "This creature has base power 4 and gains trample until end of turn"
             // Sets base P/T (counters and other bonuses are added on top)
 
-            // Parse power and toughness
-            let power = params.get_i32("Power").ok()?;
-            let toughness = params.get_i32("Toughness").ok()?;
+            // Parse power (optional)
+            let power = params.get_i32("Power").ok();
+
+            // Parse toughness (optional)
+            let toughness = params.get_i32("Toughness").ok();
+
+            // Parse keywords (optional) - e.g., "Keywords$ Trample" or "Keywords$ Flying & First Strike"
+            let keywords_granted = if let Some(kw_str) = params.get("Keywords") {
+                // Parse keyword string (may be single or "&" separated)
+                use crate::core::Keyword;
+                let mut keywords = smallvec::SmallVec::new();
+                for kw_part in kw_str.split('&').map(|s| s.trim()) {
+                    if !kw_part.is_empty() {
+                        if let Some(kw) = Keyword::from_string(kw_part) {
+                            keywords.push(kw);
+                        }
+                    }
+                }
+                keywords
+            } else {
+                smallvec::smallvec![]
+            };
+
+            // At least one of power, toughness, or keywords must be set
+            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() {
+                return None;
+            }
 
             Some(Effect::SetBasePowerToughness {
                 target: CardId::new(0), // Placeholder - filled in at activation time
                 power,
                 toughness,
+                keywords_granted,
             })
         }
 

@@ -145,7 +145,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Raucous Audience (x3) - mana ability with conditional (GAP: Count$Compare not fully implemented)
 - [ ] Suki, Kyoshi Warrior (x1) - */4 CharacteristicDefining, attack trigger token (GAP: CharacteristicDefining)
 - [ ] The Boulder, Ready to Rumble (x2) - attack earthbend X (GAP: variable X from Count$Valid)
-- [ ] Turtle-Duck (x1) - AB$ Animate (GAP: Animate not implemented)
+- [x] Turtle-Duck (x1) - AB$ Animate (VERIFIED 2026-01-15: Animate with Keywords$ implemented, base power 4 + Trample works)
 
 **Spells/Other (8):**
 - [x] Barrels of Blasting Jelly (x1) - Engine works (verified via agentplay), web GUI rewind bug
@@ -166,7 +166,7 @@ The following mechanics are NOT YET IMPLEMENTED in the engine:
 - **Waterbend**: Avatar-specific mechanic not implemented (affects Foggy Swamp Vinebender)
 - **Dig**: `SP$ Dig` library manipulation not implemented (affects Seismic Sense)
 - **Charm**: `SP$ Charm` modal spells not implemented (affects Sandbenders' Storm)
-- **Animate**: `AB$ Animate` power/keyword grant not implemented (affects Turtle-Duck)
+- ~~**Animate**: `AB$ Animate` power/keyword grant not implemented (affects Turtle-Duck)~~ **IMPLEMENTED** 2026-01-15
 - **DamageSource$ ParentTarget**: Fight-style damage from targeted creature (affects Rocky Rebuke)
 - **CharacteristicDefining**: `*/*` power/toughness from formula (affects Suki, Kyoshi Warrior)
 - **Count$Valid X**: Variable amounts from creature counts (affects The Boulder)

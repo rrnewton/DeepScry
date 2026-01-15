@@ -990,11 +990,13 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 power,
                                                 toughness,
+                                                keywords_granted,
                                             } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power: *power,
                                                     toughness: *toughness,
+                                                    keywords_granted: keywords_granted.clone(),
                                                 }
                                             }
                                             // Targeted SetBasePowerToughness: "Target creature has base P/T X/Y"
@@ -1002,11 +1004,13 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 power,
                                                 toughness,
+                                                keywords_granted,
                                             } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: chosen_targets_vec[0],
                                                     power: *power,
                                                     toughness: *toughness,
+                                                    keywords_granted: keywords_granted.clone(),
                                                 }
                                             }
                                             crate::core::Effect::AttachEquipment {
