@@ -141,7 +141,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [x] Glider Kids (x1) - flying (works), ETB scry 1 (VERIFIED 2026-01-14: Scry implemented)
 - [ ] Master Piandao (x1) - attack trigger Dig 4 (GAP: DB$ Dig not implemented)
 - [x] Ostrich-Horse (x2) - ETB mill+choose land (VERIFIED 2026-01-15: Mill 3 works, +1/+1 counter added if no land chosen)
-- [ ] Rabaroo Troop (x1) - landfall trigger pump+life (GAP: Landfall triggers not implemented - ValidCard$ Land.YouCtrl)
+- [x] Rabaroo Troop (x1) - landfall trigger pump+life (VERIFIED 2026-01-15: Landfall implemented, life gain works)
 - [ ] Raucous Audience (x3) - mana ability with conditional (GAP: Count$Compare not fully implemented)
 - [ ] Suki, Kyoshi Warrior (x1) - */4 CharacteristicDefining, attack trigger token (GAP: CharacteristicDefining)
 - [ ] The Boulder, Ready to Rumble (x2) - attack earthbend X (GAP: variable X from Count$Valid)
@@ -171,7 +171,7 @@ The following mechanics are NOT YET IMPLEMENTED in the engine:
 - **CharacteristicDefining**: `*/*` power/toughness from formula (affects Suki, Kyoshi Warrior)
 - **Count$Valid X**: Variable amounts from creature counts (affects The Boulder)
 - ~~**Mill in ETB triggers**: `DB$ Mill` not parsed for ChangesZone triggers (affects Ostrich-Horse)~~ **WORKS** - verified 2026-01-15
-- **Landfall triggers**: `ValidCard$ Land.YouCtrl` not parsed (affects Rabaroo Troop)
+- ~~**Landfall triggers**: `ValidCard$ Land.YouCtrl` not parsed (affects Rabaroo Troop)~~ **IMPLEMENTED** 2026-01-15
 - **Multi-target PutCounter**: ETB put counters on up to N targets (affects Earth Kingdom Soldier)
 
 ## AI Heuristic Gaps (2026-01-14)

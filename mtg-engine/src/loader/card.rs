@@ -1646,6 +1646,39 @@ impl CardDefinition {
                 triggers.push(Trigger::new(TriggerEvent::EntersBattlefield, effects, description));
             }
 
+            // Parse Landfall triggers (Mode$ ChangesZone with ValidCard$ Land.YouCtrl)
+            // Landfall triggers when a land enters under your control (not just this card)
+            // Example: T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Land.YouCtrl | Execute$ TrigFlying
+            if mode == Some("ChangesZone")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Battlefield")
+                && params.get("ValidCard").map(|s| s.as_str()) == Some("Land.YouCtrl")
+            {
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Landfall".to_string());
+
+                // Create trigger with [landfall] marker for runtime filtering
+                // Use trigger_self_only = false since this triggers on OTHER cards entering
+                let mut trigger = Trigger::new_any(
+                    TriggerEvent::EntersBattlefield,
+                    effects,
+                    format!("[landfall] {}", description),
+                );
+                trigger.trigger_self_only = false;
+                triggers.push(trigger);
+            }
+
             // Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)
             // Example: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigAddMana
             if mode == Some("ChangesZone")
@@ -3734,6 +3767,61 @@ Oracle:This land enters tapped unless you control a basic land.\n{T}: Add {G}.\n
         assert!(
             ability.sorcery_speed,
             "Earthbend ability should be sorcery-speed (activate only as a sorcery)"
+        );
+    }
+
+    #[test]
+    fn test_parse_rabaroo_troop_landfall_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Test Rabaroo Troop landfall trigger:
+        // "Landfall — Whenever a land you control enters, this creature gains flying until end of turn and you gain 1 life."
+        let content = r#"
+Name:Rabaroo Troop
+ManaCost:3 W W
+Types:Creature Rabbit Kangaroo
+PT:3/5
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Land.YouCtrl | TriggerZones$ Battlefield | Execute$ TrigFlying | TriggerDescription$ Landfall — Whenever a land you control enters, this creature gains flying until end of turn and you gain 1 life.
+SVar:TrigFlying:DB$ Pump | Defined$ Self | KW$ Flying | SubAbility$ DBGainLife
+SVar:DBGainLife:DB$ GainLife | Defined$ You | LifeAmount$ 1
+Oracle:Landfall — Whenever a land you control enters, this creature gains flying until end of turn and you gain 1 life.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify we have at least one trigger (the landfall trigger)
+        assert!(
+            !triggers.is_empty(),
+            "Should have at least one trigger. Got: {:?}",
+            triggers
+        );
+
+        // Find the landfall trigger (ETB with [landfall] marker)
+        let landfall_trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::EntersBattlefield && t.description.contains("[landfall]"));
+
+        assert!(
+            landfall_trigger.is_some(),
+            "Should have a landfall trigger (EntersBattlefield with [landfall]). Triggers: {:?}",
+            triggers
+        );
+
+        let trigger = landfall_trigger.unwrap();
+
+        // Verify trigger_self_only is false (landfall triggers on OTHER cards entering)
+        assert!(
+            !trigger.trigger_self_only,
+            "Landfall trigger should have trigger_self_only=false"
+        );
+
+        // Verify it has a PumpCreature effect (for Flying keyword)
+        let has_pump = trigger.effects.iter().any(|e| matches!(e, Effect::PumpCreature { .. }));
+        assert!(
+            has_pump,
+            "Trigger should have PumpCreature effect (for Flying). Effects: {:?}",
+            trigger.effects
         );
     }
 }

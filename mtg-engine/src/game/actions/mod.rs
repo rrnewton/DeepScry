@@ -82,6 +82,9 @@ impl GameState {
             prior_log_size,
         );
 
+        // Check ETB triggers (including landfall triggers on other permanents)
+        self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
+
         Ok(())
     }
 
@@ -2458,6 +2461,11 @@ impl GameState {
             sacrificed_power: u8,             // Power of sacrifice target (for Firebend effects)
         }
 
+        // Pre-compute source card info for trigger filtering (landfall check, etc.)
+        // We need this before the iterator borrows self
+        let source_card_is_land = self.cards.get(source_card_id).map(|c| c.is_land()).unwrap_or(false);
+        let source_card_controller = self.cards.get(source_card_id).map(|c| c.controller).ok();
+
         // Phase 1: Collect matching triggers with their metadata
         let candidate_triggers: Vec<TriggerInfo> = self
             .battlefield
@@ -2487,6 +2495,18 @@ impl GameState {
                             // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
                             if trigger.description.contains("[other]") && card_id == source_card_id {
                                 return false;
+                            }
+
+                            // "[landfall]" triggers only fire when:
+                            // 1. The entering card is a Land
+                            // 2. The entering card is controlled by the trigger's controller
+                            if trigger.description.contains("[landfall]") {
+                                if !source_card_is_land {
+                                    return false;
+                                }
+                                if source_card_controller != Some(controller) {
+                                    return false;
+                                }
                             }
 
                             true
