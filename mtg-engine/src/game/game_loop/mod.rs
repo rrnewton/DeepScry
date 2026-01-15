@@ -52,7 +52,73 @@ use smallvec::SmallVec;
 /// into the appropriate player's library.
 ///
 /// Used by network clients to drain reveals from the server before each draw.
-type RevealDrainer = Box<dyn Fn(&mut GameState) + Send>;
+type RevealDrainer = Box<dyn Fn(&mut GameState)>;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRE-CHOICE HOOK TYPES (Network Client Architecture)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Identifies the type of choice about to be made
+///
+/// Used by the pre-choice hook to know what message to expect from the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChoiceKind {
+    SpellAbility,
+    Targets,
+    ManaSources,
+    Attackers,
+    Blockers,
+    DamageOrder,
+    Discard,
+    FromLibrary,
+    Sacrifice,
+    Modes,
+    NotUntap,
+    Options,
+}
+
+/// Result from the pre-choice hook
+///
+/// The hook drains messages from the network until it receives a choice signal,
+/// processing CardRevealed messages along the way to update GameState.
+#[derive(Debug)]
+pub enum PreChoiceResult {
+    /// Local player: ChoiceRequest received, proceed to call controller
+    AskController,
+    /// Remote player: OpponentChoice received, use these indices
+    UseChoice(RawChoice),
+    /// Game ended
+    Exit,
+}
+
+/// Raw choice data received from network
+///
+/// Contains indices that the helper functions convert to the appropriate
+/// choice type based on the `available` slice.
+#[derive(Debug, Clone)]
+pub struct RawChoice {
+    /// Choice indices (interpretation depends on choice type)
+    pub indices: Vec<usize>,
+    /// For spell ability choices, the actual ability (server sends it directly)
+    pub spell_ability: Option<crate::core::SpellAbility>,
+}
+
+/// Pre-choice hook function type
+///
+/// Called before each controller choice point with `&mut GameState`.
+/// Blocks on the network, processes CardRevealed messages, and returns
+/// when a choice signal arrives (ChoiceRequest or OpponentChoice).
+///
+/// # Arguments
+/// * `game` - Mutable game state for processing CardRevealed
+/// * `player` - The player about to make a choice
+/// * `kind` - What type of choice is being made
+///
+/// # Returns
+/// * `AskController` - For local player, after ChoiceRequest received
+/// * `UseChoice` - For remote player, with OpponentChoice data
+/// * `Exit` - Game ended
+pub type PreChoiceHook<'a> = Box<dyn FnMut(&mut GameState, PlayerId, ChoiceKind) -> PreChoiceResult + 'a>;
 
 /// Callback type for pushing reveals AFTER automatic actions (like draws).
 ///
@@ -69,6 +135,7 @@ mod combat;
 #[allow(deprecated)]
 mod legacy;
 mod logging;
+mod network_choice;
 mod priority;
 mod snapshot;
 mod steps;
@@ -223,6 +290,12 @@ pub struct GameLoop<'a> {
     /// are revealed. Set this to skip validation for opponent's cards.
     /// When None, validation checks all players (local/single-player mode).
     local_player_id: Option<PlayerId>,
+    /// Pre-choice hook for network mode
+    ///
+    /// When set, this hook is called before each controller choice point.
+    /// It blocks on the network, processes CardRevealed messages, and returns
+    /// when a choice signal arrives (ChoiceRequest for local, OpponentChoice for remote).
+    pre_choice_hook: Option<PreChoiceHook<'a>>,
 }
 
 impl<'a> GameLoop<'a> {
@@ -258,6 +331,7 @@ impl<'a> GameLoop<'a> {
             skip_opening_hands: false,
             debug_validate_reveals: false,
             local_player_id: None,
+            pre_choice_hook: None,
         }
     }
 
@@ -430,7 +504,7 @@ impl<'a> GameLoop<'a> {
     /// ```
     pub fn with_reveal_drainer<F>(mut self, drainer: F) -> Self
     where
-        F: Fn(&mut GameState) + Send + 'static,
+        F: Fn(&mut GameState) + 'static,
     {
         self.reveal_drainer = Some(Box::new(drainer));
         self
@@ -485,6 +559,71 @@ impl<'a> GameLoop<'a> {
     pub fn skip_opening_hands(mut self) -> Self {
         self.skip_opening_hands = true;
         self
+    }
+
+    /// Set the pre-choice hook for network mode
+    ///
+    /// The pre-choice hook is called before each controller choice point.
+    /// It blocks on the network, processes CardRevealed messages to update
+    /// GameState, and returns when a choice signal arrives.
+    ///
+    /// # Arguments
+    /// * `hook` - Closure that takes `(&mut GameState, PlayerId, ChoiceKind)`
+    ///            and returns `PreChoiceResult`
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let msg_rx = /* network message receiver */;
+    /// let card_db = /* card database */;
+    /// let our_player = PlayerId::new(0);
+    ///
+    /// let hook = move |game: &mut GameState, player: PlayerId, kind: ChoiceKind| {
+    ///     loop {
+    ///         let msg = msg_rx.recv().expect("channel closed");
+    ///         match msg {
+    ///             NetworkMessage::CardRevealed { owner, card, reason } => {
+    ///                 process_card_reveal(game, &card_db, owner, card, reason);
+    ///             }
+    ///             NetworkMessage::ChoiceRequest { .. } if player == our_player => {
+    ///                 return PreChoiceResult::AskController;
+    ///             }
+    ///             NetworkMessage::OpponentChoice { indices, spell_ability, .. } if player != our_player => {
+    ///                 return PreChoiceResult::UseChoice(RawChoice { indices, spell_ability });
+    ///             }
+    ///             NetworkMessage::GameEnded { .. } => {
+    ///                 return PreChoiceResult::Exit;
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///     }
+    /// };
+    ///
+    /// game_loop.with_pre_choice_hook(hook);
+    /// ```
+    pub fn with_pre_choice_hook<F>(mut self, hook: F) -> Self
+    where
+        F: FnMut(&mut GameState, PlayerId, ChoiceKind) -> PreChoiceResult + 'a,
+    {
+        self.pre_choice_hook = Some(Box::new(hook));
+        self
+    }
+
+    /// Check if network mode is enabled (pre-choice hook is set)
+    pub fn is_network_mode(&self) -> bool {
+        self.pre_choice_hook.is_some()
+    }
+
+    /// Call the pre-choice hook if configured
+    ///
+    /// Returns `None` if no hook is configured (non-network mode).
+    /// In non-network mode, callers should proceed directly to calling the controller.
+    pub(super) fn call_pre_choice_hook(&mut self, player: PlayerId, kind: ChoiceKind) -> Option<PreChoiceResult> {
+        if let Some(ref mut hook) = self.pre_choice_hook {
+            Some(hook(self.game, player, kind))
+        } else {
+            None
+        }
     }
 
     /// Drain pending reveals if a drainer is configured
@@ -1292,10 +1431,12 @@ mod tests {
         game.battlefield.add(land_id);
 
         // Run untap step with controllers
-        let mut game_loop = GameLoop::new(&mut game);
-        let mut controller1 = ZeroController::new(alice);
-        let mut controller2 = ZeroController::new(bob);
-        game_loop.untap_step(&mut controller1, &mut controller2).unwrap();
+        {
+            let mut game_loop = GameLoop::new(&mut game);
+            let mut controller1 = ZeroController::new(alice);
+            let mut controller2 = ZeroController::new(bob);
+            game_loop.untap_step(&mut controller1, &mut controller2).unwrap();
+        } // game_loop is dropped here, releasing borrow of game
 
         // Land should now be untapped
         let land = game.cards.get(land_id).unwrap();
@@ -1329,8 +1470,10 @@ mod tests {
         let mut controller2 = crate::game::ZeroController::new(bob);
 
         // Run draw step
-        let mut game_loop = GameLoop::new(&mut game);
-        game_loop.draw_step(&mut controller1, &mut controller2).unwrap();
+        {
+            let mut game_loop = GameLoop::new(&mut game);
+            game_loop.draw_step(&mut controller1, &mut controller2).unwrap();
+        } // game_loop is dropped here, releasing borrow of game
 
         // Card should be in hand
         if let Some(zones) = game.get_player_zones(alice) {

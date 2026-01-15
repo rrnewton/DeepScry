@@ -52,8 +52,7 @@ impl<'a> GameLoop<'a> {
                 controller2
             };
 
-            let view = GameStateView::new(self.game, active_player);
-            let choice = controller.choose_permanents_to_not_untap(&view, &may_not_untap);
+            let choice = self.choose_not_untap_with_hook(controller, active_player, &may_not_untap);
 
             let stay_tapped: SmallVec<[CardId; 8]> = match choice {
                 ChoiceResult::Ok(ids) => ids,
@@ -342,9 +341,13 @@ impl<'a> GameLoop<'a> {
                 // Ask controller which cards to discard
                 // Capture log size BEFORE asking controller (before controller logs its choice)
                 let prior_log_size = self.game.logger.log_count();
-                let view = GameStateView::new(self.game, player_id);
-                let hand = view.hand();
-                let choice = controller.choose_cards_to_discard(&view, hand, discard_count);
+                // Get hand cards before calling helper (which creates view internally)
+                let hand: SmallVec<[CardId; 8]> = self
+                    .game
+                    .get_player_zones(player_id)
+                    .map(|zones| zones.hand.cards.iter().copied().collect())
+                    .unwrap_or_default();
+                let choice = self.choose_discard_with_hook(controller, player_id, &hand, discard_count);
                 let cards_to_discard = handle_choice_result_break!(choice, self.game, player_id);
 
                 // Log this choice point for snapshot/replay

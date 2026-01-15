@@ -641,10 +641,12 @@ fn bench_save_snapshot(c: &mut Criterion) {
                 let mut controller1 = RandomController::with_seed(p1_id, 42);
                 let mut controller2 = RandomController::with_seed(p2_id, 42);
 
-                let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-                game_loop
-                    .run_turns(&mut controller1, &mut controller2, 10)
-                    .expect("Game should complete successfully");
+                {
+                    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+                    game_loop
+                        .run_turns(&mut controller1, &mut controller2, 10)
+                        .expect("Game should complete successfully");
+                } // game_loop dropped here, releasing borrow
 
                 let snapshot = GameSnapshot::new(game.clone(), game.turn.turn_number, vec![]);
 

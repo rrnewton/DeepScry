@@ -249,15 +249,19 @@ async fn test_run_until_input_continues_with_choice() -> Result<()> {
     let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // First run - should return AwaitingInput
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_until_input(&mut human, &mut ai)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_until_input(&mut human, &mut ai)?
+    }; // game_loop dropped here, releasing borrow
     assert!(matches!(result, GameLoopState::AwaitingInput(_)));
 
     // Set choice to "pass" and run again
     human.set_spell_ability_choice(None);
 
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_until_input(&mut human, &mut ai)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_until_input(&mut human, &mut ai)?
+    }; // game_loop dropped here, releasing borrow
 
     // Could be either another AwaitingInput (if more choices needed) or Complete
     // The important thing is it didn't panic
@@ -298,8 +302,10 @@ async fn test_run_one_turn_advances_exactly_one_turn() -> Result<()> {
     let initial_turn = game.turn.turn_number;
 
     // Run exactly one turn
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_one_turn(&mut ai1, &mut ai2)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_one_turn(&mut ai1, &mut ai2)?
+    }; // game_loop dropped here, releasing borrow
 
     // Turn number should have advanced by exactly 1 (or game ended)
     match result {
@@ -392,8 +398,10 @@ async fn test_rewind_extracts_choices_from_undo_log() -> Result<()> {
     let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // Run until human needs to make a choice - this will log choice points
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_until_input(&mut human, &mut ai)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_until_input(&mut human, &mut ai)?
+    }; // game_loop dropped here, releasing borrow
 
     // Check that undo log has some actions
     let actions = game.undo_log.actions();
@@ -450,11 +458,15 @@ async fn test_rewind_to_turn_start() -> Result<()> {
     let mut ai2 = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // Run a couple of turns
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let _ = game_loop.run_one_turn(&mut ai1, &mut ai2)?;
+    {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        let _ = game_loop.run_one_turn(&mut ai1, &mut ai2)?;
+    } // game_loop dropped here
 
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let _ = game_loop.run_one_turn(&mut ai1, &mut ai2)?;
+    {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        let _ = game_loop.run_one_turn(&mut ai1, &mut ai2)?;
+    } // game_loop dropped here
 
     // Record state before rewind
     let turn_before = game.turn.turn_number;
@@ -535,8 +547,10 @@ async fn test_full_rewind_replay_cycle() -> Result<()> {
     let mut human = TestHumanController::new(p1_id);
     let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
 
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_until_input(&mut human, &mut ai)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_until_input(&mut human, &mut ai)?
+    }; // game_loop dropped here
 
     // Verify we're awaiting input
     let context = match result {
@@ -581,10 +595,12 @@ async fn test_full_rewind_replay_cycle() -> Result<()> {
     let mut replay = ReplayController::new(p1_id, inner, replay_choices);
     let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
 
-    let mut game_loop = GameLoop::new(&mut game)
-        .with_verbosity(VerbosityLevel::Silent)
-        .with_max_turns(3);
-    let result = game_loop.run_game(&mut replay, &mut ai)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game)
+            .with_verbosity(VerbosityLevel::Silent)
+            .with_max_turns(3);
+        game_loop.run_game(&mut replay, &mut ai)?
+    }; // game_loop dropped here
 
     // Game should have progressed
     assert!(result.turns_played > 0, "Game should have run after replay");

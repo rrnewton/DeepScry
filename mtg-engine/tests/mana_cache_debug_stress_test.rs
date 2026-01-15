@@ -104,11 +104,14 @@ async fn test_oldschool_tourney_mana_cache_debug() -> Result<()> {
 
         // Create game loop with DEBUG MODE ENABLED for ManaEngine
         // This will verify every mana query against from-scratch computation
-        let mut game_loop = GameLoop::new(&mut game)
-            .with_verbosity(VerbosityLevel::Silent)
-            .with_mana_debug_verification();
+        let result = {
+            let mut game_loop = GameLoop::new(&mut game)
+                .with_verbosity(VerbosityLevel::Silent)
+                .with_mana_debug_verification();
+            game_loop.run_game(&mut controller1, &mut controller2)
+        }; // game_loop dropped here, releasing borrow
 
-        match game_loop.run_game(&mut controller1, &mut controller2) {
+        match result {
             Ok(_result) => {
                 games_played += 1;
                 total_turns += game.turn.turn_number;

@@ -1010,6 +1010,7 @@ async fn run_connect(
     gamelog_output: Option<PathBuf>,
 ) -> Result<()> {
     use mtg_forge_rs::core::PlayerId;
+    use mtg_forge_rs::game::FancyTuiController;
     use mtg_forge_rs::network::{ClientConfig, NetworkClient};
 
     // Validate fixed controller has inputs
@@ -1086,11 +1087,15 @@ async fn run_connect(
             let ctrl = RichInputController::new(our_player_id, script);
             client.run_game(ctrl).await
         }
-        ControllerType::Fancy | ControllerType::FancyFixed => {
+        ControllerType::Fancy => {
+            let ctrl = FancyTuiController::new(our_player_id, visual_stacks)
+                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e)))?;
+            client.run_game(ctrl).await
+        }
+        ControllerType::FancyFixed => {
+            // FancyFixed requires --fixed-inputs
             return Err(mtg_forge_rs::MtgError::InvalidAction(
-                "Fancy TUI controller is not yet supported in network mode. \
-                 Use --controller=interactive or --controller=heuristic instead."
-                    .to_string(),
+                "FancyFixed controller requires --fixed-inputs (not yet fully supported in network mode).".to_string(),
             ));
         }
     }
@@ -1828,6 +1833,11 @@ async fn run_tui(
     // Run the game (with mid-turn exits if stop conditions enabled)
     let result = game_loop.run_game(&mut *controller1, &mut *controller2)?;
 
+    // Explicitly drop game_loop to release the mutable borrow of game
+    // This is needed because GameLoop holds a PreChoiceHook<'a> which has the same lifetime
+    // as the &mut GameState reference, causing Rust to be conservative about borrows.
+    drop(game_loop);
+
     use mtg_forge_rs::game::GameEndReason;
 
     // If log_tail was enabled, flush only the last K lines now
@@ -2563,6 +2573,11 @@ async fn run_resume(
 
     // Run the game (with mid-turn exits if stop conditions enabled)
     let result = game_loop.run_game(&mut *controller1, &mut *controller2)?;
+
+    // Explicitly drop game_loop to release the mutable borrow of game
+    // This is needed because GameLoop holds a PreChoiceHook<'a> which has the same lifetime
+    // as the &mut GameState reference, causing Rust to be conservative about borrows.
+    drop(game_loop);
 
     use mtg_forge_rs::game::GameEndReason;
 
