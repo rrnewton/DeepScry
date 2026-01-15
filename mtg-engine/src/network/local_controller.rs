@@ -24,6 +24,8 @@ use crate::game::snapshot::ControllerType;
 use crate::network::protocol::ClientMessage;
 use crate::network::ClientMessageSender;
 use smallvec::SmallVec;
+use std::cell::Cell;
+use std::rc::Rc;
 
 /// A choice made by the local player, to be sent to the server
 #[derive(Debug, Clone)]
@@ -55,8 +57,8 @@ pub struct NetworkLocalController<C: PlayerController> {
     client_tx: ClientMessageSender,
     /// Network debug mode: include action log info in choices for sync validation
     network_debug: bool,
-    /// Current choice sequence number (set externally before each choice)
-    choice_seq: u32,
+    /// Shared choice sequence number (pre-choice hook updates it, controller reads it)
+    choice_seq: Rc<Cell<u32>>,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -65,12 +67,13 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// # Arguments
     /// * `inner` - The actual controller to delegate choices to
     /// * `client_tx` - Channel to send client messages to WebSocket writer
-    pub fn new(inner: C, client_tx: ClientMessageSender) -> Self {
+    /// * `choice_seq` - Shared choice sequence number (hook updates it, we read it)
+    pub fn new(inner: C, client_tx: ClientMessageSender, choice_seq: Rc<Cell<u32>>) -> Self {
         Self {
             inner,
             client_tx,
             network_debug: false,
-            choice_seq: 0,
+            choice_seq,
         }
     }
 
@@ -78,11 +81,6 @@ impl<C: PlayerController> NetworkLocalController<C> {
     pub fn with_network_debug(mut self, enabled: bool) -> Self {
         self.network_debug = enabled;
         self
-    }
-
-    /// Set the choice sequence number (called by hook before each choice)
-    pub fn set_choice_seq(&mut self, seq: u32) {
-        self.choice_seq = seq;
     }
 
     /// Get access to the inner controller
@@ -104,7 +102,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
         debug_info: Option<super::DebugSyncInfo>,
     ) {
         let client_msg = ClientMessage::SubmitChoice {
-            choice_seq: self.choice_seq,
+            choice_seq: self.choice_seq.get(),
             choice_indices,
             action_count,
             timestamp_ms: 0,
@@ -132,7 +130,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
         match &result {
             ChoiceResult::Ok(_) => {
                 let (hash, debug) = self.get_debug_fields(view);
-                self.send_choice(indices, view.action_count(), hash, debug);
+                self.send_choice(indices, view.action_count() as u64, hash, debug);
             }
             _ => {}
         }
@@ -159,7 +157,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 Some(ability) => available.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0),
             };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(vec![idx], view.action_count(), hash, debug);
+            self.send_choice(vec![idx], view.action_count() as u64, hash, debug);
         }
 
         result
@@ -179,7 +177,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|t| valid_targets.iter().position(|v| v == t))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -199,7 +197,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| available_sources.iter().position(|a| a == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -220,7 +218,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .collect();
             let indices = if indices.is_empty() { vec![0] } else { indices };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -246,7 +244,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .collect();
             let indices = if indices.is_empty() { vec![0] } else { indices };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -266,7 +264,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|b| blockers.iter().position(|bl| bl == b))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -286,7 +284,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|d| hand.iter().position(|h| h == d))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -301,7 +299,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 None => valid_cards.len(),
             };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(vec![idx], view.action_count(), hash, debug);
+            self.send_choice(vec![idx], view.action_count() as u64, hash, debug);
         }
 
         result
@@ -324,7 +322,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| valid_permanents.iter().position(|p| p == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -345,7 +343,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| may_not_untap_permanents.iter().position(|p| p == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
@@ -367,7 +365,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         if let ChoiceResult::Ok(ref modes) = result {
             let indices: Vec<usize> = modes.iter().copied().collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(indices, view.action_count(), hash, debug);
+            self.send_choice(indices, view.action_count() as u64, hash, debug);
         }
 
         result
