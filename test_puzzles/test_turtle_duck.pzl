@@ -1,0 +1,21 @@
+[metadata]
+Name=Turtle-Duck Animate Test
+Goal=Win
+Turns=5
+Difficulty=Easy
+Description=Test that Turtle-Duck can activate its ability to become a 4/4 with trample
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Turtle-Duck;Forest;Forest;Forest
+p0library=Mountain;Island
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Forest;Forest
+p1library=Forest;Forest
+p1graveyard=

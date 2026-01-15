@@ -1432,6 +1432,7 @@ impl GameState {
                 target,
                 power,
                 toughness,
+                keywords_granted,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.as_u32() == 0 {
@@ -1439,24 +1440,56 @@ impl GameState {
                     return Ok(());
                 }
                 // Set temporary base P/T override (until end of turn)
-                // This is used by Animate effects like Flexible Waterbender
+                // This is used by Animate effects like Flexible Waterbender and Turtle-Duck
                 let card = self.cards.get_mut(*target)?;
                 let card_name = card.name.clone();
-                let old_power = card.current_power();
-                let old_toughness = card.current_toughness();
+                let _old_power = card.current_power();
+                let _old_toughness = card.current_toughness();
 
-                card.set_temp_base_power(*power as i8);
-                card.set_temp_base_toughness(*toughness as i8);
+                // Only set power if specified
+                if let Some(p) = power {
+                    card.set_temp_base_power(*p as i8);
+                }
+                // Only set toughness if specified
+                if let Some(t) = toughness {
+                    card.set_temp_base_toughness(*t as i8);
+                }
+
+                // Grant temporary keywords (until end of turn)
+                // Note: Uses same approach as PumpCreature - keywords added to permanent set
+                // TODO: Consider tracking temp keywords separately for proper EOT cleanup
+                for kw in keywords_granted {
+                    card.keywords.insert(*kw);
+                }
 
                 let new_power = card.current_power();
                 let new_toughness = card.current_toughness();
 
                 // Log the effect
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
-                    self.logger.gamelog(&format!(
-                        "{} base P/T set to {}/{} (was {}/{})",
-                        card_name, new_power, new_toughness, old_power, old_toughness
-                    ));
+                    let kw_str = if keywords_granted.is_empty() {
+                        String::new()
+                    } else {
+                        let kws: Vec<_> = keywords_granted.iter().map(|k| format!("{:?}", k)).collect();
+                        format!(" and gains {}", kws.join(", "))
+                    };
+
+                    if power.is_some() || toughness.is_some() {
+                        self.logger.gamelog(&format!(
+                            "{} base P/T set to {}/{}{}",
+                            card_name, new_power, new_toughness, kw_str
+                        ));
+                    } else if !keywords_granted.is_empty() {
+                        self.logger.gamelog(&format!(
+                            "{} gains {}",
+                            card_name,
+                            keywords_granted
+                                .iter()
+                                .map(|k| format!("{:?}", k))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
                 }
             }
             Effect::SearchLibrary {

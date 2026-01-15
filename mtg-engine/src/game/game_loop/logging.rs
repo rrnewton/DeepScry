@@ -377,6 +377,7 @@ impl<'a> GameLoop<'a> {
                 target,
                 power,
                 toughness,
+                keywords_granted,
             } => {
                 let target_name = self
                     .game
@@ -384,9 +385,29 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                let message = format!(
-                    "{source_name} ({source_id}) sets {target_name} ({target}) base P/T to {power}/{toughness}"
-                );
+                let pt_str = match (power, toughness) {
+                    (Some(p), Some(t)) => format!("base P/T to {}/{}", p, t),
+                    (Some(p), None) => format!("base power to {}", p),
+                    (None, Some(t)) => format!("base toughness to {}", t),
+                    (None, None) => String::new(),
+                };
+                let kw_str = if keywords_granted.is_empty() {
+                    String::new()
+                } else {
+                    let kws: Vec<_> = keywords_granted.iter().map(|k| format!("{:?}", k)).collect();
+                    format!(" and gains {}", kws.join(", "))
+                };
+                let message = if pt_str.is_empty() {
+                    format!(
+                        "{source_name} ({source_id}) grants {target_name} ({target}){}",
+                        kw_str.trim_start_matches(" and ")
+                    )
+                } else {
+                    format!(
+                        "{source_name} ({source_id}) sets {target_name} ({target}) {}{}",
+                        pt_str, kw_str
+                    )
+                };
                 self.game.logger.gamelog(&message);
             }
             Effect::Airbend { target } => {
