@@ -131,7 +131,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [x] Ba Sing Se (x2) - activated earthbend 2 ability (VERIFIED 2026-01-15: SorcerySpeed$ parsing, Earthbend targeting, mana exclusion fixes)
 - [x] Forest (x7) - basic land
 - [x] Plains (x6) - basic land
-- [ ] Thriving Grove (x1) - enters tapped, choose color
+- [x] Thriving Grove (x1) - enters tapped, choose color (VERIFIED 2026-01-15: ETB tapped works, ChooseColor works)
 
 **Creatures (16):**
 - [x] Badgermole (x1) - ETB earthbend 2, trample to countered creatures (VERIFIED 2026-01-14: earthbend works, makes 2/2 land creature)
@@ -139,9 +139,9 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [ ] Earth Kingdom Soldier (x1) - ETB put counters needs multi-target support
 - [ ] Foggy Swamp Vinebender (x1) - waterbend effects (GAP: waterbend not implemented)
 - [x] Glider Kids (x1) - flying (works), ETB scry 1 (VERIFIED 2026-01-14: Scry implemented)
-- [ ] Master Piandao (x1) - equipment synergy
+- [ ] Master Piandao (x1) - attack trigger Dig 4 (GAP: DB$ Dig not implemented)
 - [x] Ostrich-Horse (x2) - ETB mill+choose land (VERIFIED 2026-01-15: Mill 3 works, +1/+1 counter added if no land chosen)
-- [ ] Rabaroo Troop (x1) - token/creature synergy
+- [ ] Rabaroo Troop (x1) - landfall trigger pump+life (GAP: Landfall triggers not implemented - ValidCard$ Land.YouCtrl)
 - [ ] Raucous Audience (x3) - mana ability with conditional (GAP: Count$Compare not fully implemented)
 - [ ] Suki, Kyoshi Warrior (x1) - */4 CharacteristicDefining, attack trigger token (GAP: CharacteristicDefining)
 - [ ] The Boulder, Ready to Rumble (x2) - attack earthbend X (GAP: variable X from Count$Valid)
@@ -171,6 +171,7 @@ The following mechanics are NOT YET IMPLEMENTED in the engine:
 - **CharacteristicDefining**: `*/*` power/toughness from formula (affects Suki, Kyoshi Warrior)
 - **Count$Valid X**: Variable amounts from creature counts (affects The Boulder)
 - ~~**Mill in ETB triggers**: `DB$ Mill` not parsed for ChangesZone triggers (affects Ostrich-Horse)~~ **WORKS** - verified 2026-01-15
+- **Landfall triggers**: `ValidCard$ Land.YouCtrl` not parsed (affects Rabaroo Troop)
 - **Multi-target PutCounter**: ETB put counters on up to N targets (affects Earth Kingdom Soldier)
 
 ## AI Heuristic Gaps (2026-01-14)
