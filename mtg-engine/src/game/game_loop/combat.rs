@@ -90,8 +90,7 @@ impl<'a> GameLoop<'a> {
             // Ask controller to choose all attackers at once (v2 interface)
             // Capture log size BEFORE asking controller (before controller logs its choice)
             let prior_log_size = self.game.logger.log_count();
-            let view = GameStateView::new(self.game, active_player);
-            let choice = controller.choose_attackers(&view, &available_creatures);
+            let choice = self.choose_attackers_with_hook(controller, active_player, &available_creatures);
             let attackers = handle_choice_result_break!(choice, self.game, active_player);
 
             // Log this choice point for snapshot/replay
@@ -224,8 +223,7 @@ impl<'a> GameLoop<'a> {
             // Ask controller to choose all blocker assignments at once (v2 interface)
             // Capture log size BEFORE asking controller (before controller logs its choice)
             let prior_log_size = self.game.logger.log_count();
-            let view = GameStateView::new(self.game, defending_player);
-            let choice = controller.choose_blockers(&view, &available_blockers, &attackers);
+            let choice = self.choose_blockers_with_hook(controller, defending_player, &available_blockers, &attackers);
             let blocks = handle_choice_result_break!(choice, self.game, defending_player);
 
             // Log this choice point for snapshot/replay

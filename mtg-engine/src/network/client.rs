@@ -17,7 +17,6 @@ use crate::core::{CardId, PlayerId};
 use crate::game::{GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
-use crate::network::{LocalChoice, LocalControllerMessage, RemoteMessage};
 use anyhow::{anyhow, Result};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -26,43 +25,43 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc as tokio_mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-/// Reveal message sent from WebSocket handler to game thread
-/// Includes full CardReveal info so game thread can instantiate cards
-type RevealMsg = (PlayerId, CardReveal, RevealReason);
-
 // ═══════════════════════════════════════════════════════════════════════════
-// GAME LOOP MESSAGE (SINGLE-CHANNEL ARCHITECTURE)
+// SINGLE-CHANNEL NETWORK MESSAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// All messages from WebSocket handler to the game loop.
+/// All messages from WebSocket to the game loop via a single channel.
 ///
 /// The single-channel architecture routes ALL server messages through one channel.
-/// This eliminates race conditions between reveal processing and controller messages
-/// by ensuring messages are processed in the exact order they were received from
-/// the server.
+/// This eliminates race conditions by ensuring messages are processed in the exact
+/// order they were received from the server.
 ///
-/// The game loop's `drain_messages` callback processes these sequentially:
-/// 1. CardRevealed - instantiates card in game state
-/// 2. ChoiceRequest - signals NetworkLocalController to proceed
-/// 3. OpponentChoice - signals RemoteController to proceed
-/// 4. GameEnded - signals both controllers to exit
-#[derive(Debug)]
-pub enum GameLoopMessage {
+/// Both NetworkLocalController and RemoteController share access to the same channel
+/// receiver. When a controller needs input, it reads from the channel:
+/// - CardRevealed: Process immediately (update game state), continue waiting
+/// - ChoiceRequest: Return to NetworkLocalController
+/// - ChoiceAccepted: Return to NetworkLocalController
+/// - OpponentChoice: Return to RemoteController
+/// - GameEnded/Error: Return to either controller (triggers game exit)
+///
+/// This design follows docs/NETWORK_ARCHITECTURE.md:
+/// - No select! over multiple channels
+/// - No try_recv() polling
+/// - Sequential processing in arrival order
+#[derive(Debug, Clone)]
+pub enum NetworkMessage {
     /// A card was revealed by the server - instantiate it in game state
     CardRevealed {
         owner: PlayerId,
-        card_id: CardId,
-        card_name: String,
+        card: CardReveal,
         reason: RevealReason,
     },
-    /// Server is requesting a choice from us (signals NetworkLocalController)
+    /// Server is requesting a choice from us
     ChoiceRequest { action_count: u64, choice_seq: u32 },
-    /// Server acknowledged our previous choice (signals NetworkLocalController)
-    ChoiceAcknowledged,
-    /// Opponent made a choice - apply it to shadow state (signals RemoteController)
+    /// Server acknowledged our previous choice
+    ChoiceAccepted { choice_seq: u32, action_count: u64 },
+    /// Opponent made a choice
     OpponentChoice {
         choice_indices: Vec<usize>,
         description: String,
@@ -73,9 +72,70 @@ pub enum GameLoopMessage {
         winner: Option<PlayerId>,
         action_count: u64,
     },
-    /// Server reported a fatal error
-    Error(String),
+    /// Server reported an error (fatal = should exit)
+    Error { message: String, fatal: bool },
+    /// Library was reordered (informational)
+    LibraryReordered { player: PlayerId, new_order: Vec<CardId> },
 }
+
+impl NetworkMessage {
+    /// Convert a ServerMessage to NetworkMessage, returning None for irrelevant messages
+    pub fn from_server_message(msg: ServerMessage) -> Option<Self> {
+        match msg {
+            ServerMessage::CardRevealed { owner, card, reason } => {
+                Some(NetworkMessage::CardRevealed { owner, card, reason })
+            }
+            ServerMessage::ChoiceRequest {
+                action_count,
+                choice_seq,
+                ..
+            } => Some(NetworkMessage::ChoiceRequest {
+                action_count,
+                choice_seq,
+            }),
+            ServerMessage::ChoiceAccepted {
+                choice_seq,
+                action_count,
+                ..
+            } => Some(NetworkMessage::ChoiceAccepted {
+                choice_seq,
+                action_count,
+            }),
+            ServerMessage::OpponentChoice {
+                choice_indices,
+                description,
+                spell_ability,
+                ..
+            } => Some(NetworkMessage::OpponentChoice {
+                choice_indices,
+                description,
+                spell_ability,
+            }),
+            ServerMessage::GameEnded {
+                winner, action_count, ..
+            } => Some(NetworkMessage::GameEnded { winner, action_count }),
+            ServerMessage::Error { message, fatal } => Some(NetworkMessage::Error { message, fatal }),
+            ServerMessage::LibraryReordered { player, new_order } => {
+                Some(NetworkMessage::LibraryReordered { player, new_order })
+            }
+            // Ignore other messages (AuthResult, WaitingForOpponent, GameStarted, Pong)
+            // These are handled during connection setup, not during gameplay
+            _ => None,
+        }
+    }
+}
+
+/// Shared receiver for NetworkMessage
+///
+/// DEPRECATED: The pre-choice hook architecture no longer needs shared receivers.
+/// Controllers no longer block on channels; the hook handles all message processing.
+///
+/// Kept for backward compatibility.
+#[deprecated(since = "0.2.0", note = "Use pre-choice hook architecture instead")]
+pub type SharedMessageReceiver = Arc<std::sync::Mutex<mpsc::Receiver<NetworkMessage>>>;
+
+/// Sender for client messages to the WebSocket writer task
+pub type ClientMessageSender = mpsc::Sender<ClientMessage>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CARD REVEAL UTILITIES
@@ -898,40 +958,29 @@ impl NetworkClient {
 
     /// Run the game with a synchronized local GameLoop
     ///
-    /// This runs an actual GameLoop on the client side, keeping the game state
-    /// in sync with the server through choice messages. Card reveals from the
-    /// server are queued into the local game state's libraries.
+    /// ## Single-Channel Architecture
     ///
-    /// # Architecture
+    /// This implementation uses a single message channel for all server→client messages,
+    /// eliminating race conditions from the old multi-channel approach:
     ///
     /// ```text
-    /// ┌─────────────────────────────────────────────────────────────────┐
-    /// │                        Client                                   │
-    /// │  ┌──────────────────┐     ┌────────────────────────────────┐   │
-    /// │  │ WebSocket Task   │     │ Game Thread (spawn_blocking)   │   │
-    /// │  │                  │     │                                │   │
-    /// │  │ ◄─ CardRevealed ─┼─────┼─► queue to library             │   │
-    /// │  │ ◄─ OpponentChoice┼─────┼─► RemoteController             │   │
-    /// │  │ ─► SubmitChoice ◄┼─────┼── NetworkLocalController       │   │
-    /// │  │ ◄─ GameEnded ────┼─────┼─► signal end                   │   │
-    /// │  └──────────────────┘     └────────────────────────────────┘   │
-    /// └─────────────────────────────────────────────────────────────────┘
+    /// WebSocket ──► Reader Task ──► recv_tx ──► recv_rx ──► Controllers
+    ///                                                          │
+    /// WebSocket ◄── Writer Task ◄── send_rx ◄── send_tx ◄──────┘
     /// ```
     ///
-    /// Note: Wildcards are intentional - ServerMessage and RevealReason have 12+/7+
-    /// variants; we handle specific variants and log/ignore unexpected ones.
+    /// - **Reader task**: Simple loop that forwards all server messages to recv_tx
+    /// - **Writer task**: Simple loop that forwards all client messages to WebSocket
+    /// - **Pre-choice hook**: Blocks on recv_rx, processes CardRevealed, returns choice signals
     ///
     /// # Errors
     ///
     /// Returns an error if not connected, game not started, or communication fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if internal channel communication fails or required state is missing.
-    #[allow(clippy::wildcard_enum_match_arm)]
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
+        use crate::game::game_loop::{PreChoiceResult, RawChoice};
         use crate::game::GameLoop;
         use crate::network::{NetworkLocalController, RemoteController};
+        use std::cell::RefCell;
 
         // Take ownership of WebSocket and state
         let ws = self.ws.take().ok_or_else(|| anyhow!("Not connected"))?;
@@ -943,33 +992,22 @@ impl NetworkClient {
         // Split WebSocket for concurrent read/write
         let (ws_sink, ws_stream) = ws.split();
 
-        // Create communication channels
-        let (local_choice_tx, local_choice_rx) = tokio_mpsc::channel::<LocalChoice>(16);
-        let (local_msg_tx, local_msg_rx) = mpsc::channel::<LocalControllerMessage>();
-        let (remote_choice_tx, remote_choice_rx) = mpsc::channel::<RemoteMessage>();
-        let (game_end_tx, mut game_end_rx) = tokio_mpsc::channel::<(Option<PlayerId>, u64)>(1);
-        let (fatal_error_tx, mut fatal_error_rx) = tokio_mpsc::channel::<String>(1);
-        let (reveal_tx, reveal_rx) = mpsc::channel::<RevealMsg>();
+        // SINGLE-CHANNEL ARCHITECTURE: Two unidirectional channels, no select!
+        // recv: Server → Hook (all ServerMessages converted to NetworkMessage)
+        // send: Controllers → Server (ClientMessage for choices)
+        let (recv_tx, recv_rx) = mpsc::channel::<NetworkMessage>();
+        let (send_tx, send_rx) = mpsc::channel::<ClientMessage>();
 
         let network_debug = self.network_debug;
+        let card_db = self.card_db.clone().expect("Card DB not loaded");
 
-        // Create local controller with channel bridge (std -> tokio)
-        let local_controller = {
-            let (std_tx, std_rx) = mpsc::channel::<LocalChoice>();
-            let local_choice_tx_clone = local_choice_tx.clone();
-            tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Handle::current();
-                while let Ok(choice) = std_rx.recv() {
-                    log::trace!("Bridge: forwarding choice {:?}", choice.choice_indices);
-                    if runtime.block_on(local_choice_tx_clone.send(choice)).is_err() {
-                        break;
-                    }
-                }
-                log::debug!("Bridge: task exiting");
-            });
-            NetworkLocalController::new(controller, std_tx, local_msg_rx).with_network_debug(network_debug)
-        };
-        let remote_controller = RemoteController::new(opponent_id, remote_choice_rx);
+        // Create controllers - simplified versions that don't block on channels
+        // NetworkLocalController: output-only (sends choices to server)
+        // RemoteController: marker type (hook provides choices via UseChoice)
+        let mut local_controller =
+            NetworkLocalController::new(controller, send_tx.clone()).with_network_debug(network_debug);
+
+        let mut remote_controller = RemoteController::new(opponent_id);
 
         // Configure game state
         let mut game = client_state.game;
@@ -978,444 +1016,325 @@ impl NetworkClient {
             log::debug!("Client GameLoop: tag_gamelogs enabled");
         }
 
-        // Spawn WebSocket handler task
-        let ws_channels = WsHandlerChannels {
-            reveal_tx,
-            remote_choice_tx,
-            local_msg_tx,
-            game_end_tx,
-            fatal_error_tx,
-        };
-        let ws_handler = tokio::spawn(run_ws_handler(
-            ws_stream,
-            ws_sink,
-            local_choice_rx,
-            ws_channels,
-            our_player_id,
-            network_debug,
-        ));
+        // Spawn reader task: WebSocket → recv_tx (no select!, just forward)
+        let reader_handle = tokio::spawn(run_ws_reader_simple(ws_stream, recv_tx));
 
-        // Clone card_db for use in the blocking thread
-        let card_db_clone = self.card_db.clone().expect("Card DB not loaded");
+        // Spawn writer task: send_rx → WebSocket (no select!, just forward)
+        let writer_handle = tokio::spawn(run_ws_writer(ws_sink, send_rx));
 
-        // Run game loop in blocking thread
-        let mut local_controller = local_controller;
-        let mut remote_controller = remote_controller;
+        // Clone card_db for the pre-choice hook
+        let card_db_for_hook = card_db.clone();
+
+        // Run game loop in spawn_blocking (works with both single and multi-threaded runtimes)
+        // Note: This requires controllers to be Send + 'static
         let game_result = tokio::task::spawn_blocking(move || {
-            // Create drain function that processes reveals from the channel
-            let drain_reveals = move |game: &mut GameState| {
-                // Non-blocking drain: get all reveals currently in the channel
-                while let Ok((owner, card_reveal, reason)) = reveal_rx.try_recv() {
-                    process_card_reveal(game, &card_db_clone, owner, card_reveal, reason);
+            // Track choice sequence number (shared with local controller via RefCell)
+            let choice_seq = RefCell::new(0u32);
+
+            // PRE-CHOICE HOOK: This is the core of the network architecture
+            //
+            // The hook is called BEFORE every choice. It:
+            // 1. Blocks on the message channel
+            // 2. Processes CardRevealed messages (instantiates cards in GameState)
+            // 3. Returns AskController for local player choices
+            // 4. Returns UseChoice(RawChoice) for remote player choices (OpponentChoice)
+            // 5. Returns Exit for GameEnded/Error
+            let pre_choice_hook = |game: &mut GameState, player: PlayerId, _kind| -> PreChoiceResult {
+                let is_our_choice = player == our_player_id;
+
+                loop {
+                    // Block on the message channel
+                    let msg = match recv_rx.recv() {
+                        Ok(msg) => msg,
+                        Err(_) => {
+                            log::debug!("Pre-choice hook: channel closed");
+                            return PreChoiceResult::Exit;
+                        }
+                    };
+
+                    match msg {
+                        NetworkMessage::CardRevealed { owner, card, reason } => {
+                            // Process the reveal immediately - instantiate the card in GameState
+                            process_card_reveal(game, &card_db_for_hook, owner, card, reason);
+                            // Continue waiting for the actual choice message
+                        }
+                        NetworkMessage::ChoiceRequest {
+                            action_count: _,
+                            choice_seq: seq,
+                        } => {
+                            if is_our_choice {
+                                // Update choice_seq for NetworkLocalController
+                                *choice_seq.borrow_mut() = seq;
+                                local_controller.set_choice_seq(seq);
+                                return PreChoiceResult::AskController;
+                            }
+                            // Server is asking US for a choice but this is opponent's turn?
+                            // This shouldn't happen, but handle gracefully
+                            log::warn!("Pre-choice hook: ChoiceRequest for our player but hook called for opponent");
+                        }
+                        NetworkMessage::ChoiceAccepted {
+                            choice_seq: _,
+                            action_count: _,
+                        } => {
+                            // Our previous choice was accepted - continue waiting
+                            // This message comes after we submit, before next choice
+                        }
+                        NetworkMessage::OpponentChoice {
+                            choice_indices,
+                            description: _,
+                            spell_ability,
+                        } => {
+                            if !is_our_choice {
+                                // Opponent made a choice - return it as UseChoice
+                                return PreChoiceResult::UseChoice(RawChoice {
+                                    indices: choice_indices,
+                                    spell_ability,
+                                });
+                            }
+                            // OpponentChoice but hook called for our turn?
+                            log::warn!("Pre-choice hook: OpponentChoice but hook called for our player");
+                        }
+                        NetworkMessage::GameEnded { winner, action_count } => {
+                            log::info!(
+                                "Pre-choice hook: Game ended, winner={:?}, actions={}",
+                                winner,
+                                action_count
+                            );
+                            return PreChoiceResult::Exit;
+                        }
+                        NetworkMessage::Error { message, fatal } => {
+                            if fatal {
+                                log::error!("Pre-choice hook: Fatal error from server: {}", message);
+                                return PreChoiceResult::Exit;
+                            }
+                            log::warn!("Pre-choice hook: Non-fatal error: {}", message);
+                        }
+                        NetworkMessage::LibraryReordered { player, new_order } => {
+                            log::debug!(
+                                "Pre-choice hook: Library reordered for {:?}, {} cards",
+                                player,
+                                new_order.len()
+                            );
+                            // Informational only - the actual reorder happens via game actions
+                        }
+                    }
                 }
             };
 
-            // Process any reveals before starting (for opening hand)
-            drain_reveals(&mut game);
+            // Create game loop with pre-choice hook
+            let result = {
+                let mut game_loop = GameLoop::new(&mut game)
+                    .with_pre_choice_hook(Box::new(pre_choice_hook))
+                    .with_reveal_validation(our_player_id, network_debug)
+                    .skip_opening_hands();
 
-            // Create game loop with reveal drainer hook
-            let mut game_loop = GameLoop::new(&mut game)
-                .with_reveal_drainer(drain_reveals)
-                .with_reveal_validation(our_player_id, network_debug)
-                .skip_opening_hands();
+                // Pass controllers in the correct order based on which player we are
+                log::debug!("Client GameLoop: we_are_p1={}", we_are_p1);
+                if we_are_p1 {
+                    game_loop.run_game(&mut local_controller, &mut remote_controller)
+                } else {
+                    game_loop.run_game(&mut remote_controller, &mut local_controller)
+                }
+            };
 
-            // Pass controllers in the correct order based on which player we are
-            log::debug!("Client GameLoop: we_are_p1={}", we_are_p1);
-            if we_are_p1 {
-                game_loop.run_game(&mut local_controller, &mut remote_controller)
-            } else {
-                game_loop.run_game(&mut remote_controller, &mut local_controller)
+            result
+        })
+        .await;
+
+        // Clean up tasks
+        reader_handle.abort();
+        writer_handle.abort();
+
+        // Return result - handle both JoinError and game error
+        match game_result {
+            Ok(Ok(result)) => {
+                log::info!(
+                    "Client GameLoop finished: winner={:?}, action_count={}",
+                    result.winner,
+                    result.action_count
+                );
+                Ok(result.winner)
             }
-        });
+            Ok(Err(e)) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("Game exit requested") {
+                    // Game ended normally via controller ExitGame
+                    log::info!("Game ended via ExitGame");
+                    Ok(None)
+                } else {
+                    Err(anyhow!("Game error: {}", e))
+                }
+            }
+            Err(e) => {
+                // JoinError - task panicked or was cancelled
+                Err(anyhow!("Game thread panic: {}", e))
+            }
+        }
+    }
+}
 
-        // Wait for game to end
-        // network_debug is used for action_count verification logging
-        //
-        // BIASED SELECT: Prioritize server_end over game_result to ensure we get
-        // the authoritative winner from the server. Without biased, when both are
-        // ready at the same time, select! picks pseudo-randomly, and we might
-        // take game_result's Err path and fail to receive the winner.
-        tokio::select! {
-            biased;
+// ═══════════════════════════════════════════════════════════════════════════
+// SINGLE-CHANNEL WEBSOCKET TASKS
+// ═══════════════════════════════════════════════════════════════════════════
 
-            server_end = game_end_rx.recv() => {
-                ws_handler.abort();
-                match server_end {
-                    Some((winner, server_action_count)) => {
-                        log::info!("Server signaled game end: winner={:?}, server_action_count={}", winner, server_action_count);
-                        // Note: Client GameLoop was aborted, so we can't compare action_counts here
-                        // The per-choice verification during the game should catch sync issues
-                        Ok(winner)
-                    }
-                    None => {
-                        // Channel closed without sending winner - check if fatal error
-                        // Wait a short time for fatal error to arrive (race condition mitigation)
-                        match tokio::time::timeout(
-                            std::time::Duration::from_millis(100),
-                            fatal_error_rx.recv()
-                        ).await {
-                            Ok(Some(msg)) => {
-                                log::error!("Game terminated due to fatal error: {}", msg);
-                                Err(anyhow!("Fatal server error: {}", msg))
-                            }
-                            _ => {
-                                // No fatal error, treat as normal termination (draw)
-                                Ok(None)
-                            }
+/// WebSocket reader task (simplified): reads from WebSocket and forwards ALL to recv_tx
+///
+/// This is a simple linear loop with no select! - just recv and forward.
+/// ALL messages (including CardRevealed) go through the single channel.
+/// The pre-choice hook handles CardRevealed messages inline.
+async fn run_ws_reader_simple(
+    mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    recv_tx: mpsc::Sender<NetworkMessage>,
+) {
+    while let Some(msg_result) = ws_stream.next().await {
+        match msg_result {
+            Ok(Message::Text(text)) => match serde_json::from_str::<ServerMessage>(&text) {
+                Ok(server_msg) => {
+                    if let Some(network_msg) = NetworkMessage::from_server_message(server_msg) {
+                        // ALL messages go through the single channel
+                        // The pre-choice hook handles CardRevealed inline
+                        if recv_tx.send(network_msg).is_err() {
+                            log::debug!("WsReader: recv channel closed, exiting");
+                            return;
                         }
                     }
                 }
+                Err(e) => {
+                    log::error!("WsReader: failed to parse server message: {}", e);
+                }
+            },
+            Ok(Message::Close(_)) => {
+                log::debug!("WsReader: WebSocket closed by server");
+                // Send a GameEnded message to unblock the hook
+                let _ = recv_tx.send(NetworkMessage::GameEnded {
+                    winner: None,
+                    action_count: 0,
+                });
+                return;
             }
-            // Game loop completed (either normally or with error)
-            result = game_result => {
-                ws_handler.abort();
-                match result {
-                    Ok(Ok(game_result)) => {
-                        log::info!("Client GameLoop finished: winner={:?}, action_count={}", game_result.winner, game_result.action_count);
-                        Ok(game_result.winner)
-                    }
-                    Ok(Err(e)) => {
-                        // Check if this was a legitimate game-end signal
-                        // The GameLoop returns error when RemoteController gets GameEnded and returns ExitGame
-                        let error_msg = e.to_string();
-                        if error_msg.contains("Game exit requested") {
-                            // With biased select, server_end should normally win.
-                            // If we get here, the game_end message wasn't sent (edge case).
-                            // Try once more to receive it.
-                            match game_end_rx.try_recv() {
-                                Ok((winner, server_action_count)) => {
-                                    log::info!(
-                                        "Game ended via ExitGame fallback: winner={:?}, server_action_count={}",
-                                        winner, server_action_count
-                                    );
-                                    Ok(winner)
-                                }
-                                Err(_) => {
-                                    log::warn!("Game exited but no winner received from server (treating as draw)");
-                                    Ok(None)
-                                }
+            Ok(_) => {
+                // Ignore binary/ping/pong
+            }
+            Err(e) => {
+                log::error!("WsReader: WebSocket error: {}", e);
+                let _ = recv_tx.send(NetworkMessage::Error {
+                    message: e.to_string(),
+                    fatal: true,
+                });
+                return;
+            }
+        }
+    }
+    log::debug!("WsReader: WebSocket stream ended");
+}
+
+/// Legacy WebSocket reader task (with pending_reveals buffer)
+///
+/// DEPRECATED: Use run_ws_reader_simple instead with pre-choice hook architecture.
+#[allow(dead_code)]
+async fn run_ws_reader(
+    mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    recv_tx: mpsc::Sender<NetworkMessage>,
+    pending_reveals: crate::network::local_controller::PendingReveals,
+) {
+    use crate::network::local_controller::BufferedReveal;
+
+    while let Some(msg_result) = ws_stream.next().await {
+        match msg_result {
+            Ok(Message::Text(text)) => match serde_json::from_str::<ServerMessage>(&text) {
+                Ok(server_msg) => {
+                    if let Some(network_msg) = NetworkMessage::from_server_message(server_msg) {
+                        // CardRevealed goes DIRECTLY to pending_reveals buffer
+                        // This ensures reveals are processed before GameLoop validation
+                        if let NetworkMessage::CardRevealed { owner, card, reason } = network_msg {
+                            if let Ok(mut reveals) = pending_reveals.lock() {
+                                log::debug!(
+                                    "WsReader: buffering reveal {} (id={}) for {:?}",
+                                    card.name,
+                                    card.card_id.as_u32(),
+                                    owner
+                                );
+                                reveals.push(BufferedReveal { owner, card, reason });
+                            } else {
+                                log::error!("WsReader: failed to lock pending_reveals");
                             }
                         } else {
-                            Err(anyhow!("Game error: {}", e))
+                            // All other messages go to controller channel
+                            if recv_tx.send(network_msg).is_err() {
+                                log::debug!("WsReader: recv channel closed, exiting");
+                                return;
+                            }
                         }
                     }
-                    Err(e) => Err(anyhow!("Game thread panic: {}", e)),
                 }
-            }
-            // Fatal error from WebSocket handler
-            error_msg = fatal_error_rx.recv() => {
-                ws_handler.abort();
-                match error_msg {
-                    Some(msg) => {
-                        log::error!("Game terminated due to fatal error: {}", msg);
-                        Err(anyhow!("Fatal server error: {}", msg))
-                    }
-                    None => {
-                        // Error channel closed without message - shouldn't happen
-                        Ok(None)
-                    }
+                Err(e) => {
+                    log::error!("WsReader: failed to parse server message: {}", e);
                 }
+            },
+            Ok(Message::Close(_)) => {
+                log::debug!("WsReader: WebSocket closed by server");
+                // Send a GameEnded message to unblock controllers
+                let _ = recv_tx.send(NetworkMessage::GameEnded {
+                    winner: None,
+                    action_count: 0,
+                });
+                return;
+            }
+            Ok(_) => {
+                // Ignore binary/ping/pong
+            }
+            Err(e) => {
+                log::error!("WsReader: WebSocket error: {}", e);
+                let _ = recv_tx.send(NetworkMessage::Error {
+                    message: e.to_string(),
+                    fatal: true,
+                });
+                return;
             }
         }
     }
+    log::debug!("WsReader: WebSocket stream ended");
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WEBSOCKET HANDLER HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Channels used by the WebSocket handler
-struct WsHandlerChannels {
-    reveal_tx: mpsc::Sender<RevealMsg>,
-    remote_choice_tx: mpsc::Sender<RemoteMessage>,
-    local_msg_tx: mpsc::Sender<LocalControllerMessage>,
-    game_end_tx: tokio_mpsc::Sender<(Option<PlayerId>, u64)>,
-    fatal_error_tx: tokio_mpsc::Sender<String>,
-}
-
-/// State tracked by the WebSocket handler for sync validation
-struct WsHandlerState {
-    /// Last action_count we sent to server (for validation)
-    last_sent_action_count: Option<u64>,
-    /// Last actions log we sent (for debugging sync errors)
-    last_sent_actions: Option<String>,
-    /// Server's authoritative action_count from last ChoiceRequest
-    server_action_count: Option<u64>,
-    /// Server's choice_seq from last ChoiceRequest
-    server_choice_seq: Option<u32>,
-}
-
-impl WsHandlerState {
-    fn new() -> Self {
-        Self {
-            last_sent_action_count: None,
-            last_sent_actions: None,
-            server_action_count: None,
-            server_choice_seq: None,
-        }
-    }
-}
-
-/// Result of processing a server message
-enum ServerMsgResult {
-    /// Continue processing messages
-    Continue,
-    /// Handler should exit (game ended or fatal error)
-    Exit,
-}
-
-/// Process a single server message
+/// WebSocket writer task: reads from send_rx and forwards to WebSocket
 ///
-/// Returns `ServerMsgResult::Exit` if the handler should terminate.
-///
-/// Note: Wildcard is intentional - ServerMessage has 12+ variants; we handle
-/// specific variants and ignore the rest (Auth, Pong, etc. not used mid-game).
-#[allow(clippy::too_many_arguments, clippy::wildcard_enum_match_arm)]
-fn handle_server_message(
-    msg: ServerMessage,
-    channels: &WsHandlerChannels,
-    state: &mut WsHandlerState,
-    our_player_id: PlayerId,
-    network_debug: bool,
-) -> ServerMsgResult {
-    match msg {
-        ServerMessage::CardRevealed { owner, card, reason } => {
-            log::debug!(
-                "WebSocket: Sending reveal to game thread: {} (id={}) for {:?} ({:?})",
-                card.name,
-                card.card_id.as_u32(),
-                owner,
-                reason
-            );
-            if let Err(e) = channels.reveal_tx.send((owner, card, reason)) {
-                log::error!("WebSocket: Failed to send reveal: {:?}", e);
-            }
-        }
-        ServerMessage::LibraryReordered { player, new_order } => {
-            log::debug!(
-                "WebSocket: Library reordered for player {:?}, new size: {}",
-                player,
-                new_order.len()
-            );
-        }
-        ServerMessage::OpponentChoice {
-            choice_indices,
-            description,
-            spell_ability,
-            ..
-        } => {
-            log::debug!(
-                "WebSocket: opponent chose {} (indices={:?}), spell_ability={:?}",
-                description,
-                choice_indices,
-                spell_ability
-            );
-            let result = channels.remote_choice_tx.send(RemoteMessage::Choice {
-                choice_indices,
-                description,
-                spell_ability,
-                card_reveal: None,
-                reveals: Vec::new(),
-            });
-            match result {
-                Ok(()) => log::trace!("WebSocket: sent opponent choice to RemoteController"),
-                Err(e) => log::error!("WebSocket: FAILED to send opponent choice: {:?}", e),
-            }
-        }
-        ServerMessage::ChoiceRequest {
-            action_count,
-            choice_seq,
-            ..
-        } => {
-            state.server_action_count = Some(action_count);
-            state.server_choice_seq = Some(choice_seq);
-            log::debug!(
-                "Player {:?}: Received ChoiceRequest #{}, server action_count={}",
-                our_player_id,
-                choice_seq,
-                action_count
-            );
-            let _ = channels.local_msg_tx.send(LocalControllerMessage::ChoiceRequest {
-                action_count,
-                choice_seq,
-                reveals: Vec::new(),
-            });
-        }
-        ServerMessage::ChoiceAccepted {
-            choice_seq,
-            action_count: server_action_count,
-            ..
-        } => {
-            if network_debug {
-                if let Some(client_action_count) = state.last_sent_action_count {
-                    if client_action_count != server_action_count {
-                        log::error!(
-                            "SYNC ERROR: action_count mismatch! client={} server={}",
-                            client_action_count,
-                            server_action_count
-                        );
-                        if let Some(ref actions) = state.last_sent_actions {
-                            log::error!("Client's last 20 actions:\n{}", actions);
-                        }
-                        let _ = channels.local_msg_tx.send(LocalControllerMessage::Error(format!(
-                            "Action count sync failure: client={} server={}",
-                            client_action_count, server_action_count
-                        )));
-                        return ServerMsgResult::Exit;
-                    }
-                    log::debug!("SYNC OK: action_count={} (choice {})", server_action_count, choice_seq);
-                }
-            }
-            log::trace!(
-                "WebSocket: choice {} accepted (action_count={}), sending ack",
-                choice_seq,
-                server_action_count
-            );
-            let _ = channels.local_msg_tx.send(LocalControllerMessage::ChoiceAcknowledged);
-        }
-        ServerMessage::GameEnded {
-            winner, action_count, ..
-        } => {
-            log::info!("Game ended, winner: {:?}, action_count: {}", winner, action_count);
-            // Use try_send since we're in sync context - game_end_tx.send() is async
-            // but channels.game_end_tx is passed to the async handler context
-            let _ = channels.game_end_tx.try_send((winner, action_count));
-            let _ = channels.remote_choice_tx.send(RemoteMessage::GameEnded);
-            return ServerMsgResult::Exit;
-        }
-        ServerMessage::Error { message, fatal } => {
-            if fatal {
-                log::error!("Fatal server error: {}", message);
-                let _ = channels
-                    .local_msg_tx
-                    .send(LocalControllerMessage::Error(message.clone()));
-                let _ = channels.fatal_error_tx.try_send(message);
-                return ServerMsgResult::Exit;
-            }
-            log::warn!("Server warning: {}", message);
-        }
-        _ => {
-            // Ignore other messages
-        }
-    }
-    ServerMsgResult::Continue
-}
-
-/// Send a choice to the server
-async fn send_choice_to_server(
-    ws_sink: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    choice: LocalChoice,
-    state: &mut WsHandlerState,
-    network_debug: bool,
-) -> bool {
-    let action_count_to_send = state.server_action_count.unwrap_or_else(|| {
-        log::warn!(
-            "WebSocket: No server action_count received yet, using client's {} (may cause sync error)",
-            choice.action_count
-        );
-        choice.action_count
-    });
-
-    if network_debug && choice.action_count != action_count_to_send {
-        log::debug!(
-            "WebSocket: action_count differs - client shadow={} server={}",
-            choice.action_count,
-            action_count_to_send
-        );
-    }
-
-    log::trace!(
-        "WebSocket: sending choice {:?} (server_action_count={}) to server",
-        choice.choice_indices,
-        action_count_to_send
-    );
-
-    state.last_sent_action_count = Some(action_count_to_send);
-    state.last_sent_actions = choice.last_actions;
-
-    let choice_seq_to_send = state.server_choice_seq.unwrap_or_else(|| {
-        log::warn!("WebSocket: No server choice_seq received yet, using 0 (may cause sync error)");
-        0
-    });
-
-    // Clear server state after use
-    state.server_action_count = None;
-    state.server_choice_seq = None;
-
-    let msg = ClientMessage::SubmitChoice {
-        choice_seq: choice_seq_to_send,
-        choice_indices: choice.choice_indices,
-        action_count: action_count_to_send,
-        timestamp_ms: crate::network::protocol::now_ms(),
-        client_state_hash: choice.client_state_hash,
-        debug_info: choice.debug_info,
-    };
-
-    let text = serde_json::to_string(&msg).expect("Failed to serialize SubmitChoice");
-    if ws_sink.send(Message::Text(text.into())).await.is_err() {
-        log::error!("WebSocket: failed to send choice to server");
-        return false;
-    }
-    true
-}
-
-/// Run the WebSocket handler loop
-///
-/// Processes server messages and sends client choices until game ends.
-async fn run_ws_handler(
-    mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+/// This is a simple linear loop with no select! - just recv and forward.
+/// Uses tokio mpsc for async receive to avoid blocking issues.
+async fn run_ws_writer(
     mut ws_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    mut local_choice_rx: tokio_mpsc::Receiver<LocalChoice>,
-    channels: WsHandlerChannels,
-    our_player_id: PlayerId,
-    network_debug: bool,
+    send_rx: mpsc::Receiver<ClientMessage>,
 ) {
-    let mut state = WsHandlerState::new();
+    // Wrap the std::sync::mpsc::Receiver in a tokio task to make it async
+    // We use a tokio mpsc channel as a bridge
+    let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::channel::<ClientMessage>(16);
 
-    loop {
-        tokio::select! {
-            msg = ws_stream.next() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        match serde_json::from_str::<ServerMessage>(&text) {
-                            Ok(server_msg) => {
-                                if matches!(
-                                    handle_server_message(server_msg, &channels, &mut state, our_player_id, network_debug),
-                                    ServerMsgResult::Exit
-                                ) {
-                                    return;
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("Failed to parse server message: {}", e);
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | None => {
-                        log::debug!("WebSocket: connection closed by server");
-                        let _ = channels.local_msg_tx.send(LocalControllerMessage::GameEnded);
-                        return;
-                    }
-                    Some(Ok(_)) => {
-                        // Ignore binary/ping/pong
-                    }
-                    Some(Err(e)) => {
-                        log::error!("WebSocket error: {}", e);
-                        let _ = channels.local_msg_tx.send(LocalControllerMessage::Error(e.to_string()));
-                        return;
-                    }
-                }
-            }
-
-            choice = local_choice_rx.recv() => {
-                if let Some(choice) = choice {
-                    if !send_choice_to_server(&mut ws_sink, choice, &mut state, network_debug).await {
-                        return;
-                    }
-                }
+    // Spawn a blocking task that reads from std channel and forwards to tokio channel
+    let _bridge_task = tokio::task::spawn_blocking(move || {
+        while let Ok(msg) = send_rx.recv() {
+            // Use blocking_send since we're in a blocking context
+            if bridge_tx.blocking_send(msg).is_err() {
+                log::debug!("WsWriter bridge: tokio channel closed");
+                return;
             }
         }
+        log::debug!("WsWriter bridge: std channel closed");
+    });
+
+    // Now we can use async receive
+    while let Some(client_msg) = bridge_rx.recv().await {
+        let text = match serde_json::to_string(&client_msg) {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("WsWriter: failed to serialize message: {}", e);
+                continue;
+            }
+        };
+        if let Err(e) = ws_sink.send(Message::Text(text.into())).await {
+            log::error!("WsWriter: failed to send to WebSocket: {}", e);
+            return;
+        }
     }
+    log::debug!("WsWriter: bridge channel closed, exiting");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

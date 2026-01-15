@@ -364,8 +364,8 @@ impl<'a> GameLoop<'a> {
                     // Ask controller to choose one (or None to pass)
                     // Capture log size BEFORE asking controller (before controller logs its choice)
                     let prior_log_size = self.game.logger.log_count();
-                    let view = GameStateView::new(self.game, current_priority);
-                    let choice_result = controller.choose_spell_ability_to_play(&view, &available);
+                    // Use network-aware helper (creates view internally, handles pre-choice hook)
+                    let choice_result = self.choose_spell_ability_with_hook(controller, current_priority, &available);
                     let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
 
                     // IMPORTANT: Drain reveals after receiving opponent choice (network mode)
@@ -552,9 +552,9 @@ impl<'a> GameLoop<'a> {
 
                                         // Ask controller to choose from valid modes
                                         let prior_log_size = self.game.logger.log_count();
-                                        let view = GameStateView::new(self.game, current_priority);
-                                        let choice = controller.choose_modes(
-                                            &view,
+                                        let choice = self.choose_modes_with_hook(
+                                            controller,
+                                            current_priority,
                                             card_id,
                                             &mode_descriptions,
                                             num_to_choose as usize,
@@ -623,8 +623,12 @@ impl<'a> GameLoop<'a> {
                                     // Multiple valid targets - ask controller to choose
                                     // Capture log size BEFORE asking controller (before controller logs its choice)
                                     let prior_log_size = self.game.logger.log_count();
-                                    let view = GameStateView::new(self.game, current_priority);
-                                    let choice = controller.choose_targets(&view, card_id, &valid_targets);
+                                    let choice = self.choose_targets_with_hook(
+                                        controller,
+                                        current_priority,
+                                        card_id,
+                                        &valid_targets,
+                                    );
                                     let chosen_targets =
                                         handle_choice_result_break!(choice, self.game, current_priority);
 
@@ -716,8 +720,12 @@ impl<'a> GameLoop<'a> {
                                         // Multiple valid targets - ask controller to choose
                                         // Capture log size BEFORE asking controller (before controller logs its choice)
                                         let prior_log_size = self.game.logger.log_count();
-                                        let view = GameStateView::new(self.game, current_priority);
-                                        let choice = controller.choose_targets(&view, card_id, &valid_targets);
+                                        let choice = self.choose_targets_with_hook(
+                                            controller,
+                                            current_priority,
+                                            card_id,
+                                            &valid_targets,
+                                        );
                                         let chosen_targets =
                                             handle_choice_result_break!(choice, self.game, current_priority);
 
@@ -1049,11 +1057,11 @@ impl<'a> GameLoop<'a> {
 
                                                 // Ask controller to choose a card (or decline to find)
                                                 let prior_log_size = self.game.logger.log_count();
-                                                let view = crate::game::controller::GameStateView::new(
-                                                    self.game,
+                                                let choice = self.choose_from_library_with_hook(
+                                                    controller,
                                                     current_priority,
+                                                    &valid_cards,
                                                 );
-                                                let choice = controller.choose_from_library(&view, &valid_cards);
                                                 let chosen_card_opt =
                                                     handle_choice_result_break!(choice, self.game, current_priority);
 
@@ -1320,9 +1328,11 @@ impl<'a> GameLoop<'a> {
 
                                         // Ask controller to choose a card (or decline to find)
                                         let prior_log_size = self.game.logger.log_count();
-                                        let view =
-                                            crate::game::controller::GameStateView::new(self.game, current_priority);
-                                        let choice = controller.choose_from_library(&view, &valid_cards);
+                                        let choice = self.choose_from_library_with_hook(
+                                            controller,
+                                            current_priority,
+                                            &valid_cards,
+                                        );
                                         let chosen_card_opt =
                                             handle_choice_result_break!(choice, self.game, current_priority);
 
@@ -1526,11 +1536,15 @@ impl<'a> GameLoop<'a> {
                 };
 
                 // Ask player to choose which permanents to sacrifice
-                let view = GameStateView::new(self.game, player_id);
                 let prior_log_size = self.game.logger.log_count();
 
-                let choice_result =
-                    controller.choose_permanents_to_sacrifice(&view, &valid_permanents, sacrifice_count, type_str);
+                let choice_result = self.choose_sacrifice_with_hook(
+                    controller,
+                    player_id,
+                    &valid_permanents,
+                    sacrifice_count,
+                    type_str,
+                );
 
                 let to_sacrifice = handle_choice_result!(choice_result, self.game, player_id);
 

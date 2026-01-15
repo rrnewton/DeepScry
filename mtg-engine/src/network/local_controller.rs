@@ -1,27 +1,29 @@
 //! Network-aware local controller wrapper
 //!
 //! This wraps any PlayerController and sends choices to the server after each decision.
-//! It also receives CardRevealed messages to populate remote libraries before draws.
 //!
-//! ## Architecture
+//! ## Architecture (Pre-Choice Hook Design)
 //!
-//! ```text
-//! GameLoop calls LocalController methods
-//!     │
-//!     ▼
-//! NetworkLocalController
-//!     │
-//!     ├─► Delegates to inner controller (InteractiveController, etc.)
-//!     │
-//!     └─► Sends choice to server via channel
-//!         Server validates and broadcasts to opponent
-//! ```
+//! The pre-choice hook in GameLoop handles all network message processing:
+//! - Blocks on the message channel
+//! - Processes CardRevealed messages to update GameState
+//! - Returns ChoiceRequest/OpponentChoice signals
+//!
+//! This controller simply:
+//! 1. Delegates to the wrapped inner controller
+//! 2. Sends the choice to the server via client_tx
+//!
+//! It does NOT:
+//! - Block on message_rx (the hook does this)
+//! - Process CardRevealed messages (the hook does this)
+//! - Wait for ChoiceAccepted (the hook handles this on next choice)
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
+use crate::network::protocol::ClientMessage;
+use crate::network::ClientMessageSender;
 use smallvec::SmallVec;
-use std::sync::mpsc;
 
 /// A choice made by the local player, to be sent to the server
 #[derive(Debug, Clone)]
@@ -31,105 +33,30 @@ pub struct LocalChoice {
     /// Human-readable description
     pub description: String,
     /// Action count (undo log position) at the time of choice
-    /// This is used for synchronization validation with the server
     pub action_count: u64,
     /// Last N actions from the undo log (for sync debugging)
-    /// Only populated when debug mode is enabled
     pub last_actions: Option<String>,
     /// Client's computed state hash (for server validation in debug mode)
-    /// Computed using compute_view_hash from the GameStateView
     pub client_state_hash: Option<u64>,
     /// Debug synchronization info (only in network debug mode)
-    /// Contains turn, phase, life totals, zone sizes for comparison
     pub debug_info: Option<super::DebugSyncInfo>,
 }
 
-/// A bundled card reveal with all info needed to instantiate
-#[derive(Debug, Clone)]
-pub struct BundledReveal {
-    pub owner: PlayerId,
-    pub card_id: CardId,
-    pub card_name: String,
-    pub reason: super::protocol::RevealReason,
-}
-
-/// Message types for the local controller
-#[derive(Debug)]
-pub enum LocalControllerMessage {
-    /// A card was revealed by the server (queue for drawing)
-    CardRevealed { owner: PlayerId, card_id: CardId },
-    /// Server is requesting a choice - the controller should proceed to make one
-    ///
-    /// This synchronizes the client's GameLoop with the server's:
-    /// 1. Server reaches choice point in its GameLoop
-    /// 2. Server sends ChoiceRequest to client via WebSocket
-    /// 3. Client's NetworkLocalController receives this message
-    /// 4. Client's GameLoop proceeds to make the choice
-    /// 5. Client sends SubmitChoice back to server
-    ///
-    /// This ensures the client never gets ahead of the server.
-    ///
-    /// IMPORTANT: The `reveals` field contains all CardRevealed messages that
-    /// arrived BEFORE this ChoiceRequest. They MUST be processed before the
-    /// game evaluates available options. This eliminates race conditions from
-    /// having separate channels for reveals vs choice requests.
-    ChoiceRequest {
-        /// Server's authoritative action count (for sync validation)
-        action_count: u64,
-        /// Server's choice sequence number
-        choice_seq: u32,
-        /// Bundled reveals that arrived before this ChoiceRequest
-        /// These should be processed before evaluating available options
-        reveals: Vec<BundledReveal>,
-    },
-    /// Server acknowledged our choice, continue
-    ChoiceAcknowledged,
-    /// Server reported an error
-    Error(String),
-    /// Game has ended
-    GameEnded,
-}
-
-/// Reveal message type for controller → game thread communication
-pub type RevealMsg = (
-    crate::core::PlayerId,
-    super::protocol::CardReveal,
-    super::protocol::RevealReason,
-);
-
 /// A controller that wraps a local controller and sends choices to the server.
 ///
-/// This is used on the client side for our player. When the GameLoop asks for a choice,
-/// we drain any pending messages (which may include ChoiceRequest with the server's
-/// authoritative action_count), delegate to the inner controller, then send the result
-/// to the server and wait for acknowledgment.
-///
-/// The flow is:
-/// 1. GameLoop calls choose_spell_ability_to_play() (or similar)
-/// 2. We wait for ChoiceRequest (which updates server_action_count)
-/// 3. We delegate to inner controller
-/// 4. We send the choice via choice_tx using server's action_count
-/// 5. We wait for ChoiceAcknowledged from server
-/// 6. We return the result to GameLoop
-///
-/// SINGLE-CHANNEL ARCHITECTURE: This controller no longer handles reveals.
-/// Reveals are sent directly from WebSocket handler to drain_reveals() via reveal_tx,
-/// eliminating the race condition that existed when controllers pushed bundled reveals.
+/// This is used on the client side for our player. The pre-choice hook in GameLoop
+/// handles network message processing. This controller simply:
+/// 1. Delegates to the inner controller
+/// 2. Sends the choice to the server
 pub struct NetworkLocalController<C: PlayerController> {
     /// The wrapped local controller
     inner: C,
-    /// Channel to send our choices to the WebSocket handler
-    choice_tx: mpsc::Sender<LocalChoice>,
-    /// Channel to receive messages from the WebSocket handler
-    message_rx: mpsc::Receiver<LocalControllerMessage>,
-    /// Whether we've been disconnected
-    disconnected: bool,
+    /// Channel to send client messages (choices) to WebSocket writer
+    client_tx: ClientMessageSender,
     /// Network debug mode: include action log info in choices for sync validation
     network_debug: bool,
-    /// Last received server action count (from ChoiceRequest)
-    server_action_count: Option<u64>,
-    /// Last received server choice sequence (from ChoiceRequest)
-    server_choice_seq: Option<u32>,
+    /// Current choice sequence number (set externally before each choice)
+    choice_seq: u32,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -137,227 +64,82 @@ impl<C: PlayerController> NetworkLocalController<C> {
     ///
     /// # Arguments
     /// * `inner` - The actual controller to delegate choices to
-    /// * `choice_tx` - Channel to send choices to WebSocket handler
-    /// * `message_rx` - Channel to receive server messages
-    pub fn new(
-        inner: C,
-        choice_tx: mpsc::Sender<LocalChoice>,
-        message_rx: mpsc::Receiver<LocalControllerMessage>,
-    ) -> Self {
+    /// * `client_tx` - Channel to send client messages to WebSocket writer
+    pub fn new(inner: C, client_tx: ClientMessageSender) -> Self {
         Self {
             inner,
-            choice_tx,
-            message_rx,
-            disconnected: false,
+            client_tx,
             network_debug: false,
-            server_action_count: None,
-            server_choice_seq: None,
+            choice_seq: 0,
         }
     }
 
     /// Enable network debug mode for action log transmission
-    ///
-    /// When enabled, the last N actions are included with each choice
-    /// for sync validation and debugging.
     pub fn with_network_debug(mut self, enabled: bool) -> Self {
         self.network_debug = enabled;
         self
     }
 
-    /// Wait for a ChoiceRequest from the server before making a choice
-    ///
-    /// This blocks until the server sends a ChoiceRequest, ensuring the client
-    /// doesn't run ahead of the server. If a ChoiceRequest was already received,
-    /// this returns immediately.
-    ///
-    /// Returns true if we're ready to proceed, false if we're disconnected.
-    ///
-    /// SINGLE-CHANNEL ARCHITECTURE: Reveals are no longer bundled with ChoiceRequest.
-    /// They go directly to drain_reveals() via reveal_tx, eliminating race conditions.
-    fn wait_for_choice_request(&mut self) -> bool {
-        // If we already have server state from a previous message, we're ready
-        if self.server_action_count.is_some() && self.server_choice_seq.is_some() {
-            log::trace!(
-                "NetworkLocalController: using pre-received ChoiceRequest seq={:?} action_count={:?}",
-                self.server_choice_seq,
-                self.server_action_count
-            );
-            return true;
-        }
-
-        // Block waiting for ChoiceRequest
-        log::trace!("NetworkLocalController: blocking on message_rx.recv() for ChoiceRequest");
-        loop {
-            match self.message_rx.recv() {
-                Ok(LocalControllerMessage::ChoiceRequest {
-                    action_count,
-                    choice_seq,
-                    reveals: _, // Ignored - reveals sent directly to reveal_tx now
-                }) => {
-                    log::trace!(
-                        "NetworkLocalController: received ChoiceRequest seq={} action_count={}",
-                        choice_seq,
-                        action_count
-                    );
-                    self.server_action_count = Some(action_count);
-                    self.server_choice_seq = Some(choice_seq);
-                    return true;
-                }
-                Ok(LocalControllerMessage::CardRevealed { owner, card_id }) => {
-                    log::debug!(
-                        "NetworkLocalController: waiting for ChoiceRequest, got card reveal: {:?} -> {:?}",
-                        owner,
-                        card_id
-                    );
-                    // Continue waiting
-                }
-                Ok(LocalControllerMessage::GameEnded) => {
-                    log::debug!("NetworkLocalController: game ended while waiting for ChoiceRequest");
-                    self.disconnected = true;
-                    return false;
-                }
-                Ok(LocalControllerMessage::ChoiceAcknowledged) => {
-                    log::trace!(
-                        "NetworkLocalController: received stale ChoiceAcknowledged while waiting for ChoiceRequest"
-                    );
-                    // Continue waiting
-                }
-                Ok(LocalControllerMessage::Error(e)) => {
-                    log::error!(
-                        "NetworkLocalController: server error while waiting for ChoiceRequest: {}",
-                        e
-                    );
-                    self.disconnected = true;
-                    return false;
-                }
-                Err(_) => {
-                    log::error!("NetworkLocalController: channel closed while waiting for ChoiceRequest");
-                    self.disconnected = true;
-                    return false;
-                }
-            }
-        }
+    /// Set the choice sequence number (called by hook before each choice)
+    pub fn set_choice_seq(&mut self, seq: u32) {
+        self.choice_seq = seq;
     }
 
-    /// Send a choice to the server and wait for acknowledgment
-    ///
-    /// # Arguments
-    /// * `choice_indices` - The selected choice indices (single for priority, multiple for attackers)
-    /// * `description` - Human-readable description of the choice
-    /// * `action_count` - Current action count (undo log position) for sync validation
-    /// * `last_actions` - Formatted string of last N actions (debug mode only)
-    /// * `client_state_hash` - Client's computed state hash (debug mode only)
-    /// * `debug_info` - Full debug sync info (debug mode only)
+    /// Get access to the inner controller
+    pub fn inner(&self) -> &C {
+        &self.inner
+    }
+
+    /// Get mutable access to the inner controller
+    pub fn inner_mut(&mut self) -> &mut C {
+        &mut self.inner
+    }
+
+    /// Send a choice to the server (fire-and-forget, no waiting for ack)
     fn send_choice(
-        &mut self,
+        &self,
         choice_indices: Vec<usize>,
-        description: String,
         action_count: u64,
-        last_actions: Option<String>,
         client_state_hash: Option<u64>,
         debug_info: Option<super::DebugSyncInfo>,
-    ) -> Result<(), String> {
-        if self.disconnected {
-            return Err("Disconnected from server".to_string());
-        }
-
-        log::trace!(
-            "NetworkLocalController: sending choice {:?} ({}) at action_count={}",
+    ) {
+        let client_msg = ClientMessage::SubmitChoice {
+            choice_seq: self.choice_seq,
             choice_indices,
-            description,
-            action_count
-        );
+            action_count,
+            timestamp_ms: 0,
+            client_state_hash,
+            debug_info,
+        };
 
-        // Send choice
-        if self
-            .choice_tx
-            .send(LocalChoice {
-                choice_indices,
-                description,
-                action_count,
-                last_actions,
-                client_state_hash,
-                debug_info,
-            })
-            .is_err()
-        {
-            self.disconnected = true;
-            return Err("Failed to send choice to server".to_string());
-        }
+        // Fire and forget - the hook will handle any errors on next recv
+        let _ = self.client_tx.send(client_msg);
+    }
 
-        // Wait for acknowledgment
-        // Note: We loop in case other messages arrive before the ack
-        // Track if we receive an early ChoiceRequest for the next choice
-        let mut received_early_request = false;
-        loop {
-            match self.message_rx.recv() {
-                Ok(LocalControllerMessage::ChoiceAcknowledged) => {
-                    log::trace!("NetworkLocalController: choice acknowledged");
-                    // Only clear server state if we didn't receive an early request for the next choice
-                    if !received_early_request {
-                        self.server_action_count = None;
-                        self.server_choice_seq = None;
-                    }
-                    return Ok(());
-                }
-                Ok(LocalControllerMessage::Error(e)) => return Err(e),
-                Ok(LocalControllerMessage::GameEnded) => {
-                    self.disconnected = true;
-                    return Err("Game ended".to_string());
-                }
-                Ok(LocalControllerMessage::CardRevealed { owner, card_id }) => {
-                    // Card reveals can come while waiting for acknowledgment
-                    log::debug!(
-                        "NetworkLocalController: processing card reveal while waiting for ack: {:?} -> {:?}",
-                        owner,
-                        card_id
-                    );
-                    // Continue waiting for ack
-                }
-                Ok(LocalControllerMessage::ChoiceRequest {
-                    action_count,
-                    choice_seq,
-                    reveals: _,
-                }) => {
-                    // This can happen when the server sends the next ChoiceRequest before we
-                    // receive the ChoiceAcknowledged for the previous choice. Store the request
-                    // so wait_for_choice_request() can find it.
-                    log::debug!(
-                        "NetworkLocalController: received early ChoiceRequest seq={} while waiting for ack, storing",
-                        choice_seq
-                    );
-                    self.server_action_count = Some(action_count);
-                    self.server_choice_seq = Some(choice_seq);
-                    received_early_request = true;
-                    // Continue waiting for ack
-                }
-                Err(_) => {
-                    self.disconnected = true;
-                    return Err("Lost connection to server".to_string());
-                }
-            }
+    /// Get debug fields for a choice when network_debug is enabled
+    fn get_debug_fields(&self, view: &GameStateView) -> (Option<u64>, Option<super::DebugSyncInfo>) {
+        if self.network_debug {
+            let client_state_hash = Some(crate::game::compute_view_hash(view));
+            let debug_info = Some(crate::game::build_debug_sync_info(view, 10));
+            (client_state_hash, debug_info)
+        } else {
+            (None, None)
         }
     }
 
-    /// Get all debug fields for a choice when network_debug is enabled
-    ///
-    /// Returns (last_actions, client_state_hash, debug_info) tuple.
-    /// All fields are None when network_debug is disabled.
-    fn get_debug_fields(&self, view: &GameStateView) -> (Option<String>, Option<u64>, Option<super::DebugSyncInfo>) {
-        if self.network_debug {
-            let last_actions = Some(view.format_last_n_actions(20));
-            let client_state_hash = Some(crate::game::compute_view_hash(view));
-            let debug_info = Some(crate::game::build_debug_sync_info(view, 10));
-            (last_actions, client_state_hash, debug_info)
-        } else {
-            (None, None, None)
+    /// Helper to wrap a choice result and send to server
+    fn handle_choice<T>(&self, view: &GameStateView, result: ChoiceResult<T>, indices: Vec<usize>) -> ChoiceResult<T> {
+        match &result {
+            ChoiceResult::Ok(_) => {
+                let (hash, debug) = self.get_debug_fields(view);
+                self.send_choice(indices, view.action_count(), hash, debug);
+            }
+            _ => {}
         }
+        result
     }
 }
 
-/// Note: Wildcards are intentional in match arms on ChoiceResult - the enum
-/// has several variants; we handle Choice and ExitGame specially, others pass through.
-#[allow(clippy::wildcard_enum_match_arm)]
 impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
     fn player_id(&self) -> PlayerId {
         self.inner.player_id()
@@ -368,51 +150,16 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        // Wait for ChoiceRequest from server before proceeding
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
-        // Delegate to inner controller
         let result = self.inner.choose_spell_ability_to_play(view, available);
 
-        // Send choice to server using server's action_count if available
-        let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-        let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-        match &result {
-            ChoiceResult::Ok(Some(ability)) => {
-                let idx = available.iter().position(|a| a == ability).unwrap_or(0) + 1;
-                let desc = format!("Play: {:?}", ability);
-                if let Err(e) = self.send_choice(
-                    vec![idx],
-                    desc,
-                    action_count,
-                    last_actions,
-                    client_state_hash,
-                    debug_info,
-                ) {
-                    log::error!("Failed to send choice: {}", e);
-                    return ChoiceResult::ExitGame;
-                }
-            }
-            ChoiceResult::Ok(None) => {
-                if let Err(e) = self.send_choice(
-                    vec![0],
-                    "Pass".to_string(),
-                    action_count,
-                    last_actions,
-                    client_state_hash,
-                    debug_info,
-                ) {
-                    log::error!("Failed to send choice: {}", e);
-                    return ChoiceResult::ExitGame;
-                }
-            }
-            _ => {}
+        // Convert result to index and send
+        if let ChoiceResult::Ok(ref choice) = result {
+            let idx = match choice {
+                None => 0, // Pass
+                Some(ability) => available.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0),
+            };
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(vec![idx], view.action_count(), hash, debug);
         }
 
         result
@@ -424,33 +171,15 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_targets(view, spell, valid_targets);
 
-        if let ChoiceResult::Ok(targets) = &result {
-            // For targets, send all selected indices
-            let indices: Vec<usize> = if targets.is_empty() {
-                vec![valid_targets.len()] // No target
-            } else {
-                targets
-                    .iter()
-                    .filter_map(|&t| valid_targets.iter().position(|&vt| vt == t))
-                    .collect()
-            };
-            let desc = format!("Target: {:?}", targets);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref targets) = result {
+            let indices: Vec<usize> = targets
+                .iter()
+                .filter_map(|t| valid_targets.iter().position(|v| v == t))
+                .collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
@@ -462,33 +191,15 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_mana_sources_to_pay(view, cost, available_sources);
 
-        if let ChoiceResult::Ok(sources) = &result {
-            // Send all mana source indices
-            let indices: Vec<usize> = if sources.is_empty() {
-                vec![available_sources.len()]
-            } else {
-                sources
-                    .iter()
-                    .filter_map(|&s| available_sources.iter().position(|&as_| as_ == s))
-                    .collect()
-            };
-            let desc = format!("Mana source: {:?}", sources);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref sources) = result {
+            let indices: Vec<usize> = sources
+                .iter()
+                .filter_map(|s| available_sources.iter().position(|a| a == s))
+                .collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
@@ -499,35 +210,17 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_attackers(view, available_creatures);
 
-        if let ChoiceResult::Ok(attackers) = &result {
-            // Send all attacker indices (multi-select)
-            // Index 0 means "done selecting" / no attackers
-            // Index N means attacker at position N-1 in available_creatures
-            let indices: Vec<usize> = if attackers.is_empty() {
-                vec![0] // No attackers
-            } else {
-                attackers
-                    .iter()
-                    .filter_map(|&a| available_creatures.iter().position(|&ac| ac == a).map(|i| i + 1))
-                    .collect()
-            };
-            let desc = format!("Attackers: {:?}", attackers);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref attackers) = result {
+            // Index 0 = pass, index N = creature N-1
+            let indices: Vec<usize> = attackers
+                .iter()
+                .filter_map(|a| available_creatures.iter().position(|c| c == a).map(|i| i + 1))
+                .collect();
+            let indices = if indices.is_empty() { vec![0] } else { indices };
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
@@ -539,39 +232,21 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_blockers(view, available_blockers, attackers);
 
-        if let ChoiceResult::Ok(blocks) = &result {
-            // Send all blocker assignments (multi-select)
-            // Index 0 means "done selecting" / no blockers
-            // For each block, encode as blocker_idx * num_attackers + attacker_idx + 1
-            let indices: Vec<usize> = if blocks.is_empty() {
-                vec![0] // No blockers
-            } else {
-                blocks
-                    .iter()
-                    .filter_map(|&(blocker, attacker)| {
-                        let blocker_idx = available_blockers.iter().position(|&b| b == blocker)?;
-                        let attacker_idx = attackers.iter().position(|&a| a == attacker)?;
-                        Some(blocker_idx * attackers.len() + attacker_idx + 1)
-                    })
-                    .collect()
-            };
-            let desc = format!("Blocks: {:?}", blocks);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref blocks) = result {
+            // Index 0 = pass, index N = (blocker_idx, attacker_idx) pair + 1
+            let indices: Vec<usize> = blocks
+                .iter()
+                .filter_map(|(blocker, attacker)| {
+                    let blocker_idx = available_blockers.iter().position(|b| b == blocker)?;
+                    let attacker_idx = attackers.iter().position(|a| a == attacker)?;
+                    Some(blocker_idx * attackers.len() + attacker_idx + 1)
+                })
+                .collect();
+            let indices = if indices.is_empty() { vec![0] } else { indices };
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
@@ -583,33 +258,15 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_damage_assignment_order(view, attacker, blockers);
 
-        if let ChoiceResult::Ok(order) = &result {
-            // Send all damage order indices (the order matters for damage assignment)
-            let indices: Vec<usize> = if order.is_empty() {
-                vec![0]
-            } else {
-                order
-                    .iter()
-                    .filter_map(|&b| blockers.iter().position(|&bl| bl == b))
-                    .collect()
-            };
-            let desc = format!("Damage order: {:?}", order);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref order) = result {
+            let indices: Vec<usize> = order
+                .iter()
+                .filter_map(|b| blockers.iter().position(|bl| bl == b))
+                .collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
@@ -621,69 +278,30 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_cards_to_discard(view, hand, count);
 
-        if let ChoiceResult::Ok(discards) = &result {
-            // Send all discard indices (multi-select)
-            let indices: Vec<usize> = if discards.is_empty() {
-                vec![hand.len()]
-            } else {
-                discards
-                    .iter()
-                    .filter_map(|&c| hand.iter().position(|&h| h == c))
-                    .collect()
-            };
-            let desc = format!("Discard: {:?}", discards);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref discards) = result {
+            let indices: Vec<usize> = discards
+                .iter()
+                .filter_map(|d| hand.iter().position(|h| h == d))
+                .collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
     }
 
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
-        if !self.wait_for_choice_request() {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self.inner.choose_from_library(view, valid_cards);
 
-        if let ChoiceResult::Ok(card) = &result {
-            // Single-select from library
-            let idx = match card {
-                Some(c) => valid_cards.iter().position(|&v| v == *c).unwrap_or(valid_cards.len()),
+        if let ChoiceResult::Ok(ref choice) = result {
+            let idx = match choice {
+                Some(card) => valid_cards.iter().position(|c| c == card).unwrap_or(valid_cards.len()),
                 None => valid_cards.len(),
             };
-            let desc = format!("From library: {:?}", card);
-            let action_count = self.server_action_count.unwrap_or_else(|| view.action_count() as u64);
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(
-                vec![idx],
-                desc,
-                action_count,
-                last_actions,
-                client_state_hash,
-                debug_info,
-            ) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(vec![idx], view.action_count(), hash, debug);
         }
 
         result
@@ -696,32 +314,17 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         count: usize,
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Note: Reveal processing is handled by drain_reveals callback in GameLoop
-        if self.disconnected {
-            return ChoiceResult::ExitGame;
-        }
-
         let result = self
             .inner
             .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description);
 
-        if let ChoiceResult::Ok(permanents) = &result {
-            // Send all sacrifice indices (multi-select)
-            let indices: Vec<usize> = if permanents.is_empty() {
-                vec![valid_permanents.len()]
-            } else {
-                permanents
-                    .iter()
-                    .filter_map(|&p| valid_permanents.iter().position(|&vp| vp == p))
-                    .collect()
-            };
-            let desc = format!("Sacrifice: {:?}", permanents);
-            let action_count = view.action_count() as u64;
-            let (last_actions, client_state_hash, debug_info) = self.get_debug_fields(view);
-            if let Err(e) = self.send_choice(indices, desc, action_count, last_actions, client_state_hash, debug_info) {
-                log::error!("Failed to send choice: {}", e);
-                return ChoiceResult::ExitGame;
-            }
+        if let ChoiceResult::Ok(ref sacrifices) = result {
+            let indices: Vec<usize> = sacrifices
+                .iter()
+                .filter_map(|s| valid_permanents.iter().position(|p| p == s))
+                .collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
         }
 
         result
@@ -732,9 +335,20 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Delegate to inner controller
-        self.inner
-            .choose_permanents_to_not_untap(view, may_not_untap_permanents)
+        let result = self
+            .inner
+            .choose_permanents_to_not_untap(view, may_not_untap_permanents);
+
+        if let ChoiceResult::Ok(ref stay_tapped) = result {
+            let indices: Vec<usize> = stay_tapped
+                .iter()
+                .filter_map(|s| may_not_untap_permanents.iter().position(|p| p == s))
+                .collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
+        }
+
+        result
     }
 
     fn choose_modes(
@@ -746,9 +360,17 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         min_modes: usize,
         can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        // Delegate to inner controller
-        self.inner
-            .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
+        let result = self
+            .inner
+            .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat);
+
+        if let ChoiceResult::Ok(ref modes) = result {
+            let indices: Vec<usize> = modes.iter().copied().collect();
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(indices, view.action_count(), hash, debug);
+        }
+
+        result
     }
 
     fn on_priority_passed(&mut self, view: &GameStateView) {
@@ -759,18 +381,30 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         self.inner.on_game_end(view, won);
     }
 
-    fn has_more_choices(&self) -> bool {
-        self.inner.has_more_choices()
-    }
-
-    fn choose_from_options(&mut self, options: &[String]) -> usize {
-        self.inner.choose_from_options(options)
-    }
-
     fn get_controller_type(&self) -> ControllerType {
-        // Return Network type so we don't auto-pass when available_count=0.
-        // This ensures we always wait for ChoiceRequest and send SubmitChoice,
-        // even when there are no abilities available.
+        // Return Network type so GameLoop knows this is a network-controlled local player
         ControllerType::Network
     }
+}
+
+// Legacy types for backward compatibility (can be removed later)
+
+/// A buffered card reveal waiting to be processed
+#[derive(Debug, Clone)]
+pub struct BufferedReveal {
+    pub owner: PlayerId,
+    pub card: crate::network::protocol::CardReveal,
+    pub reason: crate::network::protocol::RevealReason,
+}
+
+/// Shared buffer for pending reveals (legacy - used by old architecture)
+pub type PendingReveals = std::sync::Arc<std::sync::Mutex<Vec<BufferedReveal>>>;
+
+/// A bundled card reveal (legacy)
+#[derive(Debug, Clone)]
+pub struct BundledReveal {
+    pub owner: PlayerId,
+    pub card_id: CardId,
+    pub card_name: String,
+    pub reason: crate::network::protocol::RevealReason,
 }

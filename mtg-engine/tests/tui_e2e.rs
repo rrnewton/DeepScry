@@ -46,8 +46,10 @@ async fn test_tui_zero_vs_zero_simple_bolt() -> Result<()> {
     let mut controller2 = ZeroController::new(p2_id);
 
     // Run the game loop
-    let mut game_loop = GameLoop::new(&mut game);
-    let result = game_loop.run_game(&mut controller1, &mut controller2)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game);
+        game_loop.run_game(&mut controller1, &mut controller2)?
+    }; // game_loop dropped here, releasing borrow
 
     // Verify game completed successfully
     assert!(result.winner.is_some(), "Game should have a winner");
@@ -147,8 +149,10 @@ async fn test_tui_runs_to_completion() -> Result<()> {
     let mut controller1 = ZeroController::new(p1_id);
     let mut controller2 = ZeroController::new(p2_id);
 
-    let mut game_loop = GameLoop::new(&mut game);
-    let result = game_loop.run_game(&mut controller1, &mut controller2)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game);
+        game_loop.run_game(&mut controller1, &mut controller2)?
+    }; // game_loop dropped here, releasing borrow
 
     // Verify basic properties
     assert!(result.winner.is_some(), "Game should have a winner");
@@ -198,8 +202,10 @@ async fn test_tui_random_vs_random_deals_damage() -> Result<()> {
         42u64.wrapping_add(0xFEDC_BA98_7654_3210),
     );
 
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
-    let result = game_loop.run_game(&mut controller1, &mut controller2)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+        game_loop.run_game(&mut controller1, &mut controller2)?
+    }; // game_loop dropped here, releasing borrow
 
     // Verify game completed
     assert!(result.winner.is_some(), "Game should have a winner");
@@ -353,8 +359,10 @@ async fn test_creature_combat_game() -> Result<()> {
         77777u64.wrapping_add(0xFEDC_BA98_7654_3210),
     );
 
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_game(&mut controller1, &mut controller2)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_game(&mut controller1, &mut controller2)?
+    }; // game_loop dropped here, releasing borrow
 
     // Verify game completed
     assert!(result.winner.is_some(), "Game should have a winner");
@@ -458,8 +466,10 @@ async fn test_different_deck_matchup() -> Result<()> {
             seed.wrapping_add(0xFEDC_BA98_7654_3210),
         );
 
-        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-        let result = game_loop.run_game(&mut controller1, &mut controller2)?;
+        let result = {
+            let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            game_loop.run_game(&mut controller1, &mut controller2)?
+        }; // game_loop dropped here, releasing borrow
 
         // Verify game completed successfully
         assert!(result.winner.is_some(), "Game with seed {seed} should have a winner");

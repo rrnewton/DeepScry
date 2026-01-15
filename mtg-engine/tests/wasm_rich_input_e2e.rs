@@ -288,8 +288,10 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
     let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // Step 1: Run until NeedInput
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_until_input(&mut p1_controller, &mut p2_controller)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_until_input(&mut p1_controller, &mut p2_controller)?
+    }; // game_loop dropped here, releasing borrow
 
     let context = match result {
         GameLoopState::AwaitingInput(ctx) => ctx,
@@ -359,10 +361,12 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
     let mut replay_p1 = ReplayController::new(p1_id, inner, replay_choices);
     let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
 
-    let mut game_loop = GameLoop::new(&mut game)
-        .with_verbosity(VerbosityLevel::Silent)
-        .with_max_turns(3);
-    let result = game_loop.run_game(&mut replay_p1, &mut p2_controller)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game)
+            .with_verbosity(VerbosityLevel::Silent)
+            .with_max_turns(3);
+        game_loop.run_game(&mut replay_p1, &mut p2_controller)?
+    }; // game_loop dropped here, releasing borrow
 
     // Verify game progressed and cards didn't disappear
     assert!(result.turns_played > 0, "Game should have run after replay");
@@ -423,11 +427,12 @@ async fn test_play_land_script() -> Result<()> {
     let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // Run a few turns
-    let mut game_loop = GameLoop::new(&mut game)
-        .with_verbosity(VerbosityLevel::Normal)
-        .with_max_turns(5);
-
-    let result = game_loop.run_game(&mut p1_controller, &mut p2_controller)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game)
+            .with_verbosity(VerbosityLevel::Normal)
+            .with_max_turns(5);
+        game_loop.run_game(&mut p1_controller, &mut p2_controller)?
+    }; // game_loop dropped here, releasing borrow
 
     // Check that we actually ran turns
     assert!(result.turns_played > 0, "Should have played turns");
@@ -495,11 +500,12 @@ async fn test_hand_persistence() -> Result<()> {
     );
     let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
 
-    let mut game_loop = GameLoop::new(&mut game)
-        .with_verbosity(VerbosityLevel::Silent)
-        .with_max_turns(1);
-
-    let _ = game_loop.run_game(&mut p1_controller, &mut p2_controller);
+    {
+        let mut game_loop = GameLoop::new(&mut game)
+            .with_verbosity(VerbosityLevel::Silent)
+            .with_max_turns(1);
+        let _ = game_loop.run_game(&mut p1_controller, &mut p2_controller);
+    } // game_loop dropped here, releasing borrow
 
     // Check hand after turn
     let final_hand_ids: Vec<CardId> = game
@@ -695,8 +701,10 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
     let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // Run until we get NeedInput
-    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_until_input(&mut p1_controller, &mut p2_controller)?;
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.run_until_input(&mut p1_controller, &mut p2_controller)?
+    }; // game_loop dropped here, releasing borrow
 
     let context = match result {
         GameLoopState::AwaitingInput(ctx) => ctx,
@@ -764,10 +772,12 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
     let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
 
     // Step 6: Run with replay
-    let mut game_loop = GameLoop::new(&mut game)
-        .with_verbosity(VerbosityLevel::Normal)
-        .with_max_turns(1);
-    let _result = game_loop.run_game(&mut replay_p1, &mut p2_controller)?;
+    {
+        let mut game_loop = GameLoop::new(&mut game)
+            .with_verbosity(VerbosityLevel::Normal)
+            .with_max_turns(1);
+        let _result = game_loop.run_game(&mut replay_p1, &mut p2_controller)?;
+    } // game_loop dropped here, releasing borrow
 
     // Verify results
     let final_battlefield_count = game.battlefield.cards.len();

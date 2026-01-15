@@ -83,11 +83,12 @@ async fn main() {
     println!("=== Starting Game Loop ===\n");
 
     // Run the game
-    let mut game_loop = GameLoop::new(&mut game).with_max_turns(100);
-
-    let result = game_loop
-        .run_game(&mut alice_ai, &mut bob_ai)
-        .expect("Game loop failed");
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_max_turns(100);
+        game_loop
+            .run_game(&mut alice_ai, &mut bob_ai)
+            .expect("Game loop failed")
+    }; // game_loop dropped here, releasing borrow
 
     println!("\n=== Game Complete ===");
     println!("Turns played: {}", result.turns_played);
@@ -225,11 +226,12 @@ fn run_simplified_game() {
     println!("=== Starting Game Loop ===\n");
 
     // Run the game
-    let mut game_loop = GameLoop::new(&mut game).with_max_turns(50);
-
-    let result = game_loop
-        .run_game(&mut alice_ai, &mut bob_ai)
-        .expect("Game loop failed");
+    let result = {
+        let mut game_loop = GameLoop::new(&mut game).with_max_turns(50);
+        game_loop
+            .run_game(&mut alice_ai, &mut bob_ai)
+            .expect("Game loop failed")
+    }; // game_loop dropped here, releasing borrow
 
     println!("\n=== Game Complete ===");
     println!("Turns played: {}", result.turns_played);

@@ -188,10 +188,12 @@ impl RewindPlayAgain {
         };
 
         let verbosity = self.configure_logging(game);
-        let mut game_loop = GameLoop::new(game).with_verbosity(verbosity);
-        let result = game_loop
-            .run_game(&mut controller1, &mut controller2)
-            .expect("Game should complete");
+        let result = {
+            let mut game_loop = GameLoop::new(game).with_verbosity(verbosity);
+            game_loop
+                .run_game(&mut controller1, &mut controller2)
+                .expect("Game should complete")
+        }; // game_loop dropped here, releasing borrow
 
         // Restore stdout if we redirected it
         if let Some(orig) = orig_stdout {
