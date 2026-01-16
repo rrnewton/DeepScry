@@ -134,8 +134,9 @@ echo "  Local PID: $LOCAL_PID"
 # ============================================================================
 echo -e "${BLUE}Starting NETWORK game...${NC}"
 
-# Find an available port
-PORT=17780
+# Use random port in range 17800-27800 to allow concurrent test runs
+# Each test instance gets a unique port to avoid collisions
+PORT=$((17800 + RANDOM % 10000))
 
 # Start server with --network-debug for strict reveal validation
 # Use verbosity=normal to capture GAMELOG entries (minimal suppresses them)
