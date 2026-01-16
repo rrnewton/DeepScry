@@ -139,7 +139,10 @@ impl<C: PlayerController> NetworkLocalController<C> {
         if let Some(ref state) = self.shared_state {
             // MVar mode: take from LOCAL choice MVar (dedicated for this controller)
             match state.take_local_choice() {
-                Some(LocalChoiceInfo::Request { choice_seq, action_count }) => {
+                Some(LocalChoiceInfo::Request {
+                    choice_seq,
+                    action_count,
+                }) => {
                     log::debug!(
                         "NetworkLocalController: got ChoiceRequest seq={} action={}",
                         choice_seq,
@@ -166,20 +169,22 @@ impl<C: PlayerController> NetworkLocalController<C> {
         }
     }
 
-    /// Log if client and server action counts differ
+    /// Verify client and server action counts match
     ///
-    /// This is informational - the client may be slightly behind if reveals are pending
-    /// in the sync_callback queue. The server's action_count is authoritative.
+    /// After sync_callback processes pending reveals, the client's action count
+    /// should match the server's. If they still differ, it indicates a desync bug.
     ///
     /// # Arguments
     /// * `view` - The current game state view (for client's action count)
     /// * `server_action_count` - Action count from server's ChoiceRequest
     #[inline]
-    fn log_action_count_diff(&self, view: &GameStateView, server_action_count: u64) {
+    fn verify_action_count_sync(&self, view: &GameStateView, server_action_count: u64) {
         let client_action_count = view.action_count() as u64;
         if client_action_count != server_action_count && server_action_count > 0 {
-            log::debug!(
-                "NetworkLocalController: action_count diff: client={} server={} (reveals pending)",
+            // After sync_callback should have run, any remaining diff is a warning
+            // (sync_callback uses server_action_count as target, so reveals should be processed)
+            log::warn!(
+                "NetworkLocalController: action_count mismatch after sync! client={} server={} (potential desync)",
                 client_action_count,
                 server_action_count
             );
@@ -253,7 +258,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         };
 
         // Log any action count discrepancy (informational)
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_spell_ability_to_play(view, available);
 
@@ -281,7 +286,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_targets(view, spell, valid_targets);
 
@@ -307,7 +312,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_mana_sources_to_pay(view, cost, available_sources);
 
@@ -332,7 +337,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_attackers(view, available_creatures);
 
@@ -360,7 +365,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_blockers(view, available_blockers, attackers);
 
@@ -392,7 +397,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_damage_assignment_order(view, attacker, blockers);
 
@@ -418,7 +423,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_cards_to_discard(view, hand, count);
 
@@ -439,7 +444,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self.inner.choose_from_library(view, valid_cards);
 
@@ -466,7 +471,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self
             .inner
@@ -493,7 +498,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self
             .inner
@@ -524,7 +529,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
-        self.log_action_count_diff(view, server_action_count);
+        self.verify_action_count_sync(view, server_action_count);
 
         let result = self
             .inner

@@ -217,6 +217,7 @@ pub struct PendingReveal {
 /// - `pending_reveals`: Queue of CardRevealed messages keyed by action count
 /// - `local_choice_mvar`: MVar for ChoiceRequest messages (local player)
 /// - `remote_choice_mvar`: MVar for OpponentChoice messages (remote player)
+/// - `server_action_count`: Latest action count from server (for sync targeting)
 ///
 /// The network event loop populates these, and the game loop/controllers consume them.
 /// Choices are queued because the network can receive multiple before the game loop
@@ -233,6 +234,12 @@ pub struct PendingReveal {
 /// - `local_choice_mvar` ← ChoiceRequest (server asking us to choose)
 /// - `remote_choice_mvar` ← OpponentChoice (server telling us opponent's choice)
 /// - GameEnded/Error go to BOTH MVars (either controller might be waiting)
+///
+/// ## Sync Target
+///
+/// `server_action_count` is updated whenever we receive a ChoiceRequest or OpponentChoice.
+/// The sync_callback should sync reveals up to this value (not the client's current count)
+/// to ensure the client's game state matches the server's before making choices.
 pub struct SharedNetworkState {
     /// Pending reveals for sync callback processing
     /// Keyed by action count for deterministic processing
@@ -243,6 +250,10 @@ pub struct SharedNetworkState {
 
     /// MVar for remote player choices (OpponentChoice messages)
     remote_choice_mvar: super::mvar::MVar<RemoteChoiceInfo>,
+
+    /// Latest action count from server (updated on ChoiceRequest/OpponentChoice)
+    /// Used as sync target to ensure client processes all reveals before choices
+    server_action_count: std::sync::atomic::AtomicU64,
 }
 
 impl SharedNetworkState {
@@ -252,7 +263,24 @@ impl SharedNetworkState {
             pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
             local_choice_mvar: super::mvar::MVar::new(),
             remote_choice_mvar: super::mvar::MVar::new(),
+            server_action_count: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Get the latest server action count (sync target)
+    ///
+    /// This is the action count from the most recent ChoiceRequest or OpponentChoice.
+    /// Use this as the target for sync_callback to ensure all reveals are processed.
+    pub fn server_action_count(&self) -> u64 {
+        self.server_action_count.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Update the server action count
+    ///
+    /// Called by WS reader when receiving ChoiceRequest or OpponentChoice.
+    fn update_server_action_count(&self, action_count: u64) {
+        self.server_action_count
+            .store(action_count, std::sync::atomic::Ordering::Release);
     }
 
     /// Push a pending reveal (called by network loop)
@@ -328,8 +356,14 @@ impl SharedNetworkState {
     #[allow(dead_code)]
     pub fn push_choice(&self, choice: ChoiceInfo) {
         match choice {
-            ChoiceInfo::Request { action_count, choice_seq } => {
-                self.push_local_choice(LocalChoiceInfo::Request { action_count, choice_seq });
+            ChoiceInfo::Request {
+                action_count,
+                choice_seq,
+            } => {
+                self.push_local_choice(LocalChoiceInfo::Request {
+                    action_count,
+                    choice_seq,
+                });
             }
             ChoiceInfo::Opponent {
                 action_count,
@@ -347,7 +381,9 @@ impl SharedNetworkState {
                 self.push_remote_choice(RemoteChoiceInfo::Exit { winner });
             }
             ChoiceInfo::Error { message } => {
-                self.push_local_choice(LocalChoiceInfo::Error { message: message.clone() });
+                self.push_local_choice(LocalChoiceInfo::Error {
+                    message: message.clone(),
+                });
                 self.push_remote_choice(RemoteChoiceInfo::Error { message });
             }
         }
@@ -360,9 +396,13 @@ impl SharedNetworkState {
     #[allow(dead_code)]
     pub fn take_choice(&self) -> Option<ChoiceInfo> {
         self.take_local_choice().map(|local| match local {
-            LocalChoiceInfo::Request { action_count, choice_seq } => {
-                ChoiceInfo::Request { action_count, choice_seq }
-            }
+            LocalChoiceInfo::Request {
+                action_count,
+                choice_seq,
+            } => ChoiceInfo::Request {
+                action_count,
+                choice_seq,
+            },
             LocalChoiceInfo::Exit { winner } => ChoiceInfo::Exit { winner },
             LocalChoiceInfo::Error { message } => ChoiceInfo::Error { message },
         })
@@ -1273,26 +1313,39 @@ impl NetworkClient {
             //
             // Uses target_action to validate ordering: reveals should have
             // action_count <= target_action when processed.
-            let sync_callback = move |game: &mut GameState, target_action: u64| {
+            let sync_callback = move |game: &mut GameState, _target_action: u64| {
+                // Use server's action count as sync target, not client's
+                // This ensures we process all reveals BEFORE making choices,
+                // even if the client hasn't caught up to the server's position yet.
+                let server_target = sync_state.server_action_count();
                 let game_action = game.undo_log.len() as u64;
-                let reveals = sync_state.drain_reveals_up_to(target_action);
+                let reveals = sync_state.drain_reveals_up_to(server_target);
+
+                if !reveals.is_empty() {
+                    log::debug!(
+                        "sync_callback: processing {} reveals up to server_target={} (game_action={})",
+                        reveals.len(),
+                        server_target,
+                        game_action
+                    );
+                }
 
                 for reveal in reveals {
                     // Validate action count ordering
-                    if reveal.action_count > target_action {
+                    if reveal.action_count > server_target {
                         log::warn!(
-                            "sync_callback: reveal action_count {} > target_action {} for {} (game={})",
+                            "sync_callback: reveal action_count {} > server_target {} for {} (game={})",
                             reveal.action_count,
-                            target_action,
+                            server_target,
                             reveal.card.name,
                             game_action
                         );
                     }
                     log::trace!(
-                        "sync_callback: processing reveal {} at action {} (target={}, game={})",
+                        "sync_callback: processing reveal {} at action {} (server_target={}, game={})",
                         reveal.card.name,
                         reveal.action_count,
-                        target_action,
+                        server_target,
                         game_action
                     );
                     process_card_reveal(game, &card_db_for_sync, reveal.owner, reveal.card, reveal.reason);
@@ -1396,8 +1449,9 @@ async fn run_ws_reader_shared(
                                 action_count,
                                 choice_seq,
                             } => {
-                                // Update tracked action count
+                                // Update tracked action count (for sync targeting)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
+                                shared_state.update_server_action_count(action_count);
                                 // Push to LOCAL choice MVar (for NetworkLocalController)
                                 log::debug!(
                                     "WsReaderShared: ChoiceRequest seq={} action={} -> local_mvar",
@@ -1428,6 +1482,8 @@ async fn run_ws_reader_shared(
                                 description: _,
                                 spell_ability,
                             } => {
+                                // Update tracked action count (for sync targeting)
+                                shared_state.update_server_action_count(action_count);
                                 // Push to REMOTE choice MVar (for RemoteController)
                                 log::debug!(
                                     "WsReaderShared: OpponentChoice indices={:?} action={} -> remote_mvar",
@@ -1457,7 +1513,9 @@ async fn run_ws_reader_shared(
                                     log::error!("WsReaderShared: Fatal error: {}", message);
                                     // Push to BOTH MVars (either controller might be waiting)
                                     shared_state.signal_exit();
-                                    shared_state.push_local_choice(LocalChoiceInfo::Error { message: message.clone() });
+                                    shared_state.push_local_choice(LocalChoiceInfo::Error {
+                                        message: message.clone(),
+                                    });
                                     shared_state.push_remote_choice(RemoteChoiceInfo::Error { message });
                                     return;
                                 }
