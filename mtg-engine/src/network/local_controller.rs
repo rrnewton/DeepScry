@@ -21,7 +21,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
-use crate::network::client::{ChoiceInfo, SharedNetworkState};
+use crate::network::client::{LocalChoiceInfo, SharedNetworkState};
 use crate::network::protocol::ClientMessage;
 use crate::network::ClientMessageSender;
 use smallvec::SmallVec;
@@ -128,31 +128,31 @@ impl<C: PlayerController> NetworkLocalController<C> {
         &mut self.inner
     }
 
-    /// Get choice_seq for the current choice
+    /// Get choice info for the current choice
     ///
-    /// In MVar mode: Takes ChoiceRequest from MVar (blocking if needed)
+    /// In MVar mode: Takes ChoiceRequest from local_choice_mvar (blocking if needed)
     /// In legacy mode: Returns the shared choice_seq from pre-choice hook
     ///
     /// Returns None if the game should exit (GameEnded/Error received)
-    fn get_choice_seq(&self) -> Option<u32> {
+    /// Returns Some((choice_seq, server_action_count)) on success
+    fn get_choice_info(&self) -> Option<(u32, u64)> {
         if let Some(ref state) = self.shared_state {
-            // MVar mode: take the choice from MVar
-            match state.take_choice() {
-                Some(ChoiceInfo::Request { choice_seq, .. }) => {
-                    log::debug!("NetworkLocalController: got ChoiceRequest seq={}", choice_seq);
-                    Some(choice_seq)
+            // MVar mode: take from LOCAL choice MVar (dedicated for this controller)
+            match state.take_local_choice() {
+                Some(LocalChoiceInfo::Request { choice_seq, action_count }) => {
+                    log::debug!(
+                        "NetworkLocalController: got ChoiceRequest seq={} action={}",
+                        choice_seq,
+                        action_count
+                    );
+                    Some((choice_seq, action_count))
                 }
-                Some(ChoiceInfo::Exit { winner }) => {
+                Some(LocalChoiceInfo::Exit { winner }) => {
                     log::info!("NetworkLocalController: game ended, winner={:?}", winner);
                     None
                 }
-                Some(ChoiceInfo::Error { message }) => {
+                Some(LocalChoiceInfo::Error { message }) => {
                     log::error!("NetworkLocalController: error from server: {}", message);
-                    None
-                }
-                Some(ChoiceInfo::Opponent { .. }) => {
-                    // This shouldn't happen - opponent choices go to RemoteController
-                    log::error!("NetworkLocalController: unexpected OpponentChoice for local player");
                     None
                 }
                 None => {
@@ -161,8 +161,28 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 }
             }
         } else {
-            // Legacy mode: use the pre-populated choice_seq
-            Some(self.choice_seq.get())
+            // Legacy mode: use the pre-populated choice_seq, action_count 0 (not validated)
+            Some((self.choice_seq.get(), 0))
+        }
+    }
+
+    /// Log if client and server action counts differ
+    ///
+    /// This is informational - the client may be slightly behind if reveals are pending
+    /// in the sync_callback queue. The server's action_count is authoritative.
+    ///
+    /// # Arguments
+    /// * `view` - The current game state view (for client's action count)
+    /// * `server_action_count` - Action count from server's ChoiceRequest
+    #[inline]
+    fn log_action_count_diff(&self, view: &GameStateView, server_action_count: u64) {
+        let client_action_count = view.action_count() as u64;
+        if client_action_count != server_action_count && server_action_count > 0 {
+            log::debug!(
+                "NetworkLocalController: action_count diff: client={} server={} (reveals pending)",
+                client_action_count,
+                server_action_count
+            );
         }
     }
 
@@ -226,22 +246,26 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        // Get choice info from MVar (blocks in MVar mode)
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame, // Game ended
         };
+
+        // Log any action count discrepancy (informational)
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_spell_ability_to_play(view, available);
 
         // Convert result to index and send
+        // Use SERVER's action_count - this is a correlation ID for the ChoiceRequest
         if let ChoiceResult::Ok(ref choice) = result {
             let idx = match choice {
                 None => 0, // Pass
                 Some(ability) => available.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0),
             };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug);
         }
 
         result
@@ -253,11 +277,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_targets(view, spell, valid_targets);
 
@@ -267,7 +291,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|t| valid_targets.iter().position(|v| v == t))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -279,11 +303,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_mana_sources_to_pay(view, cost, available_sources);
 
@@ -293,7 +317,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| available_sources.iter().position(|a| a == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -304,11 +328,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_attackers(view, available_creatures);
 
@@ -320,7 +344,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .collect();
             let indices = if indices.is_empty() { vec![0] } else { indices };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -332,11 +356,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_blockers(view, available_blockers, attackers);
 
@@ -352,7 +376,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .collect();
             let indices = if indices.is_empty() { vec![0] } else { indices };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -364,11 +388,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_damage_assignment_order(view, attacker, blockers);
 
@@ -378,7 +402,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|b| blockers.iter().position(|bl| bl == b))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -390,11 +414,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_cards_to_discard(view, hand, count);
 
@@ -404,18 +428,18 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|d| hand.iter().position(|h| h == d))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
     }
 
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self.inner.choose_from_library(view, valid_cards);
 
@@ -425,7 +449,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 None => valid_cards.len(),
             };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug);
         }
 
         result
@@ -438,11 +462,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         count: usize,
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self
             .inner
@@ -454,7 +478,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| valid_permanents.iter().position(|p| p == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -465,11 +489,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self
             .inner
@@ -481,7 +505,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| may_not_untap_permanents.iter().position(|p| p == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result
@@ -496,11 +520,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         min_modes: usize,
         can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        // Get choice_seq from MVar (blocks in MVar mode)
-        let choice_seq = match self.get_choice_seq() {
-            Some(seq) => seq,
+        let (choice_seq, server_action_count) = match self.get_choice_info() {
+            Some(info) => info,
             None => return ChoiceResult::ExitGame,
         };
+        self.log_action_count_diff(view, server_action_count);
 
         let result = self
             .inner
@@ -509,7 +533,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         if let ChoiceResult::Ok(ref modes) = result {
             let indices: Vec<usize> = modes.iter().copied().collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug);
         }
 
         result

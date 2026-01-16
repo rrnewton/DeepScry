@@ -15,7 +15,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
-use crate::network::client::{ChoiceInfo, SharedNetworkState};
+use crate::network::client::{RemoteChoiceInfo, SharedNetworkState};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -49,15 +49,16 @@ impl RemoteController {
 
     /// Get opponent's choice from MVar with action count validation
     ///
-    /// In MVar mode: Takes OpponentChoice from MVar (blocking if needed)
+    /// In MVar mode: Takes OpponentChoice from remote_choice_mvar (blocking if needed)
     /// In legacy mode: Panics (this shouldn't be called)
     ///
     /// The `expected_action` parameter is used for validation in network mode.
     /// If the choice's action_count doesn't match, this indicates a sync issue.
     fn get_opponent_choice(&self, expected_action: u64) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
         if let Some(ref state) = self.shared_state {
-            match state.take_choice() {
-                Some(ChoiceInfo::Opponent {
+            // MVar mode: take from REMOTE choice MVar (dedicated for this controller)
+            match state.take_remote_choice() {
+                Some(RemoteChoiceInfo::Opponent {
                     action_count,
                     indices,
                     spell_ability,
@@ -79,17 +80,12 @@ impl RemoteController {
                     );
                     ChoiceResult::Ok((indices, spell_ability))
                 }
-                Some(ChoiceInfo::Exit { winner }) => {
+                Some(RemoteChoiceInfo::Exit { winner }) => {
                     log::info!("RemoteController: game ended, winner={:?}", winner);
                     ChoiceResult::ExitGame
                 }
-                Some(ChoiceInfo::Error { message }) => {
+                Some(RemoteChoiceInfo::Error { message }) => {
                     log::error!("RemoteController: error from server: {}", message);
-                    ChoiceResult::ExitGame
-                }
-                Some(ChoiceInfo::Request { .. }) => {
-                    // This shouldn't happen - ChoiceRequest goes to local controller
-                    log::error!("RemoteController: unexpected ChoiceRequest for remote player");
                     ChoiceResult::ExitGame
                 }
                 None => {

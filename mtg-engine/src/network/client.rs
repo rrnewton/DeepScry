@@ -147,11 +147,42 @@ pub type ClientMessageSender = mpsc::Sender<ClientMessage>;
 // SHARED NETWORK STATE (MVar Pattern for Choice Synchronization)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Choice information from the network
+/// Choice information from the network for the LOCAL player
 ///
-/// Represents either a ChoiceRequest (server asking us to make a choice) or
-/// an OpponentChoice (server telling us what opponent chose). Used by the
-/// MVar pattern for choice synchronization.
+/// Represents a ChoiceRequest (server asking us to make a choice).
+/// Used by NetworkLocalController via the local_choice_mvar.
+#[derive(Debug, Clone)]
+pub enum LocalChoiceInfo {
+    /// Server is requesting a choice from us
+    Request { action_count: u64, choice_seq: u32 },
+    /// Game ended - exit the game loop
+    Exit { winner: Option<PlayerId> },
+    /// Fatal error - exit with error
+    Error { message: String },
+}
+
+/// Choice information from the network for the REMOTE player (opponent)
+///
+/// Represents an OpponentChoice (server telling us what opponent chose).
+/// Used by RemoteController via the remote_choice_mvar.
+#[derive(Debug, Clone)]
+pub enum RemoteChoiceInfo {
+    /// Opponent made a choice - use these indices
+    Opponent {
+        action_count: u64,
+        indices: Vec<usize>,
+        spell_ability: Option<crate::core::SpellAbility>,
+    },
+    /// Game ended - exit the game loop
+    Exit { winner: Option<PlayerId> },
+    /// Fatal error - exit with error
+    Error { message: String },
+}
+
+/// Legacy ChoiceInfo for backward compatibility
+///
+/// DEPRECATED: Use LocalChoiceInfo and RemoteChoiceInfo instead.
+/// This enum is kept for the transition period.
 #[derive(Debug, Clone)]
 pub enum ChoiceInfo {
     /// Server is requesting a choice from us
@@ -184,25 +215,34 @@ pub struct PendingReveal {
 ///
 /// This structure implements queued choice synchronization using the MVar pattern:
 /// - `pending_reveals`: Queue of CardRevealed messages keyed by action count
-/// - `choice_mvar`: MVar for choices (ChoiceRequest or OpponentChoice)
+/// - `local_choice_mvar`: MVar for ChoiceRequest messages (local player)
+/// - `remote_choice_mvar`: MVar for OpponentChoice messages (remote player)
 ///
 /// The network event loop populates these, and the game loop/controllers consume them.
 /// Choices are queued because the network can receive multiple before the game loop
 /// consumes them (e.g., opponent passes, then our turn starts).
 ///
-/// ## MVar vs IVar
+/// ## Two-MVar Architecture
 ///
-/// We use MVar (not IVar) because:
-/// - IVars are write-once (monotonic)
-/// - MVars support `take` which empties the variable
-/// - Our pattern requires repeated put/take cycles for each choice
+/// We use SEPARATE MVars for local and remote choices because:
+/// - Controllers alternate based on who has priority
+/// - If both use the same MVar, the wrong controller can take the wrong message
+/// - E.g., LocalController takes OpponentChoice meant for RemoteController
+///
+/// With separate MVars:
+/// - `local_choice_mvar` ← ChoiceRequest (server asking us to choose)
+/// - `remote_choice_mvar` ← OpponentChoice (server telling us opponent's choice)
+/// - GameEnded/Error go to BOTH MVars (either controller might be waiting)
 pub struct SharedNetworkState {
     /// Pending reveals for sync callback processing
     /// Keyed by action count for deterministic processing
     pending_reveals: std::sync::Mutex<std::collections::VecDeque<PendingReveal>>,
 
-    /// MVar for choice synchronization (blocking take, non-blocking put)
-    choice_mvar: super::mvar::MVar<ChoiceInfo>,
+    /// MVar for local player choice requests (ChoiceRequest messages)
+    local_choice_mvar: super::mvar::MVar<LocalChoiceInfo>,
+
+    /// MVar for remote player choices (OpponentChoice messages)
+    remote_choice_mvar: super::mvar::MVar<RemoteChoiceInfo>,
 }
 
 impl SharedNetworkState {
@@ -210,7 +250,8 @@ impl SharedNetworkState {
     pub fn new() -> Self {
         Self {
             pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            choice_mvar: super::mvar::MVar::new(),
+            local_choice_mvar: super::mvar::MVar::new(),
+            remote_choice_mvar: super::mvar::MVar::new(),
         }
     }
 
@@ -241,35 +282,90 @@ impl SharedNetworkState {
         result
     }
 
-    /// Push a choice to the MVar (called by network loop)
-    pub fn push_choice(&self, choice: ChoiceInfo) {
-        self.choice_mvar.put(choice);
+    /// Push a local choice request (ChoiceRequest from server)
+    pub fn push_local_choice(&self, choice: LocalChoiceInfo) {
+        self.local_choice_mvar.put(choice);
     }
 
-    /// Take the next choice from MVar (called by controller)
+    /// Push a remote choice (OpponentChoice from server)
+    pub fn push_remote_choice(&self, choice: RemoteChoiceInfo) {
+        self.remote_choice_mvar.put(choice);
+    }
+
+    /// Take the next local choice from MVar (called by NetworkLocalController)
     ///
     /// Blocks until a choice is available, then consumes it.
     /// Returns None only if exit has been signaled and MVar is empty.
-    pub fn take_choice(&self) -> Option<ChoiceInfo> {
-        self.choice_mvar.take()
+    pub fn take_local_choice(&self) -> Option<LocalChoiceInfo> {
+        self.local_choice_mvar.take()
     }
 
-    /// Try to take the next choice without blocking
+    /// Take the next remote choice from MVar (called by RemoteController)
     ///
-    /// Returns Some(choice) if available, None otherwise.
-    #[allow(dead_code)]
-    pub fn try_take_choice(&self) -> Option<ChoiceInfo> {
-        self.choice_mvar.try_take()
+    /// Blocks until a choice is available, then consumes it.
+    /// Returns None only if exit has been signaled and MVar is empty.
+    pub fn take_remote_choice(&self) -> Option<RemoteChoiceInfo> {
+        self.remote_choice_mvar.take()
     }
 
-    /// Signal that the game should exit
+    /// Signal that the game should exit (notifies BOTH MVars)
     pub fn signal_exit(&self) {
-        self.choice_mvar.signal_exit();
+        self.local_choice_mvar.signal_exit();
+        self.remote_choice_mvar.signal_exit();
     }
 
     /// Check if exit has been signaled
     pub fn should_exit(&self) -> bool {
-        self.choice_mvar.is_exit_signaled()
+        // Check either MVar - they should be in sync
+        self.local_choice_mvar.is_exit_signaled()
+    }
+
+    // Legacy methods for backward compatibility (DEPRECATED)
+
+    /// Push a choice to the MVar (called by network loop)
+    ///
+    /// DEPRECATED: Use push_local_choice or push_remote_choice instead.
+    #[allow(dead_code)]
+    pub fn push_choice(&self, choice: ChoiceInfo) {
+        match choice {
+            ChoiceInfo::Request { action_count, choice_seq } => {
+                self.push_local_choice(LocalChoiceInfo::Request { action_count, choice_seq });
+            }
+            ChoiceInfo::Opponent {
+                action_count,
+                indices,
+                spell_ability,
+            } => {
+                self.push_remote_choice(RemoteChoiceInfo::Opponent {
+                    action_count,
+                    indices,
+                    spell_ability,
+                });
+            }
+            ChoiceInfo::Exit { winner } => {
+                self.push_local_choice(LocalChoiceInfo::Exit { winner });
+                self.push_remote_choice(RemoteChoiceInfo::Exit { winner });
+            }
+            ChoiceInfo::Error { message } => {
+                self.push_local_choice(LocalChoiceInfo::Error { message: message.clone() });
+                self.push_remote_choice(RemoteChoiceInfo::Error { message });
+            }
+        }
+    }
+
+    /// Take the next choice from MVar (called by controller)
+    ///
+    /// DEPRECATED: Use take_local_choice or take_remote_choice instead.
+    /// This method only returns local choices for backward compatibility.
+    #[allow(dead_code)]
+    pub fn take_choice(&self) -> Option<ChoiceInfo> {
+        self.take_local_choice().map(|local| match local {
+            LocalChoiceInfo::Request { action_count, choice_seq } => {
+                ChoiceInfo::Request { action_count, choice_seq }
+            }
+            LocalChoiceInfo::Exit { winner } => ChoiceInfo::Exit { winner },
+            LocalChoiceInfo::Error { message } => ChoiceInfo::Error { message },
+        })
     }
 }
 
@@ -1302,13 +1398,13 @@ async fn run_ws_reader_shared(
                             } => {
                                 // Update tracked action count
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
-                                // Push to choice queue
+                                // Push to LOCAL choice MVar (for NetworkLocalController)
                                 log::debug!(
-                                    "WsReaderShared: ChoiceRequest seq={} action={}",
+                                    "WsReaderShared: ChoiceRequest seq={} action={} -> local_mvar",
                                     choice_seq,
                                     action_count
                                 );
-                                shared_state.push_choice(ChoiceInfo::Request {
+                                shared_state.push_local_choice(LocalChoiceInfo::Request {
                                     action_count,
                                     choice_seq,
                                 });
@@ -1332,13 +1428,13 @@ async fn run_ws_reader_shared(
                                 description: _,
                                 spell_ability,
                             } => {
-                                // Push to choice queue
+                                // Push to REMOTE choice MVar (for RemoteController)
                                 log::debug!(
-                                    "WsReaderShared: OpponentChoice indices={:?} action={}",
+                                    "WsReaderShared: OpponentChoice indices={:?} action={} -> remote_mvar",
                                     choice_indices,
                                     action_count
                                 );
-                                shared_state.push_choice(ChoiceInfo::Opponent {
+                                shared_state.push_remote_choice(RemoteChoiceInfo::Opponent {
                                     action_count,
                                     indices: choice_indices,
                                     spell_ability,
@@ -1350,15 +1446,19 @@ async fn run_ws_reader_shared(
                                     winner,
                                     action_count
                                 );
+                                // Push to BOTH MVars (either controller might be waiting)
                                 shared_state.signal_exit();
-                                shared_state.push_choice(ChoiceInfo::Exit { winner });
+                                shared_state.push_local_choice(LocalChoiceInfo::Exit { winner });
+                                shared_state.push_remote_choice(RemoteChoiceInfo::Exit { winner });
                                 return;
                             }
                             NetworkMessage::Error { message, fatal } => {
                                 if fatal {
                                     log::error!("WsReaderShared: Fatal error: {}", message);
+                                    // Push to BOTH MVars (either controller might be waiting)
                                     shared_state.signal_exit();
-                                    shared_state.push_choice(ChoiceInfo::Error { message });
+                                    shared_state.push_local_choice(LocalChoiceInfo::Error { message: message.clone() });
+                                    shared_state.push_remote_choice(RemoteChoiceInfo::Error { message });
                                     return;
                                 }
                                 log::warn!("WsReaderShared: Non-fatal error: {}", message);
@@ -1381,7 +1481,8 @@ async fn run_ws_reader_shared(
             Ok(Message::Close(_)) => {
                 log::debug!("WsReaderShared: WebSocket closed by server");
                 shared_state.signal_exit();
-                shared_state.push_choice(ChoiceInfo::Exit { winner: None });
+                shared_state.push_local_choice(LocalChoiceInfo::Exit { winner: None });
+                shared_state.push_remote_choice(RemoteChoiceInfo::Exit { winner: None });
                 return;
             }
             Ok(_) => {
@@ -1390,7 +1491,8 @@ async fn run_ws_reader_shared(
             Err(e) => {
                 log::error!("WsReaderShared: WebSocket error: {}", e);
                 shared_state.signal_exit();
-                shared_state.push_choice(ChoiceInfo::Error { message: e.to_string() });
+                shared_state.push_local_choice(LocalChoiceInfo::Error { message: e.to_string() });
+                shared_state.push_remote_choice(RemoteChoiceInfo::Error { message: e.to_string() });
                 return;
             }
         }
