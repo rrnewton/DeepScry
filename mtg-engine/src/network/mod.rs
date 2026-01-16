@@ -32,6 +32,8 @@ mod controller;
 #[cfg(feature = "network")]
 mod local_controller;
 #[cfg(feature = "network")]
+mod mvar;
+#[cfg(feature = "network")]
 mod remote_controller;
 #[cfg(feature = "network")]
 mod server;

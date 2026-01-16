@@ -141,14 +141,14 @@ impl NetworkMessage {
 pub type ClientMessageSender = mpsc::Sender<ClientMessage>;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SHARED NETWORK STATE (IVar Pattern for Choice Synchronization)
+// SHARED NETWORK STATE (MVar Pattern for Choice Synchronization)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Choice information from the network
 ///
 /// Represents either a ChoiceRequest (server asking us to make a choice) or
 /// an OpponentChoice (server telling us what opponent chose). Used by the
-/// IVar pattern for choice synchronization.
+/// MVar pattern for choice synchronization.
 #[derive(Debug, Clone)]
 pub enum ChoiceInfo {
     /// Server is requesting a choice from us
@@ -178,26 +178,27 @@ pub struct PendingReveal {
 
 /// Shared network state for synchronization between network loop and game loop
 ///
-/// This structure implements queued choice synchronization:
+/// This structure implements queued choice synchronization using the MVar pattern:
 /// - `pending_reveals`: Queue of CardRevealed messages keyed by action count
-/// - `choice_queue`: Queue of choices (ChoiceRequest or OpponentChoice)
+/// - `choice_mvar`: MVar for choices (ChoiceRequest or OpponentChoice)
 ///
 /// The network event loop populates these, and the game loop/controllers consume them.
 /// Choices are queued because the network can receive multiple before the game loop
 /// consumes them (e.g., opponent passes, then our turn starts).
+///
+/// ## MVar vs IVar
+///
+/// We use MVar (not IVar) because:
+/// - IVars are write-once (monotonic)
+/// - MVars support `take` which empties the variable
+/// - Our pattern requires repeated put/take cycles for each choice
 pub struct SharedNetworkState {
     /// Pending reveals for sync callback processing
     /// Keyed by action count for deterministic processing
     pending_reveals: std::sync::Mutex<std::collections::VecDeque<PendingReveal>>,
 
-    /// Queue of pending choices (in arrival order)
-    choice_queue: std::sync::Mutex<std::collections::VecDeque<ChoiceInfo>>,
-
-    /// Condvar to signal when choice is available
-    choice_ready: std::sync::Condvar,
-
-    /// Flag to signal the game should exit
-    exit_flag: std::sync::atomic::AtomicBool,
+    /// MVar for choice synchronization (blocking take, non-blocking put)
+    choice_mvar: super::mvar::MVar<ChoiceInfo>,
 }
 
 impl SharedNetworkState {
@@ -205,9 +206,7 @@ impl SharedNetworkState {
     pub fn new() -> Self {
         Self {
             pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            choice_queue: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            choice_ready: std::sync::Condvar::new(),
-            exit_flag: std::sync::atomic::AtomicBool::new(false),
+            choice_mvar: super::mvar::MVar::new(),
         }
     }
 
@@ -238,29 +237,17 @@ impl SharedNetworkState {
         result
     }
 
-    /// Push a choice to the queue (called by network loop)
+    /// Push a choice to the MVar (called by network loop)
     pub fn push_choice(&self, choice: ChoiceInfo) {
-        let mut queue = self.choice_queue.lock().unwrap();
-        queue.push_back(choice);
-        self.choice_ready.notify_all();
+        self.choice_mvar.put(choice);
     }
 
-    /// Take the next choice from queue (called by controller)
+    /// Take the next choice from MVar (called by controller)
     ///
     /// Blocks until a choice is available, then consumes it.
-    /// Returns None only if exit_flag is set and queue is empty.
+    /// Returns None only if exit has been signaled and MVar is empty.
     pub fn take_choice(&self) -> Option<ChoiceInfo> {
-        let mut queue = self.choice_queue.lock().unwrap();
-
-        // Wait for choice to be available
-        while queue.is_empty() {
-            if self.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                return None;
-            }
-            queue = self.choice_ready.wait(queue).unwrap();
-        }
-
-        queue.pop_front()
+        self.choice_mvar.take()
     }
 
     /// Try to take the next choice without blocking
@@ -268,19 +255,17 @@ impl SharedNetworkState {
     /// Returns Some(choice) if available, None otherwise.
     #[allow(dead_code)]
     pub fn try_take_choice(&self) -> Option<ChoiceInfo> {
-        let mut queue = self.choice_queue.lock().unwrap();
-        queue.pop_front()
+        self.choice_mvar.try_take()
     }
 
     /// Signal that the game should exit
     pub fn signal_exit(&self) {
-        self.exit_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        self.choice_ready.notify_all();
+        self.choice_mvar.signal_exit();
     }
 
     /// Check if exit has been signaled
     pub fn should_exit(&self) -> bool {
-        self.exit_flag.load(std::sync::atomic::Ordering::Relaxed)
+        self.choice_mvar.is_exit_signaled()
     }
 }
 
@@ -1105,22 +1090,22 @@ impl NetworkClient {
 
     /// Run the game with a synchronized local GameLoop
     ///
-    /// ## IVar Architecture
+    /// ## MVar Architecture
     ///
     /// This implementation uses SharedNetworkState for synchronization:
     ///
     /// ```text
     /// WebSocket ──► Reader Task ──► SharedNetworkState ◄── sync_callback (reveals)
     ///                                      │
-    ///                                      ├── choice_ivar ◄── Controllers
+    ///                                      ├── choice_mvar ◄── Controllers
     ///                                      │
     /// WebSocket ◄── Writer Task ◄── send_rx ◄── send_tx ◄── Controllers
     /// ```
     ///
-    /// - **Reader task**: Routes messages to SharedNetworkState (reveals → queue, choices → IVar)
+    /// - **Reader task**: Routes messages to SharedNetworkState (reveals → queue, choices → MVar)
     /// - **Writer task**: Forwards client messages to WebSocket
     /// - **sync_callback**: Drains pending reveals from SharedNetworkState
-    /// - **Controllers**: Read choices from IVar via SharedNetworkState
+    /// - **Controllers**: Read choices from MVar via SharedNetworkState
     ///
     /// # Errors
     ///
@@ -1139,7 +1124,7 @@ impl NetworkClient {
         // Split WebSocket for concurrent read/write
         let (ws_sink, ws_stream) = ws.split();
 
-        // Shared network state for synchronization (IVar pattern)
+        // Shared network state for synchronization (MVar pattern)
         let shared_state = Arc::new(SharedNetworkState::new());
 
         // Channel for outbound messages (Controllers → WebSocket)
@@ -1254,12 +1239,12 @@ impl NetworkClient {
 // SINGLE-CHANNEL WEBSOCKET TASKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// WebSocket reader task using SharedNetworkState (IVar architecture)
+/// WebSocket reader task using SharedNetworkState (MVar architecture)
 ///
 /// This reader routes messages to the appropriate destination:
 /// - CardRevealed → pending_reveals queue (for sync callback)
-/// - ChoiceRequest/OpponentChoice → choice_ivar (for controllers)
-/// - GameEnded/Error → signal exit and set choice_ivar
+/// - ChoiceRequest/OpponentChoice → choice_mvar (for controllers)
+/// - GameEnded/Error → signal exit and set choice_mvar
 async fn run_ws_reader_shared(
     mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     shared_state: Arc<SharedNetworkState>,
@@ -1308,7 +1293,7 @@ async fn run_ws_reader_shared(
                                 choice_seq,
                                 action_count,
                             } => {
-                                // Update tracked action count, but don't set IVar
+                                // Update tracked action count, but don't push to MVar
                                 // (ChoiceAccepted is acknowledgment, not a new choice)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
                                 log::debug!(
@@ -1386,7 +1371,7 @@ async fn run_ws_reader_shared(
 
 /// Legacy WebSocket reader task (with pending_reveals buffer)
 ///
-/// DEPRECATED: Use run_ws_reader_shared instead with IVar architecture.
+/// DEPRECATED: Use run_ws_reader_shared instead with MVar architecture.
 #[allow(dead_code)]
 async fn run_ws_reader(
     mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,

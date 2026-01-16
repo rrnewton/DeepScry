@@ -27,7 +27,7 @@
 //!
 //! ## Note
 //!
-//! Some methods are currently unused after the IVar architecture migration but
+//! Some methods are currently unused after the MVar architecture migration but
 //! are kept for potential future use or debugging.
 
 #![allow(dead_code)]
