@@ -13,6 +13,12 @@
 //! - `handle_server_message` - Processes individual server messages
 //! - `handle_choice_submission` - Sends client choices to server
 
+// Network code has specific patterns that trigger these lints
+#![allow(clippy::large_enum_variant)] // NetworkMessage has intentionally large variants
+#![allow(clippy::clone_on_ref_ptr)] // Arc::clone() pattern is verbose, .clone() is fine
+#![allow(clippy::new_without_default)] // SharedNetworkState::new() has specific semantics
+#![allow(clippy::missing_panics_doc)] // Internal network code, panics are for poisoned mutexes
+
 use crate::core::{CardId, PlayerId};
 use crate::game::{GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
@@ -118,24 +124,165 @@ impl NetworkMessage {
             ServerMessage::LibraryReordered { player, new_order } => {
                 Some(NetworkMessage::LibraryReordered { player, new_order })
             }
-            // Ignore other messages (AuthResult, WaitingForOpponent, GameStarted, Pong)
-            // These are handled during connection setup, not during gameplay
-            _ => None,
+            // Ignore connection/setup messages - handled during connection setup, not gameplay
+            ServerMessage::AuthResult { .. }
+            | ServerMessage::WaitingForOpponent
+            | ServerMessage::GameStarted { .. }
+            | ServerMessage::SyncError { .. }
+            | ServerMessage::Pong { .. } => None,
+            // DebugStateDump only exists in debug builds
+            #[cfg(debug_assertions)]
+            ServerMessage::DebugStateDump { .. } => None,
         }
     }
 }
 
-/// Shared receiver for NetworkMessage
-///
-/// DEPRECATED: The pre-choice hook architecture no longer needs shared receivers.
-/// Controllers no longer block on channels; the hook handles all message processing.
-///
-/// Kept for backward compatibility.
-#[deprecated(since = "0.2.0", note = "Use pre-choice hook architecture instead")]
-pub type SharedMessageReceiver = Arc<std::sync::Mutex<mpsc::Receiver<NetworkMessage>>>;
-
 /// Sender for client messages to the WebSocket writer task
 pub type ClientMessageSender = mpsc::Sender<ClientMessage>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED NETWORK STATE (IVar Pattern for Choice Synchronization)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Choice information from the network
+///
+/// Represents either a ChoiceRequest (server asking us to make a choice) or
+/// an OpponentChoice (server telling us what opponent chose). Used by the
+/// IVar pattern for choice synchronization.
+#[derive(Debug, Clone)]
+pub enum ChoiceInfo {
+    /// Server is requesting a choice from us
+    Request { action_count: u64, choice_seq: u32 },
+    /// Opponent made a choice - use these indices
+    Opponent {
+        indices: Vec<usize>,
+        spell_ability: Option<crate::core::SpellAbility>,
+    },
+    /// Game ended - exit the game loop
+    Exit { winner: Option<PlayerId> },
+    /// Fatal error - exit with error
+    Error { message: String },
+}
+
+/// Pending reveal for sync callback processing
+///
+/// Contains a CardRevealed message along with its associated action count
+/// for deterministic processing.
+#[derive(Debug, Clone)]
+pub struct PendingReveal {
+    pub action_count: u64,
+    pub owner: PlayerId,
+    pub card: CardReveal,
+    pub reason: RevealReason,
+}
+
+/// Shared network state for synchronization between network loop and game loop
+///
+/// This structure implements queued choice synchronization:
+/// - `pending_reveals`: Queue of CardRevealed messages keyed by action count
+/// - `choice_queue`: Queue of choices (ChoiceRequest or OpponentChoice)
+///
+/// The network event loop populates these, and the game loop/controllers consume them.
+/// Choices are queued because the network can receive multiple before the game loop
+/// consumes them (e.g., opponent passes, then our turn starts).
+pub struct SharedNetworkState {
+    /// Pending reveals for sync callback processing
+    /// Keyed by action count for deterministic processing
+    pending_reveals: std::sync::Mutex<std::collections::VecDeque<PendingReveal>>,
+
+    /// Queue of pending choices (in arrival order)
+    choice_queue: std::sync::Mutex<std::collections::VecDeque<ChoiceInfo>>,
+
+    /// Condvar to signal when choice is available
+    choice_ready: std::sync::Condvar,
+
+    /// Flag to signal the game should exit
+    exit_flag: std::sync::atomic::AtomicBool,
+}
+
+impl SharedNetworkState {
+    /// Create a new shared network state
+    pub fn new() -> Self {
+        Self {
+            pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            choice_queue: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            choice_ready: std::sync::Condvar::new(),
+            exit_flag: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Push a pending reveal (called by network loop)
+    pub fn push_reveal(&self, action_count: u64, owner: PlayerId, card: CardReveal, reason: RevealReason) {
+        let mut queue = self.pending_reveals.lock().unwrap();
+        queue.push_back(PendingReveal {
+            action_count,
+            owner,
+            card,
+            reason,
+        });
+    }
+
+    /// Process pending reveals up to target action count (called by sync callback)
+    ///
+    /// Returns reveals that should be processed, removing them from the queue.
+    /// Only returns reveals with action_count <= target.
+    pub fn drain_reveals_up_to(&self, target: u64) -> Vec<PendingReveal> {
+        let mut queue = self.pending_reveals.lock().unwrap();
+        let mut result = Vec::new();
+
+        // Drain all reveals up to target action count
+        while queue.front().map(|r| r.action_count <= target).unwrap_or(false) {
+            result.push(queue.pop_front().unwrap());
+        }
+
+        result
+    }
+
+    /// Push a choice to the queue (called by network loop)
+    pub fn push_choice(&self, choice: ChoiceInfo) {
+        let mut queue = self.choice_queue.lock().unwrap();
+        queue.push_back(choice);
+        self.choice_ready.notify_all();
+    }
+
+    /// Take the next choice from queue (called by controller)
+    ///
+    /// Blocks until a choice is available, then consumes it.
+    /// Returns None only if exit_flag is set and queue is empty.
+    pub fn take_choice(&self) -> Option<ChoiceInfo> {
+        let mut queue = self.choice_queue.lock().unwrap();
+
+        // Wait for choice to be available
+        while queue.is_empty() {
+            if self.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
+            queue = self.choice_ready.wait(queue).unwrap();
+        }
+
+        queue.pop_front()
+    }
+
+    /// Try to take the next choice without blocking
+    ///
+    /// Returns Some(choice) if available, None otherwise.
+    #[allow(dead_code)]
+    pub fn try_take_choice(&self) -> Option<ChoiceInfo> {
+        let mut queue = self.choice_queue.lock().unwrap();
+        queue.pop_front()
+    }
+
+    /// Signal that the game should exit
+    pub fn signal_exit(&self) {
+        self.exit_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.choice_ready.notify_all();
+    }
+
+    /// Check if exit has been signaled
+    pub fn should_exit(&self) -> bool {
+        self.exit_flag.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CARD REVEAL UTILITIES
@@ -958,26 +1105,27 @@ impl NetworkClient {
 
     /// Run the game with a synchronized local GameLoop
     ///
-    /// ## Single-Channel Architecture
+    /// ## IVar Architecture
     ///
-    /// This implementation uses a single message channel for all server→client messages,
-    /// eliminating race conditions from the old multi-channel approach:
+    /// This implementation uses SharedNetworkState for synchronization:
     ///
     /// ```text
-    /// WebSocket ──► Reader Task ──► recv_tx ──► recv_rx ──► Controllers
-    ///                                                          │
-    /// WebSocket ◄── Writer Task ◄── send_rx ◄── send_tx ◄──────┘
+    /// WebSocket ──► Reader Task ──► SharedNetworkState ◄── sync_callback (reveals)
+    ///                                      │
+    ///                                      ├── choice_ivar ◄── Controllers
+    ///                                      │
+    /// WebSocket ◄── Writer Task ◄── send_rx ◄── send_tx ◄── Controllers
     /// ```
     ///
-    /// - **Reader task**: Simple loop that forwards all server messages to recv_tx
-    /// - **Writer task**: Simple loop that forwards all client messages to WebSocket
-    /// - **Pre-choice hook**: Blocks on recv_rx, processes CardRevealed, returns choice signals
+    /// - **Reader task**: Routes messages to SharedNetworkState (reveals → queue, choices → IVar)
+    /// - **Writer task**: Forwards client messages to WebSocket
+    /// - **sync_callback**: Drains pending reveals from SharedNetworkState
+    /// - **Controllers**: Read choices from IVar via SharedNetworkState
     ///
     /// # Errors
     ///
     /// Returns an error if not connected, game not started, or communication fails.
     pub async fn run_game<C: PlayerController + Send + 'static>(&mut self, controller: C) -> Result<Option<PlayerId>> {
-        use crate::game::game_loop::{PreChoiceResult, RawChoice};
         use crate::game::GameLoop;
         use crate::network::{NetworkLocalController, RemoteController};
 
@@ -991,19 +1139,14 @@ impl NetworkClient {
         // Split WebSocket for concurrent read/write
         let (ws_sink, ws_stream) = ws.split();
 
-        // SINGLE-CHANNEL ARCHITECTURE: Two unidirectional channels, no select!
-        // recv: Server → Hook (all ServerMessages converted to NetworkMessage)
-        // send: Controllers → Server (ClientMessage for choices)
-        let (recv_tx, recv_rx) = mpsc::channel::<NetworkMessage>();
+        // Shared network state for synchronization (IVar pattern)
+        let shared_state = Arc::new(SharedNetworkState::new());
+
+        // Channel for outbound messages (Controllers → WebSocket)
         let (send_tx, send_rx) = mpsc::channel::<ClientMessage>();
 
         let network_debug = self.network_debug;
         let card_db = self.card_db.clone().expect("Card DB not loaded");
-
-        // RemoteController: marker type (hook provides choices via UseChoice)
-        let mut remote_controller = RemoteController::new(opponent_id);
-
-        // Note: NetworkLocalController is created inside spawn_blocking to share choice_seq with hook
 
         // Configure game state
         let mut game = client_state.game;
@@ -1012,123 +1155,55 @@ impl NetworkClient {
             log::debug!("Client GameLoop: tag_gamelogs enabled");
         }
 
-        // Spawn reader task: WebSocket → recv_tx (no select!, just forward)
-        let reader_handle = tokio::spawn(run_ws_reader_simple(ws_stream, recv_tx));
+        // Spawn reader task: WebSocket → SharedNetworkState
+        let reader_state = shared_state.clone();
+        let reader_card_db = card_db.clone();
+        let reader_handle = tokio::spawn(run_ws_reader_shared(ws_stream, reader_state, reader_card_db));
 
-        // Spawn writer task: send_rx → WebSocket (no select!, just forward)
+        // Spawn writer task: send_rx → WebSocket
         let writer_handle = tokio::spawn(run_ws_writer(ws_sink, send_rx));
 
-        // Clone card_db for the pre-choice hook
-        let card_db_for_hook = card_db.clone();
+        // Clone for sync callback and controllers
+        let sync_state = shared_state.clone();
+        let controller_state = shared_state.clone();
+        let card_db_for_sync = card_db.clone();
 
         // Run game loop in spawn_blocking (works with both single and multi-threaded runtimes)
-        // Note: This requires controllers to be Send + 'static
         let game_result = tokio::task::spawn_blocking(move || {
-            // Shared choice sequence number: hook updates it, controller reads it
-            let choice_seq = std::rc::Rc::new(std::cell::Cell::new(0u32));
+            // Create controllers with shared state
+            let mut local_controller = NetworkLocalController::new_with_shared_state(
+                controller,
+                send_tx.clone(),
+                controller_state.clone(),
+                our_player_id,
+            )
+            .with_network_debug(network_debug);
 
-            // Create local controller inside spawn_blocking to share choice_seq with hook
-            let mut local_controller = NetworkLocalController::new(controller, send_tx.clone(), choice_seq.clone())
-                .with_network_debug(network_debug);
+            let mut remote_controller = RemoteController::new_with_shared_state(opponent_id, controller_state.clone());
 
-            // Clone for hook capture
-            let hook_choice_seq = choice_seq.clone();
-
-            // PRE-CHOICE HOOK: This is the core of the network architecture
+            // SYNC CALLBACK: Drains pending reveals from SharedNetworkState
             //
-            // The hook is called BEFORE every choice. It:
-            // 1. Blocks on the message channel
-            // 2. Processes CardRevealed messages (instantiates cards in GameState)
-            // 3. Returns AskController for local player choices
-            // 4. Returns UseChoice(RawChoice) for remote player choices (OpponentChoice)
-            // 5. Returns Exit for GameEnded/Error
-            let pre_choice_hook = |game: &mut GameState, player: PlayerId, _kind| -> PreChoiceResult {
-                let is_our_choice = player == our_player_id;
-
-                loop {
-                    // Block on the message channel
-                    let msg = match recv_rx.recv() {
-                        Ok(msg) => msg,
-                        Err(_) => {
-                            log::debug!("Pre-choice hook: channel closed");
-                            return PreChoiceResult::Exit;
-                        }
-                    };
-
-                    match msg {
-                        NetworkMessage::CardRevealed { owner, card, reason } => {
-                            // Process the reveal immediately - instantiate the card in GameState
-                            process_card_reveal(game, &card_db_for_hook, owner, card, reason);
-                            // Continue waiting for the actual choice message
-                        }
-                        NetworkMessage::ChoiceRequest {
-                            action_count: _,
-                            choice_seq: seq,
-                        } => {
-                            if is_our_choice {
-                                // Update shared choice_seq (controller reads it when sending)
-                                hook_choice_seq.set(seq);
-                                return PreChoiceResult::AskController;
-                            }
-                            // Server is asking US for a choice but this is opponent's turn?
-                            // This shouldn't happen, but handle gracefully
-                            log::warn!("Pre-choice hook: ChoiceRequest for our player but hook called for opponent");
-                        }
-                        NetworkMessage::ChoiceAccepted {
-                            choice_seq: _,
-                            action_count: _,
-                        } => {
-                            // Our previous choice was accepted - continue waiting
-                            // This message comes after we submit, before next choice
-                        }
-                        NetworkMessage::OpponentChoice {
-                            choice_indices,
-                            description: _,
-                            spell_ability,
-                        } => {
-                            if !is_our_choice {
-                                // Opponent made a choice - return it as UseChoice
-                                return PreChoiceResult::UseChoice(RawChoice {
-                                    indices: choice_indices,
-                                    spell_ability,
-                                });
-                            }
-                            // OpponentChoice but hook called for our turn?
-                            log::warn!("Pre-choice hook: OpponentChoice but hook called for our player");
-                        }
-                        NetworkMessage::GameEnded { winner, action_count } => {
-                            log::info!(
-                                "Pre-choice hook: Game ended, winner={:?}, actions={}",
-                                winner,
-                                action_count
-                            );
-                            return PreChoiceResult::Exit;
-                        }
-                        NetworkMessage::Error { message, fatal } => {
-                            if fatal {
-                                log::error!("Pre-choice hook: Fatal error from server: {}", message);
-                                return PreChoiceResult::Exit;
-                            }
-                            log::warn!("Pre-choice hook: Non-fatal error: {}", message);
-                        }
-                        NetworkMessage::LibraryReordered { player, new_order } => {
-                            log::debug!(
-                                "Pre-choice hook: Library reordered for {:?}, {} cards",
-                                player,
-                                new_order.len()
-                            );
-                            // Informational only - the actual reorder happens via game actions
-                        }
-                    }
+            // Called at synchronization points (before validation, after draws, etc.)
+            // to ensure cards are instantiated before they're needed.
+            let sync_callback = move |game: &mut GameState, _target_action: u64| {
+                // For now, drain ALL pending reveals (greedy approach)
+                // We can refine to use target_action later if needed
+                let reveals = sync_state.drain_reveals_up_to(u64::MAX);
+                for reveal in reveals {
+                    process_card_reveal(game, &card_db_for_sync, reveal.owner, reveal.card, reveal.reason);
                 }
             };
 
-            // Create game loop with pre-choice hook
+            // Create game loop with sync callback (no pre-choice hook)
+            // defer_game_end_check: Server is authoritative about game end - client waits for GameEnded
+            // reveal_validation: Disabled for clients - validation timing is tricky with async reveals
+            // and the server is authoritative anyway
             let result = {
                 let mut game_loop = GameLoop::new(&mut game)
-                    .with_pre_choice_hook(Box::new(pre_choice_hook))
-                    .with_reveal_validation(our_player_id, network_debug)
-                    .skip_opening_hands();
+                    .with_sync_callback(sync_callback)
+                    .with_reveal_validation(our_player_id, false) // Server is authoritative
+                    .skip_opening_hands()
+                    .with_deferred_game_end();
 
                 // Pass controllers in the correct order based on which player we are
                 log::debug!("Client GameLoop: we_are_p1={}", we_are_p1);
@@ -1179,60 +1254,139 @@ impl NetworkClient {
 // SINGLE-CHANNEL WEBSOCKET TASKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// WebSocket reader task (simplified): reads from WebSocket and forwards ALL to recv_tx
+/// WebSocket reader task using SharedNetworkState (IVar architecture)
 ///
-/// This is a simple linear loop with no select! - just recv and forward.
-/// ALL messages (including CardRevealed) go through the single channel.
-/// The pre-choice hook handles CardRevealed messages inline.
-async fn run_ws_reader_simple(
+/// This reader routes messages to the appropriate destination:
+/// - CardRevealed → pending_reveals queue (for sync callback)
+/// - ChoiceRequest/OpponentChoice → choice_ivar (for controllers)
+/// - GameEnded/Error → signal exit and set choice_ivar
+async fn run_ws_reader_shared(
     mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    recv_tx: mpsc::Sender<NetworkMessage>,
+    shared_state: Arc<SharedNetworkState>,
+    _card_db: Arc<AsyncCardDatabase>,
 ) {
+    // Track action_count from ChoiceAccepted/ChoiceRequest for reveal tagging
+    // For now we use 0 (greedy draining) - can refine later
+    let current_action_count = std::sync::atomic::AtomicU64::new(0);
+
     while let Some(msg_result) = ws_stream.next().await {
         match msg_result {
             Ok(Message::Text(text)) => match serde_json::from_str::<ServerMessage>(&text) {
                 Ok(server_msg) => {
                     if let Some(network_msg) = NetworkMessage::from_server_message(server_msg) {
-                        // ALL messages go through the single channel
-                        // The pre-choice hook handles CardRevealed inline
-                        if recv_tx.send(network_msg).is_err() {
-                            log::debug!("WsReader: recv channel closed, exiting");
-                            return;
+                        match network_msg {
+                            NetworkMessage::CardRevealed { owner, card, reason } => {
+                                // Route to pending reveals queue
+                                let action = current_action_count.load(std::sync::atomic::Ordering::Relaxed);
+                                log::debug!(
+                                    "WsReaderShared: buffering reveal {} (id={}) for {:?} at action {}",
+                                    card.name,
+                                    card.card_id.as_u32(),
+                                    owner,
+                                    action
+                                );
+                                shared_state.push_reveal(action, owner, card, reason);
+                            }
+                            NetworkMessage::ChoiceRequest {
+                                action_count,
+                                choice_seq,
+                            } => {
+                                // Update tracked action count
+                                current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
+                                // Push to choice queue
+                                log::debug!(
+                                    "WsReaderShared: ChoiceRequest seq={} action={}",
+                                    choice_seq,
+                                    action_count
+                                );
+                                shared_state.push_choice(ChoiceInfo::Request {
+                                    action_count,
+                                    choice_seq,
+                                });
+                            }
+                            NetworkMessage::ChoiceAccepted {
+                                choice_seq,
+                                action_count,
+                            } => {
+                                // Update tracked action count, but don't set IVar
+                                // (ChoiceAccepted is acknowledgment, not a new choice)
+                                current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
+                                log::debug!(
+                                    "WsReaderShared: ChoiceAccepted seq={} action={}",
+                                    choice_seq,
+                                    action_count
+                                );
+                            }
+                            NetworkMessage::OpponentChoice {
+                                choice_indices,
+                                description: _,
+                                spell_ability,
+                            } => {
+                                // Push to choice queue
+                                log::debug!("WsReaderShared: OpponentChoice indices={:?}", choice_indices);
+                                shared_state.push_choice(ChoiceInfo::Opponent {
+                                    indices: choice_indices,
+                                    spell_ability,
+                                });
+                            }
+                            NetworkMessage::GameEnded { winner, action_count } => {
+                                log::info!(
+                                    "WsReaderShared: Game ended, winner={:?}, action={}",
+                                    winner,
+                                    action_count
+                                );
+                                shared_state.signal_exit();
+                                shared_state.push_choice(ChoiceInfo::Exit { winner });
+                                return;
+                            }
+                            NetworkMessage::Error { message, fatal } => {
+                                if fatal {
+                                    log::error!("WsReaderShared: Fatal error: {}", message);
+                                    shared_state.signal_exit();
+                                    shared_state.push_choice(ChoiceInfo::Error { message });
+                                    return;
+                                }
+                                log::warn!("WsReaderShared: Non-fatal error: {}", message);
+                            }
+                            NetworkMessage::LibraryReordered { player, new_order } => {
+                                log::debug!(
+                                    "WsReaderShared: Library reordered for {:?}, {} cards",
+                                    player,
+                                    new_order.len()
+                                );
+                                // Informational only
+                            }
                         }
                     }
                 }
                 Err(e) => {
-                    log::error!("WsReader: failed to parse server message: {}", e);
+                    log::error!("WsReaderShared: failed to parse server message: {}", e);
                 }
             },
             Ok(Message::Close(_)) => {
-                log::debug!("WsReader: WebSocket closed by server");
-                // Send a GameEnded message to unblock the hook
-                let _ = recv_tx.send(NetworkMessage::GameEnded {
-                    winner: None,
-                    action_count: 0,
-                });
+                log::debug!("WsReaderShared: WebSocket closed by server");
+                shared_state.signal_exit();
+                shared_state.push_choice(ChoiceInfo::Exit { winner: None });
                 return;
             }
             Ok(_) => {
                 // Ignore binary/ping/pong
             }
             Err(e) => {
-                log::error!("WsReader: WebSocket error: {}", e);
-                let _ = recv_tx.send(NetworkMessage::Error {
-                    message: e.to_string(),
-                    fatal: true,
-                });
+                log::error!("WsReaderShared: WebSocket error: {}", e);
+                shared_state.signal_exit();
+                shared_state.push_choice(ChoiceInfo::Error { message: e.to_string() });
                 return;
             }
         }
     }
-    log::debug!("WsReader: WebSocket stream ended");
+    log::debug!("WsReaderShared: WebSocket stream ended");
+    shared_state.signal_exit();
 }
 
 /// Legacy WebSocket reader task (with pending_reveals buffer)
 ///
-/// DEPRECATED: Use run_ws_reader_simple instead with pre-choice hook architecture.
+/// DEPRECATED: Use run_ws_reader_shared instead with IVar architecture.
 #[allow(dead_code)]
 async fn run_ws_reader(
     mut ws_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,

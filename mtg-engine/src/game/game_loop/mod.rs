@@ -45,14 +45,21 @@ use crate::game::GameState;
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
 
-/// Type alias for the reveal drainer function
+/// Type alias for the sync callback function (network state synchronization)
 ///
-/// This function is called before each draw to process pending card reveals.
-/// It takes a mutable reference to the game state so it can queue reveals
-/// into the appropriate player's library.
+/// This function is called at synchronization points to process pending
+/// network state updates (primarily CardRevealed messages) up to a target action count.
+/// The callback should process all pending updates with action_count <= target.
 ///
-/// Used by network clients to drain reveals from the server before each draw.
-type RevealDrainer = Box<dyn Fn(&mut GameState)>;
+/// The callback takes:
+/// - `&mut GameState` - mutable game state for applying updates (e.g., instantiating cards)
+/// - `target_action: u64` - process all updates up to and including this action count
+///
+/// This deterministic approach (keyed by action count) replaces the previous
+/// greedy drain approach, ensuring consistent synchronization behavior.
+///
+/// Used by network clients to sync state before operations that need revealed cards.
+type SyncCallback = Box<dyn Fn(&mut GameState, u64)>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRE-CHOICE HOOK TYPES (Network Client Architecture)
@@ -262,11 +269,12 @@ pub struct GameLoop<'a> {
     deck_seed: Option<u64>,
     /// The main game seed to use after shuffling (only needed when deck_seed is set)
     game_seed: Option<u64>,
-    /// Optional reveal drainer for network mode (client-side)
+    /// Optional sync callback for network mode (client-side)
     ///
-    /// When set, this function is called before each draw to process pending card
-    /// reveals from the server and queue them into the appropriate player's library.
-    reveal_drainer: Option<RevealDrainer>,
+    /// When set, this function is called at synchronization points to process
+    /// pending network state updates up to the current action count. This includes
+    /// CardRevealed messages that instantiate cards before they're needed.
+    sync_callback: Option<SyncCallback>,
     /// Optional reveal pusher for network mode (server-side)
     ///
     /// When set, this function is called after automatic actions (like draws) to
@@ -296,6 +304,12 @@ pub struct GameLoop<'a> {
     /// It blocks on the network, processes CardRevealed messages, and returns
     /// when a choice signal arrives (ChoiceRequest for local, OpponentChoice for remote).
     pre_choice_hook: Option<PreChoiceHook<'a>>,
+    /// Defer game-end checks to end of turn (for network clients)
+    ///
+    /// When true, mid-step game-end checks (e.g., after combat damage) are skipped.
+    /// This is for network clients where the server is authoritative - the client
+    /// waits for GameEnded from the server rather than detecting locally.
+    defer_game_end_check: bool,
 }
 
 impl<'a> GameLoop<'a> {
@@ -326,12 +340,13 @@ impl<'a> GameLoop<'a> {
             p2_hand_setup: None,
             deck_seed: None,
             game_seed: None,
-            reveal_drainer: None,
+            sync_callback: None,
             reveal_pusher: None,
             skip_opening_hands: false,
             debug_validate_reveals: false,
             local_player_id: None,
             pre_choice_hook: None,
+            defer_game_end_check: false,
         }
     }
 
@@ -478,35 +493,37 @@ impl<'a> GameLoop<'a> {
         self
     }
 
-    /// Set a reveal drainer for network mode
+    /// Set a sync callback for network mode
     ///
-    /// The reveal drainer is called before each draw to process pending card reveals
-    /// from a network server. It takes a closure that receives `&mut GameState` and
-    /// should queue any pending reveals into the appropriate player's library.
+    /// The sync callback is called at synchronization points to process pending
+    /// network state updates (primarily CardRevealed messages) up to a target action count.
+    /// This ensures cards are instantiated before they're needed for validation or display.
+    ///
+    /// The callback receives:
+    /// - `&mut GameState` - mutable game state for applying updates
+    /// - `target_action: u64` - process all updates with action_count <= target
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let reveal_queue: Arc<Mutex<VecDeque<(PlayerId, CardId, RevealReason)>>> = ...;
-    /// let queue_clone = reveal_queue.clone();
+    /// let pending_reveals: Arc<Mutex<VecDeque<(u64, PlayerId, CardReveal)>>> = ...;
+    /// let reveals_clone = pending_reveals.clone();
     ///
-    /// game_loop.with_reveal_drainer(move |game| {
-    ///     if let Ok(mut queue) = queue_clone.lock() {
-    ///         while let Some((owner, card_id, reason)) = queue.pop_front() {
-    ///             if matches!(reason, RevealReason::Draw) {
-    ///                 if let Some(zones) = game.get_player_zones_mut(owner) {
-    ///                     zones.library.queue_reveal(card_id);
-    ///                 }
-    ///             }
+    /// game_loop.with_sync_callback(move |game, target_action| {
+    ///     if let Ok(mut queue) = reveals_clone.lock() {
+    ///         // Process reveals up to target action count
+    ///         while queue.front().map(|(ac, _, _)| *ac <= target_action).unwrap_or(false) {
+    ///             let (_, owner, reveal) = queue.pop_front().unwrap();
+    ///             process_card_reveal(game, owner, reveal);
     ///         }
     ///     }
     /// });
     /// ```
-    pub fn with_reveal_drainer<F>(mut self, drainer: F) -> Self
+    pub fn with_sync_callback<F>(mut self, callback: F) -> Self
     where
-        F: Fn(&mut GameState) + 'static,
+        F: Fn(&mut GameState, u64) + 'static,
     {
-        self.reveal_drainer = Some(Box::new(drainer));
+        self.sync_callback = Some(Box::new(callback));
         self
     }
 
@@ -553,11 +570,21 @@ impl<'a> GameLoop<'a> {
     /// ```rust,ignore
     /// // Network client skips local opening hand draw
     /// let mut game_loop = GameLoop::new(&mut game)
-    ///     .with_reveal_drainer(drain_reveals)
+    ///     .with_sync_callback(sync_callback)
     ///     .skip_opening_hands();
     /// ```
     pub fn skip_opening_hands(mut self) -> Self {
         self.skip_opening_hands = true;
+        self
+    }
+
+    /// Defer game-end checks to end of turn
+    ///
+    /// For network clients, the server is authoritative about game end. This flag
+    /// skips mid-step game-end checks (e.g., after combat damage) to prevent the
+    /// client from detecting game end before the server sends GameEnded.
+    pub fn with_deferred_game_end(mut self) -> Self {
+        self.defer_game_end_check = true;
         self
     }
 
@@ -569,7 +596,7 @@ impl<'a> GameLoop<'a> {
     ///
     /// # Arguments
     /// * `hook` - Closure that takes `(&mut GameState, PlayerId, ChoiceKind)`
-    ///            and returns `PreChoiceResult`
+    ///   and returns `PreChoiceResult`
     ///
     /// # Example
     ///
@@ -626,13 +653,29 @@ impl<'a> GameLoop<'a> {
         }
     }
 
-    /// Drain pending reveals if a drainer is configured
+    /// Sync network state up to the current action count
     ///
-    /// This is called automatically before draws to ensure card reveals from
-    /// the network are queued into the library before the draw occurs.
-    pub(super) fn drain_reveals(&mut self) {
-        if let Some(ref drainer) = self.reveal_drainer {
-            drainer(self.game);
+    /// This is called at synchronization points to process pending network
+    /// state updates (primarily CardRevealed messages) before operations that
+    /// need revealed cards (e.g., validation, building available actions).
+    ///
+    /// Uses the current game action_count as the target, ensuring deterministic
+    /// synchronization behavior.
+    pub(super) fn sync_to_action(&mut self) {
+        if let Some(ref callback) = self.sync_callback {
+            let target = self.game.action_count();
+            callback(self.game, target);
+        }
+    }
+
+    /// Sync network state up to a specific action count
+    ///
+    /// Like `sync_to_action()` but allows specifying the target action count.
+    /// Used when you need to sync to a specific point (e.g., before validation).
+    #[allow(dead_code)]
+    pub(super) fn sync_to_action_count(&mut self, target: u64) {
+        if let Some(ref callback) = self.sync_callback {
+            callback(self.game, target);
         }
     }
 
@@ -959,7 +1002,7 @@ impl<'a> GameLoop<'a> {
             if self.skip_opening_hands {
                 // Positional ID mode or network mode: library already shuffled.
                 // Skip the shuffle but still handle controlled hand setup if specified.
-                self.drain_reveals();
+                self.sync_to_action();
 
                 log::debug!(
                     "Skip opening hands mode: undo_log before draws = {}",

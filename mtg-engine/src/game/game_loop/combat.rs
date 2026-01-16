@@ -287,6 +287,16 @@ impl<'a> GameLoop<'a> {
             }
             self.log_combat_damage(true)?;
             self.game.assign_combat_damage(controller1, controller2, true)?;
+
+            // Check for game end before priority (state-based actions)
+            // MTG Rule 704.3: Check state-based actions before players receive priority
+            // Skip for network clients (defer_game_end_check) - server is authoritative
+            if !self.defer_game_end_check {
+                if let Some(result) = self.check_win_condition() {
+                    return Ok(Some(result));
+                }
+            }
+
             if let Some(result) = self.priority_round(controller1, controller2)? {
                 return Ok(Some(result));
             }
@@ -298,6 +308,15 @@ impl<'a> GameLoop<'a> {
         }
         self.log_combat_damage(false)?;
         self.game.assign_combat_damage(controller1, controller2, false)?;
+
+        // Check for game end before priority (state-based actions)
+        // MTG Rule 704.3: Check state-based actions before players receive priority
+        // Skip for network clients (defer_game_end_check) - server is authoritative
+        if !self.defer_game_end_check {
+            if let Some(result) = self.check_win_condition() {
+                return Ok(Some(result));
+            }
+        }
 
         // After damage is dealt, players get priority
         if let Some(result) = self.priority_round(controller1, controller2)? {

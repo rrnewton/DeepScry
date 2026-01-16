@@ -245,9 +245,9 @@ impl<'a> GameLoop<'a> {
 
             // Inner loop: pass priority until both players pass
             while consecutive_passes < 2 {
-                // Drain any pending reveals from network before processing priority
+                // Sync network state before processing priority
                 // This ensures opponent's played cards are instantiated before we try to act on them
-                self.drain_reveals();
+                self.sync_to_action();
 
                 // Safety check to prevent infinite loops
                 action_count += 1;
@@ -366,11 +366,11 @@ impl<'a> GameLoop<'a> {
                     let choice_result = self.choose_spell_ability_with_hook(controller, current_priority, &available);
                     let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
 
-                    // IMPORTANT: Drain reveals after receiving opponent choice (network mode)
+                    // IMPORTANT: Sync network state after receiving opponent choice
                     // During wait_for_choice(), reveals may have arrived via WebSocket for cards
                     // that the opponent is about to play. We need to process those reveals NOW
                     // before the game tries to act on the choice (e.g., cast a spell from hand).
-                    self.drain_reveals();
+                    self.sync_to_action();
 
                     // Log this choice point for snapshot/replay
                     let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
