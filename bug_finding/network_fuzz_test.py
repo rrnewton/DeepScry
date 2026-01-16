@@ -2,16 +2,20 @@
 """
 Network Fuzz Test - Find bugs by testing various configurations
 
+This is a BUG FINDING script, NOT a regression test.
+It runs for extended periods to discover new bugs through randomized testing.
+
 Tests the network implementation with different:
 - Controller types (heuristic, random, zero)
 - Seeds
 - Deck combinations
 - Player orderings
 
-Reports:
+Reports on exit (or Ctrl-C):
 - Pass/fail rates per configuration
 - Error categorization by last ERROR lines in logs
 - Determinism testing (re-running failures)
+- Reproducer commands for debugging
 """
 
 import subprocess
@@ -20,7 +24,7 @@ import sys
 import tempfile
 import shutil
 import re
-import json
+import signal
 import time
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple
@@ -44,6 +48,11 @@ CONTROLLERS = ["heuristic", "random", "zero"]
 # Seeds to test
 SEEDS = [1, 2, 3, 5, 7, 11, 13, 17, 42, 100]
 
+# Global for graceful shutdown
+shutdown_requested = False
+results_collected: List = []
+error_buckets_collected: Dict = defaultdict(list)
+
 @dataclass
 class TestConfig:
     """Test configuration"""
@@ -57,6 +66,21 @@ class TestConfig:
 
     def __str__(self):
         return f"seed={self.seed} p1={self.controller_p1} p2={self.controller_p2}"
+
+    def reproducer_command(self) -> str:
+        """Generate a reproducer command for this configuration"""
+        deck1_rel = os.path.relpath(self.deck1, WORKSPACE_ROOT)
+        deck2_rel = os.path.relpath(self.deck2, WORKSPACE_ROOT)
+        return (
+            f"# Terminal 1 (server):\n"
+            f"cargo run --release --features network -- server --port 12345 --seed {self.seed} --network-debug\n\n"
+            f"# Terminal 2 (client 1):\n"
+            f"cargo run --release --features network -- connect {deck1_rel} --server localhost:12345 "
+            f"--controller {self.controller_p1} --seed-player {self.seed_p1} --name Ryan\n\n"
+            f"# Terminal 3 (client 2):\n"
+            f"cargo run --release --features network -- connect {deck2_rel} --server localhost:12345 "
+            f"--controller {self.controller_p2} --seed-player {self.seed_p2} --name Gabriel"
+        )
 
 @dataclass
 class TestResult:
@@ -99,14 +123,30 @@ def make_error_signature(server_errors: List[str], client1_errors: List[str], cl
             return "connection_reset"
         if 'REVEAL VALIDATION FAILED' in error:
             return "reveal_validation"
+        if 'Entity not found' in error:
+            return "entity_not_found"
+        if 'Creature must be on battlefield' in error:
+            return "creature_not_on_battlefield"
+        if 'Invalid game action' in error:
+            return "invalid_game_action"
         if 'panic' in error.lower():
             return "panic"
 
-    # Fallback: use first error line
+    # Fallback: use first error line truncated
     return all_errors[0][:50] if all_errors else "unknown"
 
 def run_test(config: TestConfig, timeout: int = 120) -> TestResult:
     """Run a single network test"""
+    global shutdown_requested
+
+    if shutdown_requested:
+        return TestResult(
+            config=config,
+            passed=False,
+            duration=0,
+            error_signature="shutdown_requested"
+        )
+
     start_time = time.time()
 
     # Create temp directory
@@ -269,60 +309,21 @@ def generate_configs(num_configs: int = 50) -> List[TestConfig]:
 
     return configs[:num_configs]
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Network fuzz tester')
-    parser.add_argument('--configs', type=int, default=30, help='Number of configs to test')
-    parser.add_argument('--parallel', type=int, default=3, help='Parallel test count')
-    parser.add_argument('--determinism-runs', type=int, default=3, help='Runs for determinism test')
-    parser.add_argument('--quick', action='store_true', help='Quick mode: fewer configs')
-    args = parser.parse_args()
-
-    if args.quick:
-        args.configs = 10
-
-    print(f"=== Network Fuzz Test ===")
-    print(f"Binary: {MTG_BIN}")
-    print(f"Configs: {args.configs}")
-    print(f"Parallel: {args.parallel}")
+def print_summary(results: List[TestResult], error_buckets: Dict[str, List[TestResult]],
+                  determinism_runs: int = 3, interrupted: bool = False):
+    """Print the test summary"""
     print()
-
-    # Check binary exists
-    if not os.path.exists(MTG_BIN):
-        print(f"ERROR: Binary not found: {MTG_BIN}")
-        print("Run: cargo build --release --features network")
-        sys.exit(1)
-
-    # Generate configs
-    configs = generate_configs(args.configs)
-    print(f"Generated {len(configs)} test configurations")
-    print()
-
-    # Run tests
-    results: List[TestResult] = []
-    error_buckets: Dict[str, List[TestResult]] = defaultdict(list)
-
-    print("Running tests...")
-    with ThreadPoolExecutor(max_workers=args.parallel) as executor:
-        futures = {executor.submit(run_test, config): config for config in configs}
-
-        for i, future in enumerate(as_completed(futures)):
-            result = future.result()
-            results.append(result)
-
-            status = "PASS" if result.passed else f"FAIL ({result.error_signature})"
-            print(f"  [{i+1}/{len(configs)}] {result.config}: {status} ({result.duration:.1f}s)")
-
-            if not result.passed:
-                error_buckets[result.error_signature].append(result)
-
-            # Clean up passing tests
-            if result.passed and result.output_dir and os.path.exists(result.output_dir):
-                shutil.rmtree(result.output_dir, ignore_errors=True)
-
+    if interrupted:
+        print("=" * 50)
+        print("INTERRUPTED - Printing summary of completed tests")
+        print("=" * 50)
     print()
 
     # Summary
+    if not results:
+        print("No tests completed.")
+        return
+
     passed = sum(1 for r in results if r.passed)
     failed = len(results) - passed
 
@@ -347,14 +348,15 @@ def main():
             if ex.client2_errors:
                 print(f"  Client2: {ex.client2_errors[0][:80]}...")
 
-        # Test determinism of failures
-        print()
-        print("=== Determinism Test ===")
-        for error_sig, error_results in error_buckets.items():
-            config = error_results[0].config
-            passes, fails = test_determinism(config, args.determinism_runs)
-            det = "DETERMINISTIC" if fails == args.determinism_runs else f"FLAKY ({passes}/{args.determinism_runs} pass)"
-            print(f"{error_sig}: {det}")
+        # Test determinism of failures (skip if interrupted)
+        if not interrupted:
+            print()
+            print("=== Determinism Test ===")
+            for error_sig, error_results in error_buckets.items():
+                config = error_results[0].config
+                passes, fails = test_determinism(config, determinism_runs)
+                det = "DETERMINISTIC" if fails == determinism_runs else f"FLAKY ({passes}/{determinism_runs} pass)"
+                print(f"{error_sig}: {det}")
 
     print()
     print("=== Controller Matrix ===")
@@ -370,6 +372,15 @@ def main():
         pct = 100 * stats["passed"] / stats["total"] if stats["total"] > 0 else 0
         print(f"  {combo}: {stats['passed']}/{stats['total']} ({pct:.0f}%)")
 
+    # Reproducer commands
+    if error_buckets:
+        print()
+        print("=== Reproducer Commands ===")
+        for error_sig, error_results in error_buckets.items():
+            ex = error_results[0]
+            print(f"\n--- {error_sig} ---")
+            print(ex.config.reproducer_command())
+
     # Keep failure logs
     if error_buckets:
         print()
@@ -378,6 +389,95 @@ def main():
             if error_results[0].output_dir and os.path.exists(error_results[0].output_dir):
                 print(f"{error_sig}: {error_results[0].output_dir}")
 
+def signal_handler(signum, frame):
+    """Handle Ctrl-C gracefully"""
+    global shutdown_requested
+    if shutdown_requested:
+        print("\nForce quit...")
+        sys.exit(1)
+    print("\n\nShutdown requested... waiting for current tests to complete...")
+    shutdown_requested = True
+
+def main():
+    global shutdown_requested, results_collected, error_buckets_collected
+
+    import argparse
+    parser = argparse.ArgumentParser(
+        description='Network fuzz tester - Bug finding through randomized testing',
+        epilog='This is a bug finding tool, not a regression test. Use for discovering new bugs.'
+    )
+    parser.add_argument('--configs', type=int, default=30, help='Number of configs to test per batch')
+    parser.add_argument('--parallel', type=int, default=3, help='Parallel test count')
+    parser.add_argument('--determinism-runs', type=int, default=3, help='Runs for determinism test')
+    parser.add_argument('--quick', action='store_true', help='Quick mode: fewer configs (10)')
+    parser.add_argument('--infinite', action='store_true', help='Run forever until Ctrl-C')
+    parser.add_argument('--timeout', type=int, default=120, help='Timeout per test in seconds')
+    args = parser.parse_args()
+
+    # Set up signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    if args.quick:
+        args.configs = 10
+
+    print(f"=== Network Fuzz Test ===")
+    print(f"Binary: {MTG_BIN}")
+    print(f"Configs per batch: {args.configs}")
+    print(f"Parallel: {args.parallel}")
+    print(f"Infinite mode: {args.infinite}")
+    print(f"Press Ctrl-C to stop and see summary")
+    print()
+
+    # Check binary exists
+    if not os.path.exists(MTG_BIN):
+        print(f"ERROR: Binary not found: {MTG_BIN}")
+        print("Run: cargo build --release --features network")
+        sys.exit(1)
+
+    batch_num = 0
+    while not shutdown_requested:
+        batch_num += 1
+        if args.infinite:
+            print(f"\n=== Batch {batch_num} ===")
+
+        # Generate configs
+        configs = generate_configs(args.configs)
+        if not args.infinite:
+            print(f"Generated {len(configs)} test configurations")
+        print()
+
+        # Run tests
+        print("Running tests...")
+        with ThreadPoolExecutor(max_workers=args.parallel) as executor:
+            futures = {executor.submit(run_test, config, args.timeout): config for config in configs}
+
+            for i, future in enumerate(as_completed(futures)):
+                if shutdown_requested:
+                    break
+
+                result = future.result()
+                results_collected.append(result)
+
+                status = "PASS" if result.passed else f"FAIL ({result.error_signature})"
+                print(f"  [{i+1}/{len(configs)}] {result.config}: {status} ({result.duration:.1f}s)")
+
+                if not result.passed:
+                    error_buckets_collected[result.error_signature].append(result)
+
+                # Clean up passing tests
+                if result.passed and result.output_dir and os.path.exists(result.output_dir):
+                    shutil.rmtree(result.output_dir, ignore_errors=True)
+
+        # Exit after one batch unless infinite mode
+        if not args.infinite:
+            break
+
+    # Print summary
+    print_summary(results_collected, error_buckets_collected, args.determinism_runs,
+                  interrupted=shutdown_requested)
+
+    failed = sum(1 for r in results_collected if not r.passed)
     sys.exit(0 if failed == 0 else 1)
 
 if __name__ == "__main__":
