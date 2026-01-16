@@ -48,14 +48,14 @@ pub struct LocalChoice {
 
 /// A controller that wraps a local controller and sends choices to the server.
 ///
-/// This is used on the client side for our player. In the IVar architecture:
-/// 1. Waits for ChoiceRequest from IVar (contains choice_seq)
+/// This is used on the client side for our player. In the MVar architecture:
+/// 1. Waits for ChoiceRequest from MVar (contains choice_seq)
 /// 2. Delegates to the inner controller
 /// 3. Sends the choice to the server
 ///
 /// Supports two modes:
 /// - Legacy: Uses Rc<Cell<u32>> for choice_seq (with pre-choice hook)
-/// - IVar: Uses SharedNetworkState for choice info
+/// - MVar: Uses SharedNetworkState for choice info
 pub struct NetworkLocalController<C: PlayerController> {
     /// The wrapped local controller
     inner: C,
@@ -63,9 +63,9 @@ pub struct NetworkLocalController<C: PlayerController> {
     client_tx: ClientMessageSender,
     /// Network debug mode: include action log info in choices for sync validation
     network_debug: bool,
-    /// Our player ID (for IVar architecture validation)
+    /// Our player ID (for MVar architecture validation)
     _our_player_id: Option<PlayerId>,
-    /// Shared network state (IVar architecture) - takes precedence if set
+    /// Shared network state (MVar architecture) - takes precedence if set
     shared_state: Option<Arc<SharedNetworkState>>,
     /// Legacy: Shared choice sequence number (pre-choice hook updates it, controller reads it)
     choice_seq: Rc<Cell<u32>>,
@@ -89,12 +89,12 @@ impl<C: PlayerController> NetworkLocalController<C> {
         }
     }
 
-    /// Create a new network local controller (IVar architecture)
+    /// Create a new network local controller (MVar architecture)
     ///
     /// # Arguments
     /// * `inner` - The actual controller to delegate choices to
     /// * `client_tx` - Channel to send client messages to WebSocket writer
-    /// * `shared_state` - Shared network state for IVar-based choice synchronization
+    /// * `shared_state` - Shared network state for MVar-based choice synchronization
     /// * `our_player_id` - Our player ID for validation
     pub fn new_with_shared_state(
         inner: C,
@@ -108,7 +108,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             network_debug: false,
             _our_player_id: Some(player_id),
             shared_state: Some(shared_state),
-            choice_seq: Rc::new(Cell::new(0)), // Not used in IVar mode
+            choice_seq: Rc::new(Cell::new(0)), // Not used in MVar mode
         }
     }
 
@@ -130,13 +130,13 @@ impl<C: PlayerController> NetworkLocalController<C> {
 
     /// Get choice_seq for the current choice
     ///
-    /// In IVar mode: Takes ChoiceRequest from IVar (blocking if needed)
+    /// In MVar mode: Takes ChoiceRequest from MVar (blocking if needed)
     /// In legacy mode: Returns the shared choice_seq from pre-choice hook
     ///
     /// Returns None if the game should exit (GameEnded/Error received)
     fn get_choice_seq(&self) -> Option<u32> {
         if let Some(ref state) = self.shared_state {
-            // IVar mode: take the choice from IVar
+            // MVar mode: take the choice from MVar
             match state.take_choice() {
                 Some(ChoiceInfo::Request { choice_seq, .. }) => {
                     log::debug!("NetworkLocalController: got ChoiceRequest seq={}", choice_seq);
@@ -156,7 +156,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                     None
                 }
                 None => {
-                    log::debug!("NetworkLocalController: IVar returned None (exit signaled)");
+                    log::debug!("NetworkLocalController: MVar returned None (exit signaled)");
                     None
                 }
             }
@@ -226,7 +226,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame, // Game ended
@@ -253,7 +253,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -279,7 +279,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -304,7 +304,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -332,7 +332,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -364,7 +364,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -390,7 +390,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -411,7 +411,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
     }
 
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -438,7 +438,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         count: usize,
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -465,7 +465,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,
@@ -496,7 +496,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         min_modes: usize,
         can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        // Get choice_seq from IVar (blocks in IVar mode)
+        // Get choice_seq from MVar (blocks in MVar mode)
         let choice_seq = match self.get_choice_seq() {
             Some(seq) => seq,
             None => return ChoiceResult::ExitGame,

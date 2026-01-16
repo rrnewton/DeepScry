@@ -2,14 +2,14 @@
 //!
 //! This controller represents the opponent from the client's perspective.
 //!
-//! ## Architecture (IVar Design)
+//! ## Architecture (MVar Design)
 //!
-//! With the IVar architecture:
+//! With the MVar architecture:
 //! - Returns `ControllerType::Remote` to identify this as a remote player
-//! - In IVar mode: Reads OpponentChoice from SharedNetworkState
+//! - In MVar mode: Reads OpponentChoice from SharedNetworkState
 //! - In legacy mode: Panics (pre-choice hook should intercept)
 //!
-//! The network reader task populates the IVar with OpponentChoice,
+//! The network reader task populates the MVar with OpponentChoice,
 //! and this controller reads from it when a choice method is called.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
@@ -22,11 +22,11 @@ use std::sync::Arc;
 /// A controller that represents the remote opponent.
 ///
 /// Supports two modes:
-/// - IVar: Reads OpponentChoice from SharedNetworkState
+/// - MVar: Reads OpponentChoice from SharedNetworkState
 /// - Legacy: Panics (pre-choice hook should intercept)
 pub struct RemoteController {
     player_id: PlayerId,
-    /// Shared network state (IVar architecture) - if set, reads choices from IVar
+    /// Shared network state (MVar architecture) - if set, reads choices from MVar
     shared_state: Option<Arc<SharedNetworkState>>,
 }
 
@@ -39,7 +39,7 @@ impl RemoteController {
         }
     }
 
-    /// Create a new remote controller with shared state (IVar mode)
+    /// Create a new remote controller with shared state (MVar mode)
     pub fn new_with_shared_state(player_id: PlayerId, shared_state: Arc<SharedNetworkState>) -> Self {
         Self {
             player_id,
@@ -47,9 +47,9 @@ impl RemoteController {
         }
     }
 
-    /// Get opponent's choice from IVar
+    /// Get opponent's choice from MVar
     ///
-    /// In IVar mode: Takes OpponentChoice from IVar (blocking if needed)
+    /// In MVar mode: Takes OpponentChoice from MVar (blocking if needed)
     /// In legacy mode: Panics (this shouldn't be called)
     fn get_opponent_choice(&self) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
         if let Some(ref state) = self.shared_state {
@@ -72,7 +72,7 @@ impl RemoteController {
                     ChoiceResult::ExitGame
                 }
                 None => {
-                    log::debug!("RemoteController: IVar returned None (exit signaled)");
+                    log::debug!("RemoteController: MVar returned None (exit signaled)");
                     ChoiceResult::ExitGame
                 }
             }
