@@ -9,6 +9,12 @@
 
 set -euo pipefail
 
+# Skip in CI - stress tests are resource-intensive and not suitable for CI runners
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "Skipping stress test in CI environment"
+    exit 0
+fi
+
 COPIES=${1:-5}
 ROUNDS=${2:-2}
 
