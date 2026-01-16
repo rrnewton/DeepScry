@@ -662,11 +662,13 @@ impl WasmGame {
             }
         };
 
-        let mut game_loop = GameLoop::new(&mut self.game)
-            .with_verbosity(VerbosityLevel::Normal)
-            .with_max_turns(max_turns);
-
-        let result = game_loop.run_game(controller1.as_mut(), controller2.as_mut());
+        // Scope game_loop tightly so self.game can be accessed in match arms
+        let result = {
+            let mut game_loop = GameLoop::new(&mut self.game)
+                .with_verbosity(VerbosityLevel::Normal)
+                .with_max_turns(max_turns);
+            game_loop.run_game(controller1.as_mut(), controller2.as_mut())
+        };
 
         match result {
             Ok(game_result) => {

@@ -24,6 +24,14 @@
 //! This maintains the invariant that:
 //! - Local players receive `ChoiceRequest` → `AskController`
 //! - Remote players receive `OpponentChoice` → `UseChoice`
+//!
+//! ## Note
+//!
+//! Some methods are currently unused after the IVar architecture migration but
+//! are kept for potential future use or debugging.
+
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};

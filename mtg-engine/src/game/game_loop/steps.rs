@@ -198,9 +198,9 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
-        // Drain any pending reveals from network before drawing
+        // Sync network state before drawing
         // This ensures revealed cards are queued in the library before draw_card() pops them
-        self.drain_reveals();
+        self.sync_to_action();
 
         // Debug: Log state hash before draw
         #[cfg(feature = "verbose-logging")]

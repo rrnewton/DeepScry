@@ -878,9 +878,12 @@ impl WasmFancyTuiState {
                 let mut replay_controller = ReplayController::new(p1_id, Box::new(human_controller), replay_choices);
 
                 // Run the game with replay controller
-                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                log::debug!(target: "wasm_tui", "REPLAY: Running game loop with replay controller...");
-                let result = game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut());
+                // Scope game_loop tightly so self can be accessed afterwards
+                let result = {
+                    let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                    log::debug!(target: "wasm_tui", "REPLAY: Running game loop with replay controller...");
+                    game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut())
+                };
 
                 let turn_after_run = self.game.turn.turn_number;
                 log::debug!(
@@ -923,8 +926,11 @@ impl WasmFancyTuiState {
                     self.game.turn.turn_number
                 );
                 if let Some(ref mut human) = self.p1_human_controller {
-                    let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                    let result = game_loop.run_until_input(human, p2_controller.as_mut());
+                    // Scope game_loop tightly so self can be accessed afterwards
+                    let result = {
+                        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                        game_loop.run_until_input(human, p2_controller.as_mut())
+                    };
                     let turn_after = self.game.turn.turn_number;
                     log::debug!(
                         target: "wasm_tui",
@@ -956,11 +962,11 @@ impl WasmFancyTuiState {
             // Fixed script controller - runs the script without user input
             // Uses the same rewind/replay pattern but choices come from the script
             if let Some(ref mut fixed) = self.p1_fixed_controller {
-                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-
-                // Fixed controller also uses run_until_input because WasmRichInputController
-                // may return NeedInput when it runs out of script or needs a turn break
-                let result = game_loop.run_until_input(fixed, p2_controller.as_mut());
+                // Scope game_loop tightly so self can be accessed in match arms
+                let result = {
+                    let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                    game_loop.run_until_input(fixed, p2_controller.as_mut())
+                };
 
                 match result {
                     Ok(GameLoopState::Complete(game_result)) => {
@@ -1001,10 +1007,12 @@ impl WasmFancyTuiState {
         } else {
             // AI vs AI - run one turn at a time for step-through mode
             let mut p1_controller = self.create_ai_controller(self.p1_controller_type, p1_id);
-            let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
 
-            // Run one turn only (for step mode)
-            let result = game_loop.run_one_turn(p1_controller.as_mut(), p2_controller.as_mut());
+            // Scope game_loop tightly so self.game can be accessed in match arms
+            let result = {
+                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                game_loop.run_one_turn(p1_controller.as_mut(), p2_controller.as_mut())
+            };
             match result {
                 Ok(Some(game_result)) => {
                     // Game ended
