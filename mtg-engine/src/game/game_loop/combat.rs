@@ -242,7 +242,8 @@ impl<'a> GameLoop<'a> {
                 attackers_vec.push(*attacker_id);
                 self.game.combat.declare_blocker(*blocker_id, attackers_vec);
 
-                if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                // Log blocker declarations at Normal level (same as attacker declarations)
+                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                     let blocker_name = self
                         .game
                         .cards
@@ -256,10 +257,12 @@ impl<'a> GameLoop<'a> {
                         .map(|c| c.name.as_str())
                         .unwrap_or("Unknown");
                     let message = format!(
-                        "{} blocks {} with {}",
+                        "{} declares {} ({}) as blocker for {} ({})",
                         self.get_player_name(defending_player),
+                        blocker_name,
+                        blocker_id,
                         attacker_name,
-                        blocker_name
+                        attacker_id
                     );
                     // Use gamelog for official game action
                     self.game.logger.gamelog(&message);

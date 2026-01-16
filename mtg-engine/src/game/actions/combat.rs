@@ -534,6 +534,13 @@ impl GameState {
         creatures_to_destroy_sorted.sort_by_key(|id| id.as_u32());
 
         for creature_id in creatures_to_destroy_sorted {
+            // Get creature name before moving to graveyard (for logging)
+            let creature_name = self
+                .cards
+                .get(creature_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|_| "Unknown".into());
+
             // Check death triggers BEFORE moving the card (trigger still has access to card data)
             // This handles cards like Su-Chi which adds mana when it dies
             let _ = self.check_death_triggers(creature_id);
@@ -542,6 +549,10 @@ impl GameState {
             if let Ok(creature) = self.cards.get(creature_id) {
                 let owner = creature.owner;
                 self.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+
+                // Log the death from combat damage (matching format of check_lethal_damage in state.rs)
+                self.logger
+                    .gamelog(&format!("{} ({}) dies from combat damage", creature_name, creature_id));
             }
         }
 
