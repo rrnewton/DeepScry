@@ -4348,6 +4348,107 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(killable)
     }
 
+    /// SMART damage assignment: Choose which blocker to kill first
+    /// Strategy: Kill the most valuable creature first (highest evaluation score)
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        killable_blockers: &[(CardId, i32)], // (blocker_id, lethal_damage_needed)
+        remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        if killable_blockers.is_empty() {
+            return ChoiceResult::Error("No killable blockers provided".to_string());
+        }
+
+        // Single blocker - no choice needed
+        if killable_blockers.len() == 1 {
+            return ChoiceResult::Ok(killable_blockers[0].0);
+        }
+
+        // Evaluate each killable blocker and pick the most valuable one to kill first
+        let mut best_blocker = killable_blockers[0].0;
+        let mut best_eval = i32::MIN;
+
+        for &(blocker_id, lethal_damage) in killable_blockers {
+            // Skip if we don't have enough power to kill it
+            if lethal_damage > remaining_power {
+                continue;
+            }
+
+            let eval = self.evaluate_creature(view, blocker_id);
+            if eval > best_eval {
+                best_eval = eval;
+                best_blocker = blocker_id;
+            }
+        }
+
+        // Log the choice
+        if let Some(card) = view.get_card(best_blocker) {
+            view.logger().controller_choice(
+                "HEURISTIC",
+                &format!(
+                    "assign lethal damage to {} ({}) first (eval={}, power={} for {:?})",
+                    &card.name,
+                    best_blocker,
+                    best_eval,
+                    remaining_power,
+                    attacker
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(best_blocker)
+    }
+
+    /// SMART damage assignment: Choose where to assign remaining non-lethal damage
+    /// Strategy: Dump on the least valuable creature (since we can't kill anyone anyway)
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        view: &GameStateView,
+        _attacker: CardId,
+        remaining_blockers: &[CardId],
+        remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        if remaining_blockers.is_empty() {
+            return ChoiceResult::Error("No remaining blockers provided".to_string());
+        }
+
+        // Single blocker - no choice needed
+        if remaining_blockers.len() == 1 {
+            return ChoiceResult::Ok(remaining_blockers[0]);
+        }
+
+        // Find the least valuable blocker to dump damage on
+        // (Since we can't kill any of them, put damage on the least important one)
+        let mut worst_blocker = remaining_blockers[0];
+        let mut worst_eval = i32::MAX;
+
+        for &blocker_id in remaining_blockers {
+            let eval = self.evaluate_creature(view, blocker_id);
+            if eval < worst_eval {
+                worst_eval = eval;
+                worst_blocker = blocker_id;
+            }
+        }
+
+        // Log the choice
+        if let Some(card) = view.get_card(worst_blocker) {
+            view.logger().controller_choice(
+                "HEURISTIC",
+                &format!(
+                    "assign remaining {} damage to {} ({}) (eval={})",
+                    remaining_damage,
+                    &card.name,
+                    worst_blocker,
+                    worst_eval,
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(worst_blocker)
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         view: &GameStateView,

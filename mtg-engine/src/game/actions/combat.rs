@@ -4,12 +4,22 @@
 //! - Declaring attackers (with summoning sickness, defender, vigilance checks)
 //! - Declaring blockers (with flying/reach restrictions)
 //! - Assigning and dealing combat damage (with first strike, trample, lifelink, deathtouch)
+//!
+//! ## SMART Damage Assignment
+//!
+//! When an attacker is blocked by multiple creatures, the engine uses SMART damage
+//! assignment to reduce the choice space:
+//!
+//! 1. If attacker has enough power to kill ALL blockers → auto-assign, no choice needed
+//! 2. Otherwise, iteratively ask "assign lethal damage to which blocker first?"
+//! 3. After all killable blockers are handled, ask where to put remaining non-lethal damage
 
 use crate::core::{CardId, Keyword, PlayerId, TriggerEvent};
 use crate::game::state::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
+use std::collections::HashMap;
 
 impl GameState {
     /// Declare a creature as an attacker
@@ -213,18 +223,248 @@ impl GameState {
         Ok(())
     }
 
+    /// Calculate lethal damage needed for a blocker
+    ///
+    /// Returns the amount of damage needed to kill the blocker, accounting for:
+    /// - Deathtouch (1 damage is lethal if toughness > 0)
+    /// - Indestructible (returns None - cannot be killed)
+    /// - Effective toughness (including buffs)
+    fn calculate_lethal_damage(
+        &self,
+        blocker_id: CardId,
+        attacker_has_deathtouch: bool,
+    ) -> Option<i32> {
+        let blocker = self.cards.get(blocker_id).ok()?;
+
+        // Indestructible creatures can't be killed by damage
+        if self.has_keyword_with_effects(blocker_id, Keyword::Indestructible) {
+            return None;
+        }
+
+        // Get effective toughness (includes buffs)
+        let toughness = self
+            .get_effective_toughness(blocker_id)
+            .unwrap_or_else(|_| i32::from(blocker.current_toughness()));
+
+        if toughness <= 0 {
+            return None; // Already dead or can't be killed
+        }
+
+        // Deathtouch: 1 damage is lethal
+        if attacker_has_deathtouch {
+            Some(1)
+        } else {
+            Some(toughness)
+        }
+    }
+
+    /// SMART damage assignment for multiple blockers
+    ///
+    /// Returns an ordered list of (blocker_id, damage_to_assign) pairs.
+    /// Uses the SMART algorithm to reduce choice space:
+    /// 1. If can kill all blockers → auto-assign in order
+    /// 2. Otherwise, iteratively ask which blocker to kill first
+    /// 3. Finally, assign remaining damage to any blocker
+    fn smart_damage_assignment(
+        &mut self,
+        attacker_id: CardId,
+        blockers: &[CardId],
+        controller: &mut dyn crate::game::controller::PlayerController,
+    ) -> Result<SmallVec<[(CardId, i32); 4]>> {
+        use crate::game::controller::{ChoiceResult, GameStateView};
+
+        let attacker = self.cards.get(attacker_id)?;
+        let attacker_owner = attacker.owner;
+        let attacker_has_deathtouch = self.has_keyword_with_effects(attacker_id, Keyword::Deathtouch);
+        let has_trample = self.has_keyword_with_effects(attacker_id, Keyword::Trample);
+
+        // Get attacker's effective power
+        let total_power = self
+            .get_effective_power(attacker_id)
+            .unwrap_or_else(|_| i32::from(attacker.current_power()));
+
+        // Calculate lethal damage for each blocker
+        let mut blocker_info: Vec<(CardId, Option<i32>)> = blockers
+            .iter()
+            .map(|&id| (id, self.calculate_lethal_damage(id, attacker_has_deathtouch)))
+            .collect();
+
+        // Calculate total lethal needed for all killable blockers
+        let total_lethal_needed: i32 = blocker_info
+            .iter()
+            .filter_map(|(_, lethal)| *lethal)
+            .sum();
+
+        let mut result: SmallVec<[(CardId, i32); 4]> = SmallVec::new();
+        let mut remaining_power = total_power;
+
+        // Case 1: Can kill ALL blockers - no choice needed, auto-assign
+        if total_power >= total_lethal_needed {
+            // Sort by lethal damage (smallest first for efficiency) - all will be killed anyway
+            blocker_info.sort_by_key(|(_, lethal)| lethal.unwrap_or(i32::MAX));
+
+            for (blocker_id, lethal) in &blocker_info {
+                if let Some(lethal_dmg) = lethal {
+                    let damage = remaining_power.min(*lethal_dmg);
+                    result.push((*blocker_id, damage));
+                    remaining_power -= damage;
+                }
+            }
+
+            // If trample, remaining damage goes to player (handled later)
+            // Otherwise, dump remaining on last blocker
+            if !has_trample && remaining_power > 0 {
+                if let Some((_, ref mut damage)) = result.last_mut() {
+                    *damage += remaining_power;
+                }
+            }
+
+            return Ok(result);
+        }
+
+        // Case 2: Cannot kill all blockers - use iterative choice
+        // Separate into killable (with enough power) and unkillable
+        let mut remaining_blockers: Vec<(CardId, Option<i32>)> = blocker_info;
+
+        while remaining_power > 0 {
+            // Find blockers we CAN kill with remaining power
+            let killable: Vec<(CardId, i32)> = remaining_blockers
+                .iter()
+                .filter_map(|(id, lethal)| {
+                    lethal.and_then(|l| {
+                        if l <= remaining_power {
+                            Some((*id, l))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            if killable.is_empty() {
+                // No more blockers can be killed - assign remaining damage
+                let alive_blockers: Vec<CardId> = remaining_blockers
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .collect();
+
+                if !alive_blockers.is_empty() && remaining_power > 0 && !has_trample {
+                    // Ask where to put remaining non-lethal damage
+                    let view = GameStateView::new(self, attacker_owner);
+                    let choice = controller.choose_blocker_for_remaining_damage(
+                        &view,
+                        attacker_id,
+                        &alive_blockers,
+                        remaining_power,
+                    );
+
+                    match choice {
+                        ChoiceResult::Ok(blocker_id) => {
+                            result.push((blocker_id, remaining_power));
+                            break; // All remaining damage assigned
+                        }
+                        ChoiceResult::UndoRequest(n) => {
+                            self.handle_undo_request(attacker_owner, n)?;
+                            return Ok(SmallVec::new()); // Will retry
+                        }
+                        ChoiceResult::ExitGame => {
+                            return Err(MtgError::InvalidAction("Game exit requested".to_string()));
+                        }
+                        ChoiceResult::Error(msg) => {
+                            return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
+                        }
+                        ChoiceResult::NeedInput(_) => {
+                            return Err(MtgError::InvalidAction(
+                                "NeedInput returned in synchronous game loop".to_string(),
+                            ));
+                        }
+                    }
+                }
+                break;
+            }
+
+            // Only 1 killable blocker - auto-select it
+            if killable.len() == 1 {
+                let (blocker_id, lethal) = killable[0];
+                result.push((blocker_id, lethal));
+                remaining_power -= lethal;
+                remaining_blockers.retain(|(id, _)| *id != blocker_id);
+                continue;
+            }
+
+            // Multiple killable blockers - ask the player which to kill first
+            let view = GameStateView::new(self, attacker_owner);
+            let choice = controller.choose_blocker_for_lethal_damage(
+                &view,
+                attacker_id,
+                &killable,
+                remaining_power,
+            );
+
+            match choice {
+                ChoiceResult::Ok(blocker_id) => {
+                    // Find the lethal damage for chosen blocker
+                    if let Some((_, lethal)) = killable.iter().find(|(id, _)| *id == blocker_id) {
+                        result.push((blocker_id, *lethal));
+                        remaining_power -= lethal;
+                        remaining_blockers.retain(|(id, _)| *id != blocker_id);
+                    }
+                }
+                ChoiceResult::UndoRequest(n) => {
+                    self.handle_undo_request(attacker_owner, n)?;
+                    return Ok(SmallVec::new()); // Will retry
+                }
+                ChoiceResult::ExitGame => {
+                    return Err(MtgError::InvalidAction("Game exit requested".to_string()));
+                }
+                ChoiceResult::Error(msg) => {
+                    return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
+                }
+                ChoiceResult::NeedInput(_) => {
+                    return Err(MtgError::InvalidAction(
+                        "NeedInput returned in synchronous game loop".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Helper to handle undo requests during damage assignment
+    fn handle_undo_request(&mut self, player_id: PlayerId, n: usize) -> Result<()> {
+        if n == usize::MAX {
+            if let Ok(Some((_actions_undone, choice_log_size))) =
+                self.undo_to_previous_choice_point(player_id)
+            {
+                self.logger.truncate_to(choice_log_size);
+            }
+        } else {
+            for _ in 0..n {
+                if let Ok(Some(prior_log_size)) = self.undo() {
+                    self.logger.truncate_to(prior_log_size);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Assign and deal combat damage
     ///
-    /// This method handles the combat damage step. For each attacker:
+    /// This method handles the combat damage step using SMART damage assignment.
+    /// For each attacker:
     /// - If unblocked, damage goes to defending player
-    /// - If blocked by multiple creatures, attacker's controller chooses damage assignment order
+    /// - If blocked by multiple creatures, uses SMART assignment to minimize choices
     /// - Damage is assigned in order, with lethal damage assigned to each blocker before the next
+    ///
+    /// ## SMART Damage Assignment
+    /// - If attacker can kill ALL blockers → auto-assign, no choice needed
+    /// - Otherwise, iteratively ask "which blocker to assign lethal damage to first?"
+    /// - Finally, ask where to put remaining non-lethal damage (unless trample)
     ///
     /// MTG Rules 510.1: Combat damage is assigned and dealt simultaneously.
     /// MTG Rules 510.4: If any creature has first strike or double strike, there are two
-    /// combat damage steps. Creatures with first strike or double strike deal damage in the
-    /// first step, and creatures without first strike (plus double strike creatures) deal
-    /// damage in the second step.
+    /// combat damage steps.
     ///
     /// # Arguments
     /// * `attacker_controller` - Controller for the attacking player
@@ -240,66 +480,33 @@ impl GameState {
         blocker_controller: &mut dyn crate::game::controller::PlayerController,
         first_strike_step: bool,
     ) -> Result<()> {
-        use crate::game::controller::GameStateView;
-        use std::collections::HashMap;
+        // First pass: collect SMART damage assignments for attackers with multiple blockers
+        let mut damage_assignments: HashMap<CardId, SmallVec<[(CardId, i32); 4]>> = HashMap::new();
 
-        // First pass: collect all damage assignment orders for attackers with multiple blockers
-        let mut damage_orders: HashMap<CardId, SmallVec<[CardId; 4]>> = HashMap::new();
-
-        // Collect attackers to avoid borrow conflict with undo in handle_choice_result!
+        // Collect attackers to avoid borrow conflict
         let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
         for attacker_id in attackers {
             if self.combat.is_blocked(attacker_id) {
                 let blockers = self.combat.get_blockers(attacker_id);
 
-                // If multiple blockers, ask attacker's controller for damage assignment order
+                // For multiple blockers, use SMART damage assignment
                 if blockers.len() > 1 {
                     let attacker = self.cards.get(attacker_id)?;
                     let attacker_owner = attacker.owner;
 
-                    // Ask controller for damage assignment order
-                    let view = GameStateView::new(self, attacker_owner);
-                    let choice = if attacker_owner == attacker_controller.player_id() {
-                        attacker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
-                    } else {
-                        blocker_controller.choose_damage_assignment_order(&view, attacker_id, &blockers)
-                    };
+                    // Get the appropriate controller
+                    let controller: &mut dyn crate::game::controller::PlayerController =
+                        if attacker_owner == attacker_controller.player_id() {
+                            attacker_controller
+                        } else {
+                            blocker_controller
+                        };
 
-                    use crate::game::controller::ChoiceResult;
-                    let ordered_blockers = match choice {
-                        ChoiceResult::Ok(value) => value,
-                        ChoiceResult::UndoRequest(n) => {
-                            // Perform undo and exit early - game loop will re-execute from rewound state
-                            if n == usize::MAX {
-                                if let Ok(Some((_actions_undone, choice_log_size))) =
-                                    self.undo_to_previous_choice_point(attacker_owner)
-                                {
-                                    self.logger.truncate_to(choice_log_size);
-                                }
-                            } else {
-                                for _ in 0..n {
-                                    if let Ok(Some(prior_log_size)) = self.undo() {
-                                        self.logger.truncate_to(prior_log_size);
-                                    }
-                                }
-                            }
-                            return Ok(());
-                        }
-                        ChoiceResult::ExitGame => {
-                            return Err(MtgError::InvalidAction("Game exit requested".to_string()));
-                        }
-                        ChoiceResult::Error(msg) => {
-                            return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
-                        }
-                        ChoiceResult::NeedInput(_) => {
-                            // NeedInput is only valid in WASM context - not supported in synchronous combat
-                            return Err(MtgError::InvalidAction(
-                                "NeedInput returned in synchronous game loop".to_string(),
-                            ));
-                        }
-                    };
-
-                    damage_orders.insert(attacker_id, ordered_blockers);
+                    // Use SMART assignment
+                    let assignment = self.smart_damage_assignment(attacker_id, &blockers, controller)?;
+                    if !assignment.is_empty() {
+                        damage_assignments.insert(attacker_id, assignment);
+                    }
                 }
             }
         }
@@ -351,76 +558,76 @@ impl GameState {
             if self.combat.is_blocked(attacker_id) {
                 // Attacker deals damage to blockers
                 let blockers = self.combat.get_blockers(attacker_id);
-
-                // Use the pre-determined order if we have one, otherwise use default order
-                let ordered_blockers = damage_orders.get(&attacker_id).cloned().unwrap_or(blockers);
-
-                // Assign damage in order
-                // MTG Rules 510.1c:
-                // - If exactly one creature is blocking:
-                //   * WITHOUT trample: assign ALL damage to that blocker
-                //   * WITH trample: assign at least lethal, rest can trample over
-                // - If multiple creatures are blocking: assign at least lethal to each
-                //   before assigning to the next (can assign more)
-                // Note: Current implementation doesn't track damage, so lethal = toughness
-                // Uses has_keyword_with_effects to account for granted trample
                 let has_trample = self.has_keyword_with_effects(attacker_id, Keyword::Trample);
-                for blocker_id in &ordered_blockers {
-                    if remaining_power <= 0 {
-                        break;
-                    }
+                let has_deathtouch = self.has_keyword_with_effects(attacker_id, Keyword::Deathtouch);
 
-                    let blocker = self.cards.get(*blocker_id)?;
-                    let blocker_toughness = blocker.current_toughness();
-
-                    // Lethal damage is the creature's toughness
-                    // MTG Rules 702.2c: If attacker has deathtouch, any nonzero damage is lethal
-                    // (In full MTG, this would be toughness minus damage already marked)
-                    // Uses has_keyword_with_effects to account for granted deathtouch
-                    let has_deathtouch = self.has_keyword_with_effects(attacker_id, Keyword::Deathtouch);
-                    let lethal_damage = if has_deathtouch && blocker_toughness > 0 {
-                        1 // Any nonzero damage from deathtouch is lethal
-                    } else {
-                        blocker_toughness
-                    };
-
-                    let damage_to_assign = if ordered_blockers.len() == 1 && !has_trample {
-                        // MTG Rules 510.1c: With exactly one blocker and NO trample,
-                        // assign ALL damage to it (even if more than lethal)
-                        remaining_power
-                    } else {
-                        // MTG Rules 510.1c: With trample OR multiple blockers,
-                        // assign at least lethal to each before moving to next.
-                        // For simplicity, we assign exactly lethal.
-                        remaining_power.min(i32::from(lethal_damage))
-                    };
-
-                    if damage_to_assign > 0 {
-                        *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign;
-                        // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign;
-                        // Track deathtouch damage (MTG Rules 702.2b)
-                        if has_deathtouch {
-                            deathtouch_damaged_creatures.insert(*blocker_id);
+                // Check if we have SMART damage assignment for this attacker
+                if let Some(assignments) = damage_assignments.get(&attacker_id) {
+                    // Use explicit damage assignments from SMART algorithm
+                    for (blocker_id, damage) in assignments {
+                        if *damage > 0 {
+                            *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage;
+                            *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage;
+                            if has_deathtouch {
+                                deathtouch_damaged_creatures.insert(*blocker_id);
+                            }
+                            remaining_power -= damage;
                         }
-                        remaining_power -= damage_to_assign;
                     }
-                }
 
-                // Trample: If attacker has trample and there's remaining damage after
-                // assigning lethal to all blockers, assign remaining to defending player
-                // MTG Rules 702.19
-                if has_trample && remaining_power > 0 {
-                    if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
-                        *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
-                        // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                    // Trample: remaining damage goes to defending player
+                    if has_trample && remaining_power > 0 {
+                        if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
+                            *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
+                            *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                        }
+                    }
+                } else {
+                    // Single blocker - use original simple logic (no SMART assignment needed)
+                    for blocker_id in &blockers {
+                        if remaining_power <= 0 {
+                            break;
+                        }
+
+                        let blocker = self.cards.get(*blocker_id)?;
+                        let blocker_toughness = blocker.current_toughness();
+
+                        // Lethal damage calculation
+                        let lethal_damage = if has_deathtouch && blocker_toughness > 0 {
+                            1
+                        } else {
+                            blocker_toughness
+                        };
+
+                        let damage_to_assign = if blockers.len() == 1 && !has_trample {
+                            // Single blocker without trample: assign ALL damage
+                            remaining_power
+                        } else {
+                            remaining_power.min(i32::from(lethal_damage))
+                        };
+
+                        if damage_to_assign > 0 {
+                            *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign;
+                            *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign;
+                            if has_deathtouch {
+                                deathtouch_damaged_creatures.insert(*blocker_id);
+                            }
+                            remaining_power -= damage_to_assign;
+                        }
+                    }
+
+                    // Trample: remaining damage to defending player
+                    if has_trample && remaining_power > 0 {
+                        if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
+                            *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
+                            *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                        }
                     }
                 }
 
                 // All blockers deal their damage back to attacker (simultaneously)
                 // But only if they deal damage in this step (same rules as attackers)
-                for blocker_id in &ordered_blockers {
+                for blocker_id in &blockers {
                     // Skip blockers that are no longer on the battlefield
                     if !self.battlefield.contains(*blocker_id) {
                         continue;

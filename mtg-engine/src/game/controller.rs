@@ -1280,11 +1280,15 @@ pub trait PlayerController {
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>>;
 
-    /// Choose the damage assignment order for blockers
+    /// Choose the damage assignment order for blockers (LEGACY - fallback only)
     ///
     /// Called during combat damage step when an attacker is blocked by multiple creatures.
     /// The attacker's controller chooses the order in which damage will be assigned to blockers.
     /// MTG Rules 509.2: The attacking player announces the damage assignment order.
+    ///
+    /// NOTE: The engine now uses SMART damage assignment which calls
+    /// `choose_blocker_for_lethal_damage` iteratively instead. This method is only
+    /// called as a fallback when SMART assignment is disabled.
     ///
     /// Returns ChoiceResult with the blockers in the order damage should be assigned.
     /// All blockers must be included. Can also return special requests (UndoRequest, ExitGame, Error).
@@ -1294,6 +1298,68 @@ pub trait PlayerController {
         attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>>;
+
+    /// SMART damage assignment: Choose which blocker to assign lethal damage to first
+    ///
+    /// Called iteratively during combat damage step when an attacker has enough power
+    /// to kill some (but not all) blockers. The controller chooses which blocker to
+    /// prioritize killing.
+    ///
+    /// # Arguments
+    /// * `view` - Current game state view
+    /// * `attacker` - The attacking creature
+    /// * `killable_blockers` - Blockers that CAN be killed with remaining power
+    ///   (each with their lethal damage amount)
+    /// * `remaining_power` - How much damage the attacker has left to assign
+    ///
+    /// # Returns
+    /// The CardId of the blocker to assign lethal damage to first.
+    /// Default implementation delegates to choose_damage_assignment_order.
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        _view: &GameStateView,
+        _attacker: CardId,
+        killable_blockers: &[(CardId, i32)], // (blocker_id, lethal_damage_needed)
+        _remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        // Default: use the first killable blocker (fallback behavior)
+        if let Some((blocker_id, _)) = killable_blockers.first() {
+            ChoiceResult::Ok(*blocker_id)
+        } else {
+            ChoiceResult::Error("No killable blockers provided".to_string())
+        }
+    }
+
+    /// SMART damage assignment: Choose where to assign remaining non-lethal damage
+    ///
+    /// Called after lethal damage has been assigned to all killable blockers.
+    /// The remaining damage cannot kill any blocker, so the controller chooses
+    /// where to "waste" this damage. May matter for effects that care about
+    /// damage dealt, or for future pump spells.
+    ///
+    /// # Arguments
+    /// * `view` - Current game state view
+    /// * `attacker` - The attacking creature
+    /// * `remaining_blockers` - Blockers still alive that can receive damage
+    /// * `remaining_damage` - How much non-lethal damage to assign
+    ///
+    /// # Returns
+    /// The CardId of the blocker to assign the remaining damage to.
+    /// Default implementation picks the first remaining blocker.
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        _view: &GameStateView,
+        _attacker: CardId,
+        remaining_blockers: &[CardId],
+        _remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        // Default: assign to first remaining blocker
+        if let Some(&blocker_id) = remaining_blockers.first() {
+            ChoiceResult::Ok(blocker_id)
+        } else {
+            ChoiceResult::Error("No remaining blockers provided".to_string())
+        }
+    }
 
     /// Choose cards to discard to maximum hand size
     ///
