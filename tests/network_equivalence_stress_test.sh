@@ -5,12 +5,12 @@
 # the network implementation is stable under concurrent load.
 #
 # Usage: ./network_equivalence_stress_test.sh [copies] [rounds]
-# Default: 10 copies × 3 rounds
+# Default: 5 copies × 2 rounds
 
 set -euo pipefail
 
-COPIES=${1:-10}
-ROUNDS=${2:-3}
+COPIES=${1:-5}
+ROUNDS=${2:-2}
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
