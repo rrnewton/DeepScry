@@ -69,6 +69,7 @@ pub enum NetworkMessage {
     ChoiceAccepted { choice_seq: u32, action_count: u64 },
     /// Opponent made a choice
     OpponentChoice {
+        action_count: u64,
         choice_indices: Vec<usize>,
         description: String,
         spell_ability: Option<crate::core::SpellAbility>,
@@ -111,8 +112,10 @@ impl NetworkMessage {
                 choice_indices,
                 description,
                 spell_ability,
+                action_count,
                 ..
             } => Some(NetworkMessage::OpponentChoice {
+                action_count,
                 choice_indices,
                 description,
                 spell_ability,
@@ -155,6 +158,7 @@ pub enum ChoiceInfo {
     Request { action_count: u64, choice_seq: u32 },
     /// Opponent made a choice - use these indices
     Opponent {
+        action_count: u64,
         indices: Vec<usize>,
         spell_ability: Option<crate::core::SpellAbility>,
     },
@@ -1170,11 +1174,31 @@ impl NetworkClient {
             //
             // Called at synchronization points (before validation, after draws, etc.)
             // to ensure cards are instantiated before they're needed.
-            let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                // For now, drain ALL pending reveals (greedy approach)
-                // We can refine to use target_action later if needed
-                let reveals = sync_state.drain_reveals_up_to(u64::MAX);
+            //
+            // Uses target_action to validate ordering: reveals should have
+            // action_count <= target_action when processed.
+            let sync_callback = move |game: &mut GameState, target_action: u64| {
+                let game_action = game.undo_log.len() as u64;
+                let reveals = sync_state.drain_reveals_up_to(target_action);
+
                 for reveal in reveals {
+                    // Validate action count ordering
+                    if reveal.action_count > target_action {
+                        log::warn!(
+                            "sync_callback: reveal action_count {} > target_action {} for {} (game={})",
+                            reveal.action_count,
+                            target_action,
+                            reveal.card.name,
+                            game_action
+                        );
+                    }
+                    log::trace!(
+                        "sync_callback: processing reveal {} at action {} (target={}, game={})",
+                        reveal.card.name,
+                        reveal.action_count,
+                        target_action,
+                        game_action
+                    );
                     process_card_reveal(game, &card_db_for_sync, reveal.owner, reveal.card, reveal.reason);
                 }
             };
@@ -1303,13 +1327,19 @@ async fn run_ws_reader_shared(
                                 );
                             }
                             NetworkMessage::OpponentChoice {
+                                action_count,
                                 choice_indices,
                                 description: _,
                                 spell_ability,
                             } => {
                                 // Push to choice queue
-                                log::debug!("WsReaderShared: OpponentChoice indices={:?}", choice_indices);
+                                log::debug!(
+                                    "WsReaderShared: OpponentChoice indices={:?} action={}",
+                                    choice_indices,
+                                    action_count
+                                );
                                 shared_state.push_choice(ChoiceInfo::Opponent {
+                                    action_count,
                                     indices: choice_indices,
                                     spell_ability,
                                 });

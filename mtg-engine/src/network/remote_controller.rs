@@ -47,15 +47,36 @@ impl RemoteController {
         }
     }
 
-    /// Get opponent's choice from MVar
+    /// Get opponent's choice from MVar with action count validation
     ///
     /// In MVar mode: Takes OpponentChoice from MVar (blocking if needed)
     /// In legacy mode: Panics (this shouldn't be called)
-    fn get_opponent_choice(&self) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
+    ///
+    /// The `expected_action` parameter is used for validation in network mode.
+    /// If the choice's action_count doesn't match, this indicates a sync issue.
+    fn get_opponent_choice(&self, expected_action: u64) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
         if let Some(ref state) = self.shared_state {
             match state.take_choice() {
-                Some(ChoiceInfo::Opponent { indices, spell_ability }) => {
-                    log::debug!("RemoteController: got OpponentChoice indices={:?}", indices);
+                Some(ChoiceInfo::Opponent {
+                    action_count,
+                    indices,
+                    spell_ability,
+                }) => {
+                    // Validate action count ordering
+                    if action_count != expected_action {
+                        log::warn!(
+                            "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
+                            expected_action,
+                            action_count,
+                            indices
+                        );
+                        // Continue anyway - server is authoritative, but log the discrepancy
+                    }
+                    log::debug!(
+                        "RemoteController: got OpponentChoice indices={:?} action={}",
+                        indices,
+                        action_count
+                    );
                     ChoiceResult::Ok((indices, spell_ability))
                 }
                 Some(ChoiceInfo::Exit { winner }) => {
@@ -92,10 +113,10 @@ impl PlayerController for RemoteController {
 
     fn choose_spell_ability_to_play(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        let (indices, spell_ability) = match self.get_opponent_choice() {
+        let (indices, spell_ability) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -127,11 +148,11 @@ impl PlayerController for RemoteController {
 
     fn choose_targets(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -148,11 +169,11 @@ impl PlayerController for RemoteController {
 
     fn choose_mana_sources_to_pay(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         _cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -169,10 +190,10 @@ impl PlayerController for RemoteController {
 
     fn choose_attackers(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -200,11 +221,11 @@ impl PlayerController for RemoteController {
 
     fn choose_blockers(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         available_blockers: &[CardId],
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -237,11 +258,11 @@ impl PlayerController for RemoteController {
 
     fn choose_damage_assignment_order(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         _attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -258,11 +279,11 @@ impl PlayerController for RemoteController {
 
     fn choose_cards_to_discard(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         hand: &[CardId],
         _count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -274,8 +295,8 @@ impl PlayerController for RemoteController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        let (indices, _) = match self.get_opponent_choice() {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -293,12 +314,12 @@ impl PlayerController for RemoteController {
 
     fn choose_permanents_to_sacrifice(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         valid_permanents: &[CardId],
         _count: usize,
         _card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -315,10 +336,10 @@ impl PlayerController for RemoteController {
 
     fn choose_permanents_to_not_untap(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -335,14 +356,14 @@ impl PlayerController for RemoteController {
 
     fn choose_modes(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         _spell_id: CardId,
         _mode_descriptions: &[String],
         _mode_count: usize,
         _min_modes: usize,
         _can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        let (indices, _) = match self.get_opponent_choice() {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
