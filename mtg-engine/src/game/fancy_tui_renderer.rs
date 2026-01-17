@@ -76,6 +76,11 @@ fn style_for_log_content(message: &str, level: VerbosityLevel) -> Style {
         return Style::default().fg(Color::DarkGray);
     }
 
+    // Target selection: dark gray (auxiliary info)
+    if message.starts_with("  → targeting") {
+        return Style::default().fg(Color::DarkGray);
+    }
+
     // Choice markers: cyan dim
     if message.starts_with("<Choice>") {
         return Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM);

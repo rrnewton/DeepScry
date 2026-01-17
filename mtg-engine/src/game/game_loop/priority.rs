@@ -639,6 +639,24 @@ impl<'a> GameLoop<'a> {
                                     chosen_targets.into_iter().collect()
                                 };
 
+                                // Log target selection to gamelog (if any targets were chosen)
+                                if !chosen_targets_vec.is_empty()
+                                    && self.verbosity >= VerbosityLevel::Normal
+                                    && !self.replaying
+                                {
+                                    // Get target names for display
+                                    let target_names: Vec<String> = chosen_targets_vec
+                                        .iter()
+                                        .filter_map(|&tid| {
+                                            self.game.cards.get(tid).ok().map(|c| format!("{} ({})", c.name, tid))
+                                        })
+                                        .collect();
+                                    if !target_names.is_empty() {
+                                        let message = format!("  → targeting {}", target_names.join(", "));
+                                        self.game.logger.gamelog(&message);
+                                    }
+                                }
+
                                 // Clone for closure (which will move it)
                                 // Convert to Vec for callback signature compatibility
                                 let targets_for_callback: Vec<CardId> = chosen_targets_vec.iter().copied().collect();
@@ -735,6 +753,24 @@ impl<'a> GameLoop<'a> {
 
                                         chosen_targets.into_iter().collect()
                                     };
+
+                                    // Log target selection to gamelog (if any targets were chosen)
+                                    if !chosen_targets_vec.is_empty()
+                                        && self.verbosity >= VerbosityLevel::Normal
+                                        && !self.replaying
+                                    {
+                                        // Get target names for display
+                                        let target_names: Vec<String> = chosen_targets_vec
+                                            .iter()
+                                            .filter_map(|&tid| {
+                                                self.game.cards.get(tid).ok().map(|c| format!("{} ({})", c.name, tid))
+                                            })
+                                            .collect();
+                                        if !target_names.is_empty() {
+                                            let message = format!("  → targeting {}", target_names.join(", "));
+                                            self.game.logger.gamelog(&message);
+                                        }
+                                    }
 
                                     // Auto-tap lands for mana costs (if the ability has a mana cost)
                                     // This is the same logic as spell casting (step 6 of cast_spell_8_step)

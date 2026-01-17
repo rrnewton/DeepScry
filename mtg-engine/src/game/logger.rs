@@ -482,6 +482,11 @@ impl GameLogger {
             return std::borrow::Cow::Owned(message.dark_grey().to_string());
         }
 
+        // Target selection - Dark gray (auxiliary info)
+        if message.starts_with("  → targeting") {
+            return std::borrow::Cow::Owned(message.dark_grey().to_string());
+        }
+
         // Choice markers - Cyan, dim
         if message.starts_with("<Choice>") {
             return std::borrow::Cow::Owned(message.cyan().dim().to_string());
