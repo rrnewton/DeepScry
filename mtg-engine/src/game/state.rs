@@ -1329,26 +1329,31 @@ impl GameState {
         }
 
         // Find duplicates and sacrifice all but the first one
-        let mut cards_to_sacrifice: Vec<(CardId, PlayerId, CardName)> = Vec::new();
+        // Store: (card_id_to_sacrifice, owner, name, kept_card_id)
+        let mut cards_to_sacrifice: Vec<(CardId, PlayerId, CardName, CardId)> = Vec::new();
 
         for ((_controller, name), cards) in legendary_groups {
             if cards.len() > 1 {
                 // Keep the first one (index 0), sacrifice the rest
                 // TODO: Let player choose which one to keep
+                let kept_card = cards[0];
                 for &card_id in &cards[1..] {
                     if let Ok(card) = self.cards.get(card_id) {
-                        cards_to_sacrifice.push((card_id, card.owner, name.clone()));
+                        cards_to_sacrifice.push((card_id, card.owner, name.clone(), kept_card));
                     }
                 }
             }
         }
 
         // Move duplicates to graveyard (legend rule)
-        for (card_id, owner, name) in cards_to_sacrifice {
-            log::debug!(target: "sba", "Legendary rule: {} ({}) sacrificed as duplicate", name, card_id.as_u32());
+        for (card_id, owner, name, kept_card) in cards_to_sacrifice {
+            log::debug!(target: "sba", "Legendary rule: {} ({}) sacrificed as duplicate (keeping {})",
+                name, card_id.as_u32(), kept_card.as_u32());
             self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
-            self.logger
-                .gamelog(&format!("{} ({}) sacrificed due to legendary rule", name, card_id));
+            self.logger.gamelog(&format!(
+                "{} ({}) sacrificed due to legendary rule (duplicate of {} ({}))",
+                name, card_id, name, kept_card
+            ));
         }
 
         Ok(())
