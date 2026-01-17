@@ -29,13 +29,21 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing (has critical bugs)
 
-**Current status as of 2026-01-03_#1477(54b4e2c):**
-- Tests: 732 passing (nextest, all categories)
-- Parser warnings: 772 (71% reduction from initial 2,672)
-- Dynamic Affected$ selector parsing expanded
-- Avatar deck games complete without errors (200+ seeds tested)
+**Current status as of 2026-01-17_#1715(f36b836):**
+- Tests: 513 unit tests passing
+- All 50 determinism tests passing
+- SMART damage assignment implemented
+- Combat logging improved
 
-**Recent accomplishments (2026-01-03_#1477):**
+**Recent accomplishments (2026-01-17_#1715):**
+- SMART multi-blocker damage assignment: auto-assigns when all blockers can be killed
+- choose_blocker_for_lethal_damage() and choose_blocker_for_remaining_damage() controller methods
+- Combat death logging: creatures dying from combat damage now logged
+- Blocker declaration logging at normal verbosity level
+- Deterministic damage assignment ordering (CardId tiebreaker)
+- Closed stale issues: mtg-fsjga (modal spells), mtg-ijo2m (SpellCast triggers)
+
+**Previous accomplishments (2026-01-03_#1477):**
 - Treasure tokens selector: Card.Treasure+YouCtrl
 - wasCast state selector: Card.YouCtrl+wasCast
 - Self TopLibrary: Card.Self+TopLibrary
@@ -43,7 +51,7 @@ This is the main tracking issue for MTG Forge Rust development.
 - Top of library subtype: Card.TopLibrary+YouCtrl+SUBTYPE
 - Parser warning reduction: 792 → 772 (-20)
 
-**Previous accomplishments (2026-01-03_#1475):**
+**Earlier accomplishments (2026-01-03_#1475):**
 - Dynamic subtype.YouOwn parsing (Merfolk.YouOwn, Druid.YouOwn, etc.)
 - CardType.TopLibrary+YouCtrl patterns (Instant, Sorcery top of library)
 - Permanent.Subtype+YouCtrl patterns (Servo, Thopter buffs)
@@ -63,4 +71,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Reference issues in code: // TODO(mtg-N): description
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
-Checked up-to-date as of 2026-01-03.
+Checked up-to-date as of 2026-01-17.
