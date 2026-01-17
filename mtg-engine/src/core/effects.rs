@@ -80,6 +80,12 @@ pub struct TargetRestriction {
     /// Controller restriction (e.g., YouCtrl, OppCtrl)
     #[serde(default)]
     pub controller: ControllerRestriction,
+    /// Minimum power requirement (e.g., powerGE4 means power >= 4)
+    #[serde(default)]
+    pub power_ge: Option<i32>,
+    /// Maximum power requirement (e.g., powerLE2 means power <= 2)
+    #[serde(default)]
+    pub power_le: Option<i32>,
 }
 
 impl TargetRestriction {
@@ -89,6 +95,8 @@ impl TargetRestriction {
             types: SmallVec::new(),
             requires_no_counters: false,
             controller: ControllerRestriction::Any,
+            power_ge: None,
+            power_le: None,
         }
     }
 
@@ -98,18 +106,18 @@ impl TargetRestriction {
             types: types.into_iter().collect(),
             requires_no_counters: false,
             controller: ControllerRestriction::Any,
+            power_ge: None,
+            power_le: None,
         }
     }
 
-    /// Check if a card matches this restriction (type and counter checks only)
+    /// Check if a card matches this restriction (type, counter, and power checks)
     ///
     /// Returns true if:
-    /// - types is empty (any permanent allowed), OR
-    /// - card matches at least one of the specified types
-    ///
-    /// AND
-    ///
+    /// - types is empty (any permanent allowed), OR card matches at least one of the specified types
     /// - requires_no_counters is false, OR card has no counters
+    /// - power_ge is None, OR card's power >= power_ge
+    /// - power_le is None, OR card's power <= power_le
     ///
     /// Note: This does NOT check controller restrictions. Use `matches_with_controller`
     /// for full validation including controller checks.
@@ -117,6 +125,18 @@ impl TargetRestriction {
         // Check counter restriction first
         if self.requires_no_counters && card.has_counters() {
             return false;
+        }
+
+        // Check power restrictions (for creatures)
+        if let Some(min_power) = self.power_ge {
+            if i32::from(card.current_power()) < min_power {
+                return false;
+            }
+        }
+        if let Some(max_power) = self.power_le {
+            if i32::from(card.current_power()) > max_power {
+                return false;
+            }
         }
 
         // Check type restriction
@@ -165,10 +185,14 @@ impl TargetRestriction {
     /// - "Creature.OppCtrl" -> [Creature] with OppCtrl controller restriction
     /// - "Creature.nonArtifact+nonBlack" -> [Creature] (modifiers ignored for now)
     /// - "Creature.!HasCounters" -> [Creature] with requires_no_counters=true
+    /// - "Creature.powerGE4" -> [Creature] with power_ge=4
+    /// - "Creature.powerLE2" -> [Creature] with power_le=2
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
         let mut requires_no_counters = false;
         let mut controller = ControllerRestriction::Any;
+        let mut power_ge = None;
+        let mut power_le = None;
 
         for part in valid_tgts.split(',') {
             // Check for modifiers after the base type
@@ -184,6 +208,18 @@ impl TargetRestriction {
                         "!HasCounters" => requires_no_counters = true,
                         "YouCtrl" => controller = ControllerRestriction::YouCtrl,
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
+                        m if m.starts_with("powerGE") => {
+                            // Parse powerGE4 -> power_ge = 4
+                            if let Ok(n) = m.trim_start_matches("powerGE").parse::<i32>() {
+                                power_ge = Some(n);
+                            }
+                        }
+                        m if m.starts_with("powerLE") => {
+                            // Parse powerLE2 -> power_le = 2
+                            if let Ok(n) = m.trim_start_matches("powerLE").parse::<i32>() {
+                                power_le = Some(n);
+                            }
+                        }
                         _ => {} // Other modifiers ignored for now
                     }
                 }
@@ -204,6 +240,8 @@ impl TargetRestriction {
             types,
             requires_no_counters,
             controller,
+            power_ge,
+            power_le,
         }
     }
 }
