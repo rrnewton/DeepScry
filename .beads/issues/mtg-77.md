@@ -72,6 +72,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Reference: DestroyAi.java in forge-ai
   - Tests: test_destroy_ability_classification, test_royal_assassin_from_cardsfolder,
     test_has_valuable_destroy_target
+- ✅ **SMART multi-blocker damage assignment (2026-01-17_#1715(ecf0d0c))**
+  - If lethal for all blockers → auto-assign, no choice needed
+  - Otherwise iteratively ask which killable blocker to kill first
+  - choose_blocker_for_lethal_damage(): picks most valuable creature (highest eval)
+  - choose_blocker_for_remaining_damage(): picks least valuable for leftover damage
+  - Accounts for deathtouch (1 damage lethal) and indestructible (can't kill)
+  - Uses effective toughness with all buffs applied
+  - Reference: New SMART approach, reduces decision tree vs Java Forge
 
 **What's Missing:**
 
@@ -98,4 +106,4 @@ Track completion of heuristic AI port from Java Forge to Rust.
 2. Bluffing/deception
 
 ---
-**Checked up-to-date as of 2026-01-03 - 735 tests passing**
+**Checked up-to-date as of 2026-01-17_#1715 - 513 unit tests passing**
