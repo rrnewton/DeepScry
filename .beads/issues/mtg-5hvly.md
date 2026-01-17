@@ -137,7 +137,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [x] Badgermole (x1) - ETB earthbend 2, trample to countered creatures (VERIFIED 2026-01-14: earthbend works, makes 2/2 land creature)
 - [x] Cat-Owl (x1) - flying 3/3, attack trigger untap (FIXED 2026-01-14)
 - [ ] Earth Kingdom Soldier (x1) - ETB put counters needs multi-target support
-- [ ] Foggy Swamp Vinebender (x1) - waterbend effects (GAP: waterbend not implemented)
+- [ ] Foggy Swamp Vinebender (x1) - VERIFY: waterbend effects (IMPLEMENTED - needs testing)
 - [x] Glider Kids (x1) - flying (works), ETB scry 1 (VERIFIED 2026-01-14: Scry implemented)
 - [ ] Master Piandao (x1) - attack trigger Dig 4 (GAP: DB$ Dig not implemented)
 - [x] Ostrich-Horse (x2) - ETB mill+choose land (VERIFIED 2026-01-15: Mill 3 works, +1/+1 counter added if no land chosen)
@@ -152,7 +152,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [x] Cracked Earth Technique (x1) - **FIXED** - earthbend sorcery (was web GUI replay bug)
 - [x] Pillar Launch (x1) - **FIXED** - SubAbility$ DBUntap with Defined$ Targeted now works
 - [ ] Rocky Rebuke (x1) - GAP: DamageSource$ ParentTarget not implemented
-- [ ] Sandbenders' Storm (x2) - GAP: SP$ Charm modal spells not implemented
+- [ ] Sandbenders' Storm (x2) - VERIFY: SP$ Charm modal spells (IMPLEMENTED - needs testing)
 - [ ] Seismic Sense (x1) - GAP: SP$ Dig library manipulation not implemented
 - [x] White Lotus Reinforcements (x1) - 2/3 Vigilance creature with Ally anthem (VERIFIED 2026-01-15: anthem gives +1/+1 to other allies)
 
@@ -163,9 +163,9 @@ Currently no way to see card details for unknown opponent cards on the stack.
 The following mechanics are NOT YET IMPLEMENTED in the engine:
 
 - ~~**Scry**: `ApiType::Scry` / `DB$ Scry` not implemented (affects Glider Kids)~~ **IMPLEMENTED**
-- **Waterbend**: Avatar-specific mechanic not implemented (affects Foggy Swamp Vinebender)
+- ~~**Waterbend**: Avatar-specific mechanic not implemented (affects Foggy Swamp Vinebender)~~ **IMPLEMENTED** (mtg-aui0v CLOSED)
 - **Dig**: `SP$ Dig` library manipulation not implemented (affects Seismic Sense)
-- **Charm**: `SP$ Charm` modal spells not implemented (affects Sandbenders' Storm)
+- ~~**Charm**: `SP$ Charm` modal spells not implemented (affects Sandbenders' Storm)~~ **IMPLEMENTED** 2026-01-17
 - ~~**Animate**: `AB$ Animate` power/keyword grant not implemented (affects Turtle-Duck)~~ **IMPLEMENTED** 2026-01-15
 - **DamageSource$ ParentTarget**: Fight-style damage from targeted creature (affects Rocky Rebuke)
 - **CharacteristicDefining**: `*/*` power/toughness from formula (affects Suki, Kyoshi Warrior)
