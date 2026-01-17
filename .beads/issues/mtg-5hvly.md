@@ -137,7 +137,7 @@ Currently no way to see card details for unknown opponent cards on the stack.
 - [x] Badgermole (x1) - ETB earthbend 2, trample to countered creatures (VERIFIED 2026-01-14: earthbend works, makes 2/2 land creature)
 - [x] Cat-Owl (x1) - flying 3/3, attack trigger untap (FIXED 2026-01-14)
 - [ ] Earth Kingdom Soldier (x1) - ETB put counters needs multi-target support
-- [ ] Foggy Swamp Vinebender (x1) - VERIFY: waterbend effects (IMPLEMENTED - needs testing)
+- [x] Foggy Swamp Vinebender (x1) - Waterbend 5 PutCounter (VERIFIED 2026-01-17: PlayerTurn$ True restriction, Waterbend cost payment both fixed)
 - [x] Glider Kids (x1) - flying (works), ETB scry 1 (VERIFIED 2026-01-14: Scry implemented)
 - [ ] Master Piandao (x1) - attack trigger Dig 4 (GAP: DB$ Dig not implemented)
 - [x] Ostrich-Horse (x2) - ETB mill+choose land (VERIFIED 2026-01-15: Mill 3 works, +1/+1 counter added if no land chosen)

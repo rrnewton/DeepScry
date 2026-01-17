@@ -438,11 +438,19 @@ impl<'a> GameLoop<'a> {
                     }
 
                     // Check Waterbend cost (Avatar set mechanic - like Convoke)
-                    // Waterbend N requires N total payment via tapping creatures/artifacts OR mana
+                    // Waterbend N requires N total payment via mana OR tapping creatures/artifacts
+                    // Similar to Convoke: "you can tap your artifacts and creatures to help. Each one pays for {1}."
                     if can_activate {
                         if let Some(waterbend_amount) = ability.cost.get_waterbend_amount() {
-                            // Count untapped creatures/artifacts controlled by player (excluding this card)
-                            let tappable_count = self
+                            // Get mana sources (lands and creatures/artifacts with mana abilities)
+                            let mana_sources = self.mana_engine.all_sources();
+                            let mana_source_ids: smallvec::SmallVec<[CardId; 16]> =
+                                mana_sources.iter().map(|s| s.card_id).collect();
+                            let mana_available = mana_sources.iter().filter(|s| s.card_id != card_id).count() as u8;
+
+                            // Count untapped creatures/artifacts that are NOT mana sources
+                            // (mana sources are already counted above - avoid double-counting)
+                            let tappable_for_waterbend = self
                                 .game
                                 .battlefield
                                 .cards
@@ -450,6 +458,10 @@ impl<'a> GameLoop<'a> {
                                 .filter(|&&cid| {
                                     if cid == card_id {
                                         return false; // Can't tap the source to pay its own cost
+                                    }
+                                    // Skip if it's already counted as a mana source
+                                    if mana_source_ids.contains(&cid) {
+                                        return false;
                                     }
                                     if let Some(c) = self.game.cards.try_get(cid) {
                                         !c.tapped && c.controller == player_id && (c.is_creature() || c.is_artifact())
@@ -459,7 +471,8 @@ impl<'a> GameLoop<'a> {
                                 })
                                 .count() as u8;
 
-                            let total_available = mana_pool.total() + tappable_count;
+                            // Total payment capacity = floating mana + mana from sources + tappable creatures/artifacts
+                            let total_available = mana_pool.total() + mana_available + tappable_for_waterbend;
                             if total_available < waterbend_amount {
                                 can_activate = false;
                             }
@@ -489,6 +502,15 @@ impl<'a> GameLoop<'a> {
                         let stack_empty = self.game.stack.is_empty();
 
                         if !is_main_phase || !is_your_turn || !stack_empty {
+                            can_activate = false;
+                        }
+                    }
+
+                    // Check your-turn-only restriction (PlayerTurn$ True)
+                    // Less restrictive than sorcery speed - only requires it to be your turn
+                    if can_activate && ability.your_turn_only {
+                        let is_your_turn = card.controller == self.game.turn.active_player;
+                        if !is_your_turn {
                             can_activate = false;
                         }
                     }

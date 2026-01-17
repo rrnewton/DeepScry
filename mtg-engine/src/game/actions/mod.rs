@@ -4270,22 +4270,43 @@ impl GameState {
             Cost::Waterbend { amount } => {
                 // Waterbend cost - Avatar set mechanic (like Convoke)
                 // Player can tap untapped creatures/artifacts to pay for {1} each.
-                // Any remaining cost must be paid with mana from the mana pool.
+                // Player can also tap lands to produce mana.
+                // Total payment = mana from lands + tapped creatures/artifacts + floating mana
 
-                // First, count available mana and tappable creatures/artifacts
-                let available_mana = {
+                // Get current floating mana
+                let floating_mana = {
                     let player = self.get_player(player_id)?;
                     player.mana_pool.total()
                 };
 
-                // Find untapped creatures and artifacts controlled by this player
-                // (excluding the source card - can't tap itself to pay its own cost)
+                // Find untapped mana sources (lands) controlled by this player
                 let battlefield_cards = self.battlefield.cards.to_vec();
+                let mana_sources: Vec<CardId> = battlefield_cards
+                    .iter()
+                    .filter(|&&cid| {
+                        if cid == card_id {
+                            return false; // Can't tap the source to pay its own cost
+                        }
+                        if let Ok(card) = self.cards.get(cid) {
+                            // Must be untapped land controlled by player with mana ability
+                            !card.tapped && card.controller == player_id && card.is_land()
+                        } else {
+                            false
+                        }
+                    })
+                    .copied()
+                    .collect();
+
+                // Find untapped creatures and artifacts controlled by this player
+                // (excluding the source card and mana sources - they're counted above)
                 let tappable_permanents: Vec<CardId> = battlefield_cards
                     .into_iter()
                     .filter(|&cid| {
                         if cid == card_id {
                             return false; // Can't tap the source to pay its own cost
+                        }
+                        if mana_sources.contains(&cid) {
+                            return false; // Already counted as mana source
                         }
                         if let Ok(card) = self.cards.get(cid) {
                             // Must be untapped, controlled by player, and be creature or artifact
@@ -4296,34 +4317,54 @@ impl GameState {
                     })
                     .collect();
 
-                let total_available = available_mana + tappable_permanents.len() as u8;
+                let total_available = floating_mana + mana_sources.len() as u8 + tappable_permanents.len() as u8;
 
                 if total_available < *amount {
                     return Err(MtgError::InvalidAction(format!(
-                        "Cannot pay Waterbend {}: only {} available (mana: {}, tappable: {})",
+                        "Cannot pay Waterbend {}: only {} available (floating: {}, lands: {}, tappable: {})",
                         amount,
                         total_available,
-                        available_mana,
+                        floating_mana,
+                        mana_sources.len(),
                         tappable_permanents.len()
                     )));
                 }
 
-                // Greedily tap permanents first, then use mana pool for remainder
-                let permanents_to_tap = (*amount as usize).min(tappable_permanents.len());
-                let mana_needed = *amount - permanents_to_tap as u8;
+                // Payment strategy: prefer tapping creatures/artifacts first, then lands
+                // This preserves mana sources for future use when possible
+                let mut remaining = *amount;
 
-                // Tap the permanents
-                for &perm_id in tappable_permanents.iter().take(permanents_to_tap) {
+                // First use floating mana
+                if remaining > 0 && floating_mana > 0 {
+                    let use_from_pool = remaining.min(floating_mana);
+                    let mana_cost = ManaCost::from_string(&use_from_pool.to_string());
+                    let player = self.get_player_mut(player_id)?;
+                    player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
+                    remaining -= use_from_pool;
+                }
+
+                // Then tap creatures/artifacts for waterbend
+                for &perm_id in &tappable_permanents {
+                    if remaining == 0 {
+                        break;
+                    }
                     if let Ok(card) = self.cards.get_mut(perm_id) {
                         card.tapped = true;
+                        remaining -= 1;
                     }
                 }
 
-                // Pay the remaining cost from mana pool
-                if mana_needed > 0 {
-                    let mana_cost = ManaCost::from_string(&mana_needed.to_string());
-                    let player = self.get_player_mut(player_id)?;
-                    player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
+                // Finally tap lands to produce mana
+                for &land_id in &mana_sources {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if let Ok(card) = self.cards.get_mut(land_id) {
+                        card.tapped = true;
+                        remaining -= 1;
+                        // Note: We're not adding mana to pool since we're directly counting
+                        // each land tap as {1} payment for simplicity
+                    }
                 }
 
                 Ok(())

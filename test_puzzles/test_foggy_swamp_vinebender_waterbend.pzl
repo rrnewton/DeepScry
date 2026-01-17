@@ -1,0 +1,21 @@
+[metadata]
+Name=Foggy Swamp Vinebender Waterbend Test
+Goal=Win
+Turns=5
+Difficulty=Easy
+Description=Test waterbend ability puts +1/+1 counter on creature
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Foggy Swamp Vinebender;Grizzly Bears;Grizzly Bears;Forest;Forest;Forest;Forest;Forest
+p0library=Mountain;Island
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Forest;Forest
+p1library=Forest;Forest
+p1graveyard=

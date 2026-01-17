@@ -1541,6 +1541,11 @@ pub struct ActivatedAbility {
     /// Requires: priority, main phase, your turn, stack empty
     pub sorcery_speed: bool,
 
+    /// Whether this ability can only be activated during your turn
+    /// "Activate only during your turn" (PlayerTurn$ True)
+    /// Less restrictive than sorcery_speed - only checks turn ownership
+    pub your_turn_only: bool,
+
     /// Cache for expensive string operations (computed at creation time)
     pub cache: AbilityCache,
 }
@@ -1555,7 +1560,8 @@ impl ActivatedAbility {
             effects,
             description,
             is_mana_ability,
-            sorcery_speed: false, // Default to instant speed
+            sorcery_speed: false,  // Default to instant speed
+            your_turn_only: false, // Default to any turn
             cache,
         }
     }
@@ -1570,6 +1576,28 @@ impl ActivatedAbility {
             description,
             is_mana_ability: false, // Sorcery-speed abilities are not mana abilities
             sorcery_speed: true,
+            your_turn_only: false, // sorcery_speed implies your turn already
+            cache,
+        }
+    }
+
+    /// Create a new your-turn-only activated ability
+    /// Less restrictive than sorcery speed - can be activated any time during your turn
+    pub fn new_your_turn_only(
+        cost: crate::core::Cost,
+        effects: Vec<Effect>,
+        description: String,
+        is_mana_ability: bool,
+    ) -> Self {
+        let cache = AbilityCache::new(&description);
+
+        ActivatedAbility {
+            cost,
+            effects,
+            description,
+            is_mana_ability,
+            sorcery_speed: false, // Not sorcery speed
+            your_turn_only: true, // Your turn only
             cache,
         }
     }

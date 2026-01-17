@@ -2103,10 +2103,18 @@ impl CardDefinition {
                 .map(|s| s.eq_ignore_ascii_case("True"))
                 .unwrap_or(false);
 
+            // Check for PlayerTurn$ True parameter (activate only during your turn)
+            let is_your_turn_only = params
+                .get("PlayerTurn")
+                .map(|s| s.eq_ignore_ascii_case("True"))
+                .unwrap_or(false);
+
             // Only add if we have effects
             if !effects.is_empty() {
                 let ability = if is_sorcery_speed {
                     ActivatedAbility::new_sorcery_speed(cost, effects, description)
+                } else if is_your_turn_only {
+                    ActivatedAbility::new_your_turn_only(cost, effects, description, is_mana_ability)
                 } else {
                     ActivatedAbility::new(cost, effects, description, is_mana_ability)
                 };
@@ -3782,6 +3790,65 @@ Oracle:This land enters tapped unless you control a basic land.\n{T}: Add {G}.\n
         assert!(
             ability.sorcery_speed,
             "Earthbend ability should be sorcery-speed (activate only as a sorcery)"
+        );
+    }
+
+    #[test]
+    fn test_parse_foggy_swamp_vinebender_waterbend_ability() {
+        use crate::core::Effect;
+
+        // Test Foggy Swamp Vinebender's waterbend ability:
+        // "Waterbend 5: Put a +1/+1 counter on this creature. Activate only during your turn."
+        let content = r#"
+Name:Foggy Swamp Vinebender
+ManaCost:3 G
+Types:Creature Human Ranger Ally
+PT:4/3
+S:Mode$ CantBlockBy | ValidAttacker$ Creature.Self | ValidBlocker$ Creature.powerLE2 | Description$ This creature can't be blocked by creatures with power 2 or less.
+A:AB$ PutCounter | Cost$ Waterbend<5> | Defined$ Self | CounterType$ P1P1 | CounterNum$ 1 | PlayerTurn$ True | SpellDescription$ Put a +1/+1 counter on this creature. Activate only during your turn.
+Oracle:This creature can't be blocked by creatures with power 2 or less.\nWaterbend {5}: Put a +1/+1 counter on this creature. Activate only during your turn.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // Should have 1 activated ability: the PutCounter waterbend ability
+        assert_eq!(
+            abilities.len(),
+            1,
+            "Foggy Swamp Vinebender should have 1 activated ability (waterbend PutCounter). Got: {:?}",
+            abilities
+        );
+
+        let ability = &abilities[0];
+
+        // Check it has the PutCounter effect
+        let Effect::PutCounter {
+            counter_type, amount, ..
+        } = &ability.effects[0]
+        else {
+            panic!("Expected PutCounter effect, got {:?}", ability.effects[0]);
+        };
+        assert_eq!(*counter_type, crate::core::CounterType::P1P1);
+        assert_eq!(*amount, 1);
+
+        // Check the cost includes waterbend
+        assert!(
+            ability.cost.get_waterbend_amount().is_some(),
+            "Waterbend ability should have waterbend cost. Cost: {:?}",
+            ability.cost
+        );
+
+        // Check your_turn_only flag is set (PlayerTurn$ True)
+        assert!(
+            ability.your_turn_only,
+            "Waterbend ability should be your-turn-only (PlayerTurn$ True)"
+        );
+
+        // Sorcery_speed should NOT be set
+        assert!(
+            !ability.sorcery_speed,
+            "Waterbend ability should NOT be sorcery-speed (just your-turn-only)"
         );
     }
 

@@ -29,13 +29,19 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing (has critical bugs)
 
-**Current status as of 2026-01-17_#1715(f36b836):**
-- Tests: 513 unit tests passing
+**Current status as of 2026-01-17_#1718:**
+- Tests: 514 unit tests passing
 - All 50 determinism tests passing
-- SMART damage assignment implemented
-- Combat logging improved
+- PlayerTurn$ True restriction for activated abilities
+- Waterbend cost payment fixed
 
-**Recent accomplishments (2026-01-17_#1715):**
+**Recent accomplishments (2026-01-17_#1718):**
+- PlayerTurn$ True parsing for activated abilities (your_turn_only field)
+- Fixed Waterbend cost affordability check (now counts lands + creatures/artifacts)
+- Fixed Waterbend cost payment (taps creatures first, then lands)
+- Foggy Swamp Vinebender verified working
+
+**Previous accomplishments (2026-01-17_#1715):**
 - SMART multi-blocker damage assignment: auto-assigns when all blockers can be killed
 - choose_blocker_for_lethal_damage() and choose_blocker_for_remaining_damage() controller methods
 - Combat death logging: creatures dying from combat damage now logged
