@@ -726,6 +726,21 @@ async fn run_game(
         .map(|(k, v)| (k.clone(), (**v).clone()))
         .collect();
 
+    // Serialize RNG state for clients to initialize their shadow RNG
+    // This ensures subsequent shuffles (tutors, etc.) produce identical results
+    let rng_state = {
+        let rng = game.rng.borrow();
+        bincode::serialize(&*rng).unwrap_or_else(|e| {
+            log::error!("Failed to serialize RNG state: {}", e);
+            Vec::new()
+        })
+    };
+    log::debug!(
+        "Game {}: Serialized RNG state ({} bytes) for client sync",
+        game_id,
+        rng_state.len()
+    );
+
     p1_conn
         .send(&ServerMessage::GameStarted {
             your_player_id: p1_id,
@@ -740,6 +755,7 @@ async fn run_game(
             network_debug: config.network_debug,
             deck_card_ids: deck_card_ids.clone(),
             token_definitions: token_definitions.clone(),
+            rng_state: rng_state.clone(),
         })
         .await?;
 
@@ -757,6 +773,7 @@ async fn run_game(
             network_debug: config.network_debug,
             deck_card_ids: deck_card_ids.clone(),
             token_definitions: token_definitions.clone(),
+            rng_state: rng_state.clone(),
         })
         .await?;
 

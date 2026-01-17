@@ -367,10 +367,15 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
 ///
 /// Creates debug synchronization information for network sync debugging.
 /// Used to populate the debug_info field in network messages.
+///
+/// The optional `rng_hash` parameter allows including a hash of the RNG state
+/// to detect shuffle divergence between server and clients. This should be
+/// computed by the caller who has access to the actual RNG (e.g., GameLoop).
 #[cfg(feature = "network")]
 pub fn build_debug_sync_info(
     view: &crate::game::controller::GameStateView,
     last_action_count: usize,
+    rng_hash: Option<u64>,
 ) -> crate::network::DebugSyncInfo {
     use crate::core::PlayerId;
     use crate::network::DebugSyncInfo;
@@ -405,6 +410,7 @@ pub fn build_debug_sync_info(
         // (opponent's discards we don't know about in network mode)
         graveyard_sizes: [view.player_graveyard_size(p1), view.player_graveyard_size(p2)],
         last_actions,
+        rng_hash,
     }
 }
 

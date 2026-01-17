@@ -217,7 +217,9 @@ impl<C: PlayerController> NetworkLocalController<C> {
     fn get_debug_fields(&self, view: &GameStateView) -> (Option<u64>, Option<super::DebugSyncInfo>) {
         if self.network_debug {
             let client_state_hash = Some(crate::game::compute_view_hash(view));
-            let debug_info = Some(crate::game::build_debug_sync_info(view, 10));
+            // Note: rng_hash is None here because controllers don't have direct RNG access.
+            // Full RNG verification would require GameLoop to pass the hash through.
+            let debug_info = Some(crate::game::build_debug_sync_info(view, 10, None));
             (client_state_hash, debug_info)
         } else {
             (None, None)

@@ -229,8 +229,10 @@ impl NetworkController {
         let action_count = view.action_count() as u64;
 
         // Build debug info if network debug mode is enabled
+        // Note: rng_hash is None here because controllers don't have direct RNG access.
+        // Full RNG verification would require GameLoop to pass the hash through.
         let debug_info = if self.network_debug {
-            Some(crate::game::build_debug_sync_info(view, 10))
+            Some(crate::game::build_debug_sync_info(view, 10, None))
         } else {
             None
         };

@@ -227,6 +227,15 @@ pub enum ServerMessage {
         /// Key is the script name (e.g., "c_a_food_sac"), value is the CardDefinition.
         #[serde(default)]
         token_definitions: std::collections::HashMap<String, crate::loader::CardDefinition>,
+        /// Serialized RNG state for deterministic game execution.
+        ///
+        /// The server sends its post-initial-shuffle RNG state so clients can
+        /// initialize their RNG to match. This ensures subsequent shuffles
+        /// (from tutors, etc.) produce identical results on both server and client.
+        ///
+        /// Uses bincode serialization of ChaCha12Rng (56 bytes).
+        #[serde(default)]
+        rng_state: Vec<u8>,
     },
 
     /// Card reveal event (draws, tutors, plays, etc.)
@@ -696,6 +705,10 @@ pub struct DebugSyncInfo {
     /// Typically the last 10-20 actions for debugging
     #[serde(default)]
     pub last_actions: Vec<String>,
+    /// Hash of RNG state for detecting shuffle divergence.
+    /// If server and client RNGs diverge, this will differ.
+    #[serde(default)]
+    pub rng_hash: Option<u64>,
 }
 
 impl DebugSyncInfo {
@@ -713,6 +726,7 @@ impl DebugSyncInfo {
             stack_size: 0,
             graveyard_sizes: [0, 0],
             last_actions: Vec::new(),
+            rng_hash: None,
         }
     }
 
@@ -817,6 +831,9 @@ impl DebugSyncInfo {
                 "graveyard_sizes: {:?} vs {:?}",
                 self.graveyard_sizes, other.graveyard_sizes
             ));
+        }
+        if self.rng_hash != other.rng_hash {
+            diffs.push(format!("rng_hash: {:?} vs {:?}", self.rng_hash, other.rng_hash));
         }
 
         diffs
@@ -1089,6 +1106,7 @@ mod tests {
                 network_debug: false,
                 deck_card_ids: Some(DeckCardIdRanges::from_deck_sizes(60, 60)),
                 token_definitions: std::collections::HashMap::new(),
+                rng_state: vec![1, 2, 3, 4], // Dummy RNG state for testing
             },
             ServerMessage::ChoiceRequest {
                 choice_seq: 1,

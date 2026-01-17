@@ -486,6 +486,8 @@ pub struct GameStartInfo {
     pub opponent_library_size: usize,
     pub starting_life: i32,
     pub initial_state_hash: u64,
+    /// Serialized RNG state from server for deterministic shuffles
+    pub rng_state: Vec<u8>,
 }
 
 /// Shadow game state maintained by the client
@@ -903,6 +905,7 @@ impl NetworkClient {
             server_network_debug,
             deck_card_ids,     // Phase 3: CardID ranges for late-binding architecture
             token_definitions, // Token definitions for network clients without local card DB
+            rng_state,         // Serialized RNG state for deterministic shuffles
         ) = loop {
             let msg = self.receive_message().await?;
             match msg {
@@ -922,6 +925,7 @@ impl NetworkClient {
                     network_debug,
                     deck_card_ids,
                     token_definitions,
+                    rng_state,
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(
@@ -944,6 +948,9 @@ impl NetworkClient {
                     if !token_definitions.is_empty() {
                         log::info!("Received {} token definitions from server", token_definitions.len());
                     }
+                    if !rng_state.is_empty() {
+                        log::debug!("Received RNG state from server ({} bytes)", rng_state.len());
+                    }
 
                     let our_hand_count = opening_hand.len();
                     break (
@@ -957,6 +964,7 @@ impl NetworkClient {
                         network_debug,
                         deck_card_ids,
                         token_definitions,
+                        rng_state,
                     );
                 }
                 ServerMessage::Error { message, fatal } => {
@@ -1044,6 +1052,23 @@ impl NetworkClient {
         // Both server and client must have matching skip_reveals settings
         // so their undo_logs contain the same RevealCard actions.
         game.set_skip_reveals(false);
+
+        // Initialize RNG from server's state for deterministic shuffles
+        // This ensures subsequent shuffles (tutors, etc.) produce identical results
+        if !rng_state.is_empty() {
+            use rand_chacha::ChaCha12Rng;
+            match bincode::deserialize::<ChaCha12Rng>(&rng_state) {
+                Ok(rng) => {
+                    *game.rng.borrow_mut() = rng;
+                    log::info!("Initialized RNG from server state ({} bytes)", rng_state.len());
+                }
+                Err(e) => {
+                    log::error!("Failed to deserialize RNG state: {} - shuffles may diverge!", e);
+                }
+            }
+        } else {
+            log::warn!("No RNG state received from server - shuffles may diverge!");
+        }
 
         // Get player IDs
         let p1_id = game.players[0].id;

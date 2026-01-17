@@ -42,6 +42,7 @@ mod async_tests {
             network_debug: false,
             deck_card_ids: None, // Phase 3: CardID ranges for late-binding
             token_definitions: std::collections::HashMap::new(),
+            rng_state: Vec::new(), // Empty for test - clients would receive serialized RNG
         };
 
         // Encode to JSON
