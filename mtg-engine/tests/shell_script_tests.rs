@@ -56,9 +56,10 @@ fn run_shell_test(fixture: Fixture<&str>) {
 }
 
 // Automatically discover and run all .sh files in workspace root's tests/
+// Note: Uses *.sh (not **/*.sh) to avoid running stress tests in subdirectories
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/../tests",
-    glob: "**/*.sh",
+    glob: "*.sh",
 )]
 fn shell_scripts(fixture: Fixture<&str>) {
     run_shell_test(fixture);
