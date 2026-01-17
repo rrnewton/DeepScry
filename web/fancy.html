@@ -2059,6 +2059,8 @@ Name=My Deck
             cardDetailsImg: null,
             cardDetailsBackdrop: null,
             lastSelectedCardName: null,
+            lastDetailsCellWidth: null,  // Track cell dimensions for resize detection
+            lastDetailsCellHeight: null,
 
             /**
              * Display selected card image in the Card Details pane
@@ -2073,9 +2075,16 @@ Name=My Deck
                         return;
                     }
 
-                    // No change needed if same card
-                    if (cardName === this.lastSelectedCardName) return;
+                    // Check if cell dimensions have changed (window resize)
+                    const cellDimsChanged = this.lastDetailsCellWidth !== TUICoordinateSystem.cellWidthPx ||
+                                            this.lastDetailsCellHeight !== TUICoordinateSystem.cellHeightPx;
+
+                    // No change needed if same card AND cell dimensions haven't changed
+                    // If cell dimensions changed, we need to reposition even for the same card
+                    if (cardName === this.lastSelectedCardName && !cellDimsChanged) return;
                     this.lastSelectedCardName = cardName;
+                    this.lastDetailsCellWidth = TUICoordinateSystem.cellWidthPx;
+                    this.lastDetailsCellHeight = TUICoordinateSystem.cellHeightPx;
 
                 if (!cardName) {
                     this.clearCardDetailsImage();
@@ -2300,6 +2309,9 @@ Name=My Deck
             // Clear card details image overlay
             clearCardDetailsImage() {
                 this.lastSelectedCardName = null;
+                // Reset cell dimension tracking so re-selection will force reposition
+                this.lastDetailsCellWidth = null;
+                this.lastDetailsCellHeight = null;
                 if (this.cardDetailsImg) {
                     this.cardDetailsImg.style.display = 'none';
                 }

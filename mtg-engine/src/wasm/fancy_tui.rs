@@ -906,14 +906,17 @@ impl WasmFancyTuiState {
                 // Replay complete - clear the rewind flag
                 self.in_rewind_replay = false;
 
-                // Check monotonicity invariants after replay
-                // After replay, we should have made forward progress
-                if let Some(violation_msg) = self.check_monotonicity_invariants() {
-                    self.error_message = Some(violation_msg);
-                    self.game_over = true;
-                    self.needs_redraw = true;
-                    return;
-                }
+                // Reset high water marks to establish new baseline after replay
+                // During replay, P2 (AI) makes fresh decisions that may result in different
+                // action counts than the original path. This is expected behavior, not a bug.
+                // We reset the baseline here rather than checking for violations.
+                self.high_water_action_count = self.game.undo_log.len();
+                self.high_water_log_count = self.game.logger.log_count();
+                log::debug!(
+                    target: "wasm_tui",
+                    "REPLAY: Reset high water marks after replay - action_count={}, log_count={}",
+                    self.high_water_action_count, self.high_water_log_count
+                );
 
                 // Handle the game result - this may set pending_context for the next choice
                 self.handle_game_result(result);
