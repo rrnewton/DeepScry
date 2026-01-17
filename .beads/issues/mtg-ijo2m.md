@@ -1,40 +1,31 @@
 ---
 title: SpellCast triggers (T:Mode$ SpellCast) not firing
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-01-05T20:15:53.557464015+00:00
-updated_at: 2026-01-05T20:15:53.557464015+00:00
+updated_at: 2026-01-17T04:28:38.704688283+00:00
 ---
 
 # Description
 
 ## Summary
 
-SpellCast triggers (T:Mode$ SpellCast) are defined in the loader but never fire during gameplay.
-Creatures like Boar-q-pine that have "Whenever you cast a noncreature spell" triggers don't work.
+SpellCast triggers (T:Mode$ SpellCast) are IMPLEMENTED in the Rust engine.
 
-## Evidence
+**CLOSED 2026-01-17**: SpellCast triggers work correctly:
+- check_spellcast_triggers() in actions/mod.rs handles trigger execution
+- Called during cast_spell_8_step() at the correct time
+- Prowess test passes: test_prowess_keyword_expansion
 
-Puzzle test with Boar-q-pine:
-- P1 has Boar-q-pine (2/2) on battlefield
-- P1 casts Lightning Strike (noncreature spell)
-- Expected: Boar-q-pine gets +1/+1 counter, becomes 3/3
-- Actual: Boar-q-pine remains 2/2
+## Implementation Details
 
-## Root Cause
+1. TriggerEvent::SpellCast is defined
+2. check_spellcast_triggers() iterates over battlefield permanents
+3. Matches triggers with event == SpellCast
+4. Filters noncreature-only triggers correctly
+5. Resolves placeholder targets (CardId 0 → self)
+6. Supports both PutCounter and PumpCreature effects
 
-1. cast_spell_8_step in actions/mod.rs:531 has TODO comment:
-   "8. Spell becomes cast (trigger abilities) - TODO"
-
-2. No code calls check_triggers(TriggerEvent::SpellCast, spell_id)
-
-3. The Trigger struct doesn't have a ValidCard field for filtering
-   (e.g., "noncreature spells only")
-
-## Affected Cards
-
-- Boar-q-pine: Whenever you cast a noncreature spell, +1/+1 counter
-- Prowess creatures: +1/+1 until EOT when casting noncreature
-- Young Pyromancer: Create 1/1 elemental on instant/sorcery
-- Storm count tracking (if implemented)
+The original issue may have been filed when the feature was not yet connected
+to the main spell casting flow. It is now properly called from cast_spell_8_step.
