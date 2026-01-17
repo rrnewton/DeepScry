@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
 # E2E test: Network vs Local game equivalence
 #
+# Usage: ./network_vs_local_equivalence_e2e.sh [SEED] [CONTROLLER_P1] [CONTROLLER_P2]
+#
+# Arguments (all optional):
+#   SEED          - Game seed (default: 3)
+#   CONTROLLER_P1 - Controller type for player 1: heuristic, random, zero (default: heuristic)
+#   CONTROLLER_P2 - Controller type for player 2 (default: same as P1)
+#
+# Examples:
+#   ./network_vs_local_equivalence_e2e.sh              # seed=3, both heuristic
+#   ./network_vs_local_equivalence_e2e.sh 5            # seed=5, both heuristic
+#   ./network_vs_local_equivalence_e2e.sh 5 random     # seed=5, both random
+#   ./network_vs_local_equivalence_e2e.sh 5 random heuristic  # seed=5, p1=random, p2=heuristic
+#
 # This test runs the SAME game in two modes in PARALLEL:
-# 1. Local mode: Single process with two heuristic AIs
-# 2. Network mode: Server + two client processes with heuristic AIs
+# 1. Local mode: Single process with two AIs
+# 2. Network mode: Server + two client processes with AIs
 #
 # Both use identical seeds, decks, and controller settings. The test verifies:
 # - Both games complete successfully
@@ -66,16 +79,25 @@ if [[ ! -f "$DECK2" ]]; then
     exit 1
 fi
 
-# Fixed seed for deterministic comparison
-SEED=3
+# Parse arguments with defaults
+SEED="${1:-3}"
+CONTROLLER_P1="${2:-heuristic}"
+CONTROLLER_P2="${3:-$CONTROLLER_P1}"  # Default P2 to same as P1
 CONTROLLER_SEED=3
 
-# Controller type
+# Validate controller types
+for ctrl in "$CONTROLLER_P1" "$CONTROLLER_P2"; do
+    if [[ "$ctrl" != "heuristic" && "$ctrl" != "random" && "$ctrl" != "zero" ]]; then
+        echo -e "${RED}Error: Invalid controller type '$ctrl'. Must be: heuristic, random, or zero${NC}"
+        exit 1
+    fi
+done
+
+# Controller type notes:
 # - "heuristic": Best for realistic games, but local vs network will differ due to
 #   information visibility (local sees all cards, network only sees revealed cards)
 # - "zero"/"random": Causes client/server desync due to shadow state drift
 # NOTE: This test validates both modes complete successfully, not identical outcomes.
-CONTROLLER_TYPE="heuristic"
 
 # Output directories
 OUTPUT_DIR="/tmp/network_vs_local_e2e_$$"
@@ -98,7 +120,8 @@ trap cleanup EXIT
 
 echo "Configuration:"
 echo "  Seed: $SEED"
-echo "  Controller: $CONTROLLER_TYPE"
+echo "  Controller P1: $CONTROLLER_P1"
+echo "  Controller P2: $CONTROLLER_P2"
 echo "  Deck 1: $(basename "$DECK1")"
 echo "  Deck 2: $(basename "$DECK2")"
 echo "  Output: $OUTPUT_DIR"
@@ -116,8 +139,8 @@ echo -e "${BLUE}Starting LOCAL game...${NC}"
 "$MTG_BIN" tui \
     "$DECK1" \
     "$DECK2" \
-    --p1 "$CONTROLLER_TYPE" \
-    --p2 "$CONTROLLER_TYPE" \
+    --p1 "$CONTROLLER_P1" \
+    --p2 "$CONTROLLER_P2" \
     --p1-name "$P1_NAME" \
     --p2-name "$P2_NAME" \
     --seed "$SEED" \
@@ -165,14 +188,14 @@ fi
 "$MTG_BIN" connect \
     "$DECK1" \
     --server "localhost:$PORT" \
-    --controller "$CONTROLLER_TYPE" \
+    --controller "$CONTROLLER_P1" \
     --seed-player "$CONTROLLER_SEED" \
     --name "$P1_NAME" \
     --tag-gamelogs \
     --gamelog-output "$NETWORK_OUTPUT/client1_gamelog.txt" \
     > "$NETWORK_OUTPUT/client1.log" 2>&1 &
 CLIENT1_PID=$!
-echo "  Client 1 PID: $CLIENT1_PID ($P1_NAME - $CONTROLLER_TYPE)"
+echo "  Client 1 PID: $CLIENT1_PID ($P1_NAME - $CONTROLLER_P1)"
 
 sleep 1
 
@@ -180,14 +203,14 @@ sleep 1
 "$MTG_BIN" connect \
     "$DECK2" \
     --server "localhost:$PORT" \
-    --controller "$CONTROLLER_TYPE" \
+    --controller "$CONTROLLER_P2" \
     --seed-player "$CONTROLLER_SEED" \
     --name "$P2_NAME" \
     --tag-gamelogs \
     --gamelog-output "$NETWORK_OUTPUT/client2_gamelog.txt" \
     > "$NETWORK_OUTPUT/client2.log" 2>&1 &
 CLIENT2_PID=$!
-echo "  Client 2 PID: $CLIENT2_PID ($P2_NAME - $CONTROLLER_TYPE)"
+echo "  Client 2 PID: $CLIENT2_PID ($P2_NAME - $CONTROLLER_P2)"
 
 echo
 echo "Both games running in parallel. Waiting for completion..."

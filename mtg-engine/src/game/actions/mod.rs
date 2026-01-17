@@ -2040,62 +2040,123 @@ impl GameState {
                 destination,
                 may_play,
                 may_play_without_mana_cost,
+                target_self,
+                optional: _,    // TODO(mtg-dig-optional): implement optional card selection
+                rest_random: _, // TODO(mtg-dig-rest): implement putting rest on bottom in random order
             } => {
-                // Dig effect: Exile top N cards from each opponent's library
-                // For Fire Lord Ozai: "Exile the top card of each opponent's library.
-                //                      Until end of turn, you may play one of those cards
-                //                      without paying its mana cost."
+                // Dig effect: Look at top N cards of a library and move some to destination
+                //
+                // Two patterns:
+                // 1. target_self=false (Fire Lord Ozai): Exile top card from each opponent's library
+                // 2. target_self=true (Seismic Sense): Look at top X of your library, put one in hand
                 //
                 // Implementation:
-                // 1. Get current player (the digger)
-                // 2. For each opponent, exile top N cards from their library
-                // 3. If may_play, create persistent effects for playing those cards
+                // 1. Get the digger (controller of the effect)
+                // 2. Determine whose library/libraries to dig from
+                // 3. Look at/move cards to destination
+                // 4. If may_play, create persistent effects for playing those cards
 
                 let digger = self.turn.active_player;
 
-                // Collect opponent IDs first (SmallVec for stack allocation - typically 1-3 opponents)
-                // This releases the borrow on self.players before we call self.move_card()
-                let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> =
-                    self.players.iter().filter(|p| p.id != digger).map(|p| p.id).collect();
+                // Collect card IDs that were moved
+                let mut moved_cards: Vec<CardId> = Vec::with_capacity(*dig_count as usize);
 
-                // Pre-size exiled_cards buffer (at most dig_count cards per opponent)
-                let mut exiled_cards: Vec<CardId> = Vec::with_capacity(opponent_ids.len() * (*dig_count as usize));
+                if *target_self {
+                    // Self-dig pattern (Seismic Sense, Impulse, etc.)
+                    // Look at top N cards of YOUR library, move some to hand
 
-                // For each opponent, exile top card(s) from their library
-                for opponent_id in opponent_ids {
-                    // Get opponent's library
+                    // Get digger's library
                     let library = self
                         .player_zones
                         .iter()
-                        .find(|(id, _)| *id == opponent_id)
+                        .find(|(id, _)| *id == digger)
                         .map(|(_, zones)| &zones.library);
 
                     if let Some(library) = library {
-                        // Collect card IDs to exile first (SmallVec for stack allocation)
+                        // Collect card IDs to look at
                         let take_count = *dig_count as usize;
-                        let card_ids: smallvec::SmallVec<[CardId; 4]> =
+                        let card_ids: smallvec::SmallVec<[CardId; 8]> =
                             library.cards.iter().take(take_count).copied().collect();
 
-                        // Now exile each card
+                        let digger_name = self.get_player(digger)?.name.to_string();
+
+                        // Log looking at cards
+                        if !card_ids.is_empty() {
+                            self.logger.gamelog(&format!(
+                                "{} looks at top {} cards of their library",
+                                digger_name,
+                                card_ids.len()
+                            ));
+                        }
+
+                        // For now, move all looked-at cards to destination (simplified)
+                        // TODO(mtg-dig-choice): Implement player choice for partial moves
                         for card_id in card_ids {
-                            // Get names as references for logging (avoid clone)
-                            let card_name = self.cards.get(card_id)?.name.as_str();
-                            let opponent_name = self.get_player(opponent_id)?.name.as_str();
+                            // Get card name if available - in network mode, library cards
+                            // may not be in the client's entity store until revealed
+                            let card_name = self
+                                .cards
+                                .get(card_id)
+                                .map(|c| c.name.to_string())
+                                .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
 
-                            // Log before move (need the names)
+                            // Move card from library to destination (usually Hand)
+                            self.move_card(card_id, Zone::Library, *destination, digger)?;
+
                             self.logger
-                                .gamelog(&format!("{} exiled from {}'s library", card_name, opponent_name));
+                                .gamelog(&format!("{} puts {} into {:?}", digger_name, card_name, destination));
 
-                            // Move card from library to destination (usually exile)
-                            self.move_card(card_id, Zone::Library, *destination, opponent_id)?;
+                            moved_cards.push(card_id);
+                        }
+                    }
+                } else {
+                    // Opponent-dig pattern (Fire Lord Ozai, Xander's Pact)
+                    // Exile top N cards from each opponent's library
 
-                            exiled_cards.push(card_id);
+                    // Collect opponent IDs first (SmallVec for stack allocation - typically 1-3 opponents)
+                    // This releases the borrow on self.players before we call self.move_card()
+                    let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> =
+                        self.players.iter().filter(|p| p.id != digger).map(|p| p.id).collect();
+
+                    // For each opponent, exile top card(s) from their library
+                    for opponent_id in opponent_ids {
+                        // Get opponent's library
+                        let library = self
+                            .player_zones
+                            .iter()
+                            .find(|(id, _)| *id == opponent_id)
+                            .map(|(_, zones)| &zones.library);
+
+                        if let Some(library) = library {
+                            // Collect card IDs to exile first (SmallVec for stack allocation)
+                            let take_count = *dig_count as usize;
+                            let card_ids: smallvec::SmallVec<[CardId; 4]> =
+                                library.cards.iter().take(take_count).copied().collect();
+
+                            // Now exile each card
+                            for card_id in card_ids {
+                                // Get opponent name for logging
+                                let opponent_name = self.get_player(opponent_id)?.name.to_string();
+
+                                // Get card name if available - in network mode, opponent's
+                                // library cards may not be in client's entity store
+                                let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("a card");
+
+                                // Log before move (need the names)
+                                self.logger
+                                    .gamelog(&format!("{} exiled from {}'s library", card_name, opponent_name));
+
+                                // Move card from library to destination (usually exile)
+                                self.move_card(card_id, Zone::Library, *destination, opponent_id)?;
+
+                                moved_cards.push(card_id);
+                            }
                         }
                     }
                 }
 
                 // If may_play is true, create persistent effect to allow playing exiled cards
-                if *may_play && !exiled_cards.is_empty() {
+                if *may_play && !moved_cards.is_empty() {
                     let mana_cost_text = if *may_play_without_mana_cost {
                         " without paying its mana cost"
                     } else {
@@ -2117,13 +2178,13 @@ impl GameState {
                         // Get source card ID (if available) for the persistent effect
                         // Since we're in an activated ability, the source should be on the battlefield
                         // For now, use the first exiled card as the "source" for tracking
-                        let source_card = exiled_cards[0];
-                        let num_exiled = exiled_cards.len();
+                        let source_card = moved_cards[0];
+                        let num_moved = moved_cards.len();
 
-                        // Move exiled_cards into the persistent effect (avoid clone)
+                        // Move moved_cards into the persistent effect (avoid clone)
                         self.persistent_effects.add(
                             PersistentEffectKind::MayPlayOneWithoutManaCost {
-                                tracked_cards: std::mem::take(&mut exiled_cards),
+                                tracked_cards: std::mem::take(&mut moved_cards),
                                 beneficiary: digger,
                             },
                             source_card,
@@ -2134,7 +2195,7 @@ impl GameState {
                         log::debug!(
                             target: "dig",
                             "Created MayPlayOneWithoutManaCost effect for {} cards, beneficiary: player {}",
-                            num_exiled,
+                            num_moved,
                             digger.as_u32()
                         );
                     }

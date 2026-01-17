@@ -583,7 +583,10 @@ pub enum Effect {
     /// 3. Optionally grant "may play" permission (via MayPlay$ True)
     ///
     /// Cards using this:
-    /// - Fire Lord Ozai: "{6}: Exile the top card of each opponent's library. Until end of turn, you may play one of those cards without paying its mana cost."
+    /// - Fire Lord Ozai: "{6}: Exile the top card of each opponent's library. Until end of turn,
+    ///   you may play one of those cards without paying its mana cost." (target_self=false)
+    /// - Seismic Sense: "Look at top X cards of your library. You may reveal a creature or land
+    ///   and put it into your hand. Put the rest on bottom in random order." (target_self=true)
     ///
     /// TODO(mtg-0iad2): Implement "may play without paying mana cost" via persistent effects
     Dig {
@@ -593,12 +596,20 @@ pub enum Effect {
         change_count: u8,
         /// Whether ALL cards should be moved (ChangeNum$ All)
         change_all: bool,
-        /// Destination zone for cards (usually Exile)
+        /// Destination zone for selected cards (Hand for most Dig, Exile for Fire Lord Ozai)
         destination: crate::zones::Zone,
         /// Whether to grant "may play" permission for exiled cards
         may_play: bool,
         /// Whether "may play" costs no mana
         may_play_without_mana_cost: bool,
+        /// Whether to dig from own library (true, default) or opponents' libraries (false)
+        /// Parsed from Defined$ parameter: "You"/"" = true, "Opponent" = false
+        target_self: bool,
+        /// Whether selecting a card is optional (Optional$ True)
+        optional: bool,
+        /// Whether to put non-selected cards on bottom of library in random order
+        /// (RestRandomOrder$ True)
+        rest_random: bool,
     },
 
     /// Create a delayed trigger that fires when a condition is met.

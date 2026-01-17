@@ -68,19 +68,8 @@ class TestConfig:
         return f"seed={self.seed} p1={self.controller_p1} p2={self.controller_p2}"
 
     def reproducer_command(self) -> str:
-        """Generate a reproducer command for this configuration"""
-        deck1_rel = os.path.relpath(self.deck1, WORKSPACE_ROOT)
-        deck2_rel = os.path.relpath(self.deck2, WORKSPACE_ROOT)
-        return (
-            f"# Terminal 1 (server):\n"
-            f"cargo run --release --features network -- server --port 12345 --seed {self.seed} --network-debug\n\n"
-            f"# Terminal 2 (client 1):\n"
-            f"cargo run --release --features network -- connect {deck1_rel} --server localhost:12345 "
-            f"--controller {self.controller_p1} --seed-player {self.seed_p1} --name Ryan\n\n"
-            f"# Terminal 3 (client 2):\n"
-            f"cargo run --release --features network -- connect {deck2_rel} --server localhost:12345 "
-            f"--controller {self.controller_p2} --seed-player {self.seed_p2} --name Gabriel"
-        )
+        """Generate a single-script reproducer command for this configuration"""
+        return f"./tests/network_vs_local_equivalence_e2e.sh {self.seed} {self.controller_p1} {self.controller_p2}"
 
 @dataclass
 class TestResult:

@@ -586,22 +586,25 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::DigMultiple => {
-            // Dig effect: look at top N cards, exile some/all of them
+            // Dig effect: look at top N cards of a library, move some to destination
             //
             // Fire Lord Ozai: AB$ Dig | Cost$ 6 | DigNum$ 1 | ChangeNum$ All | Defined$ Opponent
             //                       | DestinationZone$ Exile | RememberChanged$ True | SubAbility$ DBEffect
             //
+            // Seismic Sense: A:SP$ Dig | DigNum$ X | ChangeNum$ 1 | Optional$ True
+            //                        | ForceRevealToController$ True | ChangeValid$ Creature,Land
+            //                        | RestRandomOrder$ True
+            //
             // Parameters:
             // - DigNum$: Number of cards to look at (default 1)
             // - ChangeNum$: Number of cards to change zones ("All" or number)
-            // - Defined$: Who to affect (Opponent, You, etc.) - determines library source
-            // - DestinationZone$: Where to move cards (Exile, Graveyard, etc.)
+            // - Defined$: Who to affect - "Opponent" = opponents' libraries, else = own library
+            // - DestinationZone$: Where to move cards (default: Hand for self, Exile for opponent)
+            // - Optional$: Whether selecting cards is optional
+            // - RestRandomOrder$: Whether to randomize non-selected cards before putting on bottom
             // - RememberChanged$: Whether to remember moved cards for later use
             // - MayPlay$: Whether controller may play exiled cards
             // - MayPlayWithoutManaCost$: Whether playing costs no mana
-            //
-            // For Fire Lord Ozai, this exiles top card from each opponent's library
-            // and grants "may play one without paying mana cost" until end of turn.
 
             let dig_count = params.get_u8("DigNum").unwrap_or(1);
 
@@ -612,13 +615,34 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 None => (dig_count, true), // Default to moving all
             };
 
-            // Parse destination zone
+            // Parse Defined$ - determines whose library to dig from
+            // "Opponent" means opponents' libraries, anything else (including absent) means own
+            let target_self = match params.get("Defined") {
+                Some("Opponent") => false,
+                _ => true, // Default: dig from own library (You, absent, etc.)
+            };
+
+            // Parse destination zone - default depends on target_self
             let destination = match params.get("DestinationZone") {
                 Some("Exile") => crate::zones::Zone::Exile,
                 Some("Graveyard") => crate::zones::Zone::Graveyard,
                 Some("Hand") => crate::zones::Zone::Hand,
-                _ => crate::zones::Zone::Exile, // Default for Dig
+                Some("Battlefield") => crate::zones::Zone::Battlefield,
+                _ => {
+                    // Default: Hand for self-dig (Impulse/Seismic Sense), Exile for opponent-dig
+                    if target_self {
+                        crate::zones::Zone::Hand
+                    } else {
+                        crate::zones::Zone::Exile
+                    }
+                }
             };
+
+            // Parse Optional$ - whether selecting cards is optional
+            let optional = params.get("Optional").is_some_and(|v| v == "True");
+
+            // Parse RestRandomOrder$ - whether to randomize non-selected cards
+            let rest_random = params.get("RestRandomOrder").is_some_and(|v| v == "True");
 
             // Check for may play options (usually in SubAbility$ DBEffect)
             // For now, we detect may_play by presence of SubAbility with Effect
@@ -628,8 +652,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
             log::debug!(
                 target: "effect_converter",
-                "Dig: {} cards, change {} (all={}), dest={:?}, may_play={}, free={}",
-                dig_count, change_count, change_all, destination, may_play, may_play_without_mana_cost
+                "Dig: {} cards, change {} (all={}), dest={:?}, may_play={}, free={}, target_self={}, optional={}, rest_random={}",
+                dig_count, change_count, change_all, destination, may_play, may_play_without_mana_cost, target_self, optional, rest_random
             );
 
             Some(Effect::Dig {
@@ -639,6 +663,9 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 destination,
                 may_play,
                 may_play_without_mana_cost,
+                target_self,
+                optional,
+                rest_random,
             })
         }
 
