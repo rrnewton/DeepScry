@@ -229,11 +229,7 @@ impl GameState {
     /// - Deathtouch (1 damage is lethal if toughness > 0)
     /// - Indestructible (returns None - cannot be killed)
     /// - Effective toughness (including buffs)
-    fn calculate_lethal_damage(
-        &self,
-        blocker_id: CardId,
-        attacker_has_deathtouch: bool,
-    ) -> Option<i32> {
+    fn calculate_lethal_damage(&self, blocker_id: CardId, attacker_has_deathtouch: bool) -> Option<i32> {
         let blocker = self.cards.get(blocker_id).ok()?;
 
         // Indestructible creatures can't be killed by damage
@@ -290,10 +286,7 @@ impl GameState {
             .collect();
 
         // Calculate total lethal needed for all killable blockers
-        let total_lethal_needed: i32 = blocker_info
-            .iter()
-            .filter_map(|(_, lethal)| *lethal)
-            .sum();
+        let total_lethal_needed: i32 = blocker_info.iter().filter_map(|(_, lethal)| *lethal).sum();
 
         let mut result: SmallVec<[(CardId, i32); 4]> = SmallVec::new();
         let mut remaining_power = total_power;
@@ -301,7 +294,8 @@ impl GameState {
         // Case 1: Can kill ALL blockers - no choice needed, auto-assign
         if total_power >= total_lethal_needed {
             // Sort by lethal damage (smallest first for efficiency) - all will be killed anyway
-            blocker_info.sort_by_key(|(_, lethal)| lethal.unwrap_or(i32::MAX));
+            // Use CardId as secondary key for deterministic ordering
+            blocker_info.sort_by_key(|(id, lethal)| (lethal.unwrap_or(i32::MAX), *id));
 
             for (blocker_id, lethal) in &blocker_info {
                 if let Some(lethal_dmg) = lethal {
@@ -331,22 +325,13 @@ impl GameState {
             let killable: Vec<(CardId, i32)> = remaining_blockers
                 .iter()
                 .filter_map(|(id, lethal)| {
-                    lethal.and_then(|l| {
-                        if l <= remaining_power {
-                            Some((*id, l))
-                        } else {
-                            None
-                        }
-                    })
+                    lethal.and_then(|l| if l <= remaining_power { Some((*id, l)) } else { None })
                 })
                 .collect();
 
             if killable.is_empty() {
                 // No more blockers can be killed - assign remaining damage
-                let alive_blockers: Vec<CardId> = remaining_blockers
-                    .iter()
-                    .map(|(id, _)| *id)
-                    .collect();
+                let alive_blockers: Vec<CardId> = remaining_blockers.iter().map(|(id, _)| *id).collect();
 
                 if !alive_blockers.is_empty() && remaining_power > 0 && !has_trample {
                     // Ask where to put remaining non-lethal damage
@@ -394,12 +379,7 @@ impl GameState {
 
             // Multiple killable blockers - ask the player which to kill first
             let view = GameStateView::new(self, attacker_owner);
-            let choice = controller.choose_blocker_for_lethal_damage(
-                &view,
-                attacker_id,
-                &killable,
-                remaining_power,
-            );
+            let choice = controller.choose_blocker_for_lethal_damage(&view, attacker_id, &killable, remaining_power);
 
             match choice {
                 ChoiceResult::Ok(blocker_id) => {
@@ -434,9 +414,7 @@ impl GameState {
     /// Helper to handle undo requests during damage assignment
     fn handle_undo_request(&mut self, player_id: PlayerId, n: usize) -> Result<()> {
         if n == usize::MAX {
-            if let Ok(Some((_actions_undone, choice_log_size))) =
-                self.undo_to_previous_choice_point(player_id)
-            {
+            if let Ok(Some((_actions_undone, choice_log_size))) = self.undo_to_previous_choice_point(player_id) {
                 self.logger.truncate_to(choice_log_size);
             }
         } else {

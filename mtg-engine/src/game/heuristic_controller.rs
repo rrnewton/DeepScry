@@ -4389,11 +4389,7 @@ impl PlayerController for HeuristicController {
                 "HEURISTIC",
                 &format!(
                     "assign lethal damage to {} ({}) first (eval={}, power={} for {:?})",
-                    &card.name,
-                    best_blocker,
-                    best_eval,
-                    remaining_power,
-                    attacker
+                    &card.name, best_blocker, best_eval, remaining_power, attacker
                 ),
             );
         }
@@ -4438,10 +4434,7 @@ impl PlayerController for HeuristicController {
                 "HEURISTIC",
                 &format!(
                     "assign remaining {} damage to {} ({}) (eval={})",
-                    remaining_damage,
-                    &card.name,
-                    worst_blocker,
-                    worst_eval,
+                    remaining_damage, &card.name, worst_blocker, worst_eval,
                 ),
             );
         }
