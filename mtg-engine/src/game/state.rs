@@ -1290,6 +1290,11 @@ impl GameState {
         // Destroy all creatures with lethal damage
         for (card_id, owner) in creatures_to_destroy {
             let card_name = self.cards.get(card_id).map(|c| c.name.clone()).ok();
+
+            // Check death triggers BEFORE moving to graveyard (MTG Rules 603.6c)
+            // The trigger sees the game state as it was just before the creature left
+            let _ = self.check_death_triggers(card_id);
+
             self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
             if let Some(name) = card_name {
                 self.logger

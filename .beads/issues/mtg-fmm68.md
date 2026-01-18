@@ -63,9 +63,9 @@ Key gaps affecting this deck:
 - GAP: Taps trigger mode, ReduceCost static
 
 **Knowledge Seeker (x2)** - 1U 2/1 Fox Spirit
-- [ ] Vigilance (should work)
+- [x] Vigilance (should work)
 - [ ] Second card drawn trigger: put +1/+1 counter (T:Mode$ Drawn | Number$ 2)
-- [ ] Dies trigger: create Clue token (should work)
+- [x] Dies trigger: create Clue token (VERIFIED 2026-01-18: "Created Clue Token under Player 1's control" - fixed death trigger bug for state-based lethal damage)
 - GAP: T:Mode$ Drawn trigger
 
 **Otter-Penguin (x3)** - 1U 2/1 Otter Bird
@@ -131,7 +131,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (7/40)
+## Verified Cards Summary (8/40)
 
 Working cards:
 1. **Island** - basic land
@@ -141,6 +141,7 @@ Working cards:
 5. **Forecasting Fortune Teller** - ETB Clue token
 6. **Ember Island Production** - SP$ Charm + CopyPermanent
 7. **Meteor Sword** - Equipment with ETB destroy, equip, +3/+3 bonus
+8. **Knowledge Seeker** - Dies trigger creates Clue token (partial - Drawn trigger still needs work)
 
 ## Testing Protocol
 
