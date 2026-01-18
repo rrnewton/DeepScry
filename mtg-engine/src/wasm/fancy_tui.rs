@@ -1152,13 +1152,17 @@ impl WasmFancyTuiState {
             let mut replay_controller = ReplayController::new(p1_id, Box::new(network_local), replay_choices);
 
             // Run the game with replay controller
-            let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-            let result = game_loop.run_until_input(&mut replay_controller, p2_controller);
+            // Scope game_loop tightly so self can be accessed afterwards
+            let result = {
+                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                game_loop.run_until_input(&mut replay_controller, p2_controller)
+            };
 
+            let turn_after_run = self.game.turn.turn_number;
             log::debug!(
                 target: "wasm_tui",
                 "NETWORK REPLAY: Game loop returned on turn {}",
-                self.game.turn.turn_number
+                turn_after_run
             );
 
             // Replay complete - clear the rewind flag
@@ -1188,13 +1192,17 @@ impl WasmFancyTuiState {
                 let inner_clone = human.clone();
                 let mut network_local = WasmNetworkLocalController::new(inner_clone, network_client.clone());
 
-                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                let result = game_loop.run_until_input(&mut network_local, p2_controller);
+                // Scope game_loop so borrow of self.game ends before accessing self
+                let result = {
+                    let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                    game_loop.run_until_input(&mut network_local, p2_controller)
+                };
 
+                let turn_number = self.game.turn.turn_number;
                 log::debug!(
                     target: "wasm_tui",
                     "NETWORK NORMAL: Game loop returned on turn {}",
-                    self.game.turn.turn_number
+                    turn_number
                 );
 
                 // Check monotonicity invariants after normal network run
@@ -1222,19 +1230,24 @@ impl WasmFancyTuiState {
         p1_controller: &mut WasmNetworkLocalController<C>,
         p2_controller: &mut WasmRemoteController,
     ) {
+        let start_turn = self.game.turn.turn_number;
         log::debug!(
             target: "wasm_tui",
             "NETWORK AI: Running game loop, turn {}",
-            self.game.turn.turn_number
+            start_turn
         );
 
-        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-        let result = game_loop.run_until_input(p1_controller, p2_controller);
+        // Scope game_loop so borrow of self.game ends before accessing self
+        let result = {
+            let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+            game_loop.run_until_input(p1_controller, p2_controller)
+        };
 
+        let end_turn = self.game.turn.turn_number;
         log::debug!(
             target: "wasm_tui",
             "NETWORK AI: Game loop returned on turn {}",
-            self.game.turn.turn_number
+            end_turn
         );
 
         self.handle_game_result(result);
@@ -2296,16 +2309,17 @@ fn create_network_game_state(
         (opponent_library_size, our_library_size)
     };
 
-    // Set BOTH libraries as remote - we don't know the order of either
+    // Set BOTH libraries as empty - cards are revealed via CardRevealed messages
+    // We just create empty libraries and let the server's reveal messages populate them
     if let Some(zones) = game.get_player_zones_mut(p1_id) {
-        zones.library = CardZone::new_remote_library(p1_id, p1_lib_size);
+        zones.library = CardZone::new(crate::zones::Zone::Library, p1_id);
     }
     if let Some(zones) = game.get_player_zones_mut(p2_id) {
-        zones.library = CardZone::new_remote_library(p2_id, p2_lib_size);
+        zones.library = CardZone::new(crate::zones::Zone::Library, p2_id);
     }
 
     log::info!(
-        "create_network_game_state: Created game with remote libraries (P1: {}, P2: {})",
+        "create_network_game_state: Created game with empty libraries (expected P1: {}, P2: {})",
         p1_lib_size,
         p2_lib_size
     );

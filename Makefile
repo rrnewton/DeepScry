@@ -516,7 +516,7 @@ wasm-dev: wasm-export
 		echo "Installing wasm-pack..."; \
 		cargo install wasm-pack; \
 	fi
-	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-tui
+	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network
 	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""

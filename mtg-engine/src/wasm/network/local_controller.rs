@@ -445,6 +445,73 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         }
     }
 
+    fn choose_permanents_to_not_untap(
+        &mut self,
+        view: &GameStateView,
+        may_not_untap_permanents: &[CardId],
+    ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
+        if !self.wait_for_choice_request() {
+            return ChoiceResult::NeedInput(waiting_for_server_context());
+        }
+
+        match self
+            .inner
+            .choose_permanents_to_not_untap(view, may_not_untap_permanents)
+        {
+            ChoiceResult::Ok(stay_tapped) => {
+                let choice_indices: Vec<usize> = stay_tapped
+                    .iter()
+                    .filter_map(|s| may_not_untap_permanents.iter().position(|p| p == s))
+                    .collect();
+                self.submit_choice(choice_indices, view);
+
+                if !self.wait_for_choice_ack() {
+                    return ChoiceResult::NeedInput(waiting_for_ack_context());
+                }
+
+                ChoiceResult::Ok(stay_tapped)
+            }
+            other => other,
+        }
+    }
+
+    fn choose_modes(
+        &mut self,
+        view: &GameStateView,
+        spell_id: CardId,
+        mode_descriptions: &[String],
+        mode_count: usize,
+        min_modes: usize,
+        can_repeat: bool,
+    ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+        if !self.wait_for_choice_ack() {
+            return ChoiceResult::NeedInput(waiting_for_ack_context());
+        }
+        if !self.wait_for_choice_request() {
+            return ChoiceResult::NeedInput(waiting_for_server_context());
+        }
+
+        match self
+            .inner
+            .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
+        {
+            ChoiceResult::Ok(modes) => {
+                let choice_indices: Vec<usize> = modes.iter().copied().collect();
+                self.submit_choice(choice_indices, view);
+
+                if !self.wait_for_choice_ack() {
+                    return ChoiceResult::NeedInput(waiting_for_ack_context());
+                }
+
+                ChoiceResult::Ok(modes)
+            }
+            other => other,
+        }
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         self.inner.on_priority_passed(view);
     }

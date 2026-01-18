@@ -474,6 +474,16 @@ impl WasmNetworkClient {
                 // Keepalive response, ignore
             }
 
+            ServerMessage::LibraryReordered { player, new_order } => {
+                // Library shuffle notification - for now just log it
+                // The client doesn't track library order since cards are revealed individually
+                log::debug!(
+                    "WasmNetworkClient: Library reordered for {:?} ({} cards)",
+                    player,
+                    new_order.len()
+                );
+            }
+
             #[cfg(debug_assertions)]
             ServerMessage::DebugStateDump { .. } => {
                 // Debug info, just log

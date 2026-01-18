@@ -199,14 +199,14 @@ async function runTest() {
             timeout: 60000
         });
 
-        // Wait for WASM to initialize
-        await page.waitForSelector('#setup-bar', { state: 'visible', timeout: 30000 });
+        // Wait for WASM to initialize (launcher becomes visible when ready)
+        await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });
         log('WASM loaded');
 
-        // Check if network mode is available
+        // Check if network mode is available (game-mode selector, not p1-controller)
         const networkAvailable = await page.evaluate(() => {
-            const option = document.querySelector('#p1-controller option[value="network"]');
+            const option = document.querySelector('#game-mode option[value="network"]');
             return option && !option.disabled;
         });
 
@@ -227,9 +227,9 @@ async function runTest() {
         // Take screenshot of setup
         await page.screenshot({ path: path.join(screenshotDir, 'network_01_setup.png'), fullPage: true });
 
-        // Select Network controller
-        log('Selecting Network controller...');
-        await page.selectOption('#p1-controller', 'network');
+        // Select Network game mode
+        log('Selecting Network game mode...');
+        await page.selectOption('#game-mode', 'network');
 
         // Wait for network settings to appear
         await page.waitForSelector('#network-settings-group', { state: 'visible', timeout: 5000 });
