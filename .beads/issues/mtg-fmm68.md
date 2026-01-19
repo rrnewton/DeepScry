@@ -44,16 +44,16 @@ Key gaps affecting this deck:
 - GAP: Phase triggers, conditional static abilities
 
 **Elephant-Mandrill (x1)** - 2G 3/2 Elephant Monkey
-- [ ] Reach keyword (should work)
-- [ ] ETB each player creates Food token (DB$ Token | TokenOwner$ Player)
+- [x] Reach keyword (VERIFIED 2026-01-19)
+- [x] ETB creates Food token for controller (VERIFIED 2026-01-19 - partial: TokenOwner$ Player only creates for controller, not all players)
 - [ ] Beginning of combat pump based on opponent artifacts (Count$Valid Artifact.OppCtrl)
-- GAP: Count$Valid for variable pump
+- GAP: TokenOwner$ Player (multi-player token), Count$Valid for variable pump
 
 **Forecasting Fortune Teller (x2)** - 1U 1/3 Human Advisor Ally
 - [x] ETB create Clue token (VERIFIED 2026-01-18: "Created Clue Token under Player 1's control")
 
 **Giant Koi (x1)** - 4UU 5/7 Fish
-- [ ] Islandcycling {2} (TypeCycling:Island:2 - should work)
+- [x] Islandcycling {2} (VERIFIED 2026-01-19: "Player 1 uses Islandcycling on Giant Koi")
 - [ ] Waterbend 3: Can't be blocked (AB$ Effect with Waterbend cost)
 - GAP: AB$ Effect with StaticAbilities$ Unblockable
 
@@ -110,8 +110,8 @@ Key gaps affecting this deck:
 - [x] SP$ Charm with CopyPermanent modes (VERIFIED 2026-01-18: "Created a token copy of Grizzly Bears (as 4/4 Hero copy)")
 
 **Messenger Hawk (x1)** - 2UB 1/2 Bird Scout
-- [ ] Flying (should work)
-- [ ] ETB create Clue token (should work)
+- [x] Flying (VERIFIED 2026-01-19)
+- [x] ETB create Clue token (VERIFIED 2026-01-19: "Created Clue Token under Player 1's control", Clue even activates to draw)
 - [ ] Static pump based on cards drawn this turn (Count$YouDrewThisTurn)
 - GAP: Count$YouDrewThisTurn
 
@@ -131,7 +131,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (8/40)
+## Verified Cards Summary (11/40)
 
 Working cards:
 1. **Island** - basic land
@@ -142,6 +142,9 @@ Working cards:
 6. **Ember Island Production** - SP$ Charm + CopyPermanent
 7. **Meteor Sword** - Equipment with ETB destroy, equip, +3/+3 bonus
 8. **Knowledge Seeker** - Dies trigger creates Clue token (partial - Drawn trigger still needs work)
+9. **Messenger Hawk** - Flying + ETB Clue token (partial - Count$YouDrewThisTurn pump needs work)
+10. **Giant Koi** - Islandcycling works (partial - Waterbend unblockable ability needs work)
+11. **Elephant-Mandrill** - Reach + ETB Food token for controller (partial - TokenOwner$ Player only affects controller, combat pump needs Count$Valid)
 
 ## Testing Protocol
 
