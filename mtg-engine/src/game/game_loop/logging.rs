@@ -353,12 +353,20 @@ impl<'a> GameLoop<'a> {
                 controller,
                 token_script,
                 amount,
+                for_each_player,
             } => {
-                let controller_name = self.get_player_name(*controller);
-                let message = format!(
-                    "{source_name} ({source_id}) creates {amount} {token_script} token(s) under {controller_name}'s control"
-                );
-                self.game.logger.gamelog(&message);
+                if *for_each_player {
+                    let message = format!(
+                        "{source_name} ({source_id}) causes each player to create {amount} {token_script} token(s)"
+                    );
+                    self.game.logger.gamelog(&message);
+                } else {
+                    let controller_name = self.get_player_name(*controller);
+                    let message = format!(
+                        "{source_name} ({source_id}) creates {amount} {token_script} token(s) under {controller_name}'s control"
+                    );
+                    self.game.logger.gamelog(&message);
+                }
             }
             Effect::Balance {
                 card_type,

@@ -385,13 +385,16 @@ pub enum Effect {
     /// Create token(s) under a player's control
     /// Example: Spider-Ham creates a Food token
     /// Corresponds to: DB$ Token | TokenAmount$ 1 | TokenScript$ c_a_food_sac | TokenOwner$ You
+    /// When for_each_player is true, corresponds to: TokenOwner$ Player (each player creates tokens)
     CreateToken {
-        /// Player who will control the tokens
+        /// Player who will control the tokens (ignored if for_each_player is true)
         controller: PlayerId,
         /// Token script name (e.g., "c_a_food_sac" for Food token)
         token_script: String,
         /// Number of tokens to create
         amount: u8,
+        /// If true, each player creates the tokens (TokenOwner$ Player)
+        for_each_player: bool,
     },
 
     /// Create a token that's a copy of an existing permanent

@@ -1576,6 +1576,7 @@ impl GameState {
                 controller,
                 token_script,
                 amount,
+                for_each_player,
             } => {
                 // Create token(s) on the battlefield
                 // MTG Rules 111.2: The player who creates a token is its owner and controller
@@ -1586,33 +1587,44 @@ impl GameState {
                 let token_def = self.token_definitions.get(token_script).cloned();
 
                 if let Some(token_def) = token_def {
-                    // Use actual token definition
-                    for _ in 0..*amount {
-                        let token_id = self.next_card_id();
+                    // Determine which players get tokens
+                    let player_ids: Vec<PlayerId> = if *for_each_player {
+                        // Each player creates tokens (TokenOwner$ Player)
+                        self.players.iter().map(|p| p.id).collect()
+                    } else {
+                        // Only the specified controller
+                        vec![*controller]
+                    };
 
-                        // Instantiate token from definition
-                        let mut token = token_def.instantiate(token_id, *controller);
+                    for player_id in player_ids {
+                        // Use actual token definition
+                        for _ in 0..*amount {
+                            let token_id = self.next_card_id();
 
-                        // Ensure controller is set correctly (owner and controller are the same for tokens)
-                        token.controller = *controller;
+                            // Instantiate token from definition
+                            let mut token = token_def.instantiate(token_id, player_id);
 
-                        // Add token to game
-                        let token_name = token.name.to_string();
-                        self.cards.insert(token_id, token);
+                            // Ensure controller is set correctly (owner and controller are the same for tokens)
+                            token.controller = player_id;
 
-                        // Put token onto the battlefield
-                        self.battlefield.add(token_id);
+                            // Add token to game
+                            let token_name = token.name.to_string();
+                            self.cards.insert(token_id, token);
 
-                        // Debug log token creation
-                        log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
-                            token_name, token_id.as_u32(), controller.as_u32());
+                            // Put token onto the battlefield
+                            self.battlefield.add(token_id);
 
-                        // Log token creation (official game action)
-                        self.logger.gamelog(&format!(
-                            "Created {} under {}'s control",
-                            token_name,
-                            self.get_player(*controller)?.name
-                        ));
+                            // Debug log token creation
+                            log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
+                                token_name, token_id.as_u32(), player_id.as_u32());
+
+                            // Log token creation (official game action)
+                            self.logger.gamelog(&format!(
+                                "Created {} under {}'s control",
+                                token_name,
+                                self.get_player(player_id)?.name
+                            ));
+                        }
                     }
                 } else {
                     // Token definition not found - this is an error
@@ -2872,6 +2884,7 @@ impl GameState {
                         controller,
                         token_script,
                         amount,
+                        for_each_player,
                     } if controller.as_u32() == 0 => {
                         // Placeholder player ID 0 means the controller of the trigger source
                         let source_controller = self.cards.get(source_card_id)?.controller;
@@ -2879,6 +2892,7 @@ impl GameState {
                             controller: source_controller,
                             token_script: token_script.clone(),
                             amount: *amount,
+                            for_each_player: *for_each_player,
                         };
                     }
                     Effect::ExilePermanent { target } if target.as_u32() == 0 => {

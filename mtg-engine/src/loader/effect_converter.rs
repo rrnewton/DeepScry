@@ -573,7 +573,10 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let amount = params.get_u8("TokenAmount").unwrap_or(1);
 
             // TokenOwner$ parsing - default to controller (You)
-            let controller = match params.get("TokenOwner") {
+            // "Player" means each player creates tokens
+            let token_owner = params.get("TokenOwner");
+            let for_each_player = token_owner == Some("Player");
+            let controller = match token_owner {
                 Some("Opponent") => PlayerId::new(1), // Placeholder - will be resolved at runtime
                 _ => PlayerId::new(0),                // Placeholder - controller
             };
@@ -582,6 +585,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 controller,
                 token_script,
                 amount,
+                for_each_player,
             })
         }
 
@@ -1223,9 +1227,11 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 controller: _,
                 token_script,
                 amount,
+                for_each_player,
             } => {
                 assert_eq!(token_script, "c_a_clue_draw");
                 assert_eq!(*amount, 1);
+                assert!(!*for_each_player, "TokenOwner$ You should not set for_each_player");
             }
             other => panic!("Second effect should be CreateToken, got {:?}", other),
         }

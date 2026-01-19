@@ -45,9 +45,9 @@ Key gaps affecting this deck:
 
 **Elephant-Mandrill (x1)** - 2G 3/2 Elephant Monkey
 - [x] Reach keyword (VERIFIED 2026-01-19)
-- [x] ETB creates Food token for controller (VERIFIED 2026-01-19 - partial: TokenOwner$ Player only creates for controller, not all players)
+- [x] ETB each player creates Food token (VERIFIED 2026-01-19: "Created Food Token under Player 1's control", "Created Food Token under Player 2's control" - TokenOwner$ Player now implemented!)
 - [ ] Beginning of combat pump based on opponent artifacts (Count$Valid Artifact.OppCtrl)
-- GAP: TokenOwner$ Player (multi-player token), Count$Valid for variable pump
+- GAP: Count$Valid for variable pump
 
 **Forecasting Fortune Teller (x2)** - 1U 1/3 Human Advisor Ally
 - [x] ETB create Clue token (VERIFIED 2026-01-18: "Created Clue Token under Player 1's control")
