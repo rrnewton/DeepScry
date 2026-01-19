@@ -87,7 +87,7 @@ Key gaps affecting this deck:
 - GAP: AttackersDeclared trigger, ImmediateTrigger, RememberDiscarded
 
 **The Unagi of Kyoshi Island (x1)** - 3UU 5/5 Legendary Serpent
-- [ ] Flash (should work)
+- [x] Flash (VERIFIED 2026-01-19: cast and resolved, entered as 5/5)
 - [ ] Ward—Waterbend {4} (K:Ward:Waterbend<4>)
 - [ ] Opponent draws second card trigger (T:Mode$ Drawn | ValidPlayer$ Opponent)
 - GAP: Ward:Waterbend, Drawn trigger
@@ -131,7 +131,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (11/40)
+## Verified Cards Summary (12/40)
 
 Working cards:
 1. **Island** - basic land
@@ -144,7 +144,8 @@ Working cards:
 8. **Knowledge Seeker** - Dies trigger creates Clue token (partial - Drawn trigger still needs work)
 9. **Messenger Hawk** - Flying + ETB Clue token (partial - Count$YouDrewThisTurn pump needs work)
 10. **Giant Koi** - Islandcycling works (partial - Waterbend unblockable ability needs work)
-11. **Elephant-Mandrill** - Reach + ETB Food token for controller (partial - TokenOwner$ Player only affects controller, combat pump needs Count$Valid)
+11. **Elephant-Mandrill** - Reach + ETB Food for ALL players (TokenOwner$ Player now works!) (partial - combat pump needs Count$Valid)
+12. **The Unagi** - Flash works (partial - Ward:Waterbend and Drawn trigger need work)
 
 ## Testing Protocol
 
