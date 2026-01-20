@@ -430,6 +430,7 @@ impl GameState {
         let is_aura = self.cards.get(spell_card_id).map(|c| c.is_aura()).unwrap_or(false);
         if is_aura {
             // Get the enchant restriction (e.g., "creature", "land", "permanent")
+            // May include zone qualifiers like "creature.inzonegraveyard" (Animate Dead)
             let enchant_type = self
                 .cards
                 .get(spell_card_id)
@@ -444,20 +445,54 @@ impl GameState {
                 })
                 .unwrap_or_else(|| "creature".to_string()); // Default to creature
 
-            // Add valid targets based on enchant restriction
-            for &card_id in &self.battlefield.cards {
-                if let Ok(target_card) = self.cards.get(card_id) {
-                    let type_matches = match enchant_type.as_str() {
-                        "creature" => target_card.is_creature(),
-                        "land" => target_card.is_land(),
-                        "artifact" => target_card.is_artifact(),
-                        "enchantment" => target_card.is_type(&crate::core::CardType::Enchantment),
-                        "permanent" => true,            // Any permanent
-                        _ => target_card.is_creature(), // Default fallback
-                    };
+            // Parse zone qualifier from enchant type
+            // Format: "creature.inzonegraveyard" -> base_type="creature", target_zone=Some("graveyard")
+            // CR 303.4f: Animate Dead can only target creature cards in graveyards when cast
+            let (base_type, target_zone) = if let Some((type_part, zone_part)) = enchant_type.split_once(".inzone") {
+                (type_part, Some(zone_part))
+            } else {
+                (enchant_type.as_str(), None)
+            };
 
-                    if type_matches && Self::is_legal_target(target_card, spell_owner) {
-                        valid_targets.push(card_id);
+            // Helper closure to check if a card matches the enchant type restriction
+            let matches_type = |target_card: &crate::core::card::Card| -> bool {
+                match base_type {
+                    "creature" => target_card.is_creature(),
+                    "land" => target_card.is_land(),
+                    "artifact" => target_card.is_artifact(),
+                    "enchantment" => target_card.is_type(&crate::core::CardType::Enchantment),
+                    "instant" => target_card.is_type(&crate::core::CardType::Instant),
+                    "sorcery" => target_card.is_type(&crate::core::CardType::Sorcery),
+                    "permanent" => true,            // Any permanent
+                    _ => target_card.is_creature(), // Default fallback
+                }
+            };
+
+            // Choose which zone to search based on the zone qualifier
+            match target_zone {
+                Some("graveyard") => {
+                    // Search ALL graveyards for matching cards (CR 303.4f)
+                    // Auras like Animate Dead, Dance of the Dead, Spellweaver Volute
+                    for (_, zones) in &self.player_zones {
+                        for &card_id in &zones.graveyard.cards {
+                            if let Ok(target_card) = self.cards.get(card_id) {
+                                if matches_type(target_card) {
+                                    // Cards in graveyard can't have hexproof/shroud protection
+                                    // (those only apply to permanents on the battlefield)
+                                    valid_targets.push(card_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Default: search battlefield (standard Auras)
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if matches_type(target_card) && Self::is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
                     }
                 }
             }
@@ -1174,5 +1209,63 @@ mod tests {
             "Terror should be able to target creatures"
         );
         assert!(!targets.contains(&land_id), "Terror should NOT be able to target lands");
+    }
+
+    /// Test that Animate Dead targets creatures in graveyards, NOT on battlefield
+    /// This verifies the fix for mtg-s2atg
+    #[test]
+    fn test_animate_dead_targets_graveyard_not_battlefield() {
+        use crate::core::{KeywordArgs, Subtype};
+        use crate::game::state::GameState;
+
+        // Create a minimal game state to test targeting
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let player1 = PlayerId::new(0);
+        let player2 = PlayerId::new(1);
+
+        // Add a creature to the battlefield (should NOT be targetable by Animate Dead)
+        let battlefield_creature_id = game.cards.next_id();
+        let mut battlefield_creature = Card::new(battlefield_creature_id, "Sengir Vampire", player2);
+        battlefield_creature.add_type(CardType::Creature);
+        game.cards.insert(battlefield_creature_id, battlefield_creature);
+        game.battlefield.cards.push(battlefield_creature_id);
+
+        // Add a creature to player2's graveyard (SHOULD be targetable by Animate Dead)
+        let graveyard_creature_id = game.cards.next_id();
+        let mut graveyard_creature = Card::new(graveyard_creature_id, "Serra Angel", player2);
+        graveyard_creature.add_type(CardType::Creature);
+        game.cards.insert(graveyard_creature_id, graveyard_creature);
+        // Add to player2's graveyard
+        if let Some(zones) = game.get_player_zones_mut(player2) {
+            zones.graveyard.cards.push(graveyard_creature_id);
+        }
+
+        // Create Animate Dead - an Aura with "Enchant creature card in a graveyard"
+        let animate_dead_id = game.cards.next_id();
+        let mut animate_dead = Card::new(animate_dead_id, "Animate Dead", player1);
+        animate_dead.add_type(CardType::Enchantment);
+        // Add "Aura" subtype - must be after add_type() since is_aura requires is_enchantment
+        animate_dead.set_subtypes(smallvec::smallvec![Subtype::new("Aura")]);
+        // Set the Enchant keyword with the inZoneGraveyard qualifier
+        // insert_complex also inserts the keyword into the set
+        animate_dead.keywords.insert_complex(KeywordArgs::Enchant {
+            card_type: Subtype::new("Creature.inZoneGraveyard"),
+        });
+        game.cards.insert(animate_dead_id, animate_dead);
+
+        // Get valid targets for Animate Dead
+        let targets = game.get_valid_targets_for_spell(animate_dead_id).unwrap();
+
+        // Should target the creature in graveyard
+        assert!(
+            targets.contains(&graveyard_creature_id),
+            "Animate Dead should target creatures in graveyards"
+        );
+
+        // Should NOT target the creature on battlefield
+        assert!(
+            !targets.contains(&battlefield_creature_id),
+            "Animate Dead should NOT target creatures on battlefield (this was the bug in mtg-s2atg!)"
+        );
     }
 }

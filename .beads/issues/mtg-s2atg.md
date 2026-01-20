@@ -1,10 +1,11 @@
 ---
 title: Animate Dead may target creatures on battlefield
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-01-20T10:19:43.992772213+00:00
-updated_at: 2026-01-20T10:19:43.992772213+00:00
+updated_at: 2026-01-20T10:37:58.410350156+00:00
+closed_at: 2026-01-20T10:37:58.410350106+00:00
 ---
 
 # Description
