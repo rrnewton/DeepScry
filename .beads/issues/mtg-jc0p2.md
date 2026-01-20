@@ -1,10 +1,10 @@
 ---
 title: Card ID 0 appears in game logs
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-01-20T10:19:24.519133871+00:00
-updated_at: 2026-01-20T10:28:27.445467088+00:00
+updated_at: 2026-01-20T14:09:43.091649236+00:00
 ---
 
 # Description

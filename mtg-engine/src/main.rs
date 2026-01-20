@@ -18,14 +18,21 @@ use mtg_forge_rs::{
 };
 use std::path::PathBuf;
 
-/// Find cardsfolder directory, checking current directory first then parent
+/// Find cardsfolder directory using centralized search algorithm
+///
+/// Searches: CARDSFOLDER env var → ./cardsfolder → binary dir → parent dirs up to root
 fn find_cardsfolder() -> PathBuf {
-    let local = PathBuf::from("cardsfolder");
-    if local.exists() {
-        local
-    } else {
-        PathBuf::from("../cardsfolder")
-    }
+    mtg_forge_rs::loader::find_cardsfolder().unwrap_or_else(|| {
+        eprintln!(
+            "Warning: cardsfolder not found! Searched:\n\
+             - CARDSFOLDER environment variable\n\
+             - ./cardsfolder (in current working directory)\n\
+             - Binary directory and parent directories up to root\n\
+             \n\
+             Falling back to ./cardsfolder (may cause errors)"
+        );
+        PathBuf::from("cardsfolder")
+    })
 }
 
 /// Controller type for AI agents

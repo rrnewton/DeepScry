@@ -1,46 +1,83 @@
 //! Centralized cardsfolder path resolution
 //!
 //! Single source of truth for locating the cardsfolder directory.
-//! Future enhancements: support environment variables, installation paths, etc.
+//! Searches in current directory, binary location, and parent directories.
 
 use std::path::{Path, PathBuf};
 
 /// Find the cardsfolder directory
 ///
 /// Searches in the following order:
-/// 1. Environment variable CARDSFOLDER (TODO)
-/// 2. ../cardsfolder (when running from mtg-engine/ subdirectory)
-/// 3. cardsfolder (when running from repository root)
-/// 4. Standard installation paths (TODO)
+/// 1. Environment variable CARDSFOLDER (if set)
+/// 2. ./cardsfolder (in current working directory)
+/// 3. Directory containing the `mtg` binary, then parent directories up to root
 ///
 /// Returns None if cardsfolder cannot be found
 pub fn find_cardsfolder() -> Option<PathBuf> {
-    // TODO: Check CARDSFOLDER environment variable first
-    // if let Ok(path) = std::env::var("CARDSFOLDER") {
-    //     let p = PathBuf::from(path);
-    //     if p.exists() && p.is_dir() {
-    //         return Some(p);
-    //     }
-    // }
-
-    // Check relative to current directory (for tests running from mtg-engine/)
-    let relative_parent = PathBuf::from("../cardsfolder");
-    if relative_parent.exists() && is_valid_cardsfolder(&relative_parent) {
-        return Some(relative_parent);
+    // 1. Check CARDSFOLDER environment variable first
+    if let Ok(path) = std::env::var("CARDSFOLDER") {
+        let p = PathBuf::from(&path);
+        if p.exists() && is_valid_cardsfolder(&p) {
+            return Some(p);
+        }
     }
 
-    // Check in current directory (for tests running from repository root)
-    let relative_current = PathBuf::from("cardsfolder");
-    if relative_current.exists() && is_valid_cardsfolder(&relative_current) {
-        return Some(relative_current);
+    // 2. Check in current working directory
+    let cwd_cardsfolder = PathBuf::from("cardsfolder");
+    if cwd_cardsfolder.exists() && is_valid_cardsfolder(&cwd_cardsfolder) {
+        return Some(cwd_cardsfolder);
     }
 
-    // TODO: Check standard installation paths
-    // - /usr/share/mtg-forge-rs/cardsfolder
-    // - ~/.local/share/mtg-forge-rs/cardsfolder
-    // - etc.
+    // 3. Search from binary directory up to root
+    if let Some(path) = find_cardsfolder_from_binary() {
+        return Some(path);
+    }
+
+    // 4. Fall back to searching from current directory up to root
+    // (handles cases where we can't determine binary location)
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(path) = search_parent_directories(&cwd) {
+            return Some(path);
+        }
+    }
 
     None
+}
+
+/// Search for cardsfolder starting from the binary's directory
+fn find_cardsfolder_from_binary() -> Option<PathBuf> {
+    // Get the path to the current executable
+    let exe_path = std::env::current_exe().ok()?;
+
+    // Get the directory containing the executable
+    let exe_dir = exe_path.parent()?;
+
+    // Search from exe directory up to root
+    search_parent_directories(exe_dir)
+}
+
+/// Search for cardsfolder in the given directory and all parent directories
+fn search_parent_directories(start_dir: &Path) -> Option<PathBuf> {
+    let mut current = start_dir.to_path_buf();
+
+    loop {
+        // Check for cardsfolder in current directory
+        let candidate = current.join("cardsfolder");
+        if candidate.exists() && is_valid_cardsfolder(&candidate) {
+            return Some(candidate);
+        }
+
+        // Move to parent directory
+        match current.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => {
+                current = parent.to_path_buf();
+            }
+            _ => {
+                // Reached root (or empty path), not found
+                return None;
+            }
+        }
+    }
 }
 
 /// Find the cardsfolder directory or panic with helpful error message
@@ -53,13 +90,15 @@ pub fn find_cardsfolder() -> Option<PathBuf> {
 pub fn require_cardsfolder() -> PathBuf {
     find_cardsfolder().expect(
         "cardsfolder not found! Searched:\n\
-         - ../cardsfolder (relative to current directory)\n\
-         - cardsfolder (in current directory)\n\
+         - CARDSFOLDER environment variable\n\
+         - ./cardsfolder (in current working directory)\n\
+         - Binary directory and all parent directories up to root\n\
+         - Current directory and all parent directories up to root\n\
          \n\
          Please ensure the cardsfolder symlink exists:\n\
          - From repository root: ln -s forge-java/forge-gui/res/cardsfolder cardsfolder\n\
          \n\
-         Future: set CARDSFOLDER environment variable to override search path.",
+         Or set the CARDSFOLDER environment variable to the path.",
     )
 }
 
