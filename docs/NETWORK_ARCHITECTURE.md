@@ -19,6 +19,47 @@ Despite being distributed, the simulation remains **sequential**:
 - There is never parallel or concurrent execution of game logic
 - At any moment, exactly ONE entity has "control"
 
+## CRITICAL: Desync is ALWAYS a Fatal Error
+
+**Any desynchronization between server and client is an immediate, fatal error.**
+
+This principle is absolute and admits NO exceptions:
+
+1. **Never paper over desync** - If client and server have different views of the
+   game state, the correct response is to crash with a clear error message, NOT
+   to silently "fix" the discrepancy with recovery heuristics.
+
+2. **No half-working hacks** - We have NO interest in code that "stumbles along
+   for a few more turns" in a desynced state. Such code masks bugs and makes
+   debugging nearly impossible.
+
+3. **Desync means a bug exists** - When desync is detected, the correct action is:
+   - Log detailed diagnostic information (state hashes, action counts, choice indices)
+   - Terminate the game immediately with `FATAL ERROR: DESYNC DETECTED`
+   - File a bug report with reproduction steps
+
+4. **Validation, not recovery** - Extra data sent in messages (like `spell_ability`
+   in `ChoiceResponse`) is for **validation and early detection only**. If validation
+   fails, we crash immediately - we do NOT use the extra data to "recover" from
+   inconsistent state.
+
+### Why This Matters
+
+The deterministic simulation model is the foundation of network correctness. If we
+allow recovery hacks:
+
+- Bugs become invisible (game continues despite corruption)
+- State corruption compounds (one wrong choice leads to cascading errors)
+- Debugging becomes impossible (the "fix" obscures the original cause)
+- Trust in the system erodes (players experience random failures)
+
+By crashing immediately on desync, we:
+
+- Catch bugs early with clear error messages
+- Get reproducible failure cases
+- Maintain trust in the correctness of successful games
+- Keep the codebase simple (no complex recovery logic)
+
 ## Replicated Game State
 
 All three parties (server + 2 clients) maintain a copy of the game state:

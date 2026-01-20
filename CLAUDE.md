@@ -44,6 +44,10 @@ Read OPTIMIZATION.md for more details.
 
 SAFETY! This is a safe-rust project. We will not introduce the `unsafe` keyword unless we have a VERY good reason and with significant advanced planning.
 
+### Network Architecture: Desync is ALWAYS Fatal
+
+For network multiplayer code, the **deterministic sequential simulation** model in `docs/NETWORK_ARCHITECTURE.md` is inviolable. Any desynchronization between server and client is an **immediate fatal error** - never paper over desync with recovery hacks. Extra validation data in messages is for early detection only, NOT for recovering from inconsistent state. See the full architecture document for details.
+
 ### NO HACKY STRING OPERATIONS ON STRUCTURED DATA
 
 We do NOT treat structured data formats (card scripts, SVars, ability definitions) as unstructured strings. **NEVER** use substring matching like `body.contains("AB$ Mana")` or `line.contains("some keyword")` to parse structured DSL formats.

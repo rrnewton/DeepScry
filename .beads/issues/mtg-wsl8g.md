@@ -6,43 +6,69 @@ issue_type: task
 labels:
 - bug
 created_at: 2026-01-17T17:39:49.809606340+00:00
-updated_at: 2026-01-17T17:39:49.809606340+00:00
+updated_at: 2026-01-20T10:11:08.382519689+00:00
 ---
 
 # Description
 
-## Network Fuzz Test Bugs - Random/Zero Controllers
+## Network Fuzz Test Bugs
 
-## Summary
-Network fuzz testing with 50 configurations revealed multiple bugs when using random or zero controllers:
-- **Pass rate**: heuristic vs heuristic = 100%, all other combinations = 0%
-- **Total failures**: 45/50 (90%)
+## CRITICAL PRINCIPLE: Desync is ALWAYS a Fatal Error
 
-## Error Categories
+The random/zero controller failures in fuzz testing are **real bugs** that must be fixed properly.
+Any desynchronization between server and client is an immediate, fatal error - we do NOT paper
+over desync with recovery hacks.
 
-### 1. entity_not_found / connection_reset (11 occurrences combined) - FIXED
-**Root cause**: Seismic Sense (and similar Dig effects) crashed when accessing library cards that don't exist in the client's shadow state.
+The `spell_ability` field in `ChoiceResponse` is for **validation/early detection only**. If the
+index-based selection and ability-based selection don't match, we crash immediately with a clear
+error message. We do NOT use the extra data to "recover" from inconsistent state.
 
-**Fix applied**: Effect::Dig implementation now uses `unwrap_or_else` to provide fallback card names when card data is missing in network mode.
+## Latest Results (2026-01-19_#1731(0af0092))
 
-**Reproducer**: `./tests/network_vs_local_equivalence_e2e.sh 2 heuristic random`
+**Pass Rate**: 25% (5/20)
+- heuristic vs heuristic: **100% (5/5)** ✅ FIXED!
+- heuristic vs random: 0%
+- heuristic vs zero: 0%
+- random vs heuristic: 0%
 
-### 2. timeout (33 occurrences)
-**Root cause**: Games hang indefinitely, likely after an error causes desync.
+## Key Progress
 
-**Reproducer**: `./tests/network_vs_local_equivalence_e2e.sh 1 heuristic random`
+**OpponentChoice routing bug is FIXED** - The split MVar architecture (commit 2e58443) correctly routes local/remote choices.
 
-### 3. creature_not_on_battlefield (1 occurrence)
-**Root cause**: Random controller tries to attack with a creature that died or was never on battlefield.
+## Current Issues (random/zero controllers only)
 
-**Reproducer**: `./tests/network_vs_local_equivalence_e2e.sh 5 heuristic random`
+### 1. timeout (45% - 9 occurrences)
+Random/zero controllers cause game to hang waiting for invalid choices.
 
-## Remaining Issues
-- **timeout (33 occurrences)**: Root cause unknown, games hang
-- **creature_not_on_battlefield (1 occurrence)**: Random controller validation issue
+### 2. connection_reset / entity_not_found (15% - 3 occurrences)
+"Entity not found: 0" when certain cards resolve with random controller.
 
-## Fixed in this commit
-- `mtg-engine/src/game/actions/mod.rs` - Effect::Dig now handles missing card data gracefully
+### 3. handler_exit_unexpected (10% - 2 occurrences)
+Handler exits unexpectedly when game state diverges due to invalid choices.
 
-## Test Results Date
-2026-01-17 (commit depth ~240)
+### 4. Error declaring attacker (5% - 1 occurrence)
+"Creature must be on battlefield to attack" - random controller tries to attack with non-existent creature.
+
+## Root Cause Analysis
+
+The failures with random/zero controllers stem from:
+1. **Index bounds issues** - Server logs show "Invalid choice index N (max M), clamping to 0"
+2. **Game state divergence** - Clamped choices cause client/server to have different game states
+3. **Cascading failures** - Once states diverge, all subsequent choices have mismatched indices
+
+**THE FIX IS NOT RECOVERY HACKS** - The fix is to identify WHY the client and server have
+different views of available choices, and fix the root cause. Until we understand and fix
+the real bug, we crash on desync.
+
+## Why heuristic vs heuristic works
+
+Heuristic controllers make deterministic, sensible choices based on game state evaluation. Both clients see the same game state and make the same choices, maintaining synchronization.
+
+## Test Commands
+```bash
+## Heuristic vs heuristic (works!)
+./tests/network_vs_local_equivalence_e2e.sh 1 heuristic heuristic
+
+## Random controller failures (detect desync)
+./tests/network_vs_local_equivalence_e2e.sh 7 heuristic random
+```
