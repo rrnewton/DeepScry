@@ -1,5 +1,9 @@
 //! Game actions and mechanics
 
+mod triggers;
+
+pub use triggers::{resolve_effect_placeholder, TriggerContext};
+
 use crate::core::{CardId, CardType, Effect, PlayerId, TargetRef, TriggerEvent};
 use crate::game::GameState;
 use crate::zones::Zone;
@@ -2759,59 +2763,34 @@ impl GameState {
                 }
             }
 
-            // Now execute all trigger effects
-            for mut effect in trigger_to_exec.effects {
-                // Fill in placeholder values in trigger effects
-                // Similar to resolve_spell, we need to fill in targets
-                match &mut effect {
-                    Effect::DrawCards { player, count } if player.as_u32() == 0 => {
-                        // Placeholder player ID 0 means the controller of the trigger source
-                        let controller = self.cards.get(trigger_source)?.controller;
-                        effect = Effect::DrawCards {
-                            player: controller,
-                            count: *count,
-                        };
-                    }
-                    Effect::DiscardCards { player, count } if player.as_u32() == 0 => {
-                        // Placeholder player ID 0 means the controller of the trigger source
-                        let controller = self.cards.get(trigger_source)?.controller;
-                        effect = Effect::DiscardCards {
-                            player: controller,
-                            count: *count,
-                        };
-                    }
-                    Effect::Loot {
-                        player,
-                        discard_count,
-                        draw_count,
-                    } if player.as_u32() == 0 => {
-                        // Placeholder player ID 0 means the controller of the trigger source
-                        let controller = self.cards.get(trigger_source)?.controller;
-                        effect = Effect::Loot {
-                            player: controller,
-                            discard_count: *discard_count,
-                            draw_count: *draw_count,
-                        };
-                    }
-                    Effect::DealDamage {
-                        target: TargetRef::Player(player_id),
-                        amount,
-                    } if player_id.as_u32() == 0 => {
-                        // Placeholder player ID 0 means the controller of the trigger source
-                        // Used by cards like Juzám Djinn ("deals 1 damage to you")
-                        let controller = self.cards.get(trigger_source)?.controller;
-                        effect = Effect::DealDamage {
-                            target: TargetRef::Player(controller),
-                            amount: *amount,
-                        };
-                    }
+            // Build trigger context for placeholder resolution
+            let controller = self.cards.get(trigger_source)?.controller;
+            let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
+            let ctx = TriggerContext::new(trigger_source, controller)
+                .with_event_source(source_card_id)
+                .with_sacrificed_power(sacrificed_power);
+            let ctx = if let Some(opp) = opponent {
+                ctx.with_opponent(opp)
+            } else {
+                ctx
+            };
+
+            // Execute all trigger effects with placeholder resolution
+            for effect in trigger_to_exec.effects {
+                // Step 1: Apply shared placeholder resolution for simple cases
+                // (player placeholders, self-targeting, token creation)
+                let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // Step 2: Handle complex targeting that requires battlefield search
+                // These cases need game state access and can't be done in shared function
+                match &effect {
+                    // DealDamage with TargetRef::None after shared resolution means we should
+                    // try to find a creature target first (for "any target" effects like Mongoose Lizard)
                     Effect::DealDamage {
                         target: TargetRef::None,
                         amount,
                     } => {
-                        // Find a valid target: prefer opponent's creature, else opponent player
-                        // This handles "any target" effects like Mongoose Lizard's ETB
-                        let controller = self.cards.get(trigger_source)?.controller;
+                        // Try to find opponent's creature first
                         if let Some(target_id) = self
                             .battlefield
                             .cards
@@ -2832,45 +2811,17 @@ impl GameState {
                                 target: TargetRef::Permanent(target_id),
                                 amount: *amount,
                             };
-                        } else {
-                            // No valid creature target found - target opponent player instead
-                            // This is correct for "any target" effects (ValidTgts$ Any)
-                            // In a 2-player game, the opponent is the other player
-                            let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
-                            if let Some(opponent_id) = opponent {
-                                effect = Effect::DealDamage {
-                                    target: TargetRef::Player(opponent_id),
-                                    amount: *amount,
-                                };
-                            }
-                            // If somehow no opponent found (shouldn't happen), effect stays TargetRef::None
-                            // and will fizzle when executed
+                        } else if let Some(opp) = opponent {
+                            // Fall back to opponent player
+                            effect = Effect::DealDamage {
+                                target: TargetRef::Player(opp),
+                                amount: *amount,
+                            };
                         }
-                    }
-                    Effect::GainLife { player, amount } if player.as_u32() == 0 => {
-                        // Placeholder player ID 0 means the controller of the trigger source
-                        let controller = self.cards.get(trigger_source)?.controller;
-                        effect = Effect::GainLife {
-                            player: controller,
-                            amount: *amount,
-                        };
-                    }
-                    Effect::PutCounter {
-                        target,
-                        counter_type,
-                        amount,
-                    } if target.as_u32() == 0 => {
-                        // Placeholder CardId 0 means "put counter on self" (the trigger source)
-                        // Used by Beetle-Headed Merchants: "put a +1/+1 counter on this creature"
-                        effect = Effect::PutCounter {
-                            target: trigger_source,
-                            counter_type: *counter_type,
-                            amount: *amount,
-                        };
+                        // else stays as TargetRef::None and will fizzle
                     }
                     Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
                         // Find a valid target (opponent's creature matching restriction)
-                        let controller = self.cards.get(trigger_source)?.controller;
                         if let Some(target_id) = self
                             .battlefield
                             .cards
@@ -2921,21 +2872,7 @@ impl GameState {
                             };
                         }
                     }
-                    Effect::CreateToken {
-                        controller,
-                        token_script,
-                        amount,
-                        for_each_player,
-                    } if controller.as_u32() == 0 => {
-                        // Placeholder player ID 0 means the controller of the trigger source
-                        let source_controller = self.cards.get(source_card_id)?.controller;
-                        effect = Effect::CreateToken {
-                            controller: source_controller,
-                            token_script: token_script.clone(),
-                            amount: *amount,
-                            for_each_player: *for_each_player,
-                        };
-                    }
+                    // Note: CreateToken is handled by resolve_effect_placeholder
                     Effect::ExilePermanent { target } if target.as_u32() == 0 => {
                         // Find a valid target (opponent's nonland permanent)
                         // Web Up and similar cards: "exile target nonland permanent an opponent controls"
@@ -2989,43 +2926,15 @@ impl GameState {
                             continue;
                         }
                     }
-                    Effect::PumpAllCreatures {
-                        controller,
-                        filter,
-                        power_bonus,
-                        toughness_bonus,
-                    } if controller.as_u32() == 0 => {
-                        // Placeholder controller 0 means the controller of the trigger source
-                        let source_controller = self.cards.get(trigger_source)?.controller;
-                        effect = Effect::PumpAllCreatures {
-                            controller: source_controller,
-                            filter: filter.clone(),
-                            power_bonus: *power_bonus,
-                            toughness_bonus: *toughness_bonus,
-                        };
-                    }
-                    Effect::Firebend {
-                        controller: ctrl,
-                        amount,
-                    } if ctrl.as_u32() == 0 => {
-                        // Resolve placeholder controller to the actual creature controller
-                        // amount=254 means "use sacrificed creature's power" (Fire Lord Ozai)
-                        let source_controller = self.cards.get(trigger_source)?.controller;
-                        let actual_amount = if *amount == 254 { sacrificed_power } else { *amount };
-
-                        effect = Effect::Firebend {
-                            controller: source_controller,
-                            amount: actual_amount,
-                        };
-
-                        // Log the firebend trigger
-                        if actual_amount > 0 {
-                            if let Ok(card) = self.cards.get(trigger_source) {
-                                self.logger.gamelog(&format!(
-                                    "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
-                                    card.name, actual_amount, actual_amount
-                                ));
-                            }
+                    // Note: PumpAllCreatures is handled by resolve_effect_placeholder
+                    // Note: Firebend placeholder resolution handled by resolve_effect_placeholder
+                    // Log firebend effect after resolution
+                    Effect::Firebend { amount, .. } if *amount > 0 => {
+                        if let Ok(card) = self.cards.get(trigger_source) {
+                            self.logger.gamelog(&format!(
+                                "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                                card.name, amount, amount
+                            ));
                         }
                     }
                     Effect::UntapPermanent { target } if target.as_u32() == 0 => {
@@ -3126,65 +3035,19 @@ impl GameState {
                 .collect()
         };
 
+        // Build trigger context for placeholder resolution
+        let controller = self.cards.get(card_id)?.controller;
+        let ctx = TriggerContext::new(card_id, controller);
+
         // Execute each effect with placeholder resolution
-        for mut effect in effects_to_execute {
-            // Fill in placeholder values in trigger effects
-            match &mut effect {
-                Effect::DealDamage {
-                    target: TargetRef::Player(player_id),
-                    amount,
-                } if player_id.as_u32() == 0 => {
-                    // Placeholder player ID 0 means the controller of the trigger source
-                    // Used by cards like Juzám Djinn ("deals 1 damage to you")
-                    let controller = self.cards.get(card_id)?.controller;
-                    effect = Effect::DealDamage {
-                        target: TargetRef::Player(controller),
-                        amount: *amount,
-                    };
-                }
-                Effect::GainLife { player, amount } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means the controller of the trigger source
-                    let controller = self.cards.get(card_id)?.controller;
-                    effect = Effect::GainLife {
-                        player: controller,
-                        amount: *amount,
-                    };
-                }
-                Effect::DrawCards { player, count } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means the controller of the trigger source
-                    let controller = self.cards.get(card_id)?.controller;
-                    effect = Effect::DrawCards {
-                        player: controller,
-                        count: *count,
-                    };
-                }
-                Effect::DiscardCards { player, count } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means the controller of the trigger source
-                    let controller = self.cards.get(card_id)?.controller;
-                    effect = Effect::DiscardCards {
-                        player: controller,
-                        count: *count,
-                    };
-                }
-                Effect::Loot {
-                    player,
-                    discard_count,
-                    draw_count,
-                } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means the controller of the trigger source
-                    let controller = self.cards.get(card_id)?.controller;
-                    effect = Effect::Loot {
-                        player: controller,
-                        discard_count: *discard_count,
-                        draw_count: *draw_count,
-                    };
-                }
+        for effect in effects_to_execute {
+            // Step 1: Apply shared placeholder resolution for simple cases
+            let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+            // Step 2: Handle complex targeting that requires battlefield search
+            match &effect {
                 Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
                     // Placeholder CardId 0 means we need to target a land the controller controls
-                    // For now, pick the first land they control (AI could choose better targets)
-                    let controller = self.cards.get(card_id)?.controller;
-
-                    // Find a land controlled by the trigger's controller
                     let land_target = self
                         .battlefield
                         .cards
@@ -3208,21 +3071,6 @@ impl GameState {
                         // No valid land target - skip this trigger
                         continue;
                     }
-                }
-                Effect::PumpAllCreatures {
-                    controller,
-                    filter,
-                    power_bonus,
-                    toughness_bonus,
-                } if controller.as_u32() == 0 => {
-                    // Placeholder controller 0 means the controller of the trigger source
-                    let source_controller = self.cards.get(card_id)?.controller;
-                    effect = Effect::PumpAllCreatures {
-                        controller: source_controller,
-                        filter: filter.clone(),
-                        power_bonus: *power_bonus,
-                        toughness_bonus: *toughness_bonus,
-                    };
                 }
                 _ => {}
             }
@@ -3284,6 +3132,7 @@ impl GameState {
         // These triggers fire when their controller casts a spell
         struct TriggerToExecute {
             source_card_id: CardId,
+            controller: PlayerId,
             source_name: String,
             effects: Vec<Effect>,
             description: String,
@@ -3309,8 +3158,9 @@ impl GameState {
                                 return false;
                             }
 
-                            // Check noncreature-only triggers (marked with [noncreature] in description)
-                            if trigger.description.contains("[noncreature]")
+                            // Check noncreature-only triggers using structured field or description
+                            if trigger.requires_noncreature
+                                || trigger.description.contains("[noncreature]")
                                 || trigger.description.contains("noncreature")
                             {
                                 // This trigger only fires on noncreature spells
@@ -3331,6 +3181,7 @@ impl GameState {
                                 .into_iter()
                                 .map(|trigger| TriggerToExecute {
                                     source_card_id: card_id,
+                                    controller: card.controller,
                                     source_name: card.name.to_string(),
                                     effects: trigger.effects.clone(),
                                     description: trigger.description.clone(),
@@ -3351,18 +3202,19 @@ impl GameState {
             self.logger
                 .gamelog(&format!("Trigger: {} - {}", trigger.source_name, trigger.description));
 
+            // Build trigger context
+            let ctx = TriggerContext::new(trigger.source_card_id, trigger.controller);
+
             // Execute effects with placeholder resolution
             for effect in trigger.effects {
-                // Resolve placeholder targets (only specific effects need resolution)
+                // Apply shared placeholder resolution
+                let resolved_effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // Log specific effects with custom messages
+                // Wildcard is intentional: only PutCounter and PumpCreature need special logging
                 #[allow(clippy::wildcard_enum_match_arm)]
-                let resolved_effect = match effect {
-                    Effect::PutCounter {
-                        target,
-                        counter_type,
-                        amount,
-                    } if target.as_u32() == 0 => {
-                        // Placeholder CardId 0 means "put counter on self" (the trigger source)
-                        // Log the counter addition
+                match &resolved_effect {
+                    Effect::PutCounter { target, amount, .. } if *target == trigger.source_card_id => {
                         let current_counters = self
                             .cards
                             .get(trigger.source_card_id)
@@ -3373,34 +3225,20 @@ impl GameState {
                             trigger.source_name,
                             current_counters + amount
                         ));
-
-                        Effect::PutCounter {
-                            target: trigger.source_card_id,
-                            counter_type,
-                            amount,
-                        }
                     }
                     Effect::PumpCreature {
                         target,
                         power_bonus,
                         toughness_bonus,
-                        keywords_granted,
-                    } if target.as_u32() == 0 => {
-                        // Placeholder CardId 0 means "pump self" (for Prowess-like effects)
+                        ..
+                    } if *target == trigger.source_card_id => {
                         self.logger.normal(&format!(
                             "{} gets +{}/+{} until end of turn",
                             trigger.source_name, power_bonus, toughness_bonus
                         ));
-
-                        Effect::PumpCreature {
-                            target: trigger.source_card_id,
-                            power_bonus,
-                            toughness_bonus,
-                            keywords_granted,
-                        }
                     }
-                    other => other,
-                };
+                    _ => {}
+                }
 
                 self.execute_effect(&resolved_effect)?;
             }
@@ -3516,51 +3354,26 @@ impl GameState {
             }
         }
 
-        // Execute each effect with placeholder resolution
-        for mut effect in effects_to_execute {
-            // Fill in placeholder values in trigger effects
-            match &mut effect {
-                Effect::AddMana {
-                    player,
-                    mana,
-                    produces_chosen_color,
-                } if player.as_u32() == 0 => {
-                    // Placeholder player ID 0 means the controller of the trigger source
-                    // Su-Chi adds mana to its controller's pool when it dies
-                    effect = Effect::AddMana {
-                        player: controller,
-                        mana: *mana,
-                        produces_chosen_color: *produces_chosen_color,
-                    };
+        // Build trigger context for placeholder resolution
+        let ctx = TriggerContext::new(dying_card_id, controller);
 
-                    // Log the mana addition (official game action)
-                    if let Ok(card) = self.cards.get(dying_card_id) {
-                        let player_name = self
-                            .get_player(controller)
-                            .map(|p| p.name.as_str().to_string())
-                            .unwrap_or_else(|_| "player".to_string());
-                        self.logger.gamelog(&format!(
-                            "{} dies, {} adds mana to {}'s pool",
-                            card.name, card.name, player_name
-                        ));
-                    }
+        // Execute each effect with placeholder resolution
+        for effect in effects_to_execute {
+            // Apply shared placeholder resolution
+            let effect = resolve_effect_placeholder(&effect, &ctx);
+
+            // Log AddMana effects specially (Su-Chi death trigger)
+            if let Effect::AddMana { .. } = &effect {
+                if let Ok(card) = self.cards.get(dying_card_id) {
+                    let player_name = self
+                        .get_player(controller)
+                        .map(|p| p.name.as_str().to_string())
+                        .unwrap_or_else(|_| "player".to_string());
+                    self.logger.gamelog(&format!(
+                        "{} dies, {} adds mana to {}'s pool",
+                        card.name, card.name, player_name
+                    ));
                 }
-                Effect::DealDamage {
-                    target: TargetRef::Player(player_id),
-                    amount,
-                } if player_id.as_u32() == 0 => {
-                    effect = Effect::DealDamage {
-                        target: TargetRef::Player(controller),
-                        amount: *amount,
-                    };
-                }
-                Effect::GainLife { player, amount } if player.as_u32() == 0 => {
-                    effect = Effect::GainLife {
-                        player: controller,
-                        amount: *amount,
-                    };
-                }
-                _ => {}
             }
 
             self.execute_effect(&effect)?;
@@ -3593,6 +3406,7 @@ impl GameState {
 
         struct TriggerInfo {
             card_id: CardId,
+            controller: PlayerId,
             card_name: String,
             description: String,
             effects: SmallVec<[Effect; 2]>,
@@ -3633,6 +3447,7 @@ impl GameState {
                 // This trigger should fire - collect its info
                 triggers_to_fire.push(TriggerInfo {
                     card_id,
+                    controller: card.controller,
                     card_name: card.name.to_string(),
                     description: trigger.description.clone(),
                     effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
@@ -3652,54 +3467,32 @@ impl GameState {
                 trigger_info.card_name, trigger_info.description
             ));
 
+            // Build trigger context with drawing_player for DealDamage resolution
+            let ctx =
+                TriggerContext::new(trigger_info.card_id, trigger_info.controller).with_drawing_player(drawing_player);
+
             for effect in trigger_info.effects {
-                // Resolve placeholder targets in effects
-                // - target.as_u32() == 0 for CardId means "self" (the trigger source)
-                // - TargetRef::None for DealDamage means "triggered player" (who drew the card)
-                // Note: Wildcard is intentional (mtg-0et0f) - only PutCounter, PumpCreature,
-                // and DealDamage need placeholder resolution; other effects pass through unchanged.
-                #[allow(clippy::wildcard_enum_match_arm)]
-                let resolved_effect = match effect {
-                    Effect::PutCounter {
-                        target,
-                        counter_type,
-                        amount,
-                    } if target.as_u32() == 0 => {
-                        // "Put a +1/+1 counter on ~" → put counter on the trigger source
-                        Effect::PutCounter {
+                // Apply shared placeholder resolution first
+                let mut resolved_effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // PumpCreature with placeholder CardId::new(0) → "self" for CardDrawn triggers
+                // (Otter-Penguin: "this creature gets +1/+2")
+                if let Effect::PumpCreature {
+                    target,
+                    power_bonus,
+                    toughness_bonus,
+                    keywords_granted,
+                } = &resolved_effect
+                {
+                    if target.as_u32() == 0 {
+                        resolved_effect = Effect::PumpCreature {
                             target: trigger_info.card_id,
-                            counter_type,
-                            amount,
-                        }
+                            power_bonus: *power_bonus,
+                            toughness_bonus: *toughness_bonus,
+                            keywords_granted: keywords_granted.clone(),
+                        };
                     }
-                    Effect::PumpCreature {
-                        target,
-                        power_bonus,
-                        toughness_bonus,
-                        keywords_granted,
-                    } if target.as_u32() == 0 => {
-                        // "~ gets +X/+Y until end of turn" → pump the trigger source
-                        Effect::PumpCreature {
-                            target: trigger_info.card_id,
-                            power_bonus,
-                            toughness_bonus,
-                            keywords_granted,
-                        }
-                    }
-                    Effect::DealDamage {
-                        target: TargetRef::None,
-                        amount,
-                    } => {
-                        // "CARDNAME deals N damage to that player" → target is player who drew
-                        // Used by Underworld Dreams: "Whenever an opponent draws a card,
-                        // CARDNAME deals 1 damage to that player."
-                        Effect::DealDamage {
-                            target: TargetRef::Player(drawing_player),
-                            amount,
-                        }
-                    }
-                    other => other,
-                };
+                }
 
                 self.execute_effect(&resolved_effect)?;
             }
@@ -3828,37 +3621,24 @@ impl GameState {
                 }
             }
 
+            // Build trigger context with creature power for firebend resolution
+            let ctx = TriggerContext::new(attacker_id, controller)
+                .with_creature_power(creature_power)
+                .with_sacrificed_power(sacrificed_power);
+
             // Execute each effect with placeholder resolution
-            for mut effect in trigger_data.effects {
-                // Fill in placeholder values in trigger effects
-                match &mut effect {
-                    Effect::Firebend {
-                        controller: ctrl,
-                        amount,
-                    } if ctrl.as_u32() == 0 => {
-                        // Resolve placeholder controller to the actual creature controller
-                        // amount=0 means "use creature's power" (Firebending X)
-                        // amount=254 means "use sacrificed creature's power" (Fire Lord Ozai)
-                        let actual_amount = match *amount {
-                            0 => creature_power,
-                            254 => sacrificed_power,
-                            n => n,
-                        };
+            for effect in trigger_data.effects {
+                // Apply shared placeholder resolution
+                let effect = resolve_effect_placeholder(&effect, &ctx);
 
-                        effect = Effect::Firebend {
-                            controller,
-                            amount: actual_amount,
-                        };
-
-                        // Log the firebend trigger (using card_name already extracted)
-                        if actual_amount > 0 {
-                            self.logger.gamelog(&format!(
-                                "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
-                                trigger_data.card_name, actual_amount, actual_amount
-                            ));
-                        }
+                // Log firebend effects
+                if let Effect::Firebend { amount, .. } = &effect {
+                    if *amount > 0 {
+                        self.logger.gamelog(&format!(
+                            "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
+                            trigger_data.card_name, amount, amount
+                        ));
                     }
-                    _ => {}
                 }
 
                 self.execute_effect(&effect)?;

@@ -842,6 +842,34 @@ pub struct Trigger {
 
     /// For CardDrawn triggers: true = triggers on controller's draws, false = opponent's draws
     pub triggers_on_controller_draw: bool,
+
+    // =========================================================================
+    // STRUCTURED FILTER FLAGS - replacing string markers in description
+    // These provide compile-time checked filtering instead of runtime string parsing
+    // =========================================================================
+    /// When true, trigger only fires if event source is DIFFERENT from trigger source
+    /// Replaces "[other]" marker in description
+    /// Example: "Whenever you sacrifice ANOTHER permanent" (Pirate Peddlers)
+    #[serde(default)]
+    pub requires_other: bool,
+
+    /// When true, trigger only fires if event source is a Land controlled by trigger controller
+    /// Replaces "[landfall]" marker in description
+    /// Example: Landfall triggers like "Whenever a land enters under your control"
+    #[serde(default)]
+    pub requires_landfall: bool,
+
+    /// When true, trigger only fires on controller's turn
+    /// Replaces "[controller_only]" marker in description
+    /// Example: Upkeep triggers that only fire on your own upkeep
+    #[serde(default)]
+    pub controller_turn_only: bool,
+
+    /// When true, trigger only fires if event source is NOT a creature
+    /// Replaces "[noncreature]" marker in description
+    /// Example: "Whenever you cast a noncreature spell"
+    #[serde(default)]
+    pub requires_noncreature: bool,
 }
 
 impl Trigger {
@@ -857,6 +885,10 @@ impl Trigger {
             cost: None,                        // Default: no additional cost
             draw_number: None,                 // Default: trigger on any draw
             triggers_on_controller_draw: true, // Default: trigger on controller's draws
+            requires_other: false,
+            requires_landfall: false,
+            controller_turn_only: false,
+            requires_noncreature: false,
         }
     }
 
@@ -871,6 +903,10 @@ impl Trigger {
             cost: None,
             draw_number: None,
             triggers_on_controller_draw: true,
+            requires_other: false,
+            requires_landfall: false,
+            controller_turn_only: false,
+            requires_noncreature: false,
         }
     }
 
@@ -891,6 +927,10 @@ impl Trigger {
             cost: Some(cost),
             draw_number: None,
             triggers_on_controller_draw: true,
+            requires_other: false,
+            requires_landfall: false,
+            controller_turn_only: false,
+            requires_noncreature: false,
         }
     }
 
@@ -906,6 +946,10 @@ impl Trigger {
             cost: None,
             draw_number: None,
             triggers_on_controller_draw: true,
+            requires_other: false,
+            requires_landfall: false,
+            controller_turn_only: false,
+            requires_noncreature: false,
         }
     }
 }
