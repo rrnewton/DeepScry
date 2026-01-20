@@ -42,10 +42,20 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Draw => {
-            // Extract card count from NumCards$ parameter
-            let count = params.get_u8("NumCards").ok()?;
+            // Extract card count from NumCards$ parameter (default to 1 if not specified)
+            let count = params.get_u8("NumCards").unwrap_or(1);
             Some(Effect::DrawCards {
                 player: PlayerId::new(0), // Placeholder - filled in at cast time
+                count,
+            })
+        }
+
+        ApiType::Discard => {
+            // Extract card count from NumCards$ parameter (default to 1 if not specified)
+            // Example: DB$ Discard | Defined$ You | NumCards$ 1 | Mode$ TgtChoose
+            let count = params.get_u8("NumCards").unwrap_or(1);
+            Some(Effect::DiscardCards {
+                player: PlayerId::new(0), // Placeholder - filled in at cast/resolve time
                 count,
             })
         }

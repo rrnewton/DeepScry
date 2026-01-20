@@ -333,6 +333,7 @@ impl GameState {
                             // (target players, self, or have targets pre-specified)
                             Effect::DealDamage { .. }
                             | Effect::DrawCards { .. }
+                            | Effect::DiscardCards { .. }
                             | Effect::Loot { .. }
                             | Effect::GainLife { .. }
                             | Effect::Mill { .. }
@@ -380,6 +381,7 @@ impl GameState {
                 //
                 // Effects targeting players or with no target
                 Effect::DrawCards { .. }
+                | Effect::DiscardCards { .. }
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
                 | Effect::Mill { .. }
@@ -754,6 +756,7 @@ impl GameState {
                 // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
                 // Effects that don't need targets or have targets pre-specified
                 Effect::DrawCards { .. }
+                | Effect::DiscardCards { .. }
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
                 | Effect::Mill { .. }
@@ -966,6 +969,7 @@ impl GameState {
             }
             // Effects that don't require targeting always "have targets"
             Effect::DrawCards { .. }
+            | Effect::DiscardCards { .. }
             | Effect::Loot { .. }
             | Effect::GainLife { .. }
             | Effect::Mill { .. }

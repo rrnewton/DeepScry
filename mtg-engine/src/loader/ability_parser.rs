@@ -66,6 +66,7 @@ pub enum ApiType {
     Draw,
     DrawReplace,
     Mill,
+    Discard,
 
     // === Mana ===
     Mana,
@@ -210,6 +211,7 @@ impl ApiType {
             "Draw" => Self::Draw,
             "DrawReplace" => Self::DrawReplace,
             "Mill" => Self::Mill,
+            "Discard" => Self::Discard,
             "Dig" => Self::DigMultiple, // Note: "Dig" maps to DigMultiple in Java
 
             // Mana
@@ -375,6 +377,7 @@ impl ApiType {
             Self::Airbend => "Airbend",
             Self::Earthbend => "Earthbend",
             Self::Charm => "Charm",
+            Self::Discard => "Discard",
             Self::Unknown(s) => s.as_str(),
         }
     }

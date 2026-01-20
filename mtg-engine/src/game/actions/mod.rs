@@ -978,6 +978,10 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::DiscardCards { player, count } if player.as_u32() == 0 => Effect::DiscardCards {
+                player: card_owner,
+                count: *count,
+            },
             Effect::GainLife { player, amount } if player.as_u32() == 0 => Effect::GainLife {
                 player: card_owner,
                 amount: *amount,
@@ -1156,6 +1160,18 @@ impl GameState {
                     self.check_card_drawn_triggers(*player, draw_num)?;
                 }
             }
+            Effect::DiscardCards { player, count } => {
+                // Discard cards (AI chooses which cards to discard)
+                for _ in 0..*count {
+                    let card_to_discard = self.choose_card_to_discard(*player)?;
+                    if let Some(card_id) = card_to_discard {
+                        self.discard_card(*player, card_id)?;
+                    } else {
+                        // No cards in hand to discard
+                        break;
+                    }
+                }
+            }
             Effect::Loot {
                 player,
                 discard_count,
@@ -1219,6 +1235,8 @@ impl GameState {
                 }
                 // Use helper that handles tap + undo log + mana version
                 self.tap_permanent(*target)?;
+                // Check for Taps triggers
+                self.check_triggers(TriggerEvent::Taps, *target)?;
             }
             Effect::UntapPermanent { target } => {
                 // Use helper that handles untap + undo log + mana version
@@ -2743,6 +2761,14 @@ impl GameState {
                             count: *count,
                         };
                     }
+                    Effect::DiscardCards { player, count } if player.as_u32() == 0 => {
+                        // Placeholder player ID 0 means the controller of the trigger source
+                        let controller = self.cards.get(trigger_source)?.controller;
+                        effect = Effect::DiscardCards {
+                            player: controller,
+                            count: *count,
+                        };
+                    }
                     Effect::Loot {
                         player,
                         discard_count,
@@ -3117,6 +3143,14 @@ impl GameState {
                     // Placeholder player ID 0 means the controller of the trigger source
                     let controller = self.cards.get(card_id)?.controller;
                     effect = Effect::DrawCards {
+                        player: controller,
+                        count: *count,
+                    };
+                }
+                Effect::DiscardCards { player, count } if player.as_u32() == 0 => {
+                    // Placeholder player ID 0 means the controller of the trigger source
+                    let controller = self.cards.get(card_id)?.controller;
+                    effect = Effect::DiscardCards {
                         player: controller,
                         count: *count,
                     };
@@ -3981,6 +4015,9 @@ impl GameState {
         // Increment mana state version to invalidate ManaEngine cache
         self.increment_mana_version();
 
+        // Check for Taps triggers (e.g., Gran-Gran: "Whenever ~ becomes tapped")
+        self.check_triggers(TriggerEvent::Taps, card_id)?;
+
         // Handle non-land mana sources with explicit mana abilities
         if let Some(mana_to_add) = explicit_mana {
             // For creatures with "Add mana of any color", we need to choose based on cost hint
@@ -4329,6 +4366,8 @@ impl GameState {
             Cost::Tap => {
                 // Tap the permanent (this updates cache and increments mana_version)
                 self.tap_permanent(card_id)?;
+                // Check for Taps triggers (e.g., Gran-Gran: "Whenever ~ becomes tapped")
+                self.check_triggers(TriggerEvent::Taps, card_id)?;
                 Ok(())
             }
 
@@ -4355,6 +4394,8 @@ impl GameState {
 
                 // Tap the permanent (this updates cache and increments mana_version)
                 self.tap_permanent(card_id)?;
+                // Check for Taps triggers (e.g., Gran-Gran: "Whenever ~ becomes tapped")
+                self.check_triggers(TriggerEvent::Taps, card_id)?;
 
                 // Then pay mana
                 let player = self.get_player_mut(player_id)?;

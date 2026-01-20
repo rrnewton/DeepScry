@@ -2099,6 +2099,44 @@ impl CardDefinition {
 
                 triggers.push(trigger);
             }
+
+            // Parse Taps triggers (Mode$ Taps)
+            // Example: T:Mode$ Taps | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ Whenever CARDNAME becomes tapped, draw a card.
+            // This triggers when the card becomes tapped (from untapped state)
+            if mode == Some("Taps") {
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Check ValidCard$ to determine which card triggers this
+                // Card.Self = triggers only when this card becomes tapped (default)
+                // Other patterns could allow for "whenever any creature becomes tapped"
+                let valid_card = params.get("ValidCard").map(|s| s.as_str());
+                let trigger_self_only = match valid_card {
+                    Some("Card.Self") | None => true,
+                    _ => false, // Other ValidCard patterns trigger on other cards
+                };
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever this permanent becomes tapped".to_string());
+
+                // Create trigger with Taps event
+                let trigger = if trigger_self_only {
+                    Trigger::new(TriggerEvent::Taps, effects, description)
+                } else {
+                    Trigger::new_any(TriggerEvent::Taps, effects, description)
+                };
+
+                triggers.push(trigger);
+            }
         }
 
         triggers

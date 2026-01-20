@@ -108,6 +108,10 @@ impl GameState {
         if !has_vigilance {
             // Use helper that handles tap + undo log + mana version
             self.tap_permanent(card_id)?;
+
+            // Check for Taps triggers (MTG Rules 603.2a)
+            // "Whenever this creature becomes tapped" triggers fire when tapped
+            self.check_triggers(TriggerEvent::Taps, card_id)?;
         }
 
         // Check for attack triggers (MTG Rules 508.1m)

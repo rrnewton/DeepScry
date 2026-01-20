@@ -266,6 +266,11 @@ pub enum Effect {
         draw_count: u8,
     },
 
+    /// Discard cards
+    /// Example: "Discard a card"
+    /// Corresponds to: DB$ Discard | Defined$ You | NumCards$ 1
+    DiscardCards { player: PlayerId, count: u8 },
+
     /// Gain life
     /// Example: "You gain 3 life"
     GainLife { player: PlayerId, amount: i32 },
@@ -688,6 +693,7 @@ impl Effect {
             // Effects targeting players or with no target
             Effect::DrawCards { .. }
             | Effect::Loot { .. }
+            | Effect::DiscardCards { .. }
             | Effect::GainLife { .. }
             | Effect::Mill { .. }
             | Effect::Scry { .. }
@@ -796,6 +802,11 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ Drawn | ValidCard$ Card.YouCtrl | Number$ 2
     /// The draw_number field in Trigger specifies which draw triggers (e.g., 2 = second card)
     CardDrawn,
+
+    /// When a permanent becomes tapped
+    /// Corresponds to: T:Mode$ Taps | ValidCard$ Card.Self
+    /// Example: "Whenever CARDNAME becomes tapped, draw a card, then discard a card."
+    Taps,
 }
 
 /// A triggered ability that executes when an event occurs

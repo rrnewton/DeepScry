@@ -17,7 +17,7 @@ This issue tracks compatibility testing for the **julian_avatar_deck.dck** deck 
 
 Key gaps affecting this deck:
 - ~~**T:Mode$ Drawn** - "When you draw your second card" triggers~~ **FULLY IMPLEMENTED 2026-01-19** (includes undo support, opponent draw triggers for Underworld Dreams)
-- **T:Mode$ Taps** - "Whenever ~ becomes tapped" triggers (Gran-Gran)
+- ~~**T:Mode$ Taps** - "Whenever ~ becomes tapped" triggers (Gran-Gran)~~ **FULLY IMPLEMENTED 2026-01-20** (includes DiscardCards effect)
 - **T:Mode$ Phase** - Beginning of combat triggers (Avatar Kyoshi)
 - **Count$YouDrewThisTurn** - Track cards drawn this turn (Messenger Hawk)
 - **Count$Valid** - Count creatures matching filter (Elephant-Mandrill)
@@ -58,9 +58,9 @@ Key gaps affecting this deck:
 - GAP: AB$ Effect with StaticAbilities$ Unblockable
 
 **Gran-Gran (x1)** - U 1/2 Legendary Human Peasant Ally
-- [ ] Taps trigger: draw then discard (T:Mode$ Taps)
+- [x] Taps trigger: draw then discard (VERIFIED 2026-01-20: When Gran-Gran attacks and becomes tapped, draws a card then discards a card)
 - [ ] Cost reduction static (S:Mode$ ReduceCost based on Lessons in graveyard)
-- GAP: Taps trigger mode, ReduceCost static
+- GAP: ReduceCost static
 
 **Knowledge Seeker (x2)** - 1U 2/1 Fox Spirit
 - [x] Vigilance (should work)
@@ -131,7 +131,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (14/40)
+## Verified Cards Summary (15/40)
 
 Working cards:
 1. **Island** - basic land
@@ -147,6 +147,7 @@ Working cards:
 11. **Elephant-Mandrill** - Reach + ETB Food for ALL players (TokenOwner$ Player now works!) (partial - combat pump needs Count$Valid)
 12. **The Unagi** - Flash + Opponent Drawn trigger works (partial - Ward:Waterbend needs work)
 13. **Otter-Penguin** - Second draw trigger for +1/+2 pump works (partial - "can't be blocked" effect needs DB$ Effect with StaticAbilities$)
+14. **Gran-Gran** - Taps trigger for draw/discard works (VERIFIED 2026-01-20) (partial - ReduceCost static needs work)
 
 ## Testing Protocol
 
