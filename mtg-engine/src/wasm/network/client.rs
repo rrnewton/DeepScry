@@ -561,6 +561,7 @@ impl WasmNetworkClient {
                 timestamp_ms: crate::network::now_ms(),
                 client_state_hash: state_hash,
                 debug_info: None,
+                spell_ability: None, // WASM client doesn't track spell_ability yet
             };
             self.queue_outbound(msg);
             self.choice_acknowledged = false;
