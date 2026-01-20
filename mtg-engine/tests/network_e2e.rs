@@ -108,6 +108,7 @@ mod async_tests {
             timestamp_ms: 1234567891,
             client_state_hash: None,
             debug_info: None,
+            spell_ability: None,
         };
 
         let response_json = serde_json::to_string(&response).expect("serialize response");
@@ -646,6 +647,7 @@ mod websocket_integration {
                                 .unwrap_or(0),
                             client_state_hash: None,
                             debug_info: None,
+                            spell_ability: None,
                         },
                     )
                     .await

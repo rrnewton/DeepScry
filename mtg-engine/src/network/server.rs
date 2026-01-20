@@ -207,6 +207,7 @@ enum GameToHandler {
 
 /// Messages from player handler to game coordinator.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum HandlerToGame {
     /// Player submitted their choice response.
     ChoiceResponse {
