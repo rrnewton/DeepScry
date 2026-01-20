@@ -1,0 +1,25 @@
+[metadata]
+Name:Otter-Penguin Second Draw Trigger
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests that Otter-Penguin gets +1/+2 and can't be blocked when controller draws second card. Cast Divination to draw 2 cards - the second draw should trigger Otter-Penguin.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Divination
+p0battlefield=Island; Island; Island; Otter-Penguin
+p0library=Lightning Bolt; Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=3
+p1hand=Forest
+p1battlefield=Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

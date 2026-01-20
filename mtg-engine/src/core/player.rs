@@ -36,6 +36,9 @@ pub struct Player {
 
     /// Maximum hand size (usually 7, modified by some effects)
     pub max_hand_size: usize,
+
+    /// Cards drawn this turn (for "second card drawn" triggers like T:Mode$ Drawn)
+    pub cards_drawn_this_turn: u8,
 }
 
 impl Player {
@@ -50,6 +53,7 @@ impl Player {
             lands_played_this_turn: 0,
             max_lands_per_turn: 1,
             max_hand_size: 7, // Standard MTG hand size limit
+            cards_drawn_this_turn: 0,
         }
     }
 
@@ -74,6 +78,17 @@ impl Player {
 
     pub fn reset_lands_played(&mut self) {
         self.lands_played_this_turn = 0;
+    }
+
+    /// Called when a card is drawn; returns the draw count (1 = first draw, 2 = second, etc.)
+    pub fn record_card_drawn(&mut self) -> u8 {
+        self.cards_drawn_this_turn += 1;
+        self.cards_drawn_this_turn
+    }
+
+    /// Reset cards drawn counter at the start of each turn
+    pub fn reset_cards_drawn(&mut self) {
+        self.cards_drawn_this_turn = 0;
     }
 
     pub fn empty_mana_pool(&mut self) {

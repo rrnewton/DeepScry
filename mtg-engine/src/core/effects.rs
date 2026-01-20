@@ -791,6 +791,11 @@ pub enum TriggerEvent {
     /// When a permanent is sacrificed
     /// Corresponds to: T:Mode$ Sacrificed | ValidCard$ Permanent.Other | ValidPlayer$ You
     Sacrificed,
+
+    /// When a card is drawn
+    /// Corresponds to: T:Mode$ Drawn | ValidCard$ Card.YouCtrl | Number$ 2
+    /// The draw_number field in Trigger specifies which draw triggers (e.g., 2 = second card)
+    CardDrawn,
 }
 
 /// A triggered ability that executes when an event occurs
@@ -819,6 +824,13 @@ pub struct Trigger {
     /// e.g., sacrificing a permanent, paying life, paying mana
     /// If None, the trigger has no additional cost beyond being optional
     pub cost: Option<super::Cost>,
+
+    /// For CardDrawn triggers: which draw number triggers this (e.g., 2 = "second card drawn")
+    /// None means every card drawn triggers it
+    pub draw_number: Option<u8>,
+
+    /// For CardDrawn triggers: true = triggers on controller's draws, false = opponent's draws
+    pub triggers_on_controller_draw: bool,
 }
 
 impl Trigger {
@@ -829,9 +841,11 @@ impl Trigger {
             event,
             effects,
             description,
-            trigger_self_only: true, // Default: only fire for this card
-            optional: false,         // Default: mandatory trigger
-            cost: None,              // Default: no additional cost
+            trigger_self_only: true,           // Default: only fire for this card
+            optional: false,                   // Default: mandatory trigger
+            cost: None,                        // Default: no additional cost
+            draw_number: None,                 // Default: trigger on any draw
+            triggers_on_controller_draw: true, // Default: trigger on controller's draws
         }
     }
 
@@ -844,6 +858,8 @@ impl Trigger {
             trigger_self_only: false,
             optional: false,
             cost: None,
+            draw_number: None,
+            triggers_on_controller_draw: true,
         }
     }
 
@@ -862,6 +878,8 @@ impl Trigger {
             trigger_self_only: true,
             optional: true,
             cost: Some(cost),
+            draw_number: None,
+            triggers_on_controller_draw: true,
         }
     }
 
@@ -875,6 +893,8 @@ impl Trigger {
             trigger_self_only: true,
             optional: true,
             cost: None,
+            draw_number: None,
+            triggers_on_controller_draw: true,
         }
     }
 }

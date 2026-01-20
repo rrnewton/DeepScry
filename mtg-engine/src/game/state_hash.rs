@@ -3,7 +3,7 @@
 //! This module provides functionality to compute a deterministic hash of game state,
 //! excluding metadata and ephemeral fields. Supports multiple hash modes:
 //!
-//! - **Replay**: For snapshot/resume debugging (excludes metadata, lands_played_this_turn)
+//! - **Replay**: For snapshot/resume debugging (excludes metadata, turn-scoped counters)
 //! - **UndoTest**: For undo verification (excludes only true metadata)
 //! - **Network**: For network sync verification (excludes hidden information)
 //!
@@ -21,7 +21,7 @@ use std::hash::{Hash, Hasher};
 /// - undo_log: Not gameplay state
 /// - logger: Presentation layer
 /// - show_choice_menu, output_mode, etc: Display settings
-/// - lands_played_this_turn: Turn-scoped counter (resets on rewind in replay)
+/// - lands_played_this_turn, cards_drawn_this_turn: Turn-scoped counters (reset on rewind in replay)
 const EXCLUDED_FIELDS: &[&str] = &[
     "choice_id",
     "undo_log",
@@ -72,6 +72,7 @@ const EXCLUDED_FIELDS_NETWORK: &[&str] = &[
     "step_header_printed",
     "mana_state_version",
     "lands_played_this_turn", // Turn-scoped counter
+    "cards_drawn_this_turn",  // Turn-scoped counter
     // Hidden information
     "rng", // Server-only RNG state
            // Note: "hand" and "library" are handled specially - we keep SIZE but not contents
@@ -170,8 +171,9 @@ fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
                 map.remove(*field);
             }
 
-            // Also remove lands_played_this_turn which can differ after rewind in replay
+            // Also remove turn-scoped counters which can differ after rewind in replay
             map.remove("lands_played_this_turn");
+            map.remove("cards_drawn_this_turn");
 
             // Recursively clean nested objects
             for (_, v) in map.iter_mut() {
@@ -198,7 +200,7 @@ fn strip_metadata_for_undo_test(value: serde_json::Value) -> serde_json::Value {
                 map.remove(*field);
             }
 
-            // Do NOT remove lands_played_this_turn - it's gameplay state that should be restored
+            // Do NOT remove lands_played_this_turn or cards_drawn_this_turn - they're gameplay state that should be restored
 
             // Recursively clean nested objects
             for (_, v) in map.iter_mut() {
@@ -440,11 +442,12 @@ fn strip_fields_recursive(value: serde_json::Value, excluded: &[&str], mode: Has
             // Mode-specific handling
             match mode {
                 HashMode::Replay => {
-                    // Also remove lands_played_this_turn which can differ after rewind
+                    // Also remove turn-scoped counters which can differ after rewind
                     map.remove("lands_played_this_turn");
+                    map.remove("cards_drawn_this_turn");
                 }
                 HashMode::UndoTest => {
-                    // Keep lands_played_this_turn - it's gameplay state
+                    // Keep lands_played_this_turn and cards_drawn_this_turn - they're gameplay state
                 }
                 HashMode::Network => {
                     // For network mode, we need to handle hand and library specially

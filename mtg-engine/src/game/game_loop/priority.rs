@@ -1424,9 +1424,18 @@ impl<'a> GameLoop<'a> {
                                     }
                                     None => {
                                         // Regular cycling: Draw a card
-                                        if let Err(e) = self.game.draw_card(current_priority) {
-                                            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                                self.game.logger.normal(&format!("Failed to draw from cycling: {e}"));
+                                        match self.game.draw_card(current_priority) {
+                                            Ok((_, draw_count)) => {
+                                                // Check for "second card drawn" triggers
+                                                let _ =
+                                                    self.game.check_card_drawn_triggers(current_priority, draw_count);
+                                            }
+                                            Err(e) => {
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    self.game
+                                                        .logger
+                                                        .normal(&format!("Failed to draw from cycling: {e}"));
+                                                }
                                             }
                                         }
                                     }

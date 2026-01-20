@@ -1151,7 +1151,9 @@ impl GameState {
             },
             Effect::DrawCards { player, count } => {
                 for _ in 0..*count {
-                    self.draw_card(*player)?;
+                    let (_, draw_num) = self.draw_card(*player)?;
+                    // Check for "second card drawn" triggers
+                    self.check_card_drawn_triggers(*player, draw_num)?;
                 }
             }
             Effect::Loot {
@@ -1171,7 +1173,9 @@ impl GameState {
                     }
                 }
                 for _ in 0..*draw_count {
-                    self.draw_card(*player)?;
+                    let (_, draw_num) = self.draw_card(*player)?;
+                    // Check for "second card drawn" triggers
+                    self.check_card_drawn_triggers(*player, draw_num)?;
                 }
             }
             Effect::GainLife { player, amount } => {
@@ -3515,6 +3519,145 @@ impl GameState {
             }
 
             self.execute_effect(&effect)?;
+        }
+
+        Ok(())
+    }
+
+    /// Check and execute "card drawn" triggers for all permanents on the battlefield
+    ///
+    /// Called after each card is drawn. Handles "When you draw your Nth card each turn"
+    /// triggers like Knowledge Seeker ("When you draw your second card each turn, put
+    /// a +1/+1 counter on Knowledge Seeker") and Otter-Penguin.
+    ///
+    /// MTG Rules 603.2a: Draw triggers look at what card was drawn and which player drew.
+    ///
+    /// # Parameters
+    /// - `drawing_player`: The player who drew the card
+    /// - `draw_number`: Which draw this was this turn (1 = first, 2 = second, etc.)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
+    pub fn check_card_drawn_triggers(&mut self, drawing_player: PlayerId, draw_number: u8) -> Result<()> {
+        use smallvec::SmallVec;
+
+        // Fast path: Most games have no CardDrawn triggers, so check first before allocating
+        // Scan all permanents on battlefield for CardDrawn triggers
+        let battlefield_cards: SmallVec<[CardId; 32]> = self.battlefield.cards.iter().copied().collect();
+
+        struct TriggerInfo {
+            card_id: CardId,
+            card_name: String,
+            description: String,
+            effects: SmallVec<[Effect; 2]>,
+        }
+
+        let mut triggers_to_fire: SmallVec<[TriggerInfo; 2]> = SmallVec::new();
+
+        for card_id in battlefield_cards {
+            let Ok(card) = self.cards.get(card_id) else { continue };
+
+            for trigger in &card.triggers {
+                if trigger.event != TriggerEvent::CardDrawn {
+                    continue;
+                }
+
+                // Check if this trigger fires for the current draw
+                // 1. If trigger has a draw_number requirement, check it matches
+                if let Some(required_draw_num) = trigger.draw_number {
+                    if draw_number != required_draw_num {
+                        continue;
+                    }
+                }
+
+                // 2. Check if the drawing player matches trigger's target
+                // triggers_on_controller_draw = true: fires when card's controller draws
+                // triggers_on_controller_draw = false: fires when opponent draws
+                let controller_drew = drawing_player == card.controller;
+                let should_fire = if trigger.triggers_on_controller_draw {
+                    controller_drew
+                } else {
+                    !controller_drew
+                };
+
+                if !should_fire {
+                    continue;
+                }
+
+                // This trigger should fire - collect its info
+                triggers_to_fire.push(TriggerInfo {
+                    card_id,
+                    card_name: card.name.to_string(),
+                    description: trigger.description.clone(),
+                    effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
+                });
+            }
+        }
+
+        if triggers_to_fire.is_empty() {
+            return Ok(());
+        }
+
+        // Execute triggers (we've released the borrow on cards)
+        for trigger_info in triggers_to_fire {
+            // Log the trigger (official game action)
+            self.logger.gamelog(&format!(
+                "Trigger: {} - {}",
+                trigger_info.card_name, trigger_info.description
+            ));
+
+            for effect in trigger_info.effects {
+                // Resolve placeholder targets in effects
+                // - target.as_u32() == 0 for CardId means "self" (the trigger source)
+                // - TargetRef::None for DealDamage means "triggered player" (who drew the card)
+                // Note: Wildcard is intentional (mtg-0et0f) - only PutCounter, PumpCreature,
+                // and DealDamage need placeholder resolution; other effects pass through unchanged.
+                #[allow(clippy::wildcard_enum_match_arm)]
+                let resolved_effect = match effect {
+                    Effect::PutCounter {
+                        target,
+                        counter_type,
+                        amount,
+                    } if target.as_u32() == 0 => {
+                        // "Put a +1/+1 counter on ~" → put counter on the trigger source
+                        Effect::PutCounter {
+                            target: trigger_info.card_id,
+                            counter_type,
+                            amount,
+                        }
+                    }
+                    Effect::PumpCreature {
+                        target,
+                        power_bonus,
+                        toughness_bonus,
+                        keywords_granted,
+                    } if target.as_u32() == 0 => {
+                        // "~ gets +X/+Y until end of turn" → pump the trigger source
+                        Effect::PumpCreature {
+                            target: trigger_info.card_id,
+                            power_bonus,
+                            toughness_bonus,
+                            keywords_granted,
+                        }
+                    }
+                    Effect::DealDamage {
+                        target: TargetRef::None,
+                        amount,
+                    } => {
+                        // "CARDNAME deals N damage to that player" → target is player who drew
+                        // Used by Underworld Dreams: "Whenever an opponent draws a card,
+                        // CARDNAME deals 1 damage to that player."
+                        Effect::DealDamage {
+                            target: TargetRef::Player(drawing_player),
+                            amount,
+                        }
+                    }
+                    other => other,
+                };
+
+                self.execute_effect(&resolved_effect)?;
+            }
         }
 
         Ok(())

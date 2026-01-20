@@ -37,6 +37,17 @@ fn warn_with_context(message: &str) {
     });
 }
 
+/// Convert a number to its ordinal form (1st, 2nd, 3rd, etc.)
+fn ordinal(n: u8) -> String {
+    let suffix = match n % 10 {
+        1 if n % 100 != 11 => "st",
+        2 if n % 100 != 12 => "nd",
+        3 if n % 100 != 13 => "rd",
+        _ => "th",
+    };
+    format!("{}{}", n, suffix)
+}
+
 /// Card loader for .txt files
 pub struct CardLoader;
 
@@ -2026,6 +2037,55 @@ impl CardDefinition {
                 if is_other_only && !trigger.description.contains("[other]") {
                     trigger.description = format!("[other] {}", trigger.description);
                 }
+
+                triggers.push(trigger);
+            }
+
+            // Parse Drawn triggers (Mode$ Drawn)
+            // Example: T:Mode$ Drawn | ValidCard$ Card.YouCtrl | Number$ 2 | Execute$ TrigPutCounter
+            // This triggers when the controller draws their Nth card each turn
+            if mode == Some("Drawn") {
+                let mut effects = Vec::new();
+
+                // Parse Number$ to get which draw triggers this (e.g., 2 = second card drawn)
+                // If not specified, triggers on every draw
+                let draw_number = params.get("Number").and_then(|s| s.parse::<u8>().ok());
+
+                // Check ValidCard$ / ValidPlayer$ to determine whose draws trigger this
+                // Card.YouCtrl or Card.YouOwn = triggers on controller's draws
+                // Card.OppOwn or ValidPlayer$ Opponent = triggers on opponent's draws
+                let valid_card = params.get("ValidCard").map(|s| s.as_str());
+                let valid_player = params.get("ValidPlayer").map(|s| s.as_str());
+                let triggers_on_controller_draw = match (valid_player, valid_card) {
+                    (Some("Opponent"), _) => false,
+                    (_, Some(vc)) if vc.contains("Opp") => false,
+                    _ => true, // Default: trigger on controller's draws
+                };
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        if let Some(n) = draw_number {
+                            format!("Whenever you draw your {} card each turn", ordinal(n))
+                        } else {
+                            "Whenever you draw a card".to_string()
+                        }
+                    });
+
+                // Create trigger with CardDrawn event
+                // Draw triggers are NOT self-only (they watch for draw events, not card ETB)
+                let mut trigger = Trigger::new_any(TriggerEvent::CardDrawn, effects, description);
+                trigger.draw_number = draw_number;
+                trigger.triggers_on_controller_draw = triggers_on_controller_draw;
 
                 triggers.push(trigger);
             }

@@ -1,0 +1,36 @@
+# Test puzzle: Knowledge Seeker "second card drawn" trigger
+# When you draw your second card each turn, put a +1/+1 counter on Knowledge Seeker
+name: Knowledge Seeker Second Draw Trigger
+
+# Start on turn 3 so we're past the opening hand drawing
+turn: 3
+active_player: Player1
+
+player1:
+  name: Player1
+  life: 20
+  hand:
+    - Island
+    - Divination  # Draw 2 cards - this triggers "second card" on Knowledge Seeker
+  battlefield:
+    - Knowledge Seeker  # 2/1 - will get +1/+1 counter on second draw
+    - Island
+    - Island
+    - Island
+  library:
+    - Lightning Bolt
+    - Lightning Bolt
+    - Mountain
+    - Mountain
+
+player2:
+  name: Player2
+  life: 20
+  hand:
+    - Forest
+  battlefield:
+    - Forest
+  library:
+    - Forest
+    - Forest
+    - Forest

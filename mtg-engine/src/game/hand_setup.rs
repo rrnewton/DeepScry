@@ -72,9 +72,9 @@ pub fn setup_opening_hands(
             // Controlled hand setup: place specific cards, then draw rest randomly
             setup_controlled_hand(game, player_id, hand_setup)?;
         } else {
-            // Normal random draw
+            // Normal random draw (opening hands don't trigger "draw" abilities)
             for _ in 0..7 {
-                game.draw_card(player_id)?;
+                let _ = game.draw_card(player_id)?;
             }
         }
     }
@@ -123,7 +123,7 @@ fn setup_controlled_hand(game: &mut GameState, player_id: PlayerId, hand_setup: 
     let remaining_to_draw = 7usize.saturating_sub(cards_in_hand);
 
     for _ in 0..remaining_to_draw {
-        game.draw_card(player_id)?;
+        let _ = game.draw_card(player_id)?;
     }
 
     Ok(())

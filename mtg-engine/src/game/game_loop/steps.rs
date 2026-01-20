@@ -22,6 +22,23 @@ impl<'a> GameLoop<'a> {
     ) -> Result<Option<GameResult>> {
         let active_player = self.game.turn.active_player;
 
+        // Reset draw count for the active player at the start of their turn
+        // This tracks "cards drawn this turn" for triggers like Knowledge Seeker
+        let prior_log_size = self.game.logger.log_count();
+        if let Ok(player) = self.game.get_player_mut(active_player) {
+            let old_count = player.cards_drawn_this_turn;
+            player.reset_cards_drawn();
+            // Log for undo
+            self.game.undo_log.log(
+                crate::undo::GameAction::SetCardsDrawnThisTurn {
+                    player_id: active_player,
+                    old_value: old_count,
+                    new_value: 0,
+                },
+                prior_log_size,
+            );
+        }
+
         // Collect tapped permanents controlled by active player
         // Separate into: normal permanents and MayNotUntap permanents
         let mut normal_to_untap: SmallVec<[CardId; 8]> = SmallVec::new();
@@ -211,7 +228,10 @@ impl<'a> GameLoop<'a> {
         }
 
         // Draw a card
-        self.game.draw_card(active_player)?;
+        let (_, draw_count) = self.game.draw_card(active_player)?;
+
+        // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
+        self.game.check_card_drawn_triggers(active_player, draw_count)?;
 
         // Push reveals immediately for network mode (server-side)
         // This ensures clients receive the draw reveal before their GameLoop needs it

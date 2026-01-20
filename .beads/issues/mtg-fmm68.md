@@ -16,7 +16,7 @@ This issue tracks compatibility testing for the **julian_avatar_deck.dck** deck 
 ## Engine Implementation Gaps Summary
 
 Key gaps affecting this deck:
-- **T:Mode$ Drawn** - "When you draw your second card" triggers (multiple cards)
+- ~~**T:Mode$ Drawn** - "When you draw your second card" triggers~~ **FULLY IMPLEMENTED 2026-01-19** (includes undo support, opponent draw triggers for Underworld Dreams)
 - **T:Mode$ Taps** - "Whenever ~ becomes tapped" triggers (Gran-Gran)
 - **T:Mode$ Phase** - Beginning of combat triggers (Avatar Kyoshi)
 - **Count$YouDrewThisTurn** - Track cards drawn this turn (Messenger Hawk)
@@ -64,13 +64,13 @@ Key gaps affecting this deck:
 
 **Knowledge Seeker (x2)** - 1U 2/1 Fox Spirit
 - [x] Vigilance (should work)
-- [ ] Second card drawn trigger: put +1/+1 counter (T:Mode$ Drawn | Number$ 2)
+- [x] Second card drawn trigger: put +1/+1 counter (VERIFIED 2026-01-19: "Trigger: Knowledge Seeker - Whenever you draw your second card each turn, put a +1/+1 counter" - 2/1 becomes 3/2)
 - [x] Dies trigger: create Clue token (VERIFIED 2026-01-18: "Created Clue Token under Player 1's control" - fixed death trigger bug for state-based lethal damage)
-- GAP: T:Mode$ Drawn trigger
 
 **Otter-Penguin (x3)** - 1U 2/1 Otter Bird
-- [ ] Second card drawn trigger: pump +1/+2 and unblockable (T:Mode$ Drawn)
-- GAP: T:Mode$ Drawn, DB$ Effect unblockable
+- [x] Second card drawn trigger: pump +1/+2 (VERIFIED 2026-01-19: "Trigger: Otter-Penguin - Whenever you draw your second card each turn, this creature gets +1/+2" - 2/1 becomes 3/3)
+- [ ] "Can't be blocked" effect from second draw trigger (requires DB$ Effect with StaticAbilities$)
+- GAP: DB$ Effect with StaticAbilities$ for "can't be blocked"
 
 **Raucous Audience (x1)** - 1R 2/2 Human Rebel
 - [ ] Mana ability with conditional (already known GAP: Count$Compare)
@@ -89,8 +89,8 @@ Key gaps affecting this deck:
 **The Unagi of Kyoshi Island (x1)** - 3UU 5/5 Legendary Serpent
 - [x] Flash (VERIFIED 2026-01-19: cast and resolved, entered as 5/5)
 - [ ] Ward—Waterbend {4} (K:Ward:Waterbend<4>)
-- [ ] Opponent draws second card trigger (T:Mode$ Drawn | ValidPlayer$ Opponent)
-- GAP: Ward:Waterbend, Drawn trigger
+- [x] Opponent draws second card trigger (T:Mode$ Drawn | ValidPlayer$ Opponent) - should work with 2026-01-19 Drawn trigger implementation
+- GAP: Ward:Waterbend
 
 **Turtle-Duck (x1)** - 1U 0/4 Turtle Bird
 - [x] AB$ Animate ability (VERIFIED in Gabriel deck - mtg-5hvly)
@@ -131,7 +131,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (12/40)
+## Verified Cards Summary (14/40)
 
 Working cards:
 1. **Island** - basic land
@@ -141,11 +141,12 @@ Working cards:
 5. **Forecasting Fortune Teller** - ETB Clue token
 6. **Ember Island Production** - SP$ Charm + CopyPermanent
 7. **Meteor Sword** - Equipment with ETB destroy, equip, +3/+3 bonus
-8. **Knowledge Seeker** - Dies trigger creates Clue token (partial - Drawn trigger still needs work)
+8. **Knowledge Seeker** - Vigilance + Dies trigger + Second draw trigger for +1/+1 counter (FULLY WORKING 2026-01-19)
 9. **Messenger Hawk** - Flying + ETB Clue token (partial - Count$YouDrewThisTurn pump needs work)
 10. **Giant Koi** - Islandcycling works (partial - Waterbend unblockable ability needs work)
 11. **Elephant-Mandrill** - Reach + ETB Food for ALL players (TokenOwner$ Player now works!) (partial - combat pump needs Count$Valid)
-12. **The Unagi** - Flash works (partial - Ward:Waterbend and Drawn trigger need work)
+12. **The Unagi** - Flash + Opponent Drawn trigger works (partial - Ward:Waterbend needs work)
+13. **Otter-Penguin** - Second draw trigger for +1/+2 pump works (partial - "can't be blocked" effect needs DB$ Effect with StaticAbilities$)
 
 ## Testing Protocol
 

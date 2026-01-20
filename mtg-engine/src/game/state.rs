@@ -920,7 +920,12 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if drawing fails (should not happen for normal draw operations).
-    pub fn draw_card(&mut self, player_id: PlayerId) -> Result<Option<CardId>> {
+    /// Draw a card for a player
+    ///
+    /// Returns (Option<CardId>, draw_count) where draw_count is how many cards
+    /// this player has drawn this turn (1 = first, 2 = second, etc.).
+    /// This is used for "second card drawn" triggers like T:Mode$ Drawn.
+    pub fn draw_card(&mut self, player_id: PlayerId) -> Result<(Option<CardId>, u8)> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             let lib_size = zones.library.len();
             log::debug!(
@@ -950,10 +955,32 @@ impl GameState {
                     prior_log_size,
                 );
 
-                return Ok(Some(card_id));
+                // Record the draw for "second card drawn" triggers
+                // This must be done after zones are released to avoid borrow conflicts
+                let draw_count = if let Ok(player) = self.get_player_mut(player_id) {
+                    let old_count = player.cards_drawn_this_turn;
+                    let count = player.record_card_drawn();
+                    log::debug!("Player {} drew card (draw #{} this turn)", player_id.as_u32(), count);
+
+                    // Log for undo - use the prior_log_size from above (still in scope)
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetCardsDrawnThisTurn {
+                            player_id,
+                            old_value: old_count,
+                            new_value: count,
+                        },
+                        prior_log_size,
+                    );
+
+                    count
+                } else {
+                    1 // Fallback, shouldn't happen
+                };
+
+                return Ok((Some(card_id), draw_count));
             }
         }
-        Ok(None)
+        Ok((None, 0))
     }
 
     /// Mill cards from library to graveyard (used by mill effects)
@@ -2059,6 +2086,16 @@ impl GameState {
                         player.lands_played_this_turn = old_value;
                     }
                 }
+                crate::undo::GameAction::SetCardsDrawnThisTurn {
+                    player_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    // Restore the previous cards_drawn_this_turn count
+                    if let Ok(player) = self.get_player_mut(player_id) {
+                        player.cards_drawn_this_turn = old_value;
+                    }
+                }
                 crate::undo::GameAction::SetAttachedTo {
                     equipment_id,
                     old_target,
@@ -2568,8 +2605,9 @@ mod tests {
         }
 
         // Draw the card
-        let drawn = game.draw_card(p1_id).unwrap();
+        let (drawn, draw_count) = game.draw_card(p1_id).unwrap();
         assert_eq!(drawn, Some(card_id));
+        assert_eq!(draw_count, 1); // First draw this turn
 
         // Check it's in hand
         if let Some(zones) = game.get_player_zones(p1_id) {

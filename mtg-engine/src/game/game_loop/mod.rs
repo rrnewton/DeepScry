@@ -1054,24 +1054,24 @@ impl<'a> GameLoop<'a> {
                                 zones.hand.add(card_id);
                             }
 
-                            // Draw remaining cards randomly to reach 7 total
+                            // Draw remaining cards randomly to reach 7 total (opening hands don't trigger)
                             let cards_in_hand = hand_setup.specific_cards.len();
                             let remaining_to_draw = 7usize.saturating_sub(cards_in_hand);
                             for _ in 0..remaining_to_draw {
-                                self.game.draw_card(player_id)?;
+                                let _ = self.game.draw_card(player_id)?;
                             }
                         } else {
-                            // No controlled setup, draw 7 cards normally
+                            // No controlled setup, draw 7 cards normally (opening hands don't trigger)
                             for _ in 0..7 {
-                                self.game.draw_card(player_id)?;
+                                let _ = self.game.draw_card(player_id)?;
                             }
                         }
                     }
                 } else {
-                    // No controlled hand setup, just draw 7 cards for each player
+                    // No controlled hand setup, just draw 7 cards for each player (opening hands don't trigger)
                     for &player_id in &[player1_id, player2_id] {
                         for _ in 0..7 {
-                            self.game.draw_card(player_id)?;
+                            let _ = self.game.draw_card(player_id)?;
                         }
                     }
                 }

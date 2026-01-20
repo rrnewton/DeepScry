@@ -117,6 +117,15 @@ pub enum GameAction {
         new_value: u8,
     },
 
+    /// Set cards_drawn_this_turn counter (for "second card drawn" triggers)
+    SetCardsDrawnThisTurn {
+        player_id: PlayerId,
+        /// Previous count
+        old_value: u8,
+        /// New count
+        new_value: u8,
+    },
+
     /// Set attached_to field (for Equipment/Aura attachment tracking)
     SetAttachedTo {
         equipment_id: CardId,
@@ -305,6 +314,9 @@ impl fmt::Display for GameAction {
             GameAction::SetLandsPlayedThisTurn {
                 player_id, new_value, ..
             } => write!(f, "LandsPlayed(P{} = {})", player_id.as_u32(), new_value),
+            GameAction::SetCardsDrawnThisTurn {
+                player_id, new_value, ..
+            } => write!(f, "CardsDrawn(P{} = {})", player_id.as_u32(), new_value),
             GameAction::SetAttachedTo {
                 equipment_id,
                 new_target,
@@ -541,6 +553,22 @@ impl GameAction {
                 } else {
                     return Err(format!(
                         "Player {} not found for SetLandsPlayedThisTurn undo",
+                        player_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetCardsDrawnThisTurn {
+                player_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous cards_drawn_this_turn count
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.cards_drawn_this_turn = *old_value;
+                } else {
+                    return Err(format!(
+                        "Player {} not found for SetCardsDrawnThisTurn undo",
                         player_id.as_u32()
                     ));
                 }
