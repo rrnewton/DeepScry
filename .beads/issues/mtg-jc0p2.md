@@ -4,38 +4,49 @@ status: open
 priority: 3
 issue_type: bug
 created_at: 2026-01-20T10:19:24.519133871+00:00
-updated_at: 2026-01-20T10:19:24.519133871+00:00
+updated_at: 2026-01-20T10:28:27.445467088+00:00
 ---
 
 # Description
 
 ## Bug Description
 
-Cards occasionally appear in game logs with ID 0, which is a placeholder/invalid ID.
-
-## Evidence
-
-From game logs:
-```
-[GAMELOG Turn9 M1] All Hallow's Eve (42) puts 2 Scream counter(s) on Bazaar of Baghdad (0)
-[GAMELOG Turn17 M1] Random1 plays City of Brass (0)
-```
-
-In both cases, the card name is correct but the ID is 0 instead of the actual CardId.
+Card ID 0 appears in game logs when effects using `Defined$ Remembered` or similar placeholders aren't fully resolved.
 
 ## Root Cause
 
-Unknown - needs investigation. Possible causes:
-1. Counter placement targeting uses unresolved placeholder
-2. Land play logging uses wrong card reference
-3. Some code path creates CardId(0) as placeholder and doesn't resolve it
+This is a **feature gap**, not a simple logging bug. Effects like All Hallow's Eve use:
+```
+A:SP$ ChangeZone | RememberChanged$ True | SubAbility$ DBPutCounter
+SVar:DBPutCounter:DB$ PutCounter | Defined$ Remembered | ...
+```
+
+The `Defined$ Remembered` parameter requires tracking remembered cards during spell resolution, which isn't implemented. The effect converter creates `CardId::new(0)` as placeholder at effect_converter.rs:308.
+
+When CardId(0) happens to be a valid card in the game (e.g., Bazaar of Baghdad), the effect executes on the wrong card\!
+
+## Evidence
+
+```
+[GAMELOG Turn9 M1] All Hallow's Eve (42) puts 2 Scream counter(s) on Bazaar of Baghdad (0)
+[GAMELOG Turn25 DR] Random1 draws Bazaar of Baghdad (0)
+```
+
+All Hallow's Eve should put counters on ITSELF in exile, but instead puts them on Bazaar of Baghdad (which has CardId 0).
 
 ## Impact
 
-- Confusing logs make debugging difficult
-- May indicate deeper targeting bugs where wrong permanents are affected
-- All Hallow's Eve case suggests counters may be placed on wrong permanent
+- **GAMEPLAY BUG**: Wrong card receives counters/effects
+- Effects using Defined$ Remembered don't work correctly
+- Affects: All Hallow's Eve, various other cards with remember mechanics
 
-## Related
+## Fix
 
-This may be related to the SearchLibrary placeholder bug (mtg-74577) - both involve unresolved placeholders.
+Implement remembered cards tracking:
+1. Add `remembered_cards: Vec<CardId>` to GameState or spell resolution context
+2. Resolve `Defined$ Remembered` placeholder at execution time
+3. This is a significant feature, not a quick fix
+
+## Priority
+
+Should be elevated to priority 2 - this causes incorrect gameplay.

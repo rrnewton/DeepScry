@@ -3837,11 +3837,7 @@ impl GameState {
             let player = self.get_player_mut(target_id)?;
             player.lose_life(amount);
 
-            // Get new life total for logging
-            let new_life = player.life;
-            let player_name = player.name.clone();
-
-            // Log the life change
+            // Log the life change for undo system
             self.undo_log.log(
                 crate::undo::GameAction::ModifyLife {
                     player_id: target_id,
@@ -3850,9 +3846,8 @@ impl GameState {
                 prior_log_size,
             );
 
-            // Log damage with new life total (use gamelog for official action)
-            let message = format!("{} takes {} damage (life: {})", player_name, amount, new_life);
-            self.logger.gamelog(&message);
+            // Note: Display logging is handled by callers (combat.rs, logging.rs)
+            // to avoid duplicate "deals X damage" and "takes X damage" messages
 
             return Ok(());
         }

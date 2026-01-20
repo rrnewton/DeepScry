@@ -164,6 +164,19 @@ impl<'a> GameLoop<'a> {
                         player: card_owner,
                         count: *count,
                     },
+                    Effect::SearchLibrary {
+                        player,
+                        card_type_filter,
+                        destination,
+                        enters_tapped,
+                        shuffle,
+                    } if player.as_u32() == 0 => Effect::SearchLibrary {
+                        player: card_owner,
+                        card_type_filter: card_type_filter.clone(),
+                        destination: *destination,
+                        enters_tapped: *enters_tapped,
+                        shuffle: *shuffle,
+                    },
                     _ => effect.clone(),
                 };
 

@@ -1,17 +1,17 @@
 ---
 title: Combat damage logged twice with different formats
-status: open
+status: closed
 priority: 4
 issue_type: bug
 created_at: 2026-01-20T10:19:33.658210267+00:00
-updated_at: 2026-01-20T10:19:33.658210267+00:00
+updated_at: 2026-01-20T10:39:34.497929685+00:00
 ---
 
 # Description
 
 ## Bug Description
 
-Combat damage events are logged twice - once as 'X deals N damage' and once as 'Player takes N damage'.
+Combat damage events were logged twice - once as "X deals N damage" and once as "Player takes N damage".
 
 ## Evidence
 
@@ -19,17 +19,20 @@ From game log:
 ```
 [GAMELOG Turn6 CD] Royal Assassin (120) deals 1 damage to Random1 (life: 19)
 [GAMELOG Turn6 CD] Random1 takes 1 damage (life: 19)
-
-[GAMELOG Turn10 CD] Sengir Vampire (114) deals 4 damage to Random1 (life: 15)
-[GAMELOG Turn10 CD] Random1 takes 4 damage (life: 15)
 ```
 
-## Impact
+## Root Cause
 
-- Minor - cosmetic logging issue only
-- Makes log analysis more verbose
-- No gameplay impact
+`deal_damage()` in mod.rs logged "takes N damage" after the damage was dealt. But callers already logged damage:
+- Combat: `game_loop/combat.rs:435` logs "deals N damage to"
+- Spells: `logging.rs:137` logs "deals N damage to"
 
 ## Fix
 
-Consolidate the damage logging to use a single format, or remove redundant message.
+Removed redundant "takes N damage" logging from `deal_damage()` in mod.rs since callers already log appropriately.
+
+Also updated `wildcard_multicommand_e2e.sh` test which was checking for the removed log message.
+
+## Verified
+
+`make validate` passes.

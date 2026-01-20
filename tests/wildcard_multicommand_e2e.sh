@@ -74,7 +74,7 @@ else
     exit 1
 fi
 
-cat "$OUTPUT" | grep -E "(Turn [0-9]|Silvercoat|Grizzly|attack|damage|Player 2 takes|Battlefield:|Winner)" | head -100
+cat "$OUTPUT" | grep -E "(Turn [0-9]|Silvercoat|Grizzly|attack|damage|deals.*damage to Player 2|Battlefield:|Winner)" | head -100
 
 echo ""
 echo "========================================"
@@ -93,8 +93,8 @@ else
     exit 1
 fi
 
-# Check that Player 2 took damage
-if grep -qi "player 2 takes.*damage" "$OUTPUT"; then
+# Check that Player 2 took damage (combat damage logged as "deals X damage to Player 2")
+if grep -qiE "deals.*damage to Player 2" "$OUTPUT"; then
     echo "✓ Player 2 took damage from attack"
 else
     echo "✗ FAIL: Player 2 did not take damage"

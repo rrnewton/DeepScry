@@ -1391,12 +1391,22 @@ impl CardDefinition {
             };
 
             if let Some(effect) = effect {
+                // Balance effects store their SubAbility reference internally and are
+                // handled by the game loop's resolve_balance_effect_chain(). Don't
+                // follow SubAbility chain during parsing to avoid duplicate processing.
+                let is_balance = matches!(effect, crate::core::Effect::Balance { .. });
                 effects.push(effect);
-            }
 
-            // Follow SubAbility$ chain to parse additional effects
-            // Example: A:SP$ Pump | SubAbility$ DBToken creates both Pump and Token effects
-            self.follow_sub_ability_chain(&params, &mut effects);
+                if !is_balance {
+                    // Follow SubAbility$ chain to parse additional effects
+                    // Example: A:SP$ Pump | SubAbility$ DBToken creates both Pump and Token effects
+                    self.follow_sub_ability_chain(&params, &mut effects);
+                }
+            } else {
+                // No effect was created - still follow SubAbility chain in case
+                // the main ability is unsupported but SubAbility is supported
+                self.follow_sub_ability_chain(&params, &mut effects);
+            }
             // Note: Unsupported API types are silently skipped (returns None)
             // This is intentional - we don't want to spam warnings for every unsupported ability
         }
