@@ -99,6 +99,26 @@ impl<'a> GameLoop<'a> {
 
             // Declare each chosen attacker
             for attacker_id in attackers.iter() {
+                // Pre-check: Skip creatures no longer on battlefield
+                // This can happen when a previous attacker's trigger (e.g., Beetle-Headed Merchants)
+                // sacrifices another chosen attacker (e.g., Fire Sages) as a cost.
+                // MTG Rules allow triggers to modify game state during the declare attackers step.
+                if !self.game.battlefield.contains(*attacker_id) {
+                    if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                        let card_name = self
+                            .game
+                            .cards
+                            .get(*attacker_id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("Unknown");
+                        self.game.logger.verbose(&format!(
+                            "Skipping {} ({}) as attacker - no longer on battlefield",
+                            card_name, attacker_id
+                        ));
+                    }
+                    continue;
+                }
+
                 // Use GameState::declare_attacker() which taps the creature (MTG Rules 508.1f)
                 // NOT Combat::declare_attacker() which only adds to the attackers list
                 if let Err(e) = self.game.declare_attacker(active_player, *attacker_id) {
