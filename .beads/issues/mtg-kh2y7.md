@@ -45,12 +45,56 @@ or hangs instead of making/submitting a choice.
 - JavaScript single-threaded - triggers are sequential
 - WASM tui_run_turn() is synchronous (blocks JS event loop)
 
-## Possible Root Causes
+## Root Cause (2026-01-20_#1719)
 
-1. **Race condition**: choice_request arrives during game loop, not seen until next iteration
-2. **State corruption**: Some game state causes infinite loop or unexpected NeedInput
-3. **WebSocket timing**: Messages queued during WASM execution not processed correctly
-4. **Game loop termination**: Game returns Complete but state not cleaned up properly
+**CONFIRMED: Client-Server Game State Desync**
+
+The server logs reveal the issue:
+```
+[WARN] NetworkController 1: Invalid choice index 2 (max 1), clamping to 0
+[WARN] NetworkController 1: Corrected choice from [2] to [0]
+[WARN] RemoteController: invalid ability index 2 (available=0)
+```
+
+The WASM client's local "shadow" game state is **drifting** from the server's
+authoritative game state:
+1. Server says: "you have 1 option (pass priority)"
+2. Client's local game says: "I have 3 options"
+3. Client's RandomController chooses option index 2
+4. Server receives invalid index, clamps to 0
+
+This desync accumulates over time. Eventually the states diverge so much that:
+- The local game gets stuck in a state the server isn't in
+- OR the game loop enters an infinite internal loop
+- OR a controller call hangs waiting for something that won't arrive
+
+**Why this happens:**
+The WASM network client lacks proper synchronization mechanisms that the native
+client has:
+- Native: Uses action-count keyed reveals with `drain_reveals_up_to()`
+- Native: Has `sync_callback` that processes reveals before choices
+- Native: Tracks `server_action_count` for sync targeting
+- WASM: Has none of these, uses simple FIFO reveal queue
+
+**The basic E2E test passes because:**
+It uses deterministic behavior (ZeroController always passes), so the local game
+state stays roughly in sync with the server. The random test introduces divergence
+because the client's RandomController makes choices based on its (incorrect)
+local game state.
+
+## Fix Required
+
+Implement the architecture updates outlined in the plan file:
+`.claude/plans/snazzy-meandering-pond.md`
+
+Key changes needed:
+1. Add action-count keyed reveal handling to WasmNetworkClient
+2. Add sync mechanism to WasmNetworkLocalController
+3. Track server_action_count for proper synchronization
+4. Ensure reveals are processed before each choice
+
+This is non-trivial - the native client evolved this architecture over time,
+and WASM needs similar mechanisms adapted for non-blocking operation.
 
 ## Reproduction
 
@@ -70,7 +114,8 @@ done
 
 ## Next Steps
 
-1. Add more detailed logging to trace exact control flow
-2. Check if RandomController ever returns NeedInput (shouldn't)
-3. Investigate if specific game states trigger the hang
-4. Consider adding yield points in long-running game loops
+1. ✅ Add more detailed logging - DONE (root cause found)
+2. ✅ Check RandomController - VERIFIED it never returns NeedInput
+3. ✅ Identify cause - Client-server desync confirmed via server warnings
+4. **TODO**: Implement sync architecture (see Fix Required section above)
+5. **TODO**: Add integration tests for sync behavior

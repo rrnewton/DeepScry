@@ -147,8 +147,13 @@ async function runTest() {
         page.on('console', msg => {
             const entry = { timestamp: new Date().toISOString(), type: msg.type(), text: msg.text() };
             testResults.browserLogs.push(entry);
-            // Log errors and network-related messages
-            if (msg.type() === 'error' || msg.text().includes('[Network]')) {
+            // Log errors, network messages, and WASM debug logs
+            if (msg.type() === 'error' ||
+                msg.text().includes('[Network]') ||
+                msg.text().includes('[Test]') ||
+                msg.text().includes('wasm_tui') ||
+                msg.text().includes('WasmNetwork') ||
+                msg.text().includes('NETWORK AI')) {
                 log(`Browser: ${msg.text()}`);
             }
         });
@@ -169,6 +174,16 @@ async function runTest() {
         await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });
         log('WASM loaded');
+
+        // Enable debug logging to diagnose hang issues
+        await page.evaluate(() => {
+            if (typeof window.setLogLevel === 'function') {
+                window.setLogLevel('debug');
+                console.log('[Test] WASM debug logging enabled via window.setLogLevel');
+            } else {
+                console.log('[Test] window.setLogLevel not found');
+            }
+        });
 
         await page.screenshot({ path: path.join(screenshotDir, 'random_01_initial.png'), fullPage: true });
 
