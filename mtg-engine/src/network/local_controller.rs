@@ -169,10 +169,15 @@ impl<C: PlayerController> NetworkLocalController<C> {
         }
     }
 
-    /// Verify client and server action counts match
+    /// Verify client and server action counts match (informational)
     ///
-    /// After sync_callback processes pending reveals, the client's action count
-    /// should match the server's. If they still differ, it indicates a desync bug.
+    /// Note: This check can show false positives due to timing:
+    /// - The server sends ChoiceRequest AFTER processing reveals
+    /// - The client receives ChoiceRequest but sync_callback hasn't run yet
+    /// - This check sees the mismatch before sync_callback processes reveals
+    ///
+    /// The server is authoritative and will detect real desyncs when the client
+    /// submits its choice. This client-side check is for early warning/debugging.
     ///
     /// # Arguments
     /// * `view` - The current game state view (for client's action count)
@@ -181,12 +186,15 @@ impl<C: PlayerController> NetworkLocalController<C> {
     fn verify_action_count_sync(&self, view: &GameStateView, server_action_count: u64) {
         let client_action_count = view.action_count() as u64;
         if client_action_count != server_action_count && server_action_count > 0 {
-            // After sync_callback should have run, any remaining diff is a warning
-            // (sync_callback uses server_action_count as target, so reveals should be processed)
+            // Log the discrepancy for debugging
+            // Note: This can be a false positive if sync_callback hasn't run yet
+            // with the new server_action_count. The server will catch real desyncs.
             log::warn!(
-                "NetworkLocalController: action_count mismatch after sync! client={} server={} (potential desync)",
+                "NetworkLocalController: action_count mismatch (may be timing issue)! \
+                 client={} server={} (diff={})",
                 client_action_count,
-                server_action_count
+                server_action_count,
+                server_action_count as i64 - client_action_count as i64
             );
         }
     }

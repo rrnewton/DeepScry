@@ -94,6 +94,10 @@ pub struct WasmNetworkClient {
     /// Whether the last SubmitChoice was acknowledged
     choice_acknowledged: bool,
 
+    /// Last submitted choice sequence number (for duplicate detection)
+    /// This is stored in the client so it persists across controller instances
+    last_submitted_choice_seq: Option<u32>,
+
     /// Outbound message queue (JavaScript polls and sends)
     outbound_queue: VecDeque<String>,
 
@@ -139,6 +143,7 @@ impl WasmNetworkClient {
             opponent_choices: VecDeque::new(),
             current_choice_request: None,
             choice_acknowledged: true, // Start acknowledged (no pending)
+            last_submitted_choice_seq: None,
             outbound_queue: VecDeque::new(),
             last_error: None,
             winner: None,
@@ -548,8 +553,9 @@ impl WasmNetworkClient {
     /// Queue a SubmitChoice response
     pub fn submit_choice(&mut self, choice_indices: Vec<usize>, action_count: u64, state_hash: Option<u64>) {
         if let Some(ref request) = self.current_choice_request {
+            let choice_seq = request.choice_seq;
             let msg = ClientMessage::SubmitChoice {
-                choice_seq: request.choice_seq,
+                choice_seq,
                 choice_indices,
                 action_count,
                 timestamp_ms: crate::network::now_ms(),
@@ -558,10 +564,25 @@ impl WasmNetworkClient {
             };
             self.queue_outbound(msg);
             self.choice_acknowledged = false;
+            self.last_submitted_choice_seq = Some(choice_seq);
             self.current_choice_request = None;
+            log::debug!(
+                "WasmNetworkClient: Submitted choice seq={}, waiting for ack",
+                choice_seq
+            );
         } else {
             log::warn!("WasmNetworkClient: submit_choice called without pending request");
         }
+    }
+
+    /// Get the last submitted choice sequence number
+    pub fn last_submitted_choice_seq(&self) -> Option<u32> {
+        self.last_submitted_choice_seq
+    }
+
+    /// Clear the last submitted choice sequence (called when ack is processed)
+    pub fn clear_last_submitted_choice_seq(&mut self) {
+        self.last_submitted_choice_seq = None;
     }
 
     /// Queue a ping message

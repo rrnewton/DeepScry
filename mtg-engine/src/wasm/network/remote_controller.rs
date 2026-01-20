@@ -64,6 +64,7 @@ impl WasmRemoteController {
         if client.state() == super::client::NetworkState::GameEnded {
             drop(client);
             self.game_ended = true;
+            log::debug!("WasmRemoteController: Game ended, returning ExitGame");
             return ChoiceResult::ExitGame;
         }
         drop(client);
@@ -72,14 +73,16 @@ impl WasmRemoteController {
         let mut client = self.network_client.borrow_mut();
         if let Some(choice) = client.pop_opponent_choice() {
             log::debug!(
-                "WasmRemoteController: Opponent chose indices {:?} ({})",
+                "WasmRemoteController: Opponent chose indices {:?} (seq={}, {})",
                 choice.choice_indices,
+                choice.choice_seq,
                 choice.description
             );
             // Store spell_ability for choose_spell_ability_to_play to use
             self.last_spell_ability = choice.spell_ability;
             ChoiceResult::Ok(choice.choice_indices)
         } else {
+            log::debug!("WasmRemoteController: No opponent choice available, returning NeedInput");
             ChoiceResult::NeedInput(waiting_for_opponent_context())
         }
     }

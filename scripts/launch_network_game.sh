@@ -37,6 +37,9 @@ WEB_PORT=8000
 PASSWORD="play"
 DECK="decks/old_school/01_rogue_rogerbrand.dck"
 CONTROLLER="random"
+# Fixed seeds for deterministic behavior (WASM uses seed=42, native should match)
+GAME_SEED=42
+CONTROLLER_SEED=43  # Different from game seed for independent randomness
 
 # Colors
 RED='\033[0;31m'
@@ -127,23 +130,25 @@ WEB_PID=$!
 cd "$WORKSPACE_ROOT"
 sleep 0.5
 
-# Start game server using run_mtg_prebuilt
+# Start game server using run_mtg_prebuilt (with fixed seed for determinism)
 echo -e "${YELLOW}Starting game server...${NC}"
 run_mtg_prebuilt server \
     --port $GAME_PORT \
     --password "$PASSWORD" \
     --cardsfolder mtg-engine/cardsfolder \
+    --seed $GAME_SEED \
     --verbosity normal &
 SERVER_PID=$!
 sleep 1
 
-# Start native client with random controller using run_mtg_prebuilt
+# Start native client with random controller using run_mtg_prebuilt (with fixed seed)
 echo -e "${YELLOW}Starting native client (random AI)...${NC}"
 run_mtg_prebuilt connect \
     --server "localhost:$GAME_PORT" \
     --password "$PASSWORD" \
     --name "RogueAI" \
     --controller "$CONTROLLER" \
+    --seed-player $CONTROLLER_SEED \
     --cardsfolder mtg-engine/cardsfolder \
     "$DECK" &
 CLIENT_PID=$!
