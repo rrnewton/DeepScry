@@ -125,6 +125,12 @@ pub enum ClientMessage {
         client_state_hash: Option<u64>,
         /// Debug synchronization info (only in network debug mode)
         debug_info: Option<DebugSyncInfo>,
+        /// The actual spell ability chosen (for Priority choices)
+        ///
+        /// When present, server uses this directly instead of looking up by index.
+        /// This is more robust against client/server state divergence since it
+        /// identifies the ability by CardId rather than position in a list.
+        spell_ability: Option<SpellAbility>,
     },
 
     /// Request to disconnect gracefully
@@ -1189,6 +1195,7 @@ mod tests {
                 timestamp_ms: 1234567890,
                 client_state_hash: None,
                 debug_info: None,
+                spell_ability: None,
             },
             ClientMessage::Ping {
                 timestamp_ms: 9876543210,

@@ -80,6 +80,19 @@ pub struct ChoiceResponse {
     /// For single-select choices, this is a 1-element vec.
     /// For multi-select choices (attackers, blockers), contains all selected indices.
     pub choice_indices: Vec<usize>,
+    /// The actual spell ability chosen by the client (for Priority choices)
+    ///
+    /// Used for VALIDATION ONLY - to detect desync early. The canonical choice
+    /// is always determined by index. If the index-based lookup doesn't match
+    /// this spell_ability, it indicates a desync and is a FATAL ERROR.
+    /// See docs/NETWORK_ARCHITECTURE.md for the "desync is always fatal" principle.
+    pub spell_ability: Option<crate::core::SpellAbility>,
+}
+
+/// Result of request_choice including both indices and optional spell_ability
+struct NetworkChoiceResult {
+    indices: Vec<usize>,
+    spell_ability: Option<crate::core::SpellAbility>,
 }
 
 /// Error that can occur during network communication
@@ -198,7 +211,7 @@ impl NetworkController {
         options: Vec<String>,
         state_hash: u64,
         abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
-    ) -> Result<Vec<usize>, NetworkError> {
+    ) -> Result<NetworkChoiceResult, NetworkError> {
         // Collect reveals since this player's last choice and include them in the request.
         // This ensures reveals are sent BEFORE the ChoiceRequest arrives, eliminating
         // race conditions where the client's shadow GameLoop needs reveals before they arrive.
@@ -303,7 +316,10 @@ impl NetworkController {
             );
         }
 
-        Ok(corrected_indices)
+        Ok(NetworkChoiceResult {
+            indices: corrected_indices,
+            spell_ability: response.spell_ability,
+        })
     }
 
     /// Increment choice sequence after a successful choice
@@ -478,21 +494,54 @@ impl PlayerController for NetworkController {
         };
 
         match self.request_choice(view, choice_type, options, state_hash, Some(abilities)) {
-            Ok(indices) if indices.first() == Some(&0) => {
+            Ok(result) if result.indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Pass priority
             }
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
-                // Single-select: use first index. Subtract 1 because option 0 is "Pass priority"
-                let idx = indices.first().copied().unwrap_or(0);
+
+                // Canonical: always use index-based lookup
+                let idx = result.indices.first().copied().unwrap_or(0);
                 let ability_idx = idx - 1;
-                if ability_idx < available.len() {
-                    let ability = available[ability_idx].clone();
-                    ChoiceResult::Ok(Some(ability))
-                } else {
-                    ChoiceResult::Error("Invalid ability index from network".to_string())
+                if ability_idx >= available.len() {
+                    return ChoiceResult::Error(format!(
+                        "FATAL DESYNC: Invalid ability index {} from network (available: {})",
+                        ability_idx,
+                        available.len()
+                    ));
                 }
+
+                let ability = available[ability_idx].clone();
+
+                // VALIDATION ONLY: If spell_ability is present, verify it matches.
+                // A mismatch indicates desync - we crash immediately, no recovery.
+                // See docs/NETWORK_ARCHITECTURE.md for why desync is always fatal.
+                if let Some(ref expected) = result.spell_ability {
+                    if &ability != expected {
+                        log::error!(
+                            "FATAL DESYNC: NetworkController {:?}: Index {} selected {:?}, \
+                             but client sent spell_ability {:?}. \
+                             This indicates client/server state divergence.",
+                            self.player_id,
+                            idx,
+                            ability,
+                            expected
+                        );
+                        return ChoiceResult::Error(format!(
+                            "FATAL DESYNC: Choice mismatch - index {} selected {:?}, \
+                             but client expected {:?}",
+                            idx, ability, expected
+                        ));
+                    }
+                    log::debug!(
+                        "NetworkController {:?}: Validated spell_ability matches index {}",
+                        self.player_id,
+                        idx
+                    );
+                }
+
+                ChoiceResult::Ok(Some(ability))
             }
             Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
             Err(e) => ChoiceResult::Error(e.to_string()),
@@ -525,10 +574,10 @@ impl PlayerController for NetworkController {
         };
 
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 // Single-select for now (FIXME-UNFINISHED for multiple targets)
-                let idx = indices.first().copied().unwrap_or(0);
+                let idx = result.indices.first().copied().unwrap_or(0);
                 if idx < valid_targets.len() {
                     ChoiceResult::Ok(SmallVec::from_slice(&[valid_targets[idx]]))
                 } else {
@@ -560,10 +609,10 @@ impl PlayerController for NetworkController {
 
         // FIXME-UNFINISHED: Needs multi-select for paying costs with multiple sources
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 // Single-select for now
-                let idx = indices.first().copied().unwrap_or(0);
+                let idx = result.indices.first().copied().unwrap_or(0);
                 if idx < available_sources.len() {
                     ChoiceResult::Ok(SmallVec::from_slice(&[available_sources[idx]]))
                 } else {
@@ -597,15 +646,15 @@ impl PlayerController for NetworkController {
         // Multi-select for attackers: indices contains all selected attacker indices
         // Index 0 means "done selecting" (no more attackers), indices 1..N are creature indices
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) if indices.is_empty() || indices == vec![0] => {
+            Ok(result) if result.indices.is_empty() || result.indices == vec![0] => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(SmallVec::new()) // No attackers
             }
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 // Convert indices to CardIds (indices are 1-based, 0 is "done")
                 let mut attackers = SmallVec::new();
-                for &idx in &indices {
+                for &idx in &result.indices {
                     if idx == 0 {
                         continue; // Skip "done selecting" marker
                     }
@@ -653,15 +702,15 @@ impl PlayerController for NetworkController {
         // Multi-select for blockers: indices contains all selected blocker-attacker pairs
         // Index 0 means "done selecting", indices 1..N encode (blocker, attacker) pairs
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) if indices.is_empty() || indices == vec![0] => {
+            Ok(result) if result.indices.is_empty() || result.indices == vec![0] => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(SmallVec::new()) // No blockers
             }
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 // Convert indices to (blocker, attacker) pairs
                 let mut blocks = SmallVec::new();
-                for &idx in &indices {
+                for &idx in &result.indices {
                     if idx == 0 {
                         continue; // Skip "done selecting" marker
                     }
@@ -705,33 +754,33 @@ impl PlayerController for NetworkController {
 
         // Multi-select for damage order: indices specify the full ordering
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 // If indices specify a full ordering, use it directly
                 // Otherwise fall back to putting first index at front
-                if indices.len() == blockers.len() {
+                if result.indices.len() == blockers.len() {
                     // Full ordering provided
-                    let mut result = SmallVec::new();
-                    for &idx in &indices {
+                    let mut order = SmallVec::new();
+                    for &idx in &result.indices {
                         if idx < blockers.len() {
-                            result.push(blockers[idx]);
+                            order.push(blockers[idx]);
                         } else {
                             return ChoiceResult::Error(format!("Invalid damage order index {} from network", idx));
                         }
                     }
-                    ChoiceResult::Ok(result)
+                    ChoiceResult::Ok(order)
                 } else {
                     // Single index: put that blocker first, others follow in original order
-                    let idx = indices.first().copied().unwrap_or(0);
+                    let idx = result.indices.first().copied().unwrap_or(0);
                     if idx < blockers.len() {
-                        let mut result = SmallVec::new();
-                        result.push(blockers[idx]);
+                        let mut order = SmallVec::new();
+                        order.push(blockers[idx]);
                         for (i, &blocker) in blockers.iter().enumerate() {
                             if i != idx {
-                                result.push(blocker);
+                                order.push(blocker);
                             }
                         }
-                        ChoiceResult::Ok(result)
+                        ChoiceResult::Ok(order)
                     } else {
                         ChoiceResult::Error("Invalid damage order index from network".to_string())
                     }
@@ -762,10 +811,10 @@ impl PlayerController for NetworkController {
 
         // Multi-select for discarding multiple cards
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 let mut discards = SmallVec::new();
-                for &idx in &indices {
+                for &idx in &result.indices {
                     if idx < hand.len() {
                         discards.push(hand[idx]);
                     } else {
@@ -814,13 +863,13 @@ impl PlayerController for NetworkController {
         };
 
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) if indices.first() == Some(&0) => {
+            Ok(result) if result.indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Declined to find
             }
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
-                let idx = indices.first().copied().unwrap_or(0);
+                let idx = result.indices.first().copied().unwrap_or(0);
                 if idx == 0 {
                     return ChoiceResult::Ok(None); // Declined
                 }
@@ -868,10 +917,10 @@ impl PlayerController for NetworkController {
 
         // Request choice (client sends all selections in one message for multi-select)
         match self.request_choice(view, choice_type, options, state_hash, None) {
-            Ok(indices) => {
+            Ok(result) => {
                 self.increment_choice_seq();
                 let mut sacrifices = SmallVec::new();
-                for idx in indices {
+                for idx in result.indices {
                     if idx < valid_permanents.len() {
                         let card_id = valid_permanents[idx];
                         if !sacrifices.contains(&card_id) {
@@ -996,6 +1045,7 @@ mod tests {
                 .send(ChoiceResponse {
                     choice_seq: 1,
                     choice_indices: vec![2],
+                    spell_ability: None,
                 })
                 .unwrap();
         });
@@ -1010,7 +1060,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(result.unwrap(), vec![2]);
+        assert_eq!(result.unwrap().indices, vec![2]);
     }
 
     #[test]
@@ -1032,6 +1082,7 @@ mod tests {
                 .send(ChoiceResponse {
                     choice_seq: 999, // Wrong sequence
                     choice_indices: vec![0],
+                    spell_ability: None,
                 })
                 .unwrap();
         });
@@ -1068,6 +1119,7 @@ mod tests {
                 .send(ChoiceResponse {
                     choice_seq: 1,
                     choice_indices: vec![10], // Invalid - only 2 options, should clamp to 0
+                    spell_ability: None,
                 })
                 .unwrap();
         });
@@ -1081,7 +1133,7 @@ mod tests {
         );
 
         // Invalid index 10 should be clamped to 0, not return an error
-        assert_eq!(result.unwrap(), vec![0]);
+        assert_eq!(result.unwrap().indices, vec![0]);
     }
 
     #[test]

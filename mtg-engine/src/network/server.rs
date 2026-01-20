@@ -234,6 +234,8 @@ struct PendingChoice {
     action_count: u64,
     client_state_hash: Option<u64>,
     client_debug_info: Option<crate::network::protocol::DebugSyncInfo>,
+    /// The actual spell ability chosen (for Priority choices)
+    spell_ability: Option<SpellAbility>,
 }
 
 /// Player connection with single-channel architecture.
@@ -1352,10 +1354,11 @@ async fn handle_player_websocket(
                                 conn.player_id, pending.choice_seq
                             );
 
-                            // Send response to coordinator
+                            // Send response to coordinator, including spell_ability for robust matching
                             let response = ChoiceResponse {
                                 choice_seq: pending.choice_seq,
                                 choice_indices: pending.choice_indices,
+                                spell_ability: pending.spell_ability,
                             };
                             conn.game_tx.send(HandlerToGame::ChoiceResponse {
                                 response,
@@ -1484,17 +1487,18 @@ async fn handle_player_websocket(
                                 action_count,
                                 client_state_hash,
                                 debug_info,
+                                spell_ability,
                                 ..
                             }) => {
                                 if waiting_for_choice.take().is_some() {
                                     // Normal case: we sent ChoiceRequest and client is responding
                                     log::debug!(
-                                        "Handler P{}: Received choice seq={} action_count={}",
-                                        conn.player_id, choice_seq, action_count
+                                        "Handler P{}: Received choice seq={} action_count={} spell_ability={:?}",
+                                        conn.player_id, choice_seq, action_count, spell_ability.as_ref().map(|a| format!("{:?}", a))
                                     );
 
-                                    // Send response to coordinator
-                                    let response = ChoiceResponse { choice_seq, choice_indices };
+                                    // Send response to coordinator, including spell_ability for robust matching
+                                    let response = ChoiceResponse { choice_seq, choice_indices, spell_ability };
                                     conn.game_tx.send(HandlerToGame::ChoiceResponse {
                                         response,
                                         client_action_count: action_count,
@@ -1513,6 +1517,7 @@ async fn handle_player_websocket(
                                         action_count,
                                         client_state_hash,
                                         client_debug_info: debug_info,
+                                        spell_ability,
                                     });
                                 }
                             }
