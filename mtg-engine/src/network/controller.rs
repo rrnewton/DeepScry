@@ -108,6 +108,9 @@ pub enum NetworkError {
     InvalidChoice { max: usize, got: usize },
     /// Channel error
     ChannelError(String),
+    /// Client/server desync - FATAL error indicating state divergence
+    /// This should NEVER be recovered from - it indicates a fundamental bug
+    DesyncError(String),
 }
 
 impl std::fmt::Display for NetworkError {
@@ -122,6 +125,7 @@ impl std::fmt::Display for NetworkError {
                 write!(f, "Invalid choice index: {} (max {})", got, max)
             }
             NetworkError::ChannelError(msg) => write!(f, "Channel error: {}", msg),
+            NetworkError::DesyncError(msg) => write!(f, "FATAL DESYNC: {}", msg),
         }
     }
 }
@@ -244,8 +248,9 @@ impl NetworkController {
         // Build debug info if network debug mode is enabled
         // Note: rng_hash is None here because controllers don't have direct RNG access.
         // Full RNG verification would require GameLoop to pass the hash through.
+        // Pass requesting player ID to include their hand's CardIds for desync detection.
         let debug_info = if self.network_debug {
-            Some(crate::game::build_debug_sync_info(view, 10, None))
+            Some(crate::game::build_debug_sync_info(view, 10, None, Some(self.player_id)))
         } else {
             None
         };
@@ -287,37 +292,32 @@ impl NetworkController {
             });
         }
 
-        // Validate choice indices and clamp invalid ones to safe values
-        // This makes the network protocol robust to desync - we log a warning but don't crash
-        let mut corrected_indices = response.choice_indices.clone();
-        let mut had_invalid = false;
-
-        for idx in &mut corrected_indices {
+        // Validate choice indices - FATAL ERROR on invalid index (desync detection)
+        // Per mtg-wsl8g: "Desync is ALWAYS a Fatal Error" - we do NOT paper over desync
+        // with recovery hacks like clamping. Instead, we crash with a clear error message.
+        for idx in &response.choice_indices {
             if *idx >= options.len() {
-                log::warn!(
-                    "NetworkController {:?}: Invalid choice index {} (max {}), clamping to 0. \
-                     This may indicate client/server desync.",
+                // This is a FATAL desync error - the client and server have different views
+                // of the available choices. This should NEVER happen with a properly
+                // synchronized client. Do NOT recover - crash to expose the bug.
+                let error_msg = format!(
+                    "DESYNC DETECTED: NetworkController {:?} received invalid choice index {} \
+                     (only {} options available). Client sent indices {:?}. \
+                     This indicates client/server state divergence - a fundamental bug that \
+                     must be fixed, NOT papered over with clamping.",
                     self.player_id,
                     *idx,
-                    options.len()
+                    options.len(),
+                    response.choice_indices
                 );
-                // Clamp to index 0 which is typically "Pass" or the safest default
-                *idx = 0;
-                had_invalid = true;
+                log::error!("{}", error_msg);
+                // Return an error rather than clamping - let the caller handle the fatal error
+                return Err(NetworkError::DesyncError(error_msg));
             }
         }
 
-        if had_invalid {
-            log::warn!(
-                "NetworkController {:?}: Corrected choice from {:?} to {:?}",
-                self.player_id,
-                response.choice_indices,
-                corrected_indices
-            );
-        }
-
         Ok(NetworkChoiceResult {
-            indices: corrected_indices,
+            indices: response.choice_indices,
             spell_ability: response.spell_ability,
         })
     }
@@ -953,16 +953,74 @@ impl PlayerController for NetworkController {
 
     fn choose_modes(
         &mut self,
-        _view: &GameStateView,
-        _spell_id: CardId,
+        view: &GameStateView,
+        spell_id: CardId,
         mode_descriptions: &[String],
         mode_count: usize,
-        _min_modes: usize,
-        _can_repeat: bool,
+        min_modes: usize,
+        can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        // TODO: Add network protocol support for mode selection (send ChoiceRequest)
-        // For now, default to first N modes
-        ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
+        // Build options - each mode description becomes an option
+        let options: Vec<String> = mode_descriptions.to_vec();
+
+        // Compute state hash
+        let state_hash = self.compute_view_hash(view);
+
+        // Send request
+        let choice_type = ChoiceType::Modes {
+            spell_id,
+            mode_count,
+            min_modes,
+            can_repeat,
+            available_modes: mode_descriptions.len(),
+        };
+
+        // Request choice from client
+        match self.request_choice(view, choice_type, options, state_hash, None) {
+            Ok(result) => {
+                self.increment_choice_seq();
+                // Validate and collect mode indices
+                let mut modes = SmallVec::new();
+                for idx in result.indices {
+                    if idx < mode_descriptions.len() {
+                        // Check for repeats if not allowed
+                        if !can_repeat && modes.contains(&idx) {
+                            return ChoiceResult::Error(format!(
+                                "Duplicate mode {} selected (repeats not allowed)",
+                                idx
+                            ));
+                        }
+                        modes.push(idx);
+                    } else {
+                        return ChoiceResult::Error(format!(
+                            "Invalid mode index {} (max {})",
+                            idx,
+                            mode_descriptions.len() - 1
+                        ));
+                    }
+                }
+
+                // Validate mode count
+                if modes.len() < min_modes {
+                    return ChoiceResult::Error(format!(
+                        "Too few modes selected: {} (minimum {})",
+                        modes.len(),
+                        min_modes
+                    ));
+                }
+                if modes.len() > mode_count {
+                    return ChoiceResult::Error(format!(
+                        "Too many modes selected: {} (maximum {})",
+                        modes.len(),
+                        mode_count
+                    ));
+                }
+
+                ChoiceResult::Ok(modes)
+            }
+            Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
+            Err(e) => ChoiceResult::Error(e.to_string()),
+        }
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {
@@ -1102,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_choice_clamped() {
+    fn test_invalid_choice_returns_desync_error() {
         let (request_tx, request_rx) = mpsc::channel();
         let (response_tx, response_rx) = mpsc::channel();
         let shared_reveal_index = Arc::new(AtomicUsize::new(0));
@@ -1118,7 +1176,7 @@ mod tests {
             response_tx
                 .send(ChoiceResponse {
                     choice_seq: 1,
-                    choice_indices: vec![10], // Invalid - only 2 options, should clamp to 0
+                    choice_indices: vec![10], // Invalid - only 2 options
                     spell_ability: None,
                 })
                 .unwrap();
@@ -1132,8 +1190,17 @@ mod tests {
             None,
         );
 
-        // Invalid index 10 should be clamped to 0, not return an error
-        assert_eq!(result.unwrap().indices, vec![0]);
+        // Invalid index should return a DesyncError, NOT be clamped
+        // Per mtg-wsl8g: "Desync is ALWAYS a Fatal Error"
+        match result {
+            Err(NetworkError::DesyncError(msg)) => {
+                assert!(msg.contains("DESYNC DETECTED"), "Error should mention desync: {}", msg);
+                assert!(msg.contains("10"), "Error should mention invalid index 10: {}", msg);
+                assert!(msg.contains("2"), "Error should mention only 2 options: {}", msg);
+            }
+            Ok(_) => panic!("Expected DesyncError, got Ok"),
+            Err(e) => panic!("Expected DesyncError, got {:?}", e),
+        }
     }
 
     #[test]

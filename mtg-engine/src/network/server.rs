@@ -1379,6 +1379,7 @@ async fn handle_player_websocket(
                                 timestamp_ms: now_ms(),
                                 context: None,
                                 debug_info: choice_request.debug_info.clone(),
+                                abilities: choice_request.abilities.clone(),
                             }).await?;
 
                             // Mark that we're waiting for this choice

@@ -373,11 +373,16 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
 /// The optional `rng_hash` parameter allows including a hash of the RNG state
 /// to detect shuffle divergence between server and clients. This should be
 /// computed by the caller who has access to the actual RNG (e.g., GameLoop).
+///
+/// The optional `requesting_player` parameter, when provided, causes the
+/// sorted CardIds in that player's hand to be included. This allows detecting
+/// hand desync between server and client.
 #[cfg(feature = "network")]
 pub fn build_debug_sync_info(
     view: &crate::game::controller::GameStateView,
     last_action_count: usize,
     rng_hash: Option<u64>,
+    requesting_player: Option<crate::core::PlayerId>,
 ) -> crate::network::DebugSyncInfo {
     use crate::core::PlayerId;
     use crate::network::DebugSyncInfo;
@@ -390,6 +395,15 @@ pub fn build_debug_sync_info(
             .lines()
             .map(|s| s.to_string())
             .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Get sorted CardIds in requesting player's hand for desync detection
+    let requesting_player_hand_ids: Vec<u32> = if let Some(player_id) = requesting_player {
+        let mut hand_ids: Vec<u32> = view.player_hand(player_id).iter().map(|id| id.as_u32()).collect();
+        hand_ids.sort();
+        hand_ids
     } else {
         Vec::new()
     };
@@ -413,6 +427,7 @@ pub fn build_debug_sync_info(
         graveyard_sizes: [view.player_graveyard_size(p1), view.player_graveyard_size(p2)],
         last_actions,
         rng_hash,
+        requesting_player_hand_ids,
     }
 }
 

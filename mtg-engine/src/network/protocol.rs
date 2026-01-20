@@ -297,6 +297,14 @@ pub enum ServerMessage {
         context: Option<ChoiceContext>,
         /// Debug synchronization info (only in network debug mode)
         debug_info: Option<DebugSyncInfo>,
+        /// For Priority choices, the server's authoritative list of available abilities.
+        ///
+        /// Index 0 is "Pass priority" (None), indices 1+ are the actual abilities.
+        /// This eliminates race conditions where the client computes abilities before
+        /// receiving all CardRevealed messages. The client should use these abilities
+        /// instead of locally-computed ones for NetworkLocalController.
+        #[serde(default)]
+        abilities: Option<Vec<Option<SpellAbility>>>,
     },
 
     /// Notify client of opponent's choice (for sync)
@@ -715,6 +723,11 @@ pub struct DebugSyncInfo {
     /// If server and client RNGs diverge, this will differ.
     #[serde(default)]
     pub rng_hash: Option<u64>,
+    /// CardIds in the requesting player's hand (sorted for comparison).
+    /// This allows detecting hand desync - when client/server disagree on
+    /// which cards are in the player's hand.
+    #[serde(default)]
+    pub requesting_player_hand_ids: Vec<u32>,
 }
 
 impl DebugSyncInfo {
@@ -733,6 +746,7 @@ impl DebugSyncInfo {
             graveyard_sizes: [0, 0],
             last_actions: Vec::new(),
             rng_hash: None,
+            requesting_player_hand_ids: Vec::new(),
         }
     }
 
@@ -840,6 +854,16 @@ impl DebugSyncInfo {
         }
         if self.rng_hash != other.rng_hash {
             diffs.push(format!("rng_hash: {:?} vs {:?}", self.rng_hash, other.rng_hash));
+        }
+        // Only compare hand IDs if both have them populated
+        if !self.requesting_player_hand_ids.is_empty()
+            && !other.requesting_player_hand_ids.is_empty()
+            && self.requesting_player_hand_ids != other.requesting_player_hand_ids
+        {
+            diffs.push(format!(
+                "HAND DESYNC: server hand_ids={:?} vs client hand_ids={:?}",
+                self.requesting_player_hand_ids, other.requesting_player_hand_ids
+            ));
         }
 
         diffs
@@ -1000,6 +1024,7 @@ mod tests {
             timestamp_ms: 1234567890,
             context: None,
             debug_info: None,
+            abilities: None,
         };
 
         let json = serde_json::to_string(&msg).expect("serialize");
@@ -1124,6 +1149,7 @@ mod tests {
                 timestamp_ms: 1234567890,
                 context: None,
                 debug_info: None,
+                abilities: None,
             },
             ServerMessage::CardRevealed {
                 owner: player_id,

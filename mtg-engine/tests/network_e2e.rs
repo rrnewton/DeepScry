@@ -95,6 +95,7 @@ mod async_tests {
             timestamp_ms: 1234567890,
             context: None,
             debug_info: None,
+            abilities: None,
         };
 
         let request_json = serde_json::to_string(&request).expect("serialize request");

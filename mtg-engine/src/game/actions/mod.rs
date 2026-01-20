@@ -2126,6 +2126,12 @@ impl GameState {
                         // For now, move all looked-at cards to destination (simplified)
                         // TODO(mtg-dig-choice): Implement player choice for partial moves
                         for card_id in card_ids {
+                            // NETWORK: Reveal card to digger BEFORE moving to hand
+                            // This logs RevealCard action which server sends as CardRevealed message
+                            // Without this, clients don't know the card identity (causes desync)
+                            let prior_log_size = self.logger.log_count();
+                            self.maybe_reveal_to_player(card_id, digger, prior_log_size);
+
                             // Get card name if available - in network mode, library cards
                             // may not be in the client's entity store until revealed
                             let card_name = self
@@ -2169,6 +2175,11 @@ impl GameState {
 
                             // Now exile each card
                             for card_id in card_ids {
+                                // NETWORK: Reveal card to ALL players BEFORE moving
+                                // Exile is a public zone, so card identity is revealed
+                                let prior_log_size = self.logger.log_count();
+                                self.maybe_reveal_to_all(card_id, prior_log_size);
+
                                 // Get opponent name for logging
                                 let opponent_name = self.get_player(opponent_id)?.name.to_string();
 

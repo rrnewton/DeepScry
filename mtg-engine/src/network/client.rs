@@ -64,7 +64,12 @@ pub enum NetworkMessage {
         reason: RevealReason,
     },
     /// Server is requesting a choice from us
-    ChoiceRequest { action_count: u64, choice_seq: u32 },
+    ChoiceRequest {
+        action_count: u64,
+        choice_seq: u32,
+        /// Server's authoritative abilities for Priority choices (eliminates race conditions)
+        abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
+    },
     /// Server acknowledged our previous choice
     ChoiceAccepted { choice_seq: u32, action_count: u64 },
     /// Opponent made a choice
@@ -95,10 +100,12 @@ impl NetworkMessage {
             ServerMessage::ChoiceRequest {
                 action_count,
                 choice_seq,
+                abilities,
                 ..
             } => Some(NetworkMessage::ChoiceRequest {
                 action_count,
                 choice_seq,
+                abilities,
             }),
             ServerMessage::ChoiceAccepted {
                 choice_seq,
@@ -154,7 +161,12 @@ pub type ClientMessageSender = mpsc::Sender<ClientMessage>;
 #[derive(Debug, Clone)]
 pub enum LocalChoiceInfo {
     /// Server is requesting a choice from us
-    Request { action_count: u64, choice_seq: u32 },
+    Request {
+        action_count: u64,
+        choice_seq: u32,
+        /// Server's authoritative abilities for Priority choices (eliminates race conditions)
+        abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
+    },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
     /// Fatal error - exit with error
@@ -298,6 +310,7 @@ impl SharedNetworkState {
     ///
     /// Returns reveals that should be processed, removing them from the queue.
     /// Only returns reveals with action_count <= target.
+    #[allow(dead_code)] // May be used for stricter sync validation in the future
     pub fn drain_reveals_up_to(&self, target: u64) -> Vec<PendingReveal> {
         let mut queue = self.pending_reveals.lock().unwrap();
         let mut result = Vec::new();
@@ -308,6 +321,21 @@ impl SharedNetworkState {
         }
 
         result
+    }
+
+    /// Drain ALL pending reveals (greedy mode)
+    ///
+    /// Used when we need to process all reveals regardless of action_count.
+    /// This avoids race conditions where the WS reader hasn't yet updated
+    /// server_action_count when sync_callback is called.
+    ///
+    /// Safe because:
+    /// - Server sends CardRevealed BEFORE ChoiceRequest
+    /// - Client shadow game runs deterministically, reaching the same game states
+    /// - Reveals only arrive when they're actually needed
+    pub fn drain_all_reveals(&self) -> Vec<PendingReveal> {
+        let mut queue = self.pending_reveals.lock().unwrap();
+        queue.drain(..).collect()
     }
 
     /// Push a local choice request (ChoiceRequest from server)
@@ -363,6 +391,7 @@ impl SharedNetworkState {
                 self.push_local_choice(LocalChoiceInfo::Request {
                     action_count,
                     choice_seq,
+                    abilities: None, // Legacy path doesn't have abilities
                 });
             }
             ChoiceInfo::Opponent {
@@ -399,6 +428,7 @@ impl SharedNetworkState {
             LocalChoiceInfo::Request {
                 action_count,
                 choice_seq,
+                abilities: _, // Ignore abilities for legacy ChoiceInfo
             } => ChoiceInfo::Request {
                 action_count,
                 choice_seq,
@@ -1336,41 +1366,36 @@ impl NetworkClient {
             // Called at synchronization points (before validation, after draws, etc.)
             // to ensure cards are instantiated before they're needed.
             //
-            // Uses target_action to validate ordering: reveals should have
-            // action_count <= target_action when processed.
+            // GREEDY DRAINING: We drain ALL pending reveals, not just up to server_action_count.
+            // This avoids a race condition where:
+            //   1. Shadow game calls sync_to_action() BEFORE WS reader processes ChoiceRequest
+            //   2. server_action_count is still stale from the previous ChoiceRequest
+            //   3. Reveals for this turn's draw are not drained (tagged with stale action_count)
+            //   4. Available abilities are computed without the drawn card's identity
+            //   5. Desync occurs
+            //
+            // Greedy draining is safe because:
+            // - Server sends CardRevealed BEFORE ChoiceRequest
+            // - Client shadow game runs deterministically, reaching the same game states
+            // - Reveals only arrive when they're actually needed
             let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                // Use server's action count as sync target, not client's
-                // This ensures we process all reveals BEFORE making choices,
-                // even if the client hasn't caught up to the server's position yet.
-                let server_target = sync_state.server_action_count();
                 let game_action = game.undo_log.len() as u64;
-                let reveals = sync_state.drain_reveals_up_to(server_target);
+                // Greedy: drain ALL pending reveals
+                let reveals = sync_state.drain_all_reveals();
 
                 if !reveals.is_empty() {
                     log::debug!(
-                        "sync_callback: processing {} reveals up to server_target={} (game_action={})",
+                        "sync_callback: processing {} reveals (greedy mode, game_action={})",
                         reveals.len(),
-                        server_target,
                         game_action
                     );
                 }
 
                 for reveal in reveals {
-                    // Validate action count ordering
-                    if reveal.action_count > server_target {
-                        log::warn!(
-                            "sync_callback: reveal action_count {} > server_target {} for {} (game={})",
-                            reveal.action_count,
-                            server_target,
-                            reveal.card.name,
-                            game_action
-                        );
-                    }
                     log::trace!(
-                        "sync_callback: processing reveal {} at action {} (server_target={}, game={})",
+                        "sync_callback: processing reveal {} at tagged_action={} (game={})",
                         reveal.card.name,
                         reveal.action_count,
-                        server_target,
                         game_action
                     );
                     process_card_reveal(game, &card_db_for_sync, reveal.owner, reveal.card, reveal.reason);
@@ -1473,19 +1498,22 @@ async fn run_ws_reader_shared(
                             NetworkMessage::ChoiceRequest {
                                 action_count,
                                 choice_seq,
+                                abilities,
                             } => {
                                 // Update tracked action count (for sync targeting)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
                                 shared_state.update_server_action_count(action_count);
                                 // Push to LOCAL choice MVar (for NetworkLocalController)
                                 log::debug!(
-                                    "WsReaderShared: ChoiceRequest seq={} action={} -> local_mvar",
+                                    "WsReaderShared: ChoiceRequest seq={} action={} abilities={} -> local_mvar",
                                     choice_seq,
-                                    action_count
+                                    action_count,
+                                    abilities.as_ref().map(|a| a.len()).unwrap_or(0)
                                 );
                                 shared_state.push_local_choice(LocalChoiceInfo::Request {
                                     action_count,
                                     choice_seq,
+                                    abilities,
                                 });
                             }
                             NetworkMessage::ChoiceAccepted {
