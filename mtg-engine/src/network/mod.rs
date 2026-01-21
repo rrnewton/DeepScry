@@ -24,6 +24,10 @@
 mod protocol;
 pub use protocol::*;
 
+// Shared reveal processing (used by both native and WASM clients)
+mod reveal_processor;
+pub use reveal_processor::*;
+
 // Native controller types (require std::sync::mpsc and network feature)
 #[cfg(feature = "network")]
 mod client;

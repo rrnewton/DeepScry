@@ -1154,7 +1154,25 @@ impl WasmFancyTuiState {
             // Run the game with replay controller
             // Scope game_loop tightly so self can be accessed afterwards
             let result = {
-                let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                // Create sync callback that processes pending reveals
+                let client_for_sync = network_client.clone();
+                let sync_callback = move |game: &mut GameState, _target_action: u64| {
+                    let reveals = client_for_sync.borrow_mut().drain_reveals();
+                    if !reveals.is_empty() {
+                        log::debug!(
+                            "WASM sync_callback (replay): processing {} reveals at action_count={}",
+                            reveals.len(),
+                            game.action_count()
+                        );
+                        for (owner, card, reason) in reveals {
+                            process_card_reveal_wasm(game, owner, card, reason);
+                        }
+                    }
+                };
+
+                let mut game_loop = GameLoop::new(&mut self.game)
+                    .with_verbosity(VerbosityLevel::Normal)
+                    .with_sync_callback(sync_callback);
                 game_loop.run_until_input(&mut replay_controller, p2_controller)
             };
 
@@ -1194,7 +1212,25 @@ impl WasmFancyTuiState {
 
                 // Scope game_loop so borrow of self.game ends before accessing self
                 let result = {
-                    let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+                    // Create sync callback that processes pending reveals
+                    let client_for_sync = network_client.clone();
+                    let sync_callback = move |game: &mut GameState, _target_action: u64| {
+                        let reveals = client_for_sync.borrow_mut().drain_reveals();
+                        if !reveals.is_empty() {
+                            log::debug!(
+                                "WASM sync_callback (normal): processing {} reveals at action_count={}",
+                                reveals.len(),
+                                game.action_count()
+                            );
+                            for (owner, card, reason) in reveals {
+                                process_card_reveal_wasm(game, owner, card, reason);
+                            }
+                        }
+                    };
+
+                    let mut game_loop = GameLoop::new(&mut self.game)
+                        .with_verbosity(VerbosityLevel::Normal)
+                        .with_sync_callback(sync_callback);
                     game_loop.run_until_input(&mut network_local, p2_controller)
                 };
 
@@ -1237,9 +1273,32 @@ impl WasmFancyTuiState {
             start_turn
         );
 
+        // Get the network client for the sync callback
+        let network_client = ensure_client();
+
         // Scope game_loop so borrow of self.game ends before accessing self
         let result = {
-            let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
+            // Create sync callback that processes pending reveals
+            // This is the WASM equivalent of the native client's sync_callback
+            let client_for_sync = network_client.clone();
+            let sync_callback = move |game: &mut GameState, _target_action: u64| {
+                // Drain all pending reveals and process them
+                let reveals = client_for_sync.borrow_mut().drain_reveals();
+                if !reveals.is_empty() {
+                    log::debug!(
+                        "WASM sync_callback: processing {} reveals at action_count={}",
+                        reveals.len(),
+                        game.action_count()
+                    );
+                    for (owner, card, reason) in reveals {
+                        process_card_reveal_wasm(game, owner, card, reason);
+                    }
+                }
+            };
+
+            let mut game_loop = GameLoop::new(&mut self.game)
+                .with_verbosity(VerbosityLevel::Normal)
+                .with_sync_callback(sync_callback);
             game_loop.run_until_input(p1_controller, p2_controller)
         };
 
@@ -2337,4 +2396,25 @@ fn create_network_game_state(
     );
 
     game
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WASM NETWORK REVEAL PROCESSING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Process a card reveal in WASM network mode
+///
+/// Wrapper around the shared `process_card_reveal` that uses WASM-specific
+/// card definition provider (requires server to provide definitions).
+#[cfg(feature = "wasm-network")]
+fn process_card_reveal_wasm(
+    game: &mut GameState,
+    owner: PlayerId,
+    card_reveal: crate::network::CardReveal,
+    reason: crate::network::RevealReason,
+) {
+    use crate::network::{process_card_reveal, WasmCardDefProvider};
+
+    let provider = WasmCardDefProvider;
+    process_card_reveal(game, &provider, owner, card_reveal, reason, "WASM");
 }
