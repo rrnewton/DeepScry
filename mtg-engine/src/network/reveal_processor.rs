@@ -124,6 +124,27 @@ pub fn process_card_reveal<P: CardDefProvider>(
                     reveal.name,
                     card_id
                 );
+
+                // For Draw/OpeningHand, also add to hand if not already there
+                // This is needed for WASM clients that start with empty game state
+                let card_in_hand = game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
+                if !card_in_hand {
+                    if let Some(zones) = game.get_player_zones_mut(owner) {
+                        zones.hand.add(card_id);
+                        log::debug!(
+                            "{}: Added {} to hand for {:?}: {} (id={})",
+                            log_prefix,
+                            if matches!(reason, RevealReason::Draw) {
+                                "drawn card"
+                            } else {
+                                "opening hand card"
+                            },
+                            owner,
+                            reveal.name,
+                            card_id.as_u32()
+                        );
+                    }
+                }
             }
         }
         RevealReason::Played => {

@@ -381,11 +381,16 @@ impl WasmNetworkClient {
                 self.opponent_hand_count = opponent_hand_count;
                 self.state = NetworkState::InGame;
 
-                // Queue opening hand reveals
-                for card in opening_hand {
-                    self.pending_reveals
-                        .push_back((your_player_id, card, RevealReason::OpeningHand));
-                }
+                // NOTE: Do NOT queue opening_hand reveals here!
+                // The server sends individual CardRevealed messages for opening hand cards
+                // immediately after GameStarted. If we queue opening_hand here AND process
+                // the CardRevealed messages, we'd double-process the same cards.
+                //
+                // The native client also does NOT queue opening_hand as reveals - it just
+                // registers the card definitions for later reference.
+                //
+                // The opening_hand field is informational only (hand count, which cards we got).
+                let _ = opening_hand; // Acknowledge we intentionally ignore
             }
 
             ServerMessage::CardRevealed { owner, card, reason } => {
