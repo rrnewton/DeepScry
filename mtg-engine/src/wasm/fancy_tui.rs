@@ -1058,24 +1058,38 @@ impl WasmFancyTuiState {
     /// - For Human controller: uses rewind/replay pattern for resumable game loops
     /// - For AI controllers (Random, Heuristic, Zero): runs directly without replay
     #[cfg(feature = "wasm-network")]
-    fn run_network_mode(&mut self, p1_id: PlayerId, p2_id: PlayerId) {
+    fn run_network_mode(&mut self, _p1_id: PlayerId, _p2_id: PlayerId) {
         // Get the shared network client
         let network_client = ensure_client();
 
-        // Determine which player we are based on controller types:
-        // - If p1_controller_type == Remote, we are P2
-        // - Otherwise, we are P1
-        let we_are_p1 = self.p1_controller_type != WasmControllerType::Remote;
-        let (our_id, opponent_id, our_controller_type) = if we_are_p1 {
-            (p1_id, p2_id, self.p1_controller_type)
+        // Get our player ID directly from the server assignment (like native client)
+        // This is authoritative - the server determines who is P1 and P2
+        let our_player_id = match network_client.borrow().our_player_id() {
+            Some(id) => id,
+            None => {
+                log::error!("run_network_mode: Server has not assigned player ID yet");
+                self.error_message = Some("Server has not assigned player ID".to_string());
+                self.needs_redraw = true;
+                return;
+            }
+        };
+
+        // Determine which player we are based on server assignment (like native client)
+        // Native client: `let we_are_p1 = our_player_id.as_u32() == 0;`
+        let we_are_p1 = our_player_id.as_u32() == 0;
+        let opponent_id = if we_are_p1 { PlayerId::new(1) } else { PlayerId::new(0) };
+
+        // Get our controller type based on server assignment
+        let our_controller_type = if we_are_p1 {
+            self.p1_controller_type
         } else {
-            (p2_id, p1_id, self.p2_controller_type)
+            self.p2_controller_type
         };
 
         log::info!(
-            "run_network_mode: we_are_p1={}, our_id={:?}, opponent_id={:?}, our_controller={:?}",
+            "run_network_mode: server assigned us {:?}, we_are_p1={}, opponent_id={:?}, our_controller={:?}",
+            our_player_id,
             we_are_p1,
-            our_id,
             opponent_id,
             our_controller_type
         );
@@ -1087,25 +1101,31 @@ impl WasmFancyTuiState {
         match our_controller_type {
             WasmControllerType::Human => {
                 // Human controller - use rewind/replay pattern (same as local Human mode)
-                self.run_network_mode_human_v2(our_id, opponent_id, we_are_p1, network_client, &mut remote_controller);
+                self.run_network_mode_human_v2(
+                    our_player_id,
+                    opponent_id,
+                    we_are_p1,
+                    network_client,
+                    &mut remote_controller,
+                );
             }
             WasmControllerType::Random => {
                 // Random controller - runs directly without user input
-                let inner = RandomController::with_seed(our_id, 42);
+                let inner = RandomController::with_seed(our_player_id, 42);
                 let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_id, we_are_p1, &mut network_local, &mut remote_controller);
+                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
             }
             WasmControllerType::Heuristic => {
                 // Heuristic controller
-                let inner = HeuristicController::new(our_id);
+                let inner = HeuristicController::new(our_player_id);
                 let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_id, we_are_p1, &mut network_local, &mut remote_controller);
+                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
             }
             WasmControllerType::Zero => {
                 // Zero controller (always passes)
-                let inner = ZeroController::new(our_id);
+                let inner = ZeroController::new(our_player_id);
                 let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_id, we_are_p1, &mut network_local, &mut remote_controller);
+                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
             }
             WasmControllerType::Remote => {
                 // This shouldn't happen - our_controller_type should never be Remote
@@ -1207,7 +1227,8 @@ impl WasmFancyTuiState {
                 let mut game_loop = GameLoop::new(&mut self.game)
                     .with_verbosity(VerbosityLevel::Normal)
                     .with_sync_callback(sync_callback)
-                    .skip_opening_hands(); // Server handles opening hands via CardRevealed
+                    .skip_opening_hands() // Server handles opening hands via CardRevealed
+                    .with_deferred_game_end(); // Server is authoritative about game end
 
                 // Pass controllers in correct order based on which player we are
                 if we_are_p1 {
@@ -1273,7 +1294,8 @@ impl WasmFancyTuiState {
                     let mut game_loop = GameLoop::new(&mut self.game)
                         .with_verbosity(VerbosityLevel::Normal)
                         .with_sync_callback(sync_callback)
-                        .skip_opening_hands(); // Server handles opening hands via CardRevealed
+                        .skip_opening_hands() // Server handles opening hands via CardRevealed
+                        .with_deferred_game_end(); // Server is authoritative about game end
 
                     // Pass controllers in correct order based on which player we are
                     if we_are_p1 {
@@ -1356,7 +1378,8 @@ impl WasmFancyTuiState {
             let mut game_loop = GameLoop::new(&mut self.game)
                 .with_verbosity(VerbosityLevel::Normal)
                 .with_sync_callback(sync_callback)
-                .skip_opening_hands(); // Server handles opening hands via CardRevealed
+                .skip_opening_hands() // Server handles opening hands via CardRevealed
+                .with_deferred_game_end(); // Server is authoritative about game end
 
             // Pass controllers in the correct order based on which player we are
             // GameLoop expects (p1_controller, p2_controller)
