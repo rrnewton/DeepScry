@@ -11,30 +11,46 @@ use crate::game::state::GameState;
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
 
-impl GameState {
-    /// Check if a card can be legally targeted by a spell or ability
-    ///
-    /// Returns false if:
-    /// - Card has shroud (cannot be targeted by anyone) (CR 702.18a)
-    /// - Card has hexproof and source_controller is an opponent (CR 702.19a)
-    ///
-    /// # Arguments
-    /// * `card` - The potential target card
-    /// * `source_controller` - The controller of the spell/ability
-    pub(crate) fn is_legal_target(card: &crate::core::card::Card, source_controller: PlayerId) -> bool {
-        // Shroud prevents targeting by anyone (CR 702.18a)
-        if card.has_shroud() {
-            return false;
-        }
-
-        // Hexproof only protects from opponent's spells/abilities (CR 702.19a)
-        if card.has_hexproof() && card.owner != source_controller {
-            return false;
-        }
-
-        true
+/// Check if a card can be legally targeted by a spell or ability.
+///
+/// Returns false if:
+/// - Card has shroud (cannot be targeted by anyone) (CR 702.18a)
+/// - Card has hexproof and source_controller is an opponent (CR 702.19a)
+///
+/// # Arguments
+/// * `card` - The potential target card
+/// * `source_controller` - The controller of the targeting spell/ability
+///
+/// # Note
+///
+/// This is the canonical targeting validation check. All targeting code
+/// should use this function instead of inline hexproof/shroud checks.
+/// Per CR 702.19a, hexproof protects from spells/abilities controlled by
+/// opponents (using card.controller, not card.owner).
+///
+/// # Example
+///
+/// ```ignore
+/// // In a closure filtering valid targets:
+/// .filter(|card| is_legal_target(card, controller))
+/// ```
+#[inline]
+pub fn is_legal_target(card: &crate::core::card::Card, source_controller: PlayerId) -> bool {
+    // Shroud prevents targeting by anyone (CR 702.18a)
+    if card.has_shroud() {
+        return false;
     }
 
+    // Hexproof only protects from opponent's spells/abilities (CR 702.19a)
+    // Note: Uses controller, not owner - hexproof protects from opponent CONTROLLERS
+    if card.has_hexproof() && card.controller != source_controller {
+        return false;
+    }
+
+    true
+}
+
+impl GameState {
     /// Get all valid targets for a spell card
     ///
     /// This examines the spell's effects and returns all legal targets based on:
@@ -81,7 +97,7 @@ impl GameState {
                     // Add all creatures that can be legally targeted
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -110,7 +126,7 @@ impl GameState {
                             };
 
                             // Both checks must pass
-                            if restriction_matches && cache_matches && Self::is_legal_target(target_card, spell_owner) {
+                            if restriction_matches && cache_matches && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -120,7 +136,7 @@ impl GameState {
                     // Pump can target any creature
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -130,7 +146,7 @@ impl GameState {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if !target_card.tapped && Self::is_legal_target(target_card, spell_owner) {
+                            if !target_card.tapped && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -140,7 +156,7 @@ impl GameState {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.tapped && Self::is_legal_target(target_card, spell_owner) {
+                            if target_card.tapped && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -171,7 +187,7 @@ impl GameState {
                                 target_card.is_creature()
                             };
 
-                            if type_matches && Self::is_legal_target(target_card, spell_owner) {
+                            if type_matches && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -191,7 +207,7 @@ impl GameState {
                                 target_card.is_creature()
                             };
 
-                            if type_matches && Self::is_legal_target(target_card, spell_owner) {
+                            if type_matches && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -206,7 +222,7 @@ impl GameState {
                             // Must be a creature we control
                             if target_card.is_creature()
                                 && target_card.controller == spell_owner
-                                && Self::is_legal_target(target_card, spell_owner)
+                                && is_legal_target(target_card, spell_owner)
                             {
                                 // Note: "Other" and power restrictions are validated at ability level
                                 // via ValidTgts$ parsing (e.g., Creature.Other+YouCtrl+powerLE2)
@@ -220,7 +236,7 @@ impl GameState {
                     // TODO: Some RemoveCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -233,7 +249,7 @@ impl GameState {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             // Default to targeting any creature (Fatal Fissure targets any creature)
                             // Controller restriction from ValidTgts$ is checked at ability level
-                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -244,7 +260,7 @@ impl GameState {
                     // TODO: Some PutCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && Self::is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -275,7 +291,7 @@ impl GameState {
                             let controller_matches =
                                 restriction.matches_with_controller(target_card, spell_owner, target_card.owner);
 
-                            if type_matches && controller_matches && Self::is_legal_target(target_card, spell_owner) {
+                            if type_matches && controller_matches && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -294,8 +310,7 @@ impl GameState {
                                 // This mode destroys a permanent
                                 for &card_id in &self.battlefield.cards {
                                     if let Ok(target_card) = self.cards.get(card_id) {
-                                        if restriction.matches(target_card)
-                                            && Self::is_legal_target(target_card, spell_owner)
+                                        if restriction.matches(target_card) && is_legal_target(target_card, spell_owner)
                                         {
                                             valid_targets.push(card_id);
                                         }
@@ -322,7 +337,7 @@ impl GameState {
                                         );
                                         if type_matches
                                             && controller_matches
-                                            && Self::is_legal_target(target_card, spell_owner)
+                                            && is_legal_target(target_card, spell_owner)
                                         {
                                             valid_targets.push(card_id);
                                         }
@@ -491,7 +506,7 @@ impl GameState {
                     // Default: search battlefield (standard Auras)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if matches_type(target_card) && Self::is_legal_target(target_card, spell_owner) {
+                            if matches_type(target_card) && is_legal_target(target_card, spell_owner) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -612,7 +627,7 @@ impl GameState {
                             }
 
                             // Check shroud/hexproof (CR 702.18, 702.19)
-                            if !Self::is_legal_target(card, ability_controller) {
+                            if !is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
 
@@ -626,7 +641,7 @@ impl GameState {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            let is_valid = !card.tapped && Self::is_legal_target(card, ability_controller);
+                            let is_valid = !card.tapped && is_legal_target(card, ability_controller);
 
                             if is_valid {
                                 valid_targets.push(card_id);
@@ -638,7 +653,7 @@ impl GameState {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            let is_valid = card.tapped && Self::is_legal_target(card, ability_controller);
+                            let is_valid = card.tapped && is_legal_target(card, ability_controller);
 
                             if is_valid {
                                 valid_targets.push(card_id);
@@ -653,7 +668,7 @@ impl GameState {
                     // Damage can target creatures
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            let is_valid = card.is_creature() && Self::is_legal_target(card, ability_controller);
+                            let is_valid = card.is_creature() && is_legal_target(card, ability_controller);
 
                             if is_valid {
                                 valid_targets.push(card_id);
@@ -676,7 +691,7 @@ impl GameState {
                             // Check shroud/hexproof (CR 702.18, 702.19)
                             // Note: Hexproof doesn't typically apply when we control both the Equipment
                             // and the target, but we check owner-based targeting for consistency
-                            if !Self::is_legal_target(card, ability_controller) {
+                            if !is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
 
@@ -696,7 +711,7 @@ impl GameState {
                             let mut is_valid = card.is_creature();
 
                             // Check shroud/hexproof
-                            if !Self::is_legal_target(card, ability_controller) {
+                            if !is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
 
@@ -727,7 +742,7 @@ impl GameState {
                             }
 
                             // Check shroud/hexproof (though typically not relevant for own creatures)
-                            if !Self::is_legal_target(card, ability_controller) {
+                            if !is_legal_target(card, ability_controller) {
                                 is_valid = false;
                             }
 
@@ -747,7 +762,7 @@ impl GameState {
 
                             // Note: Lands typically can't have shroud/hexproof,
                             // but check anyway for completeness
-                            if is_valid && Self::is_legal_target(card, ability_controller) {
+                            if is_valid && is_legal_target(card, ability_controller) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -899,7 +914,7 @@ impl GameState {
                 // Check if any permanent matches the restriction
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        restriction.matches(card) && Self::is_legal_target(card, spell_owner)
+                        restriction.matches(card) && is_legal_target(card, spell_owner)
                     } else {
                         false
                     }
@@ -909,7 +924,7 @@ impl GameState {
                 // RemoveCounter can target any creature (mode 2 of Heartless Act)
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        card.is_creature() && Self::is_legal_target(card, spell_owner)
+                        card.is_creature() && is_legal_target(card, spell_owner)
                     } else {
                         false
                     }
@@ -919,7 +934,7 @@ impl GameState {
                 // Pump requires a creature target
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        card.is_creature() && Self::is_legal_target(card, spell_owner)
+                        card.is_creature() && is_legal_target(card, spell_owner)
                     } else {
                         false
                     }
@@ -929,7 +944,7 @@ impl GameState {
                 // Tap requires an untapped permanent
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        !card.tapped && Self::is_legal_target(card, spell_owner)
+                        !card.tapped && is_legal_target(card, spell_owner)
                     } else {
                         false
                     }
@@ -939,7 +954,7 @@ impl GameState {
                 // Untap requires a tapped permanent
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        card.tapped && Self::is_legal_target(card, spell_owner)
+                        card.tapped && is_legal_target(card, spell_owner)
                     } else {
                         false
                     }
@@ -957,7 +972,7 @@ impl GameState {
                 // Exile requires a permanent target
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        Self::is_legal_target(card, spell_owner)
+                        is_legal_target(card, spell_owner)
                     } else {
                         false
                     }

@@ -162,14 +162,7 @@ impl ManaCapacity {
     /// affordability check shared with `ManaPool::can_pay()`.
     #[inline]
     pub fn can_pay_simple(&self, cost: &ManaCost) -> bool {
-        cost.is_affordable(
-            self.white,
-            self.blue,
-            self.black,
-            self.red,
-            self.green,
-            self.colorless,
-        )
+        cost.is_affordable(self.white, self.blue, self.black, self.red, self.green, self.colorless)
     }
 }
 

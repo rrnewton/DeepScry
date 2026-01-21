@@ -128,15 +128,7 @@ impl ManaCost {
     /// # Arguments
     /// * `white`, `blue`, `black`, `red`, `green`, `colorless` - available mana amounts
     #[inline]
-    pub fn is_affordable(
-        &self,
-        white: u8,
-        blue: u8,
-        black: u8,
-        red: u8,
-        green: u8,
-        colorless: u8,
-    ) -> bool {
+    pub fn is_affordable(&self, white: u8, blue: u8, black: u8, red: u8, green: u8, colorless: u8) -> bool {
         // Check each specific color requirement
         if white < self.white
             || blue < self.blue
@@ -257,14 +249,7 @@ impl ManaPool {
     /// affordability check shared with `ManaCapacity::can_pay_simple()`.
     #[inline]
     pub fn can_pay(&self, cost: &ManaCost) -> bool {
-        cost.is_affordable(
-            self.white,
-            self.blue,
-            self.black,
-            self.red,
-            self.green,
-            self.colorless,
-        )
+        cost.is_affordable(self.white, self.blue, self.black, self.red, self.green, self.colorless)
     }
 
     /// Pay a mana cost from this pool
@@ -510,13 +495,13 @@ mod tests {
     fn test_mana_cost_is_affordable() {
         // Test basic affordability
         let cost = ManaCost::from_string("2RR"); // 2 generic + 2 red
-        // Exact match
+                                                 // Exact match
         assert!(cost.is_affordable(0, 0, 0, 2, 2, 0)); // 2R + 2G for generic
-        // More than enough
+                                                       // More than enough
         assert!(cost.is_affordable(1, 1, 1, 3, 1, 0)); // extra mana is fine
-        // Not enough red
+                                                       // Not enough red
         assert!(!cost.is_affordable(5, 0, 0, 1, 0, 0)); // only 1R
-        // Not enough total
+                                                        // Not enough total
         assert!(!cost.is_affordable(0, 0, 0, 2, 0, 0)); // only 2R, need 4 total
 
         // Test colorless requirement

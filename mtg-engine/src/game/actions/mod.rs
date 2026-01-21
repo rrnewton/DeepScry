@@ -2,6 +2,7 @@
 
 mod triggers;
 
+pub use targeting::is_legal_target;
 pub use triggers::{resolve_effect_placeholder, TriggerContext};
 
 use crate::core::{CardId, CardType, Effect, PlayerId, TargetRef, TriggerEvent};
@@ -2798,9 +2799,8 @@ impl GameState {
                             .find(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
                                     card.is_creature()
-                                        && card.owner != controller
-                                        && !card.has_hexproof()
-                                        && !card.has_shroud()
+                                        && card.controller != controller
+                                        && targeting::is_legal_target(card, controller)
                                 } else {
                                     false
                                 }
@@ -2829,9 +2829,8 @@ impl GameState {
                             .find(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
                                     restriction.matches(card)
-                                        && card.owner != controller
-                                        && !card.has_hexproof()
-                                        && !card.has_shroud()
+                                        && card.controller != controller
+                                        && targeting::is_legal_target(card, controller)
                                 } else {
                                     false
                                 }
@@ -2857,7 +2856,7 @@ impl GameState {
                             .iter()
                             .find(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
-                                    card.is_creature() && !card.has_shroud()
+                                    card.is_creature() && targeting::is_legal_target(card, controller)
                                 } else {
                                     false
                                 }
@@ -2886,8 +2885,7 @@ impl GameState {
                                     // Target nonland permanents controlled by opponents
                                     !card.is_land()
                                         && card.controller != controller
-                                        && !card.has_hexproof()
-                                        && !card.has_shroud()
+                                        && targeting::is_legal_target(card, controller)
                                 } else {
                                     false
                                 }
@@ -2965,8 +2963,8 @@ impl GameState {
                                 if *cid == trigger_source {
                                     return None;
                                 }
-                                // Check for hexproof/shroud
-                                if card.controller != controller && (card.has_hexproof() || card.has_shroud()) {
+                                // Check for hexproof/shroud (CR 702.18a, CR 702.19a)
+                                if !targeting::is_legal_target(card, controller) {
                                     return None;
                                 }
                                 // Score: prefer friendly permanents

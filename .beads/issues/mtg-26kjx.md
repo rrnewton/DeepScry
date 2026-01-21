@@ -1,10 +1,11 @@
 ---
 title: Centralize targeting validation - use is_legal_target() consistently
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-01-21T00:24:58.963624667+00:00
-updated_at: 2026-01-21T00:24:58.963624667+00:00
+updated_at: 2026-01-21T10:29:32.388292692+00:00
+closed_at: 2026-01-21T10:29:32.388292622+00:00
 ---
 
 # Description

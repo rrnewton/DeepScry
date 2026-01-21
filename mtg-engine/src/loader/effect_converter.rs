@@ -211,7 +211,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             else if params.get("Origin") == Some("Library") {
                 let destination = params
                     .get("Destination")
-                    .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                    .and_then(crate::zones::Zone::from_str_lenient)
                     .unwrap_or(crate::zones::Zone::Battlefield);
 
                 let enters_tapped = params.get("Tapped") == Some("True");
@@ -637,15 +637,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Parse destination zone - default depends on target_self
             let destination = params
                 .get("DestinationZone")
-                .and_then(|s| crate::zones::Zone::from_str_lenient(s))
-                .unwrap_or_else(|| {
+                .and_then(crate::zones::Zone::from_str_lenient)
+                .unwrap_or(
                     // Default: Hand for self-dig (Impulse/Seismic Sense), Exile for opponent-dig
                     if target_self {
                         crate::zones::Zone::Hand
                     } else {
                         crate::zones::Zone::Exile
-                    }
-                });
+                    },
+                );
 
             // Parse Optional$ - whether selecting cards is optional
             let optional = params.get("Optional").is_some_and(|v| v == "True");
@@ -703,12 +703,12 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let condition = if mode == "ChangesZone" {
                 let from_zone = params
                     .get("Origin")
-                    .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                    .and_then(crate::zones::Zone::from_str_lenient)
                     .unwrap_or(crate::zones::Zone::Battlefield); // Default for death triggers
 
                 let to_zone = params
                     .get("Destination")
-                    .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                    .and_then(crate::zones::Zone::from_str_lenient)
                     .unwrap_or(crate::zones::Zone::Graveyard); // Default for death triggers
 
                 crate::core::DelayedTriggerCondition::ZoneChange {
@@ -1009,12 +1009,12 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
     let condition = if mode == "ChangesZone" {
         let from_zone = params
             .get("Origin")
-            .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+            .and_then(crate::zones::Zone::from_str_lenient)
             .unwrap_or(crate::zones::Zone::Battlefield); // Default for death triggers
 
         let to_zone = params
             .get("Destination")
-            .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+            .and_then(crate::zones::Zone::from_str_lenient)
             .unwrap_or(crate::zones::Zone::Graveyard); // Default for death triggers
 
         crate::core::DelayedTriggerCondition::ZoneChange {
