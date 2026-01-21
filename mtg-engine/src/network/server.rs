@@ -120,6 +120,9 @@ struct OpponentChoiceInfo {
     /// The actual spell ability chosen (for Priority choices)
     /// Allows client to execute the ability directly without computing from hidden hand
     spell_ability: Option<SpellAbility>,
+    /// For LibrarySearchByName choices: the specific CardId that was chosen
+    /// Allows client's shadow game to know which card moved to hand
+    library_search_result: Option<CardId>,
 }
 
 /// Card reveal info to broadcast to a player
@@ -196,6 +199,8 @@ enum GameToHandler {
         choice_seq: u32,
         action_count: u64,
         timestamp_ms: u64,
+        /// For LibrarySearchByName choices: the specific CardId that was chosen
+        library_search_result: Option<CardId>,
     },
     /// Game has ended normally.
     /// Handler should forward to client and exit.
@@ -1092,6 +1097,7 @@ async fn run_coordinator(
                         let choice_type = choice_request.choice_type.clone();
                         let action_count = choice_request.action_count;
                         let abilities = choice_request.abilities.clone();
+                        let library_search_cards = choice_request.library_search_cards.clone();
 
                         // Forward to P1 handler
                         if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
@@ -1130,13 +1136,6 @@ async fn run_coordinator(
                                     return Err(anyhow!("P1 NetworkController channel closed"));
                                 }
 
-                                // Send ChoiceAccepted to P1
-                                let _ = p1_to_handler_tx.send(GameToHandler::ChoiceAccepted {
-                                    choice_seq,
-                                    action_count,
-                                    timestamp_ms: now_ms(),
-                                }).await;
-
                                 // Extract spell_ability for Priority choices
                                 let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
                                     let idx = response.choice_indices.first().copied().unwrap_or(0);
@@ -1146,6 +1145,38 @@ async fn run_coordinator(
                                 } else {
                                     None
                                 };
+
+                                // Extract library_search_result for LibrarySearchByName choices
+                                // Index 0 = "Decline", so name_idx = idx - 1
+                                let library_search_result = if matches!(choice_type, ChoiceType::LibrarySearchByName { .. }) {
+                                    let idx = response.choice_indices.first().copied().unwrap_or(0);
+                                    log::debug!(
+                                        "Coordinator P1: LibrarySearchByName idx={}, library_search_cards={:?}",
+                                        idx, library_search_cards
+                                    );
+                                    if idx > 0 {
+                                        let name_idx = idx - 1;
+                                        let result = library_search_cards.as_ref()
+                                            .and_then(|cards| cards.get(name_idx).copied());
+                                        log::debug!(
+                                            "Coordinator P1: name_idx={}, result={:?}",
+                                            name_idx, result
+                                        );
+                                        result
+                                    } else {
+                                        None // Declined to find
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                // Send ChoiceAccepted to P1
+                                let _ = p1_to_handler_tx.send(GameToHandler::ChoiceAccepted {
+                                    choice_seq,
+                                    action_count,
+                                    timestamp_ms: now_ms(),
+                                    library_search_result,
+                                }).await;
 
                                 // Send OpponentMadeChoice to P2
                                 let opponent_info = OpponentChoiceInfo {
@@ -1157,6 +1188,7 @@ async fn run_coordinator(
                                     action_count,
                                     timestamp_ms: now_ms(),
                                     spell_ability,
+                                    library_search_result,
                                 };
                                 let _ = p2_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
                             }
@@ -1198,6 +1230,7 @@ async fn run_coordinator(
                         let choice_type = choice_request.choice_type.clone();
                         let action_count = choice_request.action_count;
                         let abilities = choice_request.abilities.clone();
+                        let library_search_cards = choice_request.library_search_cards.clone();
 
                         // Forward to P2 handler
                         if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
@@ -1235,13 +1268,6 @@ async fn run_coordinator(
                                     return Err(anyhow!("P2 NetworkController channel closed"));
                                 }
 
-                                // Send ChoiceAccepted to P2
-                                let _ = p2_to_handler_tx.send(GameToHandler::ChoiceAccepted {
-                                    choice_seq,
-                                    action_count,
-                                    timestamp_ms: now_ms(),
-                                }).await;
-
                                 // Extract spell_ability for Priority choices
                                 let spell_ability = if matches!(choice_type, ChoiceType::Priority { .. }) {
                                     let idx = response.choice_indices.first().copied().unwrap_or(0);
@@ -1251,6 +1277,29 @@ async fn run_coordinator(
                                 } else {
                                     None
                                 };
+
+                                // Extract library_search_result for LibrarySearchByName choices
+                                // Index 0 = "Decline", so name_idx = idx - 1
+                                let library_search_result = if matches!(choice_type, ChoiceType::LibrarySearchByName { .. }) {
+                                    let idx = response.choice_indices.first().copied().unwrap_or(0);
+                                    if idx > 0 {
+                                        let name_idx = idx - 1;
+                                        library_search_cards.as_ref()
+                                            .and_then(|cards| cards.get(name_idx).copied())
+                                    } else {
+                                        None // Declined to find
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                // Send ChoiceAccepted to P2
+                                let _ = p2_to_handler_tx.send(GameToHandler::ChoiceAccepted {
+                                    choice_seq,
+                                    action_count,
+                                    timestamp_ms: now_ms(),
+                                    library_search_result,
+                                }).await;
 
                                 // Send OpponentMadeChoice to P1
                                 let opponent_info = OpponentChoiceInfo {
@@ -1262,6 +1311,7 @@ async fn run_coordinator(
                                     action_count,
                                     timestamp_ms: now_ms(),
                                     spell_ability,
+                                    library_search_result,
                                 };
                                 let _ = p1_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
                             }
@@ -1412,6 +1462,25 @@ async fn handle_player_websocket(
                             }
                         }
 
+                        // If opponent searched their library, send dummy reveal (hidden card)
+                        // The opponent searched THEIR library - we can't see what card they got
+                        if let Some(card_id) = info.library_search_result {
+                            log::debug!(
+                                "Handler P{}: Sending dummy CardRevealed for opponent library search result {}",
+                                conn.player_id, card_id
+                            );
+                            let dummy_reveal = CardReveal {
+                                card_id,
+                                name: String::new(), // Hidden - can't see opponent's card
+                                card_def: None,
+                            };
+                            conn.send(&ServerMessage::CardRevealed {
+                                owner: info.player,
+                                card: dummy_reveal,
+                                reason: RevealReason::Searched,
+                            }).await?;
+                        }
+
                         conn.send(&ServerMessage::OpponentChoice {
                             choice_seq: info.choice_seq,
                             player: info.player,
@@ -1423,18 +1492,44 @@ async fn handle_player_websocket(
                             spell_ability: info.spell_ability,
                             state_hash_after: None,
                             debug_info: None,
+                            library_search_result: info.library_search_result,
                         }).await?;
                     }
 
-                    Some(GameToHandler::ChoiceAccepted { choice_seq, action_count, timestamp_ms }) => {
+                    Some(GameToHandler::ChoiceAccepted { choice_seq, action_count, timestamp_ms, library_search_result }) => {
                         log::debug!(
                             "Handler P{}: Forwarding ChoiceAccepted seq={}",
                             conn.player_id, choice_seq
                         );
+
+                        // If this was a library search, reveal the chosen card BEFORE ChoiceAccepted
+                        // The player searched their OWN library, so send real reveal with name
+                        if let Some(card_id) = library_search_result {
+                            let game_guard = game.lock().await;
+                            if let Some(card) = game_guard.cards.try_get(card_id) {
+                                let card_def = game_guard.card_definitions.get(&card.name).cloned();
+                                let card_reveal = CardReveal {
+                                    card_id,
+                                    name: card.name.to_string(),
+                                    card_def,
+                                };
+                                log::debug!(
+                                    "Handler P{}: Sending CardRevealed for library search result {} ({})",
+                                    conn.player_id, card_id, card_reveal.name
+                                );
+                                conn.send(&ServerMessage::CardRevealed {
+                                    owner: conn.player_id,
+                                    card: card_reveal,
+                                    reason: RevealReason::Searched,
+                                }).await?;
+                            }
+                        }
+
                         conn.send(&ServerMessage::ChoiceAccepted {
                             choice_seq,
                             action_count,
                             timestamp_ms,
+                            library_search_result,
                         }).await?;
                     }
 

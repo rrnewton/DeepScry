@@ -68,6 +68,11 @@ pub struct ChoiceRequest {
     /// This allows the handler to look up the chosen ability directly
     /// without a separate channel round-trip. (mtg-e66iz channel consolidation)
     pub abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
+    /// For LibrarySearchByName choices, the first CardId for each name.
+    ///
+    /// Index 0 corresponds to unique_names[0], etc.
+    /// Allows the coordinator to determine which CardId was chosen.
+    pub library_search_cards: Option<Vec<CardId>>,
 }
 
 /// Response received from the network handler
@@ -215,6 +220,7 @@ impl NetworkController {
         options: Vec<String>,
         state_hash: u64,
         abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
+        library_search_cards: Option<Vec<CardId>>,
     ) -> Result<NetworkChoiceResult, NetworkError> {
         // Collect reveals since this player's last choice and include them in the request.
         // This ensures reveals are sent BEFORE the ChoiceRequest arrives, eliminating
@@ -264,6 +270,7 @@ impl NetworkController {
             reveals,
             debug_info,
             abilities,
+            library_search_cards,
         };
 
         // Send request
@@ -493,7 +500,7 @@ impl PlayerController for NetworkController {
             available_count: available.len(),
         };
 
-        match self.request_choice(view, choice_type, options, state_hash, Some(abilities)) {
+        match self.request_choice(view, choice_type, options, state_hash, Some(abilities), None) {
             Ok(result) if result.indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Pass priority
@@ -573,7 +580,7 @@ impl PlayerController for NetworkController {
             target_count: 1, // FIXME-UNFINISHED: Support multiple targets
         };
 
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
                 // Single-select for now (FIXME-UNFINISHED for multiple targets)
@@ -608,7 +615,7 @@ impl PlayerController for NetworkController {
         let choice_type = ChoiceType::ManaSources { cost: *cost };
 
         // FIXME-UNFINISHED: Needs multi-select for paying costs with multiple sources
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
                 // Single-select for now
@@ -645,7 +652,7 @@ impl PlayerController for NetworkController {
 
         // Multi-select for attackers: indices contains all selected attacker indices
         // Index 0 means "done selecting" (no more attackers), indices 1..N are creature indices
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) if result.indices.is_empty() || result.indices == vec![0] => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(SmallVec::new()) // No attackers
@@ -701,7 +708,7 @@ impl PlayerController for NetworkController {
 
         // Multi-select for blockers: indices contains all selected blocker-attacker pairs
         // Index 0 means "done selecting", indices 1..N encode (blocker, attacker) pairs
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) if result.indices.is_empty() || result.indices == vec![0] => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(SmallVec::new()) // No blockers
@@ -753,7 +760,7 @@ impl PlayerController for NetworkController {
         };
 
         // Multi-select for damage order: indices specify the full ordering
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
                 // If indices specify a full ordering, use it directly
@@ -810,7 +817,7 @@ impl PlayerController for NetworkController {
         let choice_type = ChoiceType::Discard { count };
 
         // Multi-select for discarding multiple cards
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
                 let mut discards = SmallVec::new();
@@ -862,7 +869,14 @@ impl PlayerController for NetworkController {
             filter_description: "matching cards".to_string(),
         };
 
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        // Build library_search_cards: first CardId for each unique name (in order)
+        // This allows the coordinator to determine which CardId was chosen
+        let library_search_cards: Vec<CardId> = unique_names
+            .iter()
+            .filter_map(|name| name_to_cards.get(name).and_then(|cards| cards.first().copied()))
+            .collect();
+
+        match self.request_choice(view, choice_type, options, state_hash, None, Some(library_search_cards)) {
             Ok(result) if result.indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Declined to find
@@ -916,7 +930,7 @@ impl PlayerController for NetworkController {
         };
 
         // Request choice (client sends all selections in one message for multi-select)
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
                 let mut sacrifices = SmallVec::new();
@@ -976,7 +990,7 @@ impl PlayerController for NetworkController {
         };
 
         // Request choice from client
-        match self.request_choice(view, choice_type, options, state_hash, None) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
                 // Validate and collect mode indices
@@ -1116,6 +1130,7 @@ mod tests {
             options,
             0x12345678,
             None,
+            None,
         );
 
         assert_eq!(result.unwrap().indices, vec![2]);
@@ -1150,6 +1165,7 @@ mod tests {
             ChoiceType::Priority { available_count: 0 },
             vec!["Pass".to_string()],
             0,
+            None,
             None,
         );
 
@@ -1187,6 +1203,7 @@ mod tests {
             ChoiceType::Priority { available_count: 1 },
             vec!["Pass".to_string(), "Play land".to_string()],
             0,
+            None,
             None,
         );
 

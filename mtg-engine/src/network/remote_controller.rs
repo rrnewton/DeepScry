@@ -55,6 +55,25 @@ impl RemoteController {
     /// The `expected_action` parameter is used for validation in network mode.
     /// If the choice's action_count doesn't match, this indicates a sync issue.
     fn get_opponent_choice(&self, expected_action: u64) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
+        match self.get_opponent_choice_full(expected_action) {
+            ChoiceResult::Ok((indices, spell_ability, _library_search_result)) => {
+                ChoiceResult::Ok((indices, spell_ability))
+            }
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::UndoRequest(n) => ChoiceResult::UndoRequest(n),
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::NeedInput(i) => ChoiceResult::NeedInput(i),
+        }
+    }
+
+    /// Get opponent's choice from MVar with full info including library_search_result
+    ///
+    /// This is the underlying implementation that returns all choice info.
+    /// Used by choose_from_library to get the authoritative CardId for library searches.
+    fn get_opponent_choice_full(
+        &self,
+        expected_action: u64,
+    ) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>, Option<CardId>)> {
         if let Some(ref state) = self.shared_state {
             // MVar mode: take from REMOTE choice MVar (dedicated for this controller)
             match state.take_remote_choice() {
@@ -62,6 +81,7 @@ impl RemoteController {
                     action_count,
                     indices,
                     spell_ability,
+                    library_search_result,
                 }) => {
                     // Validate action count ordering
                     if action_count != expected_action {
@@ -74,11 +94,12 @@ impl RemoteController {
                         // Continue anyway - server is authoritative, but log the discrepancy
                     }
                     log::debug!(
-                        "RemoteController: got OpponentChoice indices={:?} action={}",
+                        "RemoteController: got OpponentChoice indices={:?} action={} lib_search={:?}",
                         indices,
-                        action_count
+                        action_count,
+                        library_search_result
                     );
-                    ChoiceResult::Ok((indices, spell_ability))
+                    ChoiceResult::Ok((indices, spell_ability, library_search_result))
                 }
                 Some(RemoteChoiceInfo::Exit { winner }) => {
                     log::info!("RemoteController: game ended, winner={:?}", winner);
@@ -291,21 +312,24 @@ impl PlayerController for RemoteController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
-            ChoiceResult::Ok(choice) => choice,
-            ChoiceResult::UndoRequest(_)
-            | ChoiceResult::ExitGame
-            | ChoiceResult::Error(_)
-            | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
-        };
+    fn choose_from_library(&mut self, view: &GameStateView, _valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+        // Use get_opponent_choice_full to get the authoritative library_search_result.
+        // The local valid_cards may have different CardIds due to library order differences,
+        // so we trust the server's library_search_result which contains the exact CardId chosen.
+        let (_indices, _spell_ability, library_search_result) =
+            match self.get_opponent_choice_full(view.action_count() as u64) {
+                ChoiceResult::Ok(choice) => choice,
+                ChoiceResult::UndoRequest(_)
+                | ChoiceResult::ExitGame
+                | ChoiceResult::Error(_)
+                | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
+            };
 
-        let idx = indices.first().copied().unwrap_or(valid_cards.len());
-        if idx < valid_cards.len() {
-            ChoiceResult::Ok(Some(valid_cards[idx]))
-        } else {
-            ChoiceResult::Ok(None)
-        }
+        log::debug!(
+            "RemoteController::choose_from_library: using library_search_result={:?}",
+            library_search_result
+        );
+        ChoiceResult::Ok(library_search_result)
     }
 
     fn choose_permanents_to_sacrifice(

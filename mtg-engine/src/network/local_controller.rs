@@ -21,7 +21,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
-use crate::network::client::{LocalChoiceInfo, SharedNetworkState};
+use crate::network::client::{ChoiceAcceptedInfo, LocalChoiceInfo, SharedNetworkState};
 use crate::network::protocol::ClientMessage;
 use crate::network::ClientMessageSender;
 use smallvec::SmallVec;
@@ -53,6 +53,9 @@ struct ChoiceInfoResult {
     server_action_count: u64,
     /// Server's authoritative abilities for Priority choices (eliminates race conditions)
     abilities: Option<Vec<Option<SpellAbility>>>,
+    /// Server's unique card names for LibrarySearchByName choices
+    /// Used when client can't compute valid_cards due to hidden card identities
+    library_search_names: Option<Vec<String>>,
 }
 
 /// A controller that wraps a local controller and sends choices to the server.
@@ -152,17 +155,20 @@ impl<C: PlayerController> NetworkLocalController<C> {
                     choice_seq,
                     action_count,
                     abilities,
+                    library_search_names,
                 }) => {
                     log::debug!(
-                        "NetworkLocalController: got ChoiceRequest seq={} action={} abilities={}",
+                        "NetworkLocalController: got ChoiceRequest seq={} action={} abilities={} lib_search={}",
                         choice_seq,
                         action_count,
-                        abilities.as_ref().map(|a| a.len()).unwrap_or(0)
+                        abilities.as_ref().map(|a| a.len()).unwrap_or(0),
+                        library_search_names.as_ref().map(|n| n.len()).unwrap_or(0)
                     );
                     Some(ChoiceInfoResult {
                         choice_seq,
                         server_action_count: action_count,
                         abilities,
+                        library_search_names,
                     })
                 }
                 Some(LocalChoiceInfo::Exit { winner }) => {
@@ -184,6 +190,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 choice_seq: self.choice_seq.get(),
                 server_action_count: 0,
                 abilities: None,
+                library_search_names: None,
             })
         }
     }
@@ -534,15 +541,131 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let server_action_count = info.server_action_count;
         self.verify_action_count_sync(view, server_action_count);
 
+        // Check if server provided library_search_names (late-binding architecture)
+        // In this case, client can't compute valid_cards locally due to hidden card identities
+        log::info!(
+            "[NetworkLocalController] choose_from_library: library_search_names={:?}, valid_cards.len={}",
+            info.library_search_names.as_ref().map(|n| n.len()),
+            valid_cards.len()
+        );
+        if let Some(ref names) = info.library_search_names {
+            // Server encoding: options = ["Decline to find", name1, name2, ...]
+            // Index 0 = Decline, Index 1+ = card names
+            let idx = if names.is_empty() {
+                // No valid cards found by server - decline
+                0
+            } else {
+                // ZeroController-like behavior: pick first card (index 1)
+                // For other controllers, we would need to implement name-based selection
+                1
+            };
+
+            log::debug!(
+                "[NetworkLocalController] choose_from_library (LibrarySearchByName): names={:?}, idx={}",
+                names,
+                idx
+            );
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+
+            // Wait for ChoiceAccepted to confirm the server processed our choice.
+            // Use the server's library_search_result directly - the shadow game is
+            // synchronized with the server (same RNG state, same CardIds).
+            // IMPORTANT: Use take_choice_accepted_for_seq to skip stale ChoiceAccepted
+            // messages from previous (non-library-search) choices that weren't consumed.
+            if let Some(ref state) = self.shared_state {
+                match state.take_choice_accepted_for_seq(choice_seq) {
+                    Some(ChoiceAcceptedInfo::Accepted {
+                        library_search_result, ..
+                    }) => {
+                        // Use the server's library_search_result directly.
+                        // The shadow game is synchronized with the server (same RNG state, same CardIds),
+                        // so the server's CardId is valid in the client's shadow game.
+                        log::info!(
+                            "[NetworkLocalController] LibrarySearchByName: ChoiceAccepted received, library_search_result={:?}",
+                            library_search_result
+                        );
+                        return ChoiceResult::Ok(library_search_result);
+                    }
+                    Some(ChoiceAcceptedInfo::Exit { .. }) => {
+                        log::info!(
+                            "[NetworkLocalController] choose_from_library: game ended while waiting for ChoiceAccepted"
+                        );
+                        return ChoiceResult::ExitGame;
+                    }
+                    Some(ChoiceAcceptedInfo::Error { message }) => {
+                        log::error!(
+                            "[NetworkLocalController] choose_from_library: error while waiting for ChoiceAccepted: {}",
+                            message
+                        );
+                        return ChoiceResult::ExitGame;
+                    }
+                    None => {
+                        log::warn!("[NetworkLocalController] choose_from_library: take_choice_accepted returned None (exit signaled)");
+                        return ChoiceResult::ExitGame;
+                    }
+                }
+            } else {
+                // Legacy mode - no shared_state, cannot get library_search_result
+                // This path should not be reached in normal operation
+                log::warn!("[NetworkLocalController] choose_from_library (LibrarySearchByName): legacy mode without shared_state - returning None");
+                return ChoiceResult::Ok(None);
+            }
+        }
+
+        // Fall back to local computation (non-network or visible library)
+        // Even for this path, we need to wait for ChoiceAccepted to get library_search_result
+        // because the server's valid_cards may have different CardIds than the client's shadow game.
         let result = self.inner.choose_from_library(view, valid_cards);
 
         if let ChoiceResult::Ok(ref choice) = result {
+            // Encoding: index = position in valid_cards, out-of-bounds = decline
             let idx = match choice {
                 Some(card) => valid_cards.iter().position(|c| c == card).unwrap_or(valid_cards.len()),
                 None => valid_cards.len(),
             };
+            log::debug!(
+                "[NetworkLocalController] choose_from_library (fallback): choice={:?}, valid_cards.len={}, sending idx={}",
+                choice,
+                valid_cards.len(),
+                idx
+            );
             let (hash, debug) = self.get_debug_fields(view);
             self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+
+            // Wait for ChoiceAccepted to get server's authoritative library_search_result
+            // This ensures the shadow game stays synchronized with the server even in fallback path
+            // IMPORTANT: Use take_choice_accepted_for_seq to skip stale ChoiceAccepted messages
+            if let Some(ref state) = self.shared_state {
+                log::info!(
+                    "[NetworkLocalController] Fallback path: waiting for ChoiceAccepted after sending idx={}, valid_cards.len={}",
+                    idx,
+                    valid_cards.len()
+                );
+                match state.take_choice_accepted_for_seq(choice_seq) {
+                    Some(ChoiceAcceptedInfo::Accepted {
+                        library_search_result, ..
+                    }) => {
+                        log::info!(
+                            "[NetworkLocalController] Fallback: ChoiceAccepted received, library_search_result={:?}",
+                            library_search_result
+                        );
+                        return ChoiceResult::Ok(library_search_result);
+                    }
+                    Some(ChoiceAcceptedInfo::Exit { .. }) => {
+                        log::info!("[NetworkLocalController] choose_from_library (fallback): game ended while waiting for ChoiceAccepted");
+                        return ChoiceResult::ExitGame;
+                    }
+                    Some(ChoiceAcceptedInfo::Error { message }) => {
+                        log::error!("[NetworkLocalController] choose_from_library (fallback): error while waiting for ChoiceAccepted: {}", message);
+                        return ChoiceResult::ExitGame;
+                    }
+                    None => {
+                        log::warn!("[NetworkLocalController] choose_from_library (fallback): take_choice_accepted returned None (exit signaled)");
+                        return ChoiceResult::ExitGame;
+                    }
+                }
+            }
         }
 
         result

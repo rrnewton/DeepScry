@@ -108,6 +108,8 @@ pub struct RawChoice {
     pub indices: Vec<usize>,
     /// For spell ability choices, the actual ability (server sends it directly)
     pub spell_ability: Option<crate::core::SpellAbility>,
+    /// For library search choices, the CardId chosen by the server
+    pub library_search_result: Option<crate::core::CardId>,
 }
 
 /// Pre-choice hook function type

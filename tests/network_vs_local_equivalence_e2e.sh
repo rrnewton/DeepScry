@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # E2E test: Network vs Local game equivalence
 #
+# This test validates that network and local games produce identical results when
+# using the same seed, decks, and deterministic controllers.
+#
+# HISTORY: This test was previously disabled (mtg-a33hf) due to library search
+# state divergence in network mode. The issue was that clients didn't know which
+# specific CardId was chosen by the server for library searches (like typecycling).
+# This was fixed by adding library_search_result to the ChoiceAccepted message,
+# allowing the client's shadow game to stay synchronized with the server.
+#
 # Usage: ./network_vs_local_equivalence_e2e.sh [SEED] [CONTROLLER_P1] [CONTROLLER_P2]
 #
 # Arguments (all optional):
@@ -80,8 +89,12 @@ if [[ ! -f "$DECK2" ]]; then
 fi
 
 # Parse arguments with defaults
+# Default to "zero" controller for deterministic equivalence testing.
+# "zero" always picks the first option, independent of information visibility,
+# which ensures LOCAL and NETWORK modes produce identical decisions.
+# Use "heuristic" to test realistic play (but gamelogs will differ).
 SEED="${1:-3}"
-CONTROLLER_P1="${2:-heuristic}"
+CONTROLLER_P1="${2:-zero}"
 CONTROLLER_P2="${3:-$CONTROLLER_P1}"  # Default P2 to same as P1
 CONTROLLER_SEED=3
 

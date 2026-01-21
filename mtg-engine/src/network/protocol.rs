@@ -336,6 +336,13 @@ pub enum ServerMessage {
         /// actual ability so the client can execute it directly without
         /// needing to compute available abilities from hidden hand contents.
         spell_ability: Option<SpellAbility>,
+        /// The CardId chosen for library search operations
+        ///
+        /// When the opponent searches their library (e.g., typecycling), this contains
+        /// the specific CardId that was chosen. Client needs this because it cannot
+        /// determine which CardId was chosen from the name alone (libraries are hidden).
+        #[serde(default)]
+        library_search_result: Option<CardId>,
         /// State hash AFTER applying this choice (for client validation)
         state_hash_after: Option<u64>,
         /// Debug synchronization info (only in network debug mode)
@@ -359,6 +366,12 @@ pub enum ServerMessage {
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         #[serde(default)]
         timestamp_ms: u64,
+        /// The CardId chosen for library search operations (for local player's choices)
+        ///
+        /// When the local player searches their library, the server picks the specific
+        /// CardId and sends it back here so the client's shadow game can stay in sync.
+        #[serde(default)]
+        library_search_result: Option<CardId>,
     },
 
     /// Game has ended
@@ -1171,6 +1184,7 @@ mod tests {
                 spell_ability: None,
                 state_hash_after: None,
                 debug_info: None,
+                library_search_result: None,
             },
             ServerMessage::GameEnded {
                 winner: Some(player_id),

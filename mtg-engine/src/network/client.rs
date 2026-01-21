@@ -69,15 +69,25 @@ pub enum NetworkMessage {
         choice_seq: u32,
         /// Server's authoritative abilities for Priority choices (eliminates race conditions)
         abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
+        /// Server's unique card names for LibrarySearchByName choices
+        /// Used when client can't compute valid_cards due to hidden card identities
+        library_search_names: Option<Vec<String>>,
     },
     /// Server acknowledged our previous choice
-    ChoiceAccepted { choice_seq: u32, action_count: u64 },
+    ChoiceAccepted {
+        choice_seq: u32,
+        action_count: u64,
+        /// The CardId chosen for library search operations (for local player)
+        library_search_result: Option<CardId>,
+    },
     /// Opponent made a choice
     OpponentChoice {
         action_count: u64,
         choice_indices: Vec<usize>,
         description: String,
         spell_ability: Option<crate::core::SpellAbility>,
+        /// The CardId chosen for library search operations
+        library_search_result: Option<CardId>,
     },
     /// Game has ended
     GameEnded {
@@ -101,24 +111,39 @@ impl NetworkMessage {
                 action_count,
                 choice_seq,
                 abilities,
+                choice_type,
                 ..
-            } => Some(NetworkMessage::ChoiceRequest {
-                action_count,
-                choice_seq,
-                abilities,
-            }),
+            } => {
+                // Extract library_search_names from LibrarySearchByName choice type
+                #[allow(clippy::wildcard_enum_match_arm)] // Intentionally match only one variant
+                let library_search_names = match choice_type {
+                    crate::network::protocol::ChoiceType::LibrarySearchByName { unique_names, .. } => {
+                        Some(unique_names)
+                    }
+                    _ => None,
+                };
+                Some(NetworkMessage::ChoiceRequest {
+                    action_count,
+                    choice_seq,
+                    abilities,
+                    library_search_names,
+                })
+            }
             ServerMessage::ChoiceAccepted {
                 choice_seq,
                 action_count,
+                library_search_result,
                 ..
             } => Some(NetworkMessage::ChoiceAccepted {
                 choice_seq,
                 action_count,
+                library_search_result,
             }),
             ServerMessage::OpponentChoice {
                 choice_indices,
                 description,
                 spell_ability,
+                library_search_result,
                 action_count,
                 ..
             } => Some(NetworkMessage::OpponentChoice {
@@ -126,6 +151,7 @@ impl NetworkMessage {
                 choice_indices,
                 description,
                 spell_ability,
+                library_search_result,
             }),
             ServerMessage::GameEnded {
                 winner, action_count, ..
@@ -166,6 +192,9 @@ pub enum LocalChoiceInfo {
         choice_seq: u32,
         /// Server's authoritative abilities for Priority choices (eliminates race conditions)
         abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
+        /// Server's unique card names for LibrarySearchByName choices
+        /// Used when client can't compute valid_cards due to hidden card identities
+        library_search_names: Option<Vec<String>>,
     },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
@@ -184,10 +213,31 @@ pub enum RemoteChoiceInfo {
         action_count: u64,
         indices: Vec<usize>,
         spell_ability: Option<crate::core::SpellAbility>,
+        /// The CardId chosen for library search operations
+        library_search_result: Option<CardId>,
     },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
     /// Fatal error - exit with error
+    Error { message: String },
+}
+
+/// ChoiceAccepted information for library search result synchronization
+///
+/// When the local player makes a LibrarySearchByName choice, the server responds
+/// with ChoiceAccepted containing the actual CardId chosen. This allows the
+/// client's shadow game to know which specific card was moved.
+#[derive(Debug, Clone)]
+pub enum ChoiceAcceptedInfo {
+    /// Server accepted our choice, optionally with library search result
+    Accepted {
+        choice_seq: u32,
+        /// The CardId chosen for library search operations (only set for LibrarySearchByName)
+        library_search_result: Option<CardId>,
+    },
+    /// Game ended while waiting for ChoiceAccepted
+    Exit { winner: Option<PlayerId> },
+    /// Fatal error while waiting for ChoiceAccepted
     Error { message: String },
 }
 
@@ -204,6 +254,7 @@ pub enum ChoiceInfo {
         action_count: u64,
         indices: Vec<usize>,
         spell_ability: Option<crate::core::SpellAbility>,
+        library_search_result: Option<CardId>,
     },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
@@ -263,6 +314,10 @@ pub struct SharedNetworkState {
     /// MVar for remote player choices (OpponentChoice messages)
     remote_choice_mvar: super::mvar::MVar<RemoteChoiceInfo>,
 
+    /// MVar for ChoiceAccepted responses (for library search result synchronization)
+    /// Used by NetworkLocalController to receive library_search_result after LibrarySearchByName
+    choice_accepted_mvar: super::mvar::MVar<ChoiceAcceptedInfo>,
+
     /// Latest action count from server (updated on ChoiceRequest/OpponentChoice)
     /// Used as sync target to ensure client processes all reveals before choices
     server_action_count: std::sync::atomic::AtomicU64,
@@ -275,6 +330,7 @@ impl SharedNetworkState {
             pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
             local_choice_mvar: super::mvar::MVar::new(),
             remote_choice_mvar: super::mvar::MVar::new(),
+            choice_accepted_mvar: super::mvar::MVar::new(),
             server_action_count: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -364,10 +420,65 @@ impl SharedNetworkState {
         self.remote_choice_mvar.take()
     }
 
-    /// Signal that the game should exit (notifies BOTH MVars)
+    /// Push a ChoiceAccepted response (called by WS reader)
+    ///
+    /// Used to communicate library_search_result back to NetworkLocalController
+    /// after a LibrarySearchByName choice.
+    pub fn push_choice_accepted(&self, info: ChoiceAcceptedInfo) {
+        self.choice_accepted_mvar.put(info);
+    }
+
+    /// Take the next ChoiceAccepted response (called by NetworkLocalController)
+    ///
+    /// Blocks until ChoiceAccepted is available, then consumes it.
+    /// Returns None only if exit has been signaled and MVar is empty.
+    pub fn take_choice_accepted(&self) -> Option<ChoiceAcceptedInfo> {
+        self.choice_accepted_mvar.take()
+    }
+
+    /// Take ChoiceAccepted for a specific choice_seq, discarding stale messages
+    ///
+    /// The MVar may contain ChoiceAccepted messages from previous choices that weren't
+    /// consumed (because only library searches need to wait for ChoiceAccepted).
+    /// This method loops until it finds the matching choice_seq or encounters Exit/Error.
+    pub fn take_choice_accepted_for_seq(&self, expected_seq: u32) -> Option<ChoiceAcceptedInfo> {
+        loop {
+            match self.choice_accepted_mvar.take() {
+                Some(ChoiceAcceptedInfo::Accepted {
+                    choice_seq,
+                    library_search_result,
+                }) => {
+                    if choice_seq == expected_seq {
+                        // Found the matching ChoiceAccepted
+                        return Some(ChoiceAcceptedInfo::Accepted {
+                            choice_seq,
+                            library_search_result,
+                        });
+                    }
+                    // Stale message from previous choice - discard and continue
+                    log::debug!(
+                        "[ClientSharedState] Discarding stale ChoiceAccepted: got seq={}, expected seq={}",
+                        choice_seq,
+                        expected_seq
+                    );
+                }
+                Some(exit_or_error) => {
+                    // Exit or Error - return immediately
+                    return Some(exit_or_error);
+                }
+                None => {
+                    // MVar returned None (exit signaled and empty)
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Signal that the game should exit (notifies ALL MVars)
     pub fn signal_exit(&self) {
         self.local_choice_mvar.signal_exit();
         self.remote_choice_mvar.signal_exit();
+        self.choice_accepted_mvar.signal_exit();
     }
 
     /// Check if exit has been signaled
@@ -391,18 +502,21 @@ impl SharedNetworkState {
                 self.push_local_choice(LocalChoiceInfo::Request {
                     action_count,
                     choice_seq,
-                    abilities: None, // Legacy path doesn't have abilities
+                    abilities: None,            // Legacy path doesn't have abilities
+                    library_search_names: None, // Legacy path doesn't have library search names
                 });
             }
             ChoiceInfo::Opponent {
                 action_count,
                 indices,
                 spell_ability,
+                library_search_result,
             } => {
                 self.push_remote_choice(RemoteChoiceInfo::Opponent {
                     action_count,
                     indices,
                     spell_ability,
+                    library_search_result,
                 });
             }
             ChoiceInfo::Exit { winner } => {
@@ -428,7 +542,7 @@ impl SharedNetworkState {
             LocalChoiceInfo::Request {
                 action_count,
                 choice_seq,
-                abilities: _, // Ignore abilities for legacy ChoiceInfo
+                ..  // Ignore abilities and library_search_names for legacy ChoiceInfo
             } => ChoiceInfo::Request {
                 action_count,
                 choice_seq,
@@ -1499,54 +1613,66 @@ async fn run_ws_reader_shared(
                                 action_count,
                                 choice_seq,
                                 abilities,
+                                library_search_names,
                             } => {
                                 // Update tracked action count (for sync targeting)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
                                 shared_state.update_server_action_count(action_count);
                                 // Push to LOCAL choice MVar (for NetworkLocalController)
                                 log::debug!(
-                                    "WsReaderShared: ChoiceRequest seq={} action={} abilities={} -> local_mvar",
+                                    "WsReaderShared: ChoiceRequest seq={} action={} abilities={} lib_search={} -> local_mvar",
                                     choice_seq,
                                     action_count,
-                                    abilities.as_ref().map(|a| a.len()).unwrap_or(0)
+                                    abilities.as_ref().map(|a| a.len()).unwrap_or(0),
+                                    library_search_names.as_ref().map(|n| n.len()).unwrap_or(0)
                                 );
                                 shared_state.push_local_choice(LocalChoiceInfo::Request {
                                     action_count,
                                     choice_seq,
                                     abilities,
+                                    library_search_names,
                                 });
                             }
                             NetworkMessage::ChoiceAccepted {
                                 choice_seq,
                                 action_count,
+                                library_search_result,
                             } => {
-                                // Update tracked action count, but don't push to MVar
-                                // (ChoiceAccepted is acknowledgment, not a new choice)
+                                // Update tracked action count
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
                                 log::debug!(
-                                    "WsReaderShared: ChoiceAccepted seq={} action={}",
+                                    "WsReaderShared: ChoiceAccepted seq={} action={} lib_search_result={:?}",
                                     choice_seq,
-                                    action_count
+                                    action_count,
+                                    library_search_result
                                 );
+                                // Push to choice_accepted_mvar for library search synchronization
+                                shared_state.push_choice_accepted(ChoiceAcceptedInfo::Accepted {
+                                    choice_seq,
+                                    library_search_result,
+                                });
                             }
                             NetworkMessage::OpponentChoice {
                                 action_count,
                                 choice_indices,
                                 description: _,
                                 spell_ability,
+                                library_search_result,
                             } => {
                                 // Update tracked action count (for sync targeting)
                                 shared_state.update_server_action_count(action_count);
                                 // Push to REMOTE choice MVar (for RemoteController)
                                 log::debug!(
-                                    "WsReaderShared: OpponentChoice indices={:?} action={} -> remote_mvar",
+                                    "WsReaderShared: OpponentChoice indices={:?} action={} lib_search={:?} -> remote_mvar",
                                     choice_indices,
-                                    action_count
+                                    action_count,
+                                    library_search_result
                                 );
                                 shared_state.push_remote_choice(RemoteChoiceInfo::Opponent {
                                     action_count,
                                     indices: choice_indices,
                                     spell_ability,
+                                    library_search_result,
                                 });
                             }
                             NetworkMessage::GameEnded { winner, action_count } => {
@@ -1555,21 +1681,25 @@ async fn run_ws_reader_shared(
                                     winner,
                                     action_count
                                 );
-                                // Push to BOTH MVars (either controller might be waiting)
+                                // Push to ALL MVars (any controller might be waiting)
                                 shared_state.signal_exit();
                                 shared_state.push_local_choice(LocalChoiceInfo::Exit { winner });
                                 shared_state.push_remote_choice(RemoteChoiceInfo::Exit { winner });
+                                shared_state.push_choice_accepted(ChoiceAcceptedInfo::Exit { winner });
                                 return;
                             }
                             NetworkMessage::Error { message, fatal } => {
                                 if fatal {
                                     log::error!("WsReaderShared: Fatal error: {}", message);
-                                    // Push to BOTH MVars (either controller might be waiting)
+                                    // Push to ALL MVars (any controller might be waiting)
                                     shared_state.signal_exit();
                                     shared_state.push_local_choice(LocalChoiceInfo::Error {
                                         message: message.clone(),
                                     });
-                                    shared_state.push_remote_choice(RemoteChoiceInfo::Error { message });
+                                    shared_state.push_remote_choice(RemoteChoiceInfo::Error {
+                                        message: message.clone(),
+                                    });
+                                    shared_state.push_choice_accepted(ChoiceAcceptedInfo::Error { message });
                                     return;
                                 }
                                 log::warn!("WsReaderShared: Non-fatal error: {}", message);
@@ -1820,7 +1950,32 @@ fn process_card_reveal(
                 log::debug!("Created token for {:?}: {} ({:?})", owner, card_reveal.name, card_id);
             }
         }
+        RevealReason::Searched => {
+            // Library search result - instantiate the card so it can be moved to hand
+            // The card is being revealed because it was found in a library search
+            let card_already_known = game.cards.get(card_id).is_ok();
+            log::debug!(
+                "RevealReason::Searched: {} (id={}) for {:?} card_already_known={}",
+                card_reveal.name,
+                card_id.as_u32(),
+                owner,
+                card_already_known
+            );
+
+            if !card_already_known {
+                let card_def = get_card_def_from_reveal(&card_reveal, card_db);
+                let card_instance = card_def.instantiate(card_id, owner);
+                game.cards.insert(card_id, card_instance);
+                log::debug!(
+                    "Instantiated searched card for {:?}: {} ({:?})",
+                    owner,
+                    card_reveal.name,
+                    card_id
+                );
+            }
+        }
         _ => {
+            // Effect, Targeting, OpeningHand (handled during init) - just log
             log::debug!(
                 "Received {:?} reveal for {:?}: {} ({:?})",
                 reason,

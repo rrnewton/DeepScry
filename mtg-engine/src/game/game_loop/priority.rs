@@ -1401,9 +1401,21 @@ impl<'a> GameLoop<'a> {
                                         // Typecycling: Search library for card with matching type
                                         // For Mountaincycling, search for Mountain
                                         // For Swampcycling, search for Swamp
+                                        log::debug!(
+                                            "[TYPECYCLING] Entered typecycling branch for land_type={:?}",
+                                            land_type
+                                        );
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            self.game.logger.normal(&format!(
+                                                "[TYPECYCLING-DEBUG] Searching library for {} (filter: Land.{})",
+                                                land_type.as_str(),
+                                                land_type.as_str()
+                                            ));
+                                        }
 
                                         // Build search filter for matching land type
                                         let filter = format!("Land.{}", land_type.as_str());
+                                        log::debug!("[TYPECYCLING] Filter = '{}'", filter);
 
                                         // Get library and filter for matching cards
                                         let library_cards = self
@@ -1413,6 +1425,7 @@ impl<'a> GameLoop<'a> {
                                             .find(|(id, _)| *id == current_priority)
                                             .map(|(_, zones)| zones.library.cards.clone())
                                             .unwrap_or_default();
+                                        log::debug!("[TYPECYCLING] Library has {} cards", library_cards.len());
 
                                         // Filter cards by type
                                         let mut valid_cards = Vec::new();
@@ -1425,16 +1438,26 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                         }
+                                        log::debug!(
+                                            "[TYPECYCLING] Found {} valid cards matching filter",
+                                            valid_cards.len()
+                                        );
 
                                         // Ask controller to choose a card (or decline to find)
                                         let prior_log_size = self.game.logger.log_count();
+                                        log::debug!("[TYPECYCLING] About to call choose_from_library_with_hook");
                                         let choice = self.choose_from_library_with_hook(
                                             controller,
                                             current_priority,
                                             &valid_cards,
                                         );
+                                        log::debug!(
+                                            "[TYPECYCLING] choose_from_library_with_hook returned: {:?}",
+                                            choice
+                                        );
                                         let chosen_card_opt =
                                             handle_choice_result_break!(choice, self.game, current_priority);
+                                        log::debug!("[TYPECYCLING] chosen_card_opt = {:?}", chosen_card_opt);
 
                                         // Log the choice for replay
                                         let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);

@@ -384,7 +384,7 @@ impl<'a> GameLoop<'a> {
         let is_remote = controller.get_controller_type() == ControllerType::Remote;
         let hook_result = self.call_pre_choice_hook(player, ChoiceKind::FromLibrary);
 
-        match hook_result {
+        let result = match hook_result {
             Some(PreChoiceResult::AskController) => {
                 debug_assert!(!is_remote, "AskController returned for remote controller");
                 let view = GameStateView::new(self.game, viewer_player);
@@ -392,16 +392,25 @@ impl<'a> GameLoop<'a> {
             }
             Some(PreChoiceResult::UseChoice(raw)) => {
                 debug_assert!(is_remote, "UseChoice returned for non-remote controller");
-                let idx = raw.indices.first().copied().unwrap_or(valid_cards.len());
-                if idx < valid_cards.len() {
-                    ChoiceResult::Ok(Some(valid_cards[idx]))
-                } else {
-                    ChoiceResult::Ok(None)
-                }
+                // For library searches, use the server's authoritative library_search_result
+                // instead of valid_cards[idx], because valid_cards may have different CardIds
+                // on the client's shadow game vs the server's game.
+                ChoiceResult::Ok(raw.library_search_result)
             }
             Some(PreChoiceResult::Exit) => ChoiceResult::ExitGame,
             None => unreachable!("is_network_mode() returned true but no hook configured"),
+        };
+
+        // CRITICAL: After any library search in network mode, sync pending reveals.
+        // The server sends CardRevealed for the library search result BEFORE
+        // ChoiceAccepted, so it's in pending_reveals waiting to be processed.
+        // We must process it before returning, otherwise move_card will fail
+        // with "Entity not found" because the card isn't instantiated yet.
+        if let ChoiceResult::Ok(Some(_)) = &result {
+            self.sync_to_action();
         }
+
+        result
     }
 
     /// Choose permanents to sacrifice (network-aware)
