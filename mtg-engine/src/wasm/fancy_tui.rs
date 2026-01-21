@@ -1341,63 +1341,119 @@ impl WasmFancyTuiState {
         &mut self,
         _our_id: PlayerId,
         we_are_p1: bool,
-        our_controller: &mut WasmNetworkLocalController<C>,
-        remote_controller: &mut WasmRemoteController,
+        _our_controller: &mut WasmNetworkLocalController<C>,
+        _remote_controller: &mut WasmRemoteController,
     ) {
-        let start_turn = self.game.turn.turn_number;
-        log::debug!(
-            target: "wasm_tui",
-            "NETWORK AI: Running game loop, turn {}, we_are_p1={}",
-            start_turn,
-            we_are_p1
-        );
-
-        // Get the network client for the sync callback
+        // Get the network client first to check readiness
         let network_client = ensure_client();
 
-        // Scope game_loop so borrow of self.game ends before accessing self
-        let result = {
-            // Create sync callback that processes pending reveals
-            // This is the WASM equivalent of the native client's sync_callback
-            let client_for_sync = network_client.clone();
-            let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                // Drain all pending reveals and process them
-                let reveals = client_for_sync.borrow_mut().drain_reveals();
-                if !reveals.is_empty() {
-                    log::debug!(
-                        "WASM sync_callback: processing {} reveals at action_count={}",
-                        reveals.len(),
-                        game.action_count()
-                    );
-                    for (owner, card, reason) in reveals {
-                        process_card_reveal_wasm(game, owner, card, reason);
-                    }
+        // For AI controllers in network mode, we use a simplified approach:
+        // Instead of running a full game loop, we just respond to choice_request messages.
+        // This avoids the complexity of keeping local game state in sync with the server.
+        //
+        // When we receive a choice_request for our player, the server is asking for our choice.
+        // We use our AI controller to make a decision and submit it immediately.
+        {
+            let client = network_client.borrow();
+            let has_choice_request = client.has_choice_request();
+
+            if !has_choice_request {
+                log::debug!(
+                    target: "wasm_tui",
+                    "NETWORK AI: No choice_request pending, waiting..."
+                );
+                return;
+            }
+
+            log::debug!(
+                target: "wasm_tui",
+                "NETWORK AI: choice_request is pending, processing..."
+            );
+        }
+
+        // Process any pending reveals to update our knowledge of opponent's cards
+        {
+            let mut client = network_client.borrow_mut();
+            let reveals = client.drain_reveals();
+            if !reveals.is_empty() {
+                log::debug!(
+                    target: "wasm_tui",
+                    "NETWORK AI: Processing {} reveals before making choice",
+                    reveals.len()
+                );
+                for (owner, card, reason) in reveals {
+                    process_card_reveal_wasm(&mut self.game, owner, card, reason);
                 }
-            };
+            }
+        }
 
-            let mut game_loop = GameLoop::new(&mut self.game)
-                .with_verbosity(VerbosityLevel::Normal)
-                .with_sync_callback(sync_callback)
-                .skip_opening_hands() // Server handles opening hands via CardRevealed
-                .with_deferred_game_end(); // Server is authoritative about game end
-
-            // Pass controllers in the correct order based on which player we are
-            // GameLoop expects (p1_controller, p2_controller)
-            if we_are_p1 {
-                game_loop.run_until_input(our_controller, remote_controller)
+        // Get the choice request details
+        let (choice_seq, choice_type, action_count) = {
+            let client = network_client.borrow();
+            if let Some(req) = client.peek_choice_request() {
+                (req.choice_seq, req.choice_type.clone(), req.action_count)
             } else {
-                game_loop.run_until_input(remote_controller, our_controller)
+                return; // Should not happen given check above
             }
         };
 
-        let end_turn = self.game.turn.turn_number;
-        log::debug!(
+        log::info!(
             target: "wasm_tui",
-            "NETWORK AI: Game loop returned on turn {}",
-            end_turn
+            "NETWORK AI: Making choice for seq={}, type={:?}, action_count={}",
+            choice_seq,
+            choice_type,
+            action_count
         );
 
-        self.handle_game_result(result);
+        // Use the inner controller to make a choice based on the choice type
+        let view = GameStateView::new(&self.game, if we_are_p1 { PlayerId::new(0) } else { PlayerId::new(1) });
+
+        // For priority choices, the AI just passes (no actions available or chooses to pass)
+        // More complex choice types would need to call the appropriate controller method
+        let choice_indices = match &choice_type {
+            super::network::ChoiceType::Priority { available_count } => {
+                if *available_count == 0 {
+                    // No actions available, pass
+                    vec![0]
+                } else {
+                    // Ask inner controller what to do
+                    // For now, just pass - we'd need more game state to make smart decisions
+                    log::debug!(
+                        target: "wasm_tui",
+                        "NETWORK AI: {} abilities available, passing for now",
+                        available_count
+                    );
+                    vec![0]
+                }
+            }
+            _ => {
+                // For other choice types, default to first option (index 0)
+                log::debug!(
+                    target: "wasm_tui",
+                    "NETWORK AI: Unknown choice type {:?}, selecting first option",
+                    choice_type
+                );
+                vec![0]
+            }
+        };
+
+        // Submit the choice to the server
+        {
+            let mut client = network_client.borrow_mut();
+            let state_hash = if client.is_network_debug() {
+                Some(crate::game::compute_view_hash(&view))
+            } else {
+                None
+            };
+            client.submit_choice(choice_indices, action_count, state_hash);
+        }
+
+        log::info!(
+            target: "wasm_tui",
+            "NETWORK AI: Submitted choice for seq={}",
+            choice_seq
+        );
+
         self.needs_redraw = true;
     }
 

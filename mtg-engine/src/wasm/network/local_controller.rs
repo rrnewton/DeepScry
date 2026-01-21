@@ -97,7 +97,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 );
                 None
             } else {
-                log::debug!(
+                log::info!(
                     "WasmNetworkLocalController: ChoiceRequest seq={} ready (last_submitted={:?})",
                     req.choice_seq,
                     last_submitted
@@ -105,10 +105,6 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 Some(req.choice_seq)
             }
         } else {
-            log::debug!(
-                "WasmNetworkLocalController: No ChoiceRequest available (last_submitted={:?})",
-                last_submitted
-            );
             None
         }
     }
