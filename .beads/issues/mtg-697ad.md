@@ -1,13 +1,14 @@
 ---
 title: Centralize zone and color string parsing in effect_converter.rs
-status: open
+status: closed
 priority: 4
 issue_type: task
 labels:
 - draft
 - refactoring
 created_at: 2026-01-21T00:27:19.235309428+00:00
-updated_at: 2026-01-21T00:27:19.235309428+00:00
+updated_at: 2026-01-21T10:11:38.912964912+00:00
+closed_at: 2026-01-21T10:11:38.912964852+00:00
 ---
 
 # Description

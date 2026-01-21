@@ -209,12 +209,10 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
             // Check for library search effects: Origin$ Library
             else if params.get("Origin") == Some("Library") {
-                let destination = match params.get("Destination") {
-                    Some("Battlefield") => crate::zones::Zone::Battlefield,
-                    Some("Hand") => crate::zones::Zone::Hand,
-                    Some("Graveyard") => crate::zones::Zone::Graveyard,
-                    _ => crate::zones::Zone::Battlefield, // Default
-                };
+                let destination = params
+                    .get("Destination")
+                    .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                    .unwrap_or(crate::zones::Zone::Battlefield);
 
                 let enters_tapped = params.get("Tapped") == Some("True");
                 let card_type_filter = params.get("ChangeType").unwrap_or("Card").to_string();
@@ -637,20 +635,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             };
 
             // Parse destination zone - default depends on target_self
-            let destination = match params.get("DestinationZone") {
-                Some("Exile") => crate::zones::Zone::Exile,
-                Some("Graveyard") => crate::zones::Zone::Graveyard,
-                Some("Hand") => crate::zones::Zone::Hand,
-                Some("Battlefield") => crate::zones::Zone::Battlefield,
-                _ => {
+            let destination = params
+                .get("DestinationZone")
+                .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                .unwrap_or_else(|| {
                     // Default: Hand for self-dig (Impulse/Seismic Sense), Exile for opponent-dig
                     if target_self {
                         crate::zones::Zone::Hand
                     } else {
                         crate::zones::Zone::Exile
                     }
-                }
-            };
+                });
 
             // Parse Optional$ - whether selecting cards is optional
             let optional = params.get("Optional").is_some_and(|v| v == "True");
@@ -706,21 +701,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
             // Parse zone change condition (most common for delayed triggers)
             let condition = if mode == "ChangesZone" {
-                let from_zone = match params.get("Origin") {
-                    Some("Battlefield") => crate::zones::Zone::Battlefield,
-                    Some("Hand") => crate::zones::Zone::Hand,
-                    Some("Library") => crate::zones::Zone::Library,
-                    Some("Graveyard") => crate::zones::Zone::Graveyard,
-                    _ => crate::zones::Zone::Battlefield, // Default for death triggers
-                };
+                let from_zone = params
+                    .get("Origin")
+                    .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                    .unwrap_or(crate::zones::Zone::Battlefield); // Default for death triggers
 
-                let to_zone = match params.get("Destination") {
-                    Some("Graveyard") => crate::zones::Zone::Graveyard,
-                    Some("Exile") => crate::zones::Zone::Exile,
-                    Some("Hand") => crate::zones::Zone::Hand,
-                    Some("Battlefield") => crate::zones::Zone::Battlefield,
-                    _ => crate::zones::Zone::Graveyard, // Default for death triggers
-                };
+                let to_zone = params
+                    .get("Destination")
+                    .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+                    .unwrap_or(crate::zones::Zone::Graveyard); // Default for death triggers
 
                 crate::core::DelayedTriggerCondition::ZoneChange {
                     from_zones: smallvec::smallvec![from_zone],
@@ -1018,21 +1007,15 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
 
     // Parse trigger condition based on Mode$
     let condition = if mode == "ChangesZone" {
-        let from_zone = match params.get("Origin") {
-            Some("Battlefield") => crate::zones::Zone::Battlefield,
-            Some("Hand") => crate::zones::Zone::Hand,
-            Some("Library") => crate::zones::Zone::Library,
-            Some("Graveyard") => crate::zones::Zone::Graveyard,
-            _ => crate::zones::Zone::Battlefield, // Default for death triggers
-        };
+        let from_zone = params
+            .get("Origin")
+            .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+            .unwrap_or(crate::zones::Zone::Battlefield); // Default for death triggers
 
-        let to_zone = match params.get("Destination") {
-            Some("Graveyard") => crate::zones::Zone::Graveyard,
-            Some("Exile") => crate::zones::Zone::Exile,
-            Some("Hand") => crate::zones::Zone::Hand,
-            Some("Battlefield") => crate::zones::Zone::Battlefield,
-            _ => crate::zones::Zone::Graveyard, // Default for death triggers
-        };
+        let to_zone = params
+            .get("Destination")
+            .and_then(|s| crate::zones::Zone::from_str_lenient(s))
+            .unwrap_or(crate::zones::Zone::Graveyard); // Default for death triggers
 
         crate::core::DelayedTriggerCondition::ZoneChange {
             from_zones: smallvec::smallvec![from_zone],

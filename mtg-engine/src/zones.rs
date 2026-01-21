@@ -31,6 +31,34 @@ pub enum Zone {
     Command,
 }
 
+impl Zone {
+    /// Parse a zone name from a string, handling common variants.
+    ///
+    /// Accepts capitalized, lowercase, and abbreviated forms:
+    /// - "Graveyard", "graveyard", "Grave" → Graveyard
+    /// - "Hand", "hand" → Hand
+    /// - "Library", "library" → Library
+    /// - "Battlefield", "battlefield", "Play" → Battlefield
+    /// - "Exile", "exile", "Exiled" → Exile
+    /// - "Stack", "stack" → Stack
+    /// - "Command", "command" → Command
+    ///
+    /// Returns None for unrecognized strings.
+    #[inline]
+    pub fn from_str_lenient(s: &str) -> Option<Zone> {
+        match s {
+            "Graveyard" | "graveyard" | "Grave" => Some(Zone::Graveyard),
+            "Hand" | "hand" => Some(Zone::Hand),
+            "Library" | "library" => Some(Zone::Library),
+            "Battlefield" | "battlefield" | "Play" => Some(Zone::Battlefield),
+            "Exile" | "exile" | "Exiled" => Some(Zone::Exile),
+            "Stack" | "stack" => Some(Zone::Stack),
+            "Command" | "command" => Some(Zone::Command),
+            _ => None,
+        }
+    }
+}
+
 /// A zone containing cards (ordered for Library/Graveyard, unordered for others)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardZone {
@@ -282,5 +310,30 @@ mod tests {
         // (With 10 cards and a random seed, very unlikely to stay same)
         assert_ne!(library.cards, original);
         assert_eq!(library.len(), 10);
+    }
+
+    #[test]
+    fn test_zone_from_str_lenient() {
+        // Test capitalized forms
+        assert_eq!(Zone::from_str_lenient("Graveyard"), Some(Zone::Graveyard));
+        assert_eq!(Zone::from_str_lenient("Hand"), Some(Zone::Hand));
+        assert_eq!(Zone::from_str_lenient("Library"), Some(Zone::Library));
+        assert_eq!(Zone::from_str_lenient("Battlefield"), Some(Zone::Battlefield));
+        assert_eq!(Zone::from_str_lenient("Exile"), Some(Zone::Exile));
+        assert_eq!(Zone::from_str_lenient("Stack"), Some(Zone::Stack));
+        assert_eq!(Zone::from_str_lenient("Command"), Some(Zone::Command));
+
+        // Test lowercase forms
+        assert_eq!(Zone::from_str_lenient("graveyard"), Some(Zone::Graveyard));
+        assert_eq!(Zone::from_str_lenient("hand"), Some(Zone::Hand));
+
+        // Test abbreviated forms
+        assert_eq!(Zone::from_str_lenient("Grave"), Some(Zone::Graveyard));
+        assert_eq!(Zone::from_str_lenient("Play"), Some(Zone::Battlefield));
+        assert_eq!(Zone::from_str_lenient("Exiled"), Some(Zone::Exile));
+
+        // Test invalid strings
+        assert_eq!(Zone::from_str_lenient("invalid"), None);
+        assert_eq!(Zone::from_str_lenient(""), None);
     }
 }
