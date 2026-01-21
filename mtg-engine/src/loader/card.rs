@@ -890,8 +890,20 @@ impl CardDefinition {
                         keyword_set.insert_complex(KeywordArgs::Unearth { cost });
                     }
                     "Ward" => {
-                        let cost = ManaCost::from_string(param);
-                        keyword_set.insert_complex(KeywordArgs::Ward { cost });
+                        // Ward can have mana cost or Waterbend cost
+                        // Examples: "Ward:2", "Ward:Waterbend<4>"
+                        if param.starts_with("Waterbend<") {
+                            // Extract the amount from Waterbend<N>
+                            if let Some(amount_str) = param.strip_prefix("Waterbend<").and_then(|s| s.strip_suffix('>'))
+                            {
+                                if let Ok(amount) = amount_str.parse::<u8>() {
+                                    keyword_set.insert_complex(KeywordArgs::WardWaterbend { amount });
+                                }
+                            }
+                        } else {
+                            let cost = ManaCost::from_string(param);
+                            keyword_set.insert_complex(KeywordArgs::Ward { cost });
+                        }
                     }
                     "Warp" => {
                         let cost = ManaCost::from_string(param);
@@ -1819,10 +1831,48 @@ impl CardDefinition {
                                     if let Some(sub_params) = self.parsed_svars.get(sub_ref) {
                                         // DB$ Untap - untap the earthbended land
                                         if sub_params.api_type == ApiType::Untap {
-                                            effects.push(Effect::UntapPermanent {
-                                                target: CardId::new(0),
-                                            });
+                                            effects.push(Effect::UntapPermanent { target: CardId::new(0) });
                                         }
+                                    }
+                                }
+                            }
+                            // DB$ Pump effects with variable values
+                            // Example: "DB$ Pump | Defined$ Self | NumAtt$ +X | NumDef$ +X"
+                            // SVar:X:Count$Valid Artifact.OppCtrl
+                            if svar_params.api_type == ApiType::Pump {
+                                let power_str = svar_params.get("NumAtt").unwrap_or("");
+                                let toughness_str = svar_params.get("NumDef").unwrap_or("");
+
+                                // Check if either value references a variable (X) that uses Count$
+                                let is_variable =
+                                    power_str.contains('X') || power_str.contains('Y') || toughness_str.contains('X');
+
+                                if is_variable {
+                                    // Use svars HashMap for CountExpression parsing
+                                    // Parse as variable count expressions
+                                    let power_count = crate::core::CountExpression::parse(power_str, &self.svars);
+                                    let toughness_count =
+                                        crate::core::CountExpression::parse(toughness_str, &self.svars);
+
+                                    effects.push(Effect::PumpCreatureVariable {
+                                        target: CardId::new(0),
+                                        power_count,
+                                        toughness_count,
+                                        keywords_granted: smallvec::SmallVec::new(),
+                                    });
+                                } else {
+                                    // Fixed pump values
+                                    let power_bonus = power_str.trim_start_matches('+').parse::<i32>().unwrap_or(0);
+                                    let toughness_bonus =
+                                        toughness_str.trim_start_matches('+').parse::<i32>().unwrap_or(0);
+
+                                    if power_bonus != 0 || toughness_bonus != 0 {
+                                        effects.push(Effect::PumpCreature {
+                                            target: CardId::new(0),
+                                            power_bonus,
+                                            toughness_bonus,
+                                            keywords_granted: smallvec::SmallVec::new(),
+                                        });
                                     }
                                 }
                             }
@@ -2866,6 +2916,7 @@ impl CardDefinition {
             let mut toughness = 0;
             let mut keyword: Option<Keyword> = None;
             let mut description = String::new();
+            let mut condition: Option<crate::core::StaticCondition> = None;
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -2974,6 +3025,21 @@ impl CardDefinition {
                                 }
                             }
                         }
+                        "Condition" => {
+                            // Parse condition for when this ability is active
+                            // Example: "Condition$ PlayerTurn" = only during controller's turn
+                            match value {
+                                "PlayerTurn" => {
+                                    condition = Some(crate::core::StaticCondition::PlayerTurn);
+                                }
+                                "NotPlayerTurn" => {
+                                    condition = Some(crate::core::StaticCondition::NotPlayerTurn);
+                                }
+                                _ => {
+                                    // Other conditions not supported yet (e.g., CounteredSpellWithCMCGE5)
+                                }
+                            }
+                        }
                         _ => {} // Ignore other parameters (e.g., AddType$, AddAbility$)
                     }
                 }
@@ -2996,6 +3062,7 @@ impl CardDefinition {
                     affected,
                     keyword: kw,
                     description,
+                    condition,
                 });
             }
         }
@@ -4063,10 +4130,7 @@ Oracle:Whenever you draw your second card each turn, this creature gets +1/+2 un
         );
 
         // Check for PumpCreature effect
-        let has_pump = trigger
-            .effects
-            .iter()
-            .any(|e| matches!(e, Effect::PumpCreature { .. }));
+        let has_pump = trigger.effects.iter().any(|e| matches!(e, Effect::PumpCreature { .. }));
         assert!(
             has_pump,
             "Trigger should have PumpCreature effect: {:?}",
@@ -4146,5 +4210,161 @@ Oracle:At the beginning of combat on your turn, earthbend 8, then untap that lan
             trigger.description.contains("[controller_only]"),
             "Trigger description should have [controller_only] prefix for ValidPlayer$ You"
         );
+    }
+
+    #[test]
+    fn test_elephant_mandrill_variable_pump() {
+        // Test parsing Elephant-Mandrill's variable pump with Count$Valid expression
+        // The card gets +X/+X where X is the number of artifacts opponents control
+        let card_data = r#"Name:Elephant-Mandrill
+ManaCost:2 G
+Types:Creature Elephant Monkey
+PT:3/2
+K:Reach
+T:Mode$ Phase | Phase$ BeginCombat | ValidPlayer$ You | TriggerZones$ Battlefield | Execute$ TrigPump | TriggerDescription$ At the beginning of combat on your turn, this creature gets +1/+1 until end of turn for each artifact your opponents control.
+SVar:TrigPump:DB$ Pump | Defined$ Self | NumAtt$ +X | NumDef$ +X
+SVar:X:Count$Valid Artifact.OppCtrl
+Oracle:Reach\nAt the beginning of combat on your turn, this creature gets +1/+1 until end of turn for each artifact your opponents control."#;
+
+        let def = CardLoader::parse(card_data).expect("Should parse Elephant-Mandrill card data");
+        assert_eq!(def.name.as_str(), "Elephant-Mandrill");
+
+        // Parse triggers from the definition
+        let triggers = def.parse_triggers();
+
+        // Should have 1 trigger (BeginCombat trigger)
+        assert_eq!(triggers.len(), 1, "Should have 1 trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::BeginningOfCombat);
+
+        // Trigger should have PumpCreatureVariable effect (NOT fixed PumpCreature)
+        let has_variable_pump = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::PumpCreatureVariable { .. }));
+        assert!(
+            has_variable_pump,
+            "Trigger should have PumpCreatureVariable effect for +X/+X: {:?}",
+            trigger.effects
+        );
+
+        // Verify the count expression is ValidPermanents with Artifact.OppCtrl filter
+        let pump_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::PumpCreatureVariable { .. }))
+            .unwrap();
+
+        if let Effect::PumpCreatureVariable {
+            power_count,
+            toughness_count,
+            ..
+        } = pump_effect
+        {
+            // Both power and toughness should use the same Count$ expression
+            assert!(
+                matches!(power_count, crate::core::CountExpression::ValidPermanents { filter } if filter.contains("Artifact")),
+                "Power count should be ValidPermanents with Artifact filter: {:?}",
+                power_count
+            );
+            assert!(
+                matches!(toughness_count, crate::core::CountExpression::ValidPermanents { filter } if filter.contains("Artifact")),
+                "Toughness count should be ValidPermanents with Artifact filter: {:?}",
+                toughness_count
+            );
+        }
+
+        // Check that the trigger is controller-only (ValidPlayer$ You)
+        assert!(
+            trigger.description.contains("[controller_only]"),
+            "Trigger description should have [controller_only] prefix for ValidPlayer$ You"
+        );
+    }
+
+    #[test]
+    fn test_ward_waterbend_parsing() {
+        // Test parsing Ward:Waterbend<4> (The Unagi of Kyoshi Island)
+        let card_data = r#"Name:The Unagi of Kyoshi Island
+ManaCost:3 U U
+Types:Legendary Creature Serpent
+PT:5/5
+K:Flash
+K:Ward:Waterbend<4>
+Oracle:Flash\nWard—Waterbend {4}"#;
+
+        let def = CardLoader::parse(card_data).expect("Should parse card data");
+        assert_eq!(def.name.as_str(), "The Unagi of Kyoshi Island");
+
+        // Parse keywords
+        let keywords = def.parse_keywords();
+
+        // Should have Flash keyword
+        assert!(keywords.contains(Keyword::Flash), "Should have Flash keyword");
+
+        // Should have Ward keyword (WardWaterbend maps to Ward)
+        assert!(keywords.contains(Keyword::Ward), "Should have Ward keyword");
+
+        // Check for WardWaterbend specifically
+        let has_ward_waterbend = keywords.iter().any(|kw| {
+            if let Some(args) = keywords.get_args(kw) {
+                matches!(args, KeywordArgs::WardWaterbend { amount: 4 })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_ward_waterbend,
+            "Should have WardWaterbend with amount 4. Keywords: {:?}",
+            keywords
+        );
+    }
+
+    #[test]
+    fn test_conditional_hexproof_player_turn() {
+        use crate::core::{AffectedSelector, StaticAbility, StaticCondition};
+
+        // Test parsing conditional hexproof (Avatar Kyoshi)
+        // "During your turn, this creature has hexproof"
+        let card_data = r#"Name:Avatar Kyoshi, Earthbender
+ManaCost:5 G G G
+Types:Legendary Creature Human Avatar
+PT:6/6
+S:Mode$ Continuous | Affected$ Card.Self | AddKeyword$ Hexproof | Condition$ PlayerTurn | Description$ During your turn, NICKNAME has hexproof.
+Oracle:During your turn, Avatar Kyoshi has hexproof."#;
+
+        let def = CardLoader::parse(card_data).expect("Should parse card data");
+        assert_eq!(def.name.as_str(), "Avatar Kyoshi, Earthbender");
+
+        // Parse static abilities
+        let static_abilities = def.parse_static_abilities();
+
+        // Should have exactly one static ability
+        assert_eq!(
+            static_abilities.len(),
+            1,
+            "Should have 1 static ability. Got: {:?}",
+            static_abilities
+        );
+
+        // Check it's a GrantKeyword for Hexproof with PlayerTurn condition
+        let ability = &static_abilities[0];
+        if let StaticAbility::GrantKeyword {
+            affected,
+            keyword,
+            description: _,
+            condition,
+        } = ability
+        {
+            assert_eq!(*affected, AffectedSelector::Self_, "Should affect self");
+            assert_eq!(*keyword, Keyword::Hexproof, "Should grant Hexproof");
+            assert_eq!(
+                *condition,
+                Some(StaticCondition::PlayerTurn),
+                "Should have PlayerTurn condition"
+            );
+        } else {
+            panic!("Expected GrantKeyword static ability, got: {:?}", ability);
+        }
     }
 }

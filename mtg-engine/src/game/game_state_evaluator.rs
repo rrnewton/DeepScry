@@ -467,6 +467,7 @@ impl GameStateEvaluator {
                     affected,
                     keyword,
                     description: _,
+                    condition: _,
                 } => {
                     // Check if this grants a keyword to the attached creature
                     let affects_creature = match affected {
@@ -789,6 +790,7 @@ mod tests {
             affected: AffectedSelector::CreatureEnchantedBy,
             keyword: Keyword::Flying,
             description: "Enchanted creature has flying".to_string(),
+            condition: None,
         });
 
         // Attach the aura to the creature

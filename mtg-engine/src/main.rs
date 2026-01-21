@@ -3019,6 +3019,7 @@ async fn run_stats(paths: Vec<String>) -> Result<()> {
                     mtg_forge_rs::core::KeywordArgs::Transmute { .. } => "Transmute",
                     mtg_forge_rs::core::KeywordArgs::Unearth { .. } => "Unearth",
                     mtg_forge_rs::core::KeywordArgs::Ward { .. } => "Ward",
+                    mtg_forge_rs::core::KeywordArgs::WardWaterbend { .. } => "Ward (Waterbend)",
                     mtg_forge_rs::core::KeywordArgs::Warp { .. } => "Warp",
                     mtg_forge_rs::core::KeywordArgs::WebSlinging { .. } => "Web-Slinging",
                     // New amount-based keywords

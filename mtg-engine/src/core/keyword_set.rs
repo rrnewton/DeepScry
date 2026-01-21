@@ -679,6 +679,9 @@ pub enum KeywordArgs {
     Unearth { cost: ManaCost },
     /// Ward cost (e.g., "Ward:2")
     Ward { cost: ManaCost },
+    /// Ward with Waterbend cost (e.g., "Ward:Waterbend<4>")
+    /// While paying this ward cost, opponent can tap artifacts/creatures to help pay {1} each
+    WardWaterbend { amount: u8 },
     /// Warp cost (e.g., "Warp:3 B")
     Warp { cost: ManaCost },
     /// Web-slinging cost (e.g., "Web-slinging:2 U")
@@ -874,6 +877,7 @@ impl KeywordArgs {
             KeywordArgs::Transmute { .. } => Keyword::Transmute,
             KeywordArgs::Unearth { .. } => Keyword::Unearth,
             KeywordArgs::Ward { .. } => Keyword::Ward,
+            KeywordArgs::WardWaterbend { .. } => Keyword::Ward, // WardWaterbend is Ward with different cost type
             KeywordArgs::Warp { .. } => Keyword::Warp,
             KeywordArgs::WebSlinging { .. } => Keyword::WebSlinging,
             KeywordArgs::BandsWithOther { .. } => Keyword::BandsWithOther,

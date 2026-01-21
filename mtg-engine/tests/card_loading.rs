@@ -840,6 +840,7 @@ fn test_load_spider_punk_type_other_you_ctrl() -> Result<()> {
             affected,
             keyword,
             description: _,
+            condition: _,
         } => {
             match affected {
                 AffectedSelector::CreatureTypeOtherYouControl { subtype } => {

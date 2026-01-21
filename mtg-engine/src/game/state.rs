@@ -2552,6 +2552,7 @@ impl GameState {
                     | crate::core::Effect::TapPermanent { .. }
                     | crate::core::Effect::UntapPermanent { .. }
                     | crate::core::Effect::PumpCreature { .. }
+                    | crate::core::Effect::PumpCreatureVariable { .. }
                     | crate::core::Effect::PumpAllCreatures { .. }
                     | crate::core::Effect::Mill { .. }
                     | crate::core::Effect::Scry { .. }

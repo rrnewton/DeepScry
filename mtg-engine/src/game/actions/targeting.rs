@@ -142,6 +142,16 @@ impl GameState {
                         }
                     }
                 }
+                Effect::PumpCreatureVariable { target, .. } if target.is_placeholder() => {
+                    // Variable pump can target any creature
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::TapPermanent { target } if target.is_placeholder() => {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
@@ -362,6 +372,7 @@ impl GameState {
                             | Effect::SetBasePowerToughness { .. }
                             | Effect::CounterSpell { .. }
                             | Effect::PumpCreature { .. }
+                            | Effect::PumpCreatureVariable { .. }
                             | Effect::TapPermanent { .. }
                             | Effect::UntapPermanent { .. }
                             | Effect::ExilePermanent { .. }
@@ -421,6 +432,7 @@ impl GameState {
                 }
                 Effect::DestroyPermanent { .. }
                 | Effect::PumpCreature { .. }
+                | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
                 | Effect::UntapPermanent { .. }
                 | Effect::CounterSpell { .. }
@@ -796,6 +808,7 @@ impl GameState {
                 }
                 Effect::DestroyPermanent { .. }
                 | Effect::PumpCreature { .. }
+                | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
                 | Effect::UntapPermanent { .. }
                 | Effect::CounterSpell { .. }
@@ -1009,6 +1022,7 @@ impl GameState {
             Effect::DealDamage { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
             | Effect::PumpCreature { .. }
+            | Effect::PumpCreatureVariable { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::CounterSpell { .. }

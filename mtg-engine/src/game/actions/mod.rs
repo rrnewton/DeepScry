@@ -1282,6 +1282,57 @@ impl GameState {
                     prior_log_size,
                 );
             }
+            Effect::PumpCreatureVariable {
+                target,
+                power_count,
+                toughness_count,
+                keywords_granted,
+            } => {
+                // Variable pump: bonus depends on counting game state
+                // Example: Elephant-Mandrill gets +X/+X where X is artifacts opponents control
+
+                // Skip if target is still placeholder
+                if target.is_placeholder() {
+                    log::warn!(target: "pump", "PumpCreatureVariable fizzled: target is still placeholder");
+                    return Ok(());
+                }
+
+                // Get target's controller for filter resolution
+                let target_controller = self.cards.get(*target)?.controller;
+
+                // Evaluate the count expressions
+                let power_bonus = self.evaluate_count_expression(power_count, target_controller)?;
+                let toughness_bonus = self.evaluate_count_expression(toughness_count, target_controller)?;
+
+                log::debug!(
+                    target: "pump",
+                    "PumpCreatureVariable executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}",
+                    target.as_u32(),
+                    power_bonus,
+                    toughness_bonus,
+                    keywords_granted
+                );
+
+                // Apply the pump
+                let prior_log_size = self.logger.log_count();
+                let card = self.cards.get_mut(*target)?;
+                card.power_bonus += power_bonus;
+                card.toughness_bonus += toughness_bonus;
+                for keyword in keywords_granted.iter() {
+                    card.keywords.insert(*keyword);
+                }
+
+                // Log for undo
+                self.undo_log.log(
+                    crate::undo::GameAction::PumpCreature {
+                        card_id: *target,
+                        power_delta: power_bonus,
+                        toughness_delta: toughness_bonus,
+                        keywords_granted: keywords_granted.clone(),
+                    },
+                    prior_log_size,
+                );
+            }
             Effect::PumpAllCreatures {
                 controller,
                 filter,
@@ -4584,6 +4635,85 @@ impl GameState {
         }
 
         Ok(())
+    }
+
+    /// Evaluate a count expression against the current game state
+    ///
+    /// Used for variable effects like "gets +X/+X where X is the number of artifacts
+    /// your opponents control" (Elephant-Mandrill).
+    ///
+    /// # Errors
+    ///
+    /// This function is infallible and always returns `Ok`. The Result type is used
+    /// for consistency with other effect evaluation methods.
+    pub fn evaluate_count_expression(&self, expr: &crate::core::CountExpression, controller: PlayerId) -> Result<i32> {
+        use crate::core::CountExpression;
+        match expr {
+            CountExpression::Fixed(n) => Ok(*n),
+            CountExpression::ValidPermanents { filter } => {
+                let count = self.count_permanents_matching(filter, controller);
+                Ok(i32::try_from(count).unwrap_or(i32::MAX))
+            }
+            CountExpression::CardsDrawnThisTurn => {
+                if let Ok(player) = self.get_player(controller) {
+                    Ok(i32::from(player.cards_drawn_this_turn))
+                } else {
+                    Ok(0)
+                }
+            }
+        }
+    }
+
+    /// Count permanents on the battlefield matching a filter string
+    ///
+    /// Filter format examples:
+    /// - "Artifact.OppCtrl" - artifacts opponents control
+    /// - "Creature.YouCtrl" - creatures you control
+    /// - "Land.YouCtrl" - lands you control
+    /// - "Permanent" - all permanents
+    fn count_permanents_matching(&self, filter: &str, controller: PlayerId) -> usize {
+        self.battlefield
+            .cards
+            .iter()
+            .filter(|&&card_id| {
+                if let Ok(card) = self.cards.get(card_id) {
+                    // Check card type filter
+                    let type_matches = if filter.starts_with("Artifact") {
+                        card.is_artifact()
+                    } else if filter.starts_with("Creature") {
+                        card.is_creature()
+                    } else if filter.starts_with("Land") {
+                        card.is_land()
+                    } else if filter.starts_with("Enchantment") {
+                        card.is_enchantment()
+                    } else if filter.starts_with("Permanent") || filter.starts_with("Card") {
+                        true // Any permanent
+                    } else {
+                        // Unknown type, assume it matches if we can't parse
+                        log::warn!(target: "count", "Unknown filter type in count expression: {}", filter);
+                        true
+                    };
+
+                    if !type_matches {
+                        return false;
+                    }
+
+                    // Check controller filter
+                    if filter.contains("OppCtrl") {
+                        // Opponents control - not the controller
+                        card.controller != controller
+                    } else if filter.contains("YouCtrl") {
+                        // You control
+                        card.controller == controller
+                    } else {
+                        // No controller restriction
+                        true
+                    }
+                } else {
+                    false
+                }
+            })
+            .count()
     }
 }
 

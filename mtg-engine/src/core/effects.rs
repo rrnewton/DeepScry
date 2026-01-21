@@ -64,6 +64,74 @@ impl TargetType {
     }
 }
 
+/// Count expression for variable effects
+///
+/// Used by effects that depend on counting game state, like:
+/// - "gets +X/+X where X is the number of artifacts your opponents control"
+/// - "draw cards equal to the number of creatures you control"
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CountExpression {
+    /// Fixed value (not actually a count, just wraps a constant)
+    Fixed(i32),
+
+    /// Count permanents matching a filter (Count$Valid filter)
+    /// Filter examples: "Artifact.OppCtrl", "Creature.YouCtrl", "Land.YouCtrl"
+    ValidPermanents {
+        /// The filter string (e.g., "Artifact.OppCtrl")
+        filter: String,
+    },
+
+    /// Count cards drawn this turn (Count$YouDrewThisTurn)
+    CardsDrawnThisTurn,
+}
+
+impl Default for CountExpression {
+    fn default() -> Self {
+        CountExpression::Fixed(0)
+    }
+}
+
+impl CountExpression {
+    /// Parse a count expression from a string value and optional SVars
+    ///
+    /// Examples:
+    /// - "+3" -> Fixed(3)
+    /// - "X" with SVar X = "Count$Valid Artifact.OppCtrl" -> ValidPermanents { filter: "Artifact.OppCtrl" }
+    /// - "X" with SVar X = "Count$YouDrewThisTurn" -> CardsDrawnThisTurn
+    pub fn parse(value: &str, svars: &std::collections::HashMap<String, String>) -> Self {
+        // Try parsing as fixed integer first
+        let trimmed = value.trim_start_matches('+');
+        if let Ok(n) = trimmed.parse::<i32>() {
+            return CountExpression::Fixed(n);
+        }
+
+        // Check if it's a variable reference (X, Y, Z, -X, etc.)
+        let var_name = value.trim_start_matches('+').trim_start_matches('-');
+
+        // Look up the SVar
+        if let Some(svar_value) = svars.get(var_name) {
+            // Parse Count$ expressions
+            if let Some(rest) = svar_value.strip_prefix("Count$") {
+                if rest.starts_with("Valid ") {
+                    // Count$Valid filter
+                    let filter = rest.strip_prefix("Valid ").unwrap_or(rest).to_string();
+                    return CountExpression::ValidPermanents { filter };
+                } else if rest == "YouDrewThisTurn" {
+                    return CountExpression::CardsDrawnThisTurn;
+                }
+            }
+        }
+
+        // Unknown expression - return 0
+        CountExpression::Fixed(0)
+    }
+
+    /// Check if this is a fixed value (not actually variable)
+    pub fn is_fixed(&self) -> bool {
+        matches!(self, CountExpression::Fixed(_))
+    }
+}
+
 /// Restrictions on what types of permanents can be targeted
 ///
 /// For spells like Disenchant ("destroy target artifact or enchantment"),
@@ -310,6 +378,20 @@ pub enum Effect {
         filter: String,
         power_bonus: i32,
         toughness_bonus: i32,
+    },
+
+    /// Pump with variable bonus based on counting game state
+    /// Example: "This creature gets +X/+X until end of turn, where X is the number of artifacts your opponents control"
+    ///
+    /// Used by cards like Elephant-Mandrill where the pump amount depends on Count$Valid
+    PumpCreatureVariable {
+        target: CardId,
+        /// Count expression for power bonus (e.g., "Artifact.OppCtrl" for Count$Valid Artifact.OppCtrl)
+        power_count: CountExpression,
+        /// Count expression for toughness bonus
+        toughness_count: CountExpression,
+        /// Keywords to grant (optional)
+        keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
     },
 
     /// Mill cards from library to graveyard
@@ -727,7 +809,8 @@ impl Effect {
             | Effect::Airbend { .. }
             | Effect::Earthbend { .. }
             | Effect::GrantCantBeBlocked { .. }
-            | Effect::CreateDelayedTrigger { .. } => EffectTargetCategory::RequiresTarget,
+            | Effect::CreateDelayedTrigger { .. }
+            | Effect::PumpCreatureVariable { .. } => EffectTargetCategory::RequiresTarget,
         }
     }
 
@@ -1006,7 +1089,24 @@ pub enum StaticAbility {
 
         /// Description for logging
         description: String,
+
+        /// Optional condition for when this ability is active
+        /// None = always active, Some(PlayerTurn) = only during controller's turn
+        condition: Option<StaticCondition>,
     },
+}
+
+/// Condition for when a static ability is active
+///
+/// Used for abilities like "During your turn, this creature has hexproof"
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StaticCondition {
+    /// Active only during the controller's turn
+    /// Corresponds to: `Condition$ PlayerTurn`
+    PlayerTurn,
+    /// Active only during opponents' turns
+    /// Corresponds to: `Condition$ NotPlayerTurn`
+    NotPlayerTurn,
 }
 
 /// Selector for which cards are affected by a static ability
@@ -1770,5 +1870,58 @@ mod tests {
             panic!("Wrong effect type: expected DestroyPermanent, got {destroy_effect:?}");
         };
         assert_eq!(target, card_id);
+    }
+
+    #[test]
+    fn test_count_expression_parse_fixed() {
+        let svars = std::collections::HashMap::new();
+
+        // Fixed positive value
+        let expr = CountExpression::parse("+3", &svars);
+        assert_eq!(expr, CountExpression::Fixed(3));
+
+        // Fixed negative value
+        let expr = CountExpression::parse("-2", &svars);
+        assert_eq!(expr, CountExpression::Fixed(-2));
+
+        // Fixed value without sign
+        let expr = CountExpression::parse("5", &svars);
+        assert_eq!(expr, CountExpression::Fixed(5));
+    }
+
+    #[test]
+    fn test_count_expression_parse_valid_permanents() {
+        let mut svars = std::collections::HashMap::new();
+        svars.insert("X".to_string(), "Count$Valid Artifact.OppCtrl".to_string());
+
+        let expr = CountExpression::parse("+X", &svars);
+        assert!(
+            matches!(&expr, CountExpression::ValidPermanents { filter } if filter == "Artifact.OppCtrl"),
+            "Expected ValidPermanents with Artifact.OppCtrl filter, got {:?}",
+            expr
+        );
+    }
+
+    #[test]
+    fn test_count_expression_parse_you_drew_this_turn() {
+        let mut svars = std::collections::HashMap::new();
+        svars.insert("X".to_string(), "Count$YouDrewThisTurn".to_string());
+
+        let expr = CountExpression::parse("+X", &svars);
+        assert_eq!(
+            expr,
+            CountExpression::CardsDrawnThisTurn,
+            "Expected CardsDrawnThisTurn, got {:?}",
+            expr
+        );
+    }
+
+    #[test]
+    fn test_count_expression_parse_unknown() {
+        let svars = std::collections::HashMap::new();
+
+        // Unknown variable -> defaults to 0
+        let expr = CountExpression::parse("X", &svars);
+        assert_eq!(expr, CountExpression::Fixed(0));
     }
 }

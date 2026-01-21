@@ -252,6 +252,25 @@ impl<'a> GameLoop<'a> {
                 };
                 self.game.logger.gamelog(&message);
             }
+            Effect::PumpCreatureVariable {
+                target,
+                power_count,
+                toughness_count,
+                keywords_granted,
+            } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                // Note: We log the expression type since actual values depend on game state
+                let message = format!(
+                    "{source_name} ({source_id}) gives {target_name} ({target}) +X/+X (power: {:?}, toughness: {:?}) and {:?} until end of turn",
+                    power_count, toughness_count, keywords_granted
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::Mill { player, count } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to mill {count} card(s)");

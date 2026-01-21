@@ -1408,8 +1408,26 @@ impl GameState {
                     affected,
                     keyword,
                     description: _,
+                    condition,
                 } = ability
                 {
+                    // Check condition (e.g., PlayerTurn = only during controller's turn)
+                    if let Some(cond) = condition {
+                        use crate::core::StaticCondition;
+                        let is_controller_turn = self.turn.active_player == source.controller;
+                        match cond {
+                            StaticCondition::PlayerTurn => {
+                                if !is_controller_turn {
+                                    continue; // Condition not met - skip this ability
+                                }
+                            }
+                            StaticCondition::NotPlayerTurn => {
+                                if is_controller_turn {
+                                    continue; // Condition not met - skip this ability
+                                }
+                            }
+                        }
+                    }
                     // Check if this ability affects the target creature
                     let affects_creature = match affected {
                         AffectedSelector::CreatureTypeOtherYouControl { subtype } => {
@@ -1690,6 +1708,7 @@ mod tests {
             },
             keyword: Keyword::Haste,
             description: "Other Spiders you control have haste".into(),
+            condition: None,
         });
         game.cards.insert(lord_id, lord);
 
