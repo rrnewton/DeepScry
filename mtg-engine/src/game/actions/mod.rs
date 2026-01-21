@@ -3492,6 +3492,16 @@ impl GameState {
                     }
                 }
 
+                // GrantCantBeBlocked with placeholder CardId::new(0) → "self" for CardDrawn triggers
+                // (Otter-Penguin: "can't be blocked this turn" via SubAbility$ chain)
+                if let Effect::GrantCantBeBlocked { target } = &resolved_effect {
+                    if target.is_placeholder() {
+                        resolved_effect = Effect::GrantCantBeBlocked {
+                            target: trigger_info.card_id,
+                        };
+                    }
+                }
+
                 self.execute_effect(&resolved_effect)?;
             }
         }

@@ -1813,6 +1813,18 @@ impl CardDefinition {
                                     target: CardId::new(0),
                                     num_counters,
                                 });
+
+                                // Check SubAbility$ chain (e.g., DBUntap for Avatar Kyoshi)
+                                if let Some(sub_ref) = svar_params.get("SubAbility") {
+                                    if let Some(sub_params) = self.parsed_svars.get(sub_ref) {
+                                        // DB$ Untap - untap the earthbended land
+                                        if sub_params.api_type == ApiType::Untap {
+                                            effects.push(Effect::UntapPermanent {
+                                                target: CardId::new(0),
+                                            });
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -4012,6 +4024,127 @@ Oracle:Landfall — Whenever a land you control enters, this creature gains flyi
             has_pump,
             "Trigger should have PumpCreature effect (for Flying). Effects: {:?}",
             trigger.effects
+        );
+    }
+
+    #[test]
+    fn test_otter_penguin_subability_chain_with_effect() {
+        // Test parsing Otter-Penguin's trigger with SubAbility$ chain to DB$ Effect
+        // This is the pattern: TrigPump -> DBUnblockable (DB$ Effect with StaticAbilities$)
+        let card_data = r#"Name:Otter-Penguin
+ManaCost:1 U
+Types:Creature Otter Bird
+PT:2/1
+T:Mode$ Drawn | ValidCard$ Card.YouCtrl | Number$ 2 | TriggerZones$ Battlefield | Execute$ TrigPump | TriggerDescription$ Whenever you draw your second card each turn, this creature gets +1/+2 until end of turn and can't be blocked this turn.
+SVar:TrigPump:DB$ Pump | Defined$ Self | NumAtt$ +1 | NumDef$ +2 | SubAbility$ DBUnblockable
+SVar:DBUnblockable:DB$ Effect | RememberObjects$ Self | ExileOnMoved$ Battlefield | StaticAbilities$ Unblockable
+SVar:Unblockable:Mode$ CantBlockBy | ValidAttacker$ Card.IsRemembered | Description$ EFFECTSOURCE can't be blocked this turn.
+Oracle:Whenever you draw your second card each turn, this creature gets +1/+2 until end of turn and can't be blocked this turn."#;
+
+        let def = CardLoader::parse(card_data).expect("Should parse Otter-Penguin card data");
+        assert_eq!(def.name.as_str(), "Otter-Penguin");
+
+        // Parse triggers from the definition
+        let triggers = def.parse_triggers();
+
+        // Should have 1 trigger (Drawn trigger)
+        assert_eq!(triggers.len(), 1, "Should have 1 trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::CardDrawn);
+        assert_eq!(trigger.draw_number, Some(2)); // Second card drawn
+
+        // Trigger should have 2 effects: PumpCreature and GrantCantBeBlocked
+        assert!(
+            trigger.effects.len() >= 2,
+            "Expected at least 2 effects (Pump + GrantCantBeBlocked), got {}: {:?}",
+            trigger.effects.len(),
+            trigger.effects
+        );
+
+        // Check for PumpCreature effect
+        let has_pump = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::PumpCreature { .. }));
+        assert!(
+            has_pump,
+            "Trigger should have PumpCreature effect: {:?}",
+            trigger.effects
+        );
+
+        // Check for GrantCantBeBlocked effect (from SubAbility$ chain)
+        let has_cant_be_blocked = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::GrantCantBeBlocked { .. }));
+        assert!(
+            has_cant_be_blocked,
+            "Trigger should have GrantCantBeBlocked effect from SubAbility$ chain: {:?}",
+            trigger.effects
+        );
+    }
+
+    #[test]
+    fn test_avatar_kyoshi_begin_combat_trigger() {
+        // Test parsing Avatar Kyoshi's BeginCombat trigger with SubAbility$ chain
+        // Trigger: earthbend 8, then untap that land
+        let card_data = r#"Name:Avatar Kyoshi, Earthbender
+ManaCost:5 G G G
+Types:Legendary Creature Human Avatar
+PT:6/6
+T:Mode$ Phase | Phase$ BeginCombat | ValidPlayer$ You | Execute$ TrigEarthbend | TriggerZones$ Battlefield | TriggerDescription$ At the beginning of combat on your turn, earthbend 8, then untap that land.
+SVar:TrigEarthbend:DB$ Earthbend | Num$ 8 | SubAbility$ DBUntap
+SVar:DBUntap:DB$ Untap | Defined$ Targeted
+Oracle:At the beginning of combat on your turn, earthbend 8, then untap that land."#;
+
+        let def = CardLoader::parse(card_data).expect("Should parse Avatar Kyoshi card data");
+        assert_eq!(def.name.as_str(), "Avatar Kyoshi, Earthbender");
+
+        // Parse triggers from the definition
+        let triggers = def.parse_triggers();
+
+        // Should have 1 trigger (BeginCombat trigger)
+        assert_eq!(triggers.len(), 1, "Should have 1 trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::BeginningOfCombat);
+
+        // Trigger should have 2 effects: Earthbend + UntapPermanent
+        assert!(
+            trigger.effects.len() >= 2,
+            "Expected at least 2 effects (Earthbend + Untap), got {}: {:?}",
+            trigger.effects.len(),
+            trigger.effects
+        );
+
+        // Check for Earthbend effect
+        let has_earthbend = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::Earthbend { num_counters: 8, .. }));
+        assert!(
+            has_earthbend,
+            "Trigger should have Earthbend effect with 8 counters: {:?}",
+            trigger.effects
+        );
+
+        // Check for UntapPermanent effect (from SubAbility$ chain)
+        let has_untap = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::UntapPermanent { .. }));
+        assert!(
+            has_untap,
+            "Trigger should have UntapPermanent effect from SubAbility$ chain: {:?}",
+            trigger.effects
+        );
+
+        // Check that the trigger is controller-only (ValidPlayer$ You)
+        // This is indicated by the [controller_only] prefix in description
+        assert!(
+            trigger.description.contains("[controller_only]"),
+            "Trigger description should have [controller_only] prefix for ValidPlayer$ You"
         );
     }
 }
