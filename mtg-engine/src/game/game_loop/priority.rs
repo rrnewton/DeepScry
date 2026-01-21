@@ -218,6 +218,18 @@ impl<'a> GameLoop<'a> {
                 eprintln!("    Failed to check legendary rule: {e}");
             }
         }
+        // Check aura attachment (MTG CR 704.5d)
+        if let Err(e) = self.game.check_aura_attachment() {
+            if should_log {
+                eprintln!("    Failed to check aura attachment: {e}");
+            }
+        }
+        // Check equipment attachment (MTG CR 704.5n)
+        if let Err(e) = self.game.check_equipment_attachment() {
+            if should_log {
+                eprintln!("    Failed to check equipment attachment: {e}");
+            }
+        }
 
         // Remove the spell from our targets tracking
         self.spell_targets.retain(|(id, _)| *id != spell_id);
@@ -1206,6 +1218,18 @@ impl<'a> GameLoop<'a> {
                                     if let Err(e) = self.game.check_legendary_rule() {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             eprintln!("    Failed to check legendary rule: {e}");
+                                        }
+                                    }
+                                    // Check aura attachment (MTG CR 704.5d)
+                                    if let Err(e) = self.game.check_aura_attachment() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to check aura attachment: {e}");
+                                        }
+                                    }
+                                    // Check equipment attachment (MTG CR 704.5n)
+                                    if let Err(e) = self.game.check_equipment_attachment() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to check equipment attachment: {e}");
                                         }
                                     }
                                 } else if self.verbosity >= VerbosityLevel::Normal && !self.replaying {

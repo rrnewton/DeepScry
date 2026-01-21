@@ -1390,6 +1390,115 @@ impl GameState {
         Ok(())
     }
 
+    /// Check state-based actions for aura attachment (MTG CR 704.5d)
+    ///
+    /// If an Aura is attached to an illegal permanent or not attached to anything,
+    /// that Aura's controller puts it into the graveyard.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if zone operations fail.
+    pub fn check_aura_attachment(&mut self) -> Result<()> {
+        // Collect auras that need to go to graveyard
+        let auras_to_destroy: Vec<(CardId, PlayerId, crate::core::CardName)> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+                if !card.is_aura() {
+                    return None;
+                }
+
+                // Check if aura is attached to something
+                let attached_to = card.get_attached_to()?;
+
+                // Check if the attached target still exists on battlefield
+                if !self.battlefield.cards.contains(&attached_to) {
+                    log::debug!(target: "sba", "Aura {} ({}) attached to {} which is no longer on battlefield",
+                        card.name, card_id.as_u32(), attached_to.as_u32());
+                    return Some((card_id, card.owner, card.name.clone()));
+                }
+
+                // Check if the attached target is a legal target for this aura
+                // For now, we just check it exists - full legality would require
+                // checking the aura's enchant restriction (e.g., "Enchant creature")
+                None
+            })
+            .collect();
+
+        // Move orphaned auras to graveyard
+        for (card_id, owner, name) in auras_to_destroy {
+            self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            self.logger.gamelog(&format!(
+                "{} ({}) goes to graveyard (aura not attached to valid permanent)",
+                name, card_id
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check state-based actions for equipment attachment (MTG CR 704.5n)
+    ///
+    /// If an Equipment or Fortification is attached to an illegal permanent or
+    /// became a creature, it becomes unattached.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if card operations fail.
+    pub fn check_equipment_attachment(&mut self) -> Result<()> {
+        // Collect equipment that needs to become unattached
+        let equipment_to_unattach: Vec<CardId> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                let card = self.cards.get(card_id).ok()?;
+                if !card.is_equipment() || !card.is_attached() {
+                    return None;
+                }
+
+                // CR 704.5n: Equipment that became a creature becomes unattached
+                if card.is_creature() {
+                    log::debug!(target: "sba", "Equipment {} ({}) is now a creature, becoming unattached",
+                        card.name, card_id.as_u32());
+                    return Some(card_id);
+                }
+
+                // Check if attached target still exists on battlefield
+                let attached_to = card.get_attached_to()?;
+                if !self.battlefield.cards.contains(&attached_to) {
+                    log::debug!(target: "sba", "Equipment {} ({}) attached to {} which is no longer on battlefield",
+                        card.name, card_id.as_u32(), attached_to.as_u32());
+                    return Some(card_id);
+                }
+
+                // Check if attached target is still a creature
+                let target = self.cards.get(attached_to).ok()?;
+                if !target.is_creature() {
+                    log::debug!(target: "sba", "Equipment {} ({}) attached to {} which is no longer a creature",
+                        card.name, card_id.as_u32(), attached_to.as_u32());
+                    return Some(card_id);
+                }
+
+                None
+            })
+            .collect();
+
+        // Unattach equipment
+        for card_id in equipment_to_unattach {
+            if let Ok(card) = self.cards.get_mut(card_id) {
+                let name = card.name.clone();
+                card.attached_to = None;
+                self.logger
+                    .gamelog(&format!("{} ({}) becomes unattached", name, card_id));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Clear temporary effects at end of turn (Cleanup step)
     /// This resets power/toughness bonuses from pump spells and clears damage
     /// MTG CR 514.2: Damage marked on permanents is removed (CR 704.5f)

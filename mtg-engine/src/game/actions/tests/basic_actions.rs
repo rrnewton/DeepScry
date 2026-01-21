@@ -125,4 +125,146 @@ mod tests {
             assert!(zones.graveyard.contains(card_id), "Card not in graveyard");
         }
     }
+
+    #[test]
+    fn test_aura_dies_when_creature_destroyed() {
+        // Test CR 704.5d: Auras not attached to valid permanent go to graveyard
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a 2/2 creature on battlefield
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Create an Aura attached to the creature
+        let aura_id = game.next_card_id();
+        let mut aura = Card::new(aura_id, "Pacifism".to_string(), p1_id);
+        aura.add_type(CardType::Enchantment);
+        aura.cache.is_enchantment = true;
+        aura.cache.is_aura = true;
+        aura.attached_to = Some(creature_id);
+        game.cards.insert(aura_id, aura);
+        game.battlefield.add(aura_id);
+
+        // Verify setup: both on battlefield, aura attached
+        assert!(game.battlefield.contains(creature_id));
+        assert!(game.battlefield.contains(aura_id));
+        let aura_attached = game.cards.get(aura_id).unwrap().get_attached_to();
+        assert_eq!(aura_attached, Some(creature_id));
+
+        // Move creature to graveyard (simulating death)
+        game.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, p1_id)
+            .unwrap();
+        assert!(!game.battlefield.contains(creature_id));
+
+        // Check aura SBA - aura should go to graveyard
+        game.check_aura_attachment().unwrap();
+
+        // Aura should now be in graveyard
+        assert!(
+            !game.battlefield.contains(aura_id),
+            "Aura still on battlefield after creature died"
+        );
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(zones.graveyard.contains(aura_id), "Aura not in graveyard");
+        }
+    }
+
+    #[test]
+    fn test_equipment_unattaches_when_creature_leaves() {
+        // Test CR 704.5n: Equipment attached to nothing becomes unattached
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a 2/2 creature on battlefield
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Create Equipment attached to the creature
+        let equip_id = game.next_card_id();
+        let mut equipment = Card::new(equip_id, "Bonesplitter".to_string(), p1_id);
+        equipment.add_type(CardType::Artifact);
+        equipment.cache.is_equipment = true;
+        equipment.attached_to = Some(creature_id);
+        game.cards.insert(equip_id, equipment);
+        game.battlefield.add(equip_id);
+
+        // Verify setup: both on battlefield, equipment attached
+        assert!(game.battlefield.contains(creature_id));
+        assert!(game.battlefield.contains(equip_id));
+        let equip_attached = game.cards.get(equip_id).unwrap().get_attached_to();
+        assert_eq!(equip_attached, Some(creature_id));
+
+        // Move creature to graveyard (simulating death)
+        game.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, p1_id)
+            .unwrap();
+        assert!(!game.battlefield.contains(creature_id));
+
+        // Check equipment SBA - equipment should become unattached
+        game.check_equipment_attachment().unwrap();
+
+        // Equipment should still be on battlefield but unattached
+        assert!(game.battlefield.contains(equip_id), "Equipment left battlefield");
+        let equip_attached_after = game.cards.get(equip_id).unwrap().get_attached_to();
+        assert_eq!(
+            equip_attached_after, None,
+            "Equipment still attached after creature died"
+        );
+    }
+
+    #[test]
+    fn test_equipment_unattaches_when_becomes_creature() {
+        // Test CR 704.5n: Equipment that becomes a creature becomes unattached
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a creature that the equipment is attached to
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Create Equipment attached to the creature
+        let equip_id = game.next_card_id();
+        let mut equipment = Card::new(equip_id, "Animated Sword".to_string(), p1_id);
+        equipment.add_type(CardType::Artifact);
+        equipment.cache.is_equipment = true;
+        equipment.attached_to = Some(creature_id);
+        game.cards.insert(equip_id, equipment);
+        game.battlefield.add(equip_id);
+
+        // Now make the equipment also a creature (simulating Animate Artifact effect)
+        let equip = game.cards.get_mut(equip_id).unwrap();
+        equip.add_type(CardType::Creature);
+        equip.set_base_power(Some(3));
+        equip.set_base_toughness(Some(3));
+
+        // Both still on battlefield
+        assert!(game.battlefield.contains(creature_id));
+        assert!(game.battlefield.contains(equip_id));
+
+        // Check equipment SBA - equipment-creature should become unattached
+        game.check_equipment_attachment().unwrap();
+
+        // Equipment-creature should still be on battlefield but unattached
+        assert!(
+            game.battlefield.contains(equip_id),
+            "Equipment-creature left battlefield"
+        );
+        let equip_attached_after = game.cards.get(equip_id).unwrap().get_attached_to();
+        assert_eq!(equip_attached_after, None, "Equipment-creature still attached");
+    }
 }
