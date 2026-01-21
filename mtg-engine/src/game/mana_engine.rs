@@ -152,44 +152,24 @@ impl ManaCapacity {
             .saturating_add(self.colorless)
     }
 
-    /// Check if this capacity can pay for a mana cost
+    /// Check if this capacity can pay for a mana cost.
     ///
     /// For simple costs (only specific colors, no hybrid/phyrexian), this is
     /// a straightforward comparison. Returns false if the cost requires more
     /// mana of any color than we can produce.
+    ///
+    /// This delegates to `ManaCost::is_affordable()` which is the canonical
+    /// affordability check shared with `ManaPool::can_pay()`.
+    #[inline]
     pub fn can_pay_simple(&self, cost: &ManaCost) -> bool {
-        // Check specific color requirements
-        if cost.white > self.white {
-            return false;
-        }
-        if cost.blue > self.blue {
-            return false;
-        }
-        if cost.black > self.black {
-            return false;
-        }
-        if cost.red > self.red {
-            return false;
-        }
-        if cost.green > self.green {
-            return false;
-        }
-        if cost.colorless > self.colorless {
-            return false;
-        }
-
-        // Check if we have enough total mana for generic requirement
-        // Generic can be paid with any color or colorless mana
-        let remaining_capacity = self
-            .total()
-            .saturating_sub(cost.white)
-            .saturating_sub(cost.blue)
-            .saturating_sub(cost.black)
-            .saturating_sub(cost.red)
-            .saturating_sub(cost.green)
-            .saturating_sub(cost.colorless);
-
-        remaining_capacity >= cost.generic
+        cost.is_affordable(
+            self.white,
+            self.blue,
+            self.black,
+            self.red,
+            self.green,
+            self.colorless,
+        )
     }
 }
 

@@ -118,6 +118,41 @@ impl ManaCost {
         self.generic + self.white + self.blue + self.black + self.red + self.green + self.colorless
     }
 
+    /// Check if this cost can be paid with the given mana amounts.
+    ///
+    /// This is the canonical affordability check used by both ManaPool::can_pay()
+    /// and ManaCapacity::can_pay_simple(). It checks:
+    /// 1. Each color requirement can be met
+    /// 2. Total available mana is enough for generic + colored requirements
+    ///
+    /// # Arguments
+    /// * `white`, `blue`, `black`, `red`, `green`, `colorless` - available mana amounts
+    #[inline]
+    pub fn is_affordable(
+        &self,
+        white: u8,
+        blue: u8,
+        black: u8,
+        red: u8,
+        green: u8,
+        colorless: u8,
+    ) -> bool {
+        // Check each specific color requirement
+        if white < self.white
+            || blue < self.blue
+            || black < self.black
+            || red < self.red
+            || green < self.green
+            || colorless < self.colorless
+        {
+            return false;
+        }
+
+        // Check total mana for generic requirement
+        let total_available = white + blue + black + red + green + colorless;
+        total_available >= self.cmc()
+    }
+
     /// Multiply all mana amounts by a factor
     /// Useful for abilities like Sol Ring that produce multiple mana (e.g., {C}{C})
     /// Note: x_count is NOT multiplied since X is a placeholder
@@ -216,23 +251,20 @@ impl ManaPool {
         self.colorless = 0;
     }
 
-    /// Check if we can pay the given mana cost
+    /// Check if we can pay the given mana cost with mana currently in the pool.
+    ///
+    /// This delegates to `ManaCost::is_affordable()` which is the canonical
+    /// affordability check shared with `ManaCapacity::can_pay_simple()`.
+    #[inline]
     pub fn can_pay(&self, cost: &ManaCost) -> bool {
-        // Check colored mana requirements
-        if self.white < cost.white
-            || self.blue < cost.blue
-            || self.black < cost.black
-            || self.red < cost.red
-            || self.green < cost.green
-            || self.colorless < cost.colorless
-        {
-            return false;
-        }
-
-        // Check if we have enough mana for generic cost
-        let available = self.white + self.blue + self.black + self.red + self.green + self.colorless;
-        let required = cost.cmc();
-        available >= required
+        cost.is_affordable(
+            self.white,
+            self.blue,
+            self.black,
+            self.red,
+            self.green,
+            self.colorless,
+        )
     }
 
     /// Pay a mana cost from this pool
@@ -472,5 +504,24 @@ mod tests {
         let colors: Vec<_> = Color::all_colors_and_colorless().collect();
         assert_eq!(colors.len(), 6);
         assert_eq!(colors[5], Color::Colorless);
+    }
+
+    #[test]
+    fn test_mana_cost_is_affordable() {
+        // Test basic affordability
+        let cost = ManaCost::from_string("2RR"); // 2 generic + 2 red
+        // Exact match
+        assert!(cost.is_affordable(0, 0, 0, 2, 2, 0)); // 2R + 2G for generic
+        // More than enough
+        assert!(cost.is_affordable(1, 1, 1, 3, 1, 0)); // extra mana is fine
+        // Not enough red
+        assert!(!cost.is_affordable(5, 0, 0, 1, 0, 0)); // only 1R
+        // Not enough total
+        assert!(!cost.is_affordable(0, 0, 0, 2, 0, 0)); // only 2R, need 4 total
+
+        // Test colorless requirement
+        let cost2 = ManaCost::from_string("2C"); // 2 generic + 1 colorless
+        assert!(cost2.is_affordable(0, 0, 0, 0, 0, 3)); // 3 colorless
+        assert!(!cost2.is_affordable(2, 0, 0, 0, 0, 0)); // 2 white, no colorless
     }
 }
