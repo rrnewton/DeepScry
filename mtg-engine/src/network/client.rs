@@ -1857,12 +1857,8 @@ async fn run_ws_writer(
 
 /// Process a card reveal in the client's shadow game state
 ///
-/// Handles late-binding architecture where CardID slots are pre-reserved
-/// and card identities are revealed via CardRevealed messages.
-///
-/// Note: Wildcard is intentional - RevealReason has 7 variants; we handle
-/// specific ones (Draw, Played, TokenCreated) and log the rest.
-#[allow(clippy::wildcard_enum_match_arm)]
+/// Wrapper around the shared `reveal_processor::process_card_reveal` that uses
+/// the native card definition provider (with database fallback).
 fn process_card_reveal(
     game: &mut GameState,
     card_db: &AsyncCardDatabase,
@@ -1870,121 +1866,10 @@ fn process_card_reveal(
     card_reveal: CardReveal,
     reason: RevealReason,
 ) {
-    let card_id = card_reveal.card_id;
+    use super::reveal_processor::{process_card_reveal as shared_process, NativeCardDefProvider};
 
-    // Check for dummy reveal (empty name = hidden card)
-    if card_reveal.name.is_empty() {
-        log::debug!(
-            "Dummy reveal: CardID {} for {:?} ({:?}) - skipping instantiation",
-            card_id.as_u32(),
-            owner,
-            reason
-        );
-        return;
-    }
-
-    match reason {
-        RevealReason::Draw => {
-            let card_already_known = game.cards.get(card_id).is_ok();
-            log::debug!(
-                "RevealReason::Draw: {} (id={}) for {:?} card_already_known={}",
-                card_reveal.name,
-                card_id.as_u32(),
-                owner,
-                card_already_known
-            );
-
-            if !card_already_known {
-                let card_def = get_card_def_from_reveal(&card_reveal, card_db);
-                let card_instance = card_def.instantiate(card_id, owner);
-                game.cards.insert(card_id, card_instance);
-                log::debug!(
-                    "Instantiated drawn card for {:?}: {} ({:?})",
-                    owner,
-                    card_reveal.name,
-                    card_id
-                );
-            }
-        }
-        RevealReason::Played => {
-            let card_already_known = game.cards.get(card_id).is_ok();
-            log::debug!(
-                "RevealReason::Played: {} (id={}) card_already_known={}",
-                card_reveal.name,
-                card_id.as_u32(),
-                card_already_known
-            );
-
-            if !card_already_known {
-                let card_def = get_card_def_from_reveal(&card_reveal, card_db);
-                let card_instance = card_def.instantiate(card_id, owner);
-                game.cards.insert(card_id, card_instance);
-                log::debug!(
-                    "Instantiated played card for {:?}: {} ({:?})",
-                    owner,
-                    card_reveal.name,
-                    card_id
-                );
-
-                // If card isn't in hand or battlefield, add to hand
-                let card_in_hand = game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
-                let card_on_battlefield = game.battlefield.cards.contains(&card_id);
-
-                if !card_in_hand && !card_on_battlefield {
-                    if let Some(zones) = game.get_player_zones_mut(owner) {
-                        zones.hand.add(card_id);
-                        log::debug!(
-                            "Added revealed card to hand: {} (id={})",
-                            card_reveal.name,
-                            card_id.as_u32()
-                        );
-                    }
-                }
-            }
-        }
-        RevealReason::TokenCreated => {
-            let card_def = get_card_def_from_reveal(&card_reveal, card_db);
-            let card_instance = card_def.instantiate(card_id, owner);
-            if game.cards.insert_if_vacant(card_id, card_instance) {
-                game.battlefield.add(card_id);
-                log::debug!("Created token for {:?}: {} ({:?})", owner, card_reveal.name, card_id);
-            }
-        }
-        RevealReason::Searched => {
-            // Library search result - instantiate the card so it can be moved to hand
-            // The card is being revealed because it was found in a library search
-            let card_already_known = game.cards.get(card_id).is_ok();
-            log::debug!(
-                "RevealReason::Searched: {} (id={}) for {:?} card_already_known={}",
-                card_reveal.name,
-                card_id.as_u32(),
-                owner,
-                card_already_known
-            );
-
-            if !card_already_known {
-                let card_def = get_card_def_from_reveal(&card_reveal, card_db);
-                let card_instance = card_def.instantiate(card_id, owner);
-                game.cards.insert(card_id, card_instance);
-                log::debug!(
-                    "Instantiated searched card for {:?}: {} ({:?})",
-                    owner,
-                    card_reveal.name,
-                    card_id
-                );
-            }
-        }
-        _ => {
-            // Effect, Targeting, OpeningHand (handled during init) - just log
-            log::debug!(
-                "Received {:?} reveal for {:?}: {} ({:?})",
-                reason,
-                owner,
-                card_reveal.name,
-                card_id
-            );
-        }
-    }
+    let provider = NativeCardDefProvider::new(card_db);
+    shared_process(game, &provider, owner, card_reveal, reason, "Native");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
