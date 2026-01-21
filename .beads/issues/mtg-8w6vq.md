@@ -1,13 +1,14 @@
 ---
 title: Extract repeated mana color iteration into helper function
-status: open
+status: closed
 priority: 4
 issue_type: task
 labels:
 - draft
 - refactoring
 created_at: 2026-01-21T00:27:07.283560560+00:00
-updated_at: 2026-01-21T00:27:07.283560560+00:00
+updated_at: 2026-01-21T10:08:29.617903294+00:00
+closed_at: 2026-01-21T10:08:29.617903184+00:00
 ---
 
 # Description

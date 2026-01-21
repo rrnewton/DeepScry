@@ -27,6 +27,36 @@ impl fmt::Display for Color {
     }
 }
 
+/// The five colors in WUBRG order (does not include colorless)
+pub const ALL_COLORS: [Color; 5] = [Color::White, Color::Blue, Color::Black, Color::Red, Color::Green];
+
+impl Color {
+    /// Returns iterator over the five colors in WUBRG order.
+    /// Does not include colorless - use `all_colors_and_colorless()` for that.
+    ///
+    /// This is a zero-cost abstraction: the array is const and
+    /// `into_iter()` compiles to the same code as an inline array.
+    #[inline]
+    pub fn all_colors() -> impl Iterator<Item = Color> {
+        ALL_COLORS.into_iter()
+    }
+
+    /// Returns iterator over all six mana types including colorless.
+    /// Order is WUBRGC (White, Blue, Black, Red, Green, Colorless).
+    #[inline]
+    pub fn all_colors_and_colorless() -> impl Iterator<Item = Color> {
+        [
+            Color::White,
+            Color::Blue,
+            Color::Black,
+            Color::Red,
+            Color::Green,
+            Color::Colorless,
+        ]
+        .into_iter()
+    }
+}
+
 /// Represents a mana cost (e.g., "2RR" = 2 generic + 2 red, "X R" = X + 1 red)
 /// Copy-eligible since it's just 8 u8 fields (8 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,5 +452,25 @@ mod tests {
 
         pool.clear();
         assert_eq!(pool.total(), 0);
+    }
+
+    #[test]
+    fn test_color_all_colors() {
+        // Verify all_colors returns exactly 5 colors in WUBRG order
+        let colors: Vec<_> = Color::all_colors().collect();
+        assert_eq!(colors.len(), 5);
+        assert_eq!(colors[0], Color::White);
+        assert_eq!(colors[1], Color::Blue);
+        assert_eq!(colors[2], Color::Black);
+        assert_eq!(colors[3], Color::Red);
+        assert_eq!(colors[4], Color::Green);
+    }
+
+    #[test]
+    fn test_color_all_colors_and_colorless() {
+        // Verify all_colors_and_colorless returns all 6 mana types
+        let colors: Vec<_> = Color::all_colors_and_colorless().collect();
+        assert_eq!(colors.len(), 6);
+        assert_eq!(colors[5], Color::Colorless);
     }
 }

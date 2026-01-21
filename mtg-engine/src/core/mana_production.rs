@@ -18,7 +18,25 @@ pub enum ManaColor {
     Green,
 }
 
+/// The five mana colors in WUBRG order
+pub const ALL_MANA_COLORS: [ManaColor; 5] = [
+    ManaColor::White,
+    ManaColor::Blue,
+    ManaColor::Black,
+    ManaColor::Red,
+    ManaColor::Green,
+];
+
 impl ManaColor {
+    /// Returns iterator over the five mana colors in WUBRG order.
+    ///
+    /// This is a zero-cost abstraction: the array is const and
+    /// `into_iter()` compiles to the same code as an inline array.
+    #[inline]
+    pub fn all_colors() -> impl Iterator<Item = ManaColor> {
+        ALL_MANA_COLORS.into_iter()
+    }
+
     /// Convert to single-character representation (W, U, B, R, G)
     pub fn to_char(self) -> char {
         match self {

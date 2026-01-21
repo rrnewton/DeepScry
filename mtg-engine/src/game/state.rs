@@ -884,8 +884,7 @@ impl GameState {
             .map(|(color, _)| color)
             .unwrap_or_else(|| {
                 // Default: pick first non-excluded color
-                [Color::White, Color::Blue, Color::Black, Color::Red, Color::Green]
-                    .into_iter()
+                Color::all_colors()
                     .find(|c| !exclude.contains(c))
                     .unwrap_or(Color::White)
             })
