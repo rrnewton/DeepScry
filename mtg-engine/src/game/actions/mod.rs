@@ -889,7 +889,7 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+            Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -907,7 +907,7 @@ impl GameState {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
-            } if target.as_u32() == 0 => {
+            } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -922,7 +922,7 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::TapPermanent { target } if target.as_u32() == 0 => {
+            Effect::TapPermanent { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -944,7 +944,7 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+            Effect::UntapPermanent { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -956,7 +956,7 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::CounterSpell { target } if target.as_u32() == 0 => {
+            Effect::CounterSpell { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -967,7 +967,7 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+            Effect::ExilePermanent { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -979,23 +979,23 @@ impl GameState {
                 }
             }
             // Player ID resolution for player-targeting effects
-            Effect::DrawCards { player, count } if player.as_u32() == 0 => Effect::DrawCards {
+            Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
                 player: card_owner,
                 count: *count,
             },
-            Effect::DiscardCards { player, count } if player.as_u32() == 0 => Effect::DiscardCards {
+            Effect::DiscardCards { player, count } if player.is_placeholder() => Effect::DiscardCards {
                 player: card_owner,
                 count: *count,
             },
-            Effect::GainLife { player, amount } if player.as_u32() == 0 => Effect::GainLife {
+            Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
                 player: card_owner,
                 amount: *amount,
             },
-            Effect::Mill { player, count } if player.as_u32() == 0 => Effect::Mill {
+            Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
                 player: card_owner,
                 count: *count,
             },
-            Effect::Scry { player, count } if player.as_u32() == 0 => Effect::Scry {
+            Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
                 player: card_owner,
                 count: *count,
             },
@@ -1003,7 +1003,7 @@ impl GameState {
                 player,
                 discard_count,
                 draw_count,
-            } if player.as_u32() == 0 => Effect::Loot {
+            } if player.is_placeholder() => Effect::Loot {
                 player: card_owner,
                 discard_count: *discard_count,
                 draw_count: *draw_count,
@@ -1012,13 +1012,13 @@ impl GameState {
                 player,
                 mana,
                 produces_chosen_color,
-            } if player.as_u32() == 0 => Effect::AddMana {
+            } if player.is_placeholder() => Effect::AddMana {
                 player: card_owner,
                 mana: *mana,
                 produces_chosen_color: *produces_chosen_color,
             },
             // Earthbend: Target land becomes 0/0 creature with haste
-            Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
+            Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -1031,7 +1031,7 @@ impl GameState {
                 }
             }
             // Airbend: Exile target, owner may cast for {2}
-            Effect::Airbend { target } if target.as_u32() == 0 => {
+            Effect::Airbend { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -1047,7 +1047,7 @@ impl GameState {
                 target,
                 counter_type,
                 amount,
-            } if target.as_u32() == 0 => {
+            } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -1065,7 +1065,7 @@ impl GameState {
                 target,
                 counter_type,
                 amount,
-            } if target.as_u32() == 0 => {
+            } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -1088,13 +1088,13 @@ impl GameState {
                 add_types,
                 num_copies,
                 restriction,
-            } if target.as_u32() == 0 => {
+            } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
                     Effect::CopyPermanent {
                         target: resolved_target,
-                        controller: if controller.as_u32() == 0 {
+                        controller: if controller.is_placeholder() {
                             card_owner
                         } else {
                             *controller
@@ -1118,7 +1118,7 @@ impl GameState {
                 condition,
                 effect: delayed_effect,
                 expiry,
-            } if tracked_card.as_u32() == 0 => {
+            } if tracked_card.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -1217,7 +1217,7 @@ impl GameState {
             }
             Effect::DestroyPermanent { target, .. } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -1234,7 +1234,7 @@ impl GameState {
             }
             Effect::TapPermanent { target } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -1254,7 +1254,7 @@ impl GameState {
                 keywords_granted,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     log::warn!(target: "pump", "PumpCreature fizzled: target is still placeholder 0");
                     return Ok(());
@@ -1406,7 +1406,7 @@ impl GameState {
                 amount,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -1419,7 +1419,7 @@ impl GameState {
                 amount,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -1447,7 +1447,7 @@ impl GameState {
             }
             Effect::ExilePermanent { target } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -1462,7 +1462,7 @@ impl GameState {
                 keywords_granted,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -1578,7 +1578,7 @@ impl GameState {
             } => {
                 // Attach Equipment to target creature
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target_creature.as_u32() == 0 {
+                if target_creature.is_placeholder() {
                     // Ability fizzles - no valid targets
                     return Ok(());
                 }
@@ -1675,7 +1675,7 @@ impl GameState {
                 // 5. The effect is cleaned up when the card leaves exile or is cast
 
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Ability fizzles - no valid targets
                     return Ok(());
                 }
@@ -1732,7 +1732,7 @@ impl GameState {
                 // 6. Register delayed trigger for return-to-battlefield on death/exile
 
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Ability fizzles - no valid targets
                     return Ok(());
                 }
@@ -1840,7 +1840,7 @@ impl GameState {
                 // 3. The effect is cleaned up at end of turn
 
                 // Skip if target is still placeholder (0) - no valid targets found
-                if target.as_u32() == 0 {
+                if target.is_placeholder() {
                     // Ability fizzles - no valid targets
                     return Ok(());
                 }
@@ -1882,7 +1882,7 @@ impl GameState {
                 // 4. Register the trigger in the delayed_triggers store
 
                 // Skip if tracked_card is still placeholder (0) - no valid targets found
-                if tracked_card.as_u32() == 0 {
+                if tracked_card.is_placeholder() {
                     // Spell fizzles - no valid targets
                     log::debug!(target: "actions", "CreateDelayedTrigger: tracked_card is placeholder, spell fizzles");
                     return Ok(());
@@ -2820,7 +2820,7 @@ impl GameState {
                         }
                         // else stays as TargetRef::None and will fizzle
                     }
-                    Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                    Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                         // Find a valid target (opponent's creature matching restriction)
                         if let Some(target_id) = self
                             .battlefield
@@ -2848,7 +2848,7 @@ impl GameState {
                         power_bonus,
                         toughness_bonus,
                         keywords_granted,
-                    } if target.as_u32() == 0 => {
+                    } if target.is_placeholder() => {
                         // Find a valid target (any creature on battlefield)
                         if let Some(target_id) = self
                             .battlefield
@@ -2872,7 +2872,7 @@ impl GameState {
                         }
                     }
                     // Note: CreateToken is handled by resolve_effect_placeholder
-                    Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                    Effect::ExilePermanent { target } if target.is_placeholder() => {
                         // Find a valid target (opponent's nonland permanent)
                         // Web Up and similar cards: "exile target nonland permanent an opponent controls"
                         let controller = self.cards.get(trigger_source)?.controller;
@@ -2895,7 +2895,7 @@ impl GameState {
                             effect = Effect::ExilePermanent { target: target_id };
                         }
                     }
-                    Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
+                    Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
                         // Placeholder CardId 0 means we need to target a land the controller controls
                         // For now, pick the first land they control (AI could choose better targets)
                         let controller = self.cards.get(trigger_source)?.controller;
@@ -2935,7 +2935,7 @@ impl GameState {
                             ));
                         }
                     }
-                    Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                    Effect::UntapPermanent { target } if target.is_placeholder() => {
                         // Placeholder CardId 0 means we need to target an artifact or creature
                         // Cat-Owl trigger: "untap target artifact or creature"
                         // Heuristic: prefer tapped friendly permanents
@@ -3044,7 +3044,7 @@ impl GameState {
 
             // Step 2: Handle complex targeting that requires battlefield search
             match &effect {
-                Effect::Earthbend { target, num_counters } if target.as_u32() == 0 => {
+                Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
                     // Placeholder CardId 0 means we need to target a land the controller controls
                     let land_target = self
                         .battlefield
@@ -3482,7 +3482,7 @@ impl GameState {
                     keywords_granted,
                 } = &resolved_effect
                 {
-                    if target.as_u32() == 0 {
+                    if target.is_placeholder() {
                         resolved_effect = Effect::PumpCreature {
                             target: trigger_info.card_id,
                             power_bonus: *power_bonus,

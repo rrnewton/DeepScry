@@ -58,7 +58,12 @@ impl<T> std::hash::Hash for EntityId<T> {
 /// Used when parsing `Defined$ Targeted` to avoid consuming a new target.
 pub const REUSE_PREVIOUS_TARGET: u32 = u32::MAX;
 
+/// Sentinel value indicating "placeholder to be resolved".
+/// Used for targets/players that need runtime resolution (e.g., "you", "target creature").
+pub const PLACEHOLDER_ID: u32 = 0;
+
 impl<T> EntityId<T> {
+    #[inline]
     pub fn new(id: u32) -> Self {
         EntityId {
             id,
@@ -66,18 +71,35 @@ impl<T> EntityId<T> {
         }
     }
 
+    #[inline]
     pub fn as_u32(&self) -> u32 {
         self.id
+    }
+
+    /// Check if this ID is a placeholder that needs resolution.
+    /// Placeholders (ID 0) are used for targets/players that must be
+    /// resolved at runtime (e.g., "you", "target creature", "any target").
+    #[inline]
+    pub fn is_placeholder(&self) -> bool {
+        self.id == PLACEHOLDER_ID
+    }
+
+    /// Create a placeholder ID for later resolution.
+    #[inline]
+    pub fn placeholder() -> Self {
+        EntityId::new(PLACEHOLDER_ID)
     }
 
     /// Check if this ID is the "reuse previous target" sentinel.
     /// Used in SubAbility chains where `Defined$ Targeted` means
     /// "use the same target as the parent ability".
+    #[inline]
     pub fn is_reuse_previous(&self) -> bool {
         self.id == REUSE_PREVIOUS_TARGET
     }
 
     /// Create a sentinel ID meaning "reuse the previous target".
+    #[inline]
     pub fn reuse_previous() -> Self {
         EntityId::new(REUSE_PREVIOUS_TARGET)
     }

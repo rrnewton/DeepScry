@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for effect in &ability.effects {
                     // Fix placeholder player IDs
                     let fixed_effect = match effect {
-                        mtg_forge_rs::core::Effect::DrawCards { player, count } if player.as_u32() == 0 => {
+                        mtg_forge_rs::core::Effect::DrawCards { player, count } if player.is_placeholder() => {
                             mtg_forge_rs::core::Effect::DrawCards {
                                 player: alice_id,
                                 count: *count,

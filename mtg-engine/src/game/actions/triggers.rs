@@ -22,7 +22,7 @@ use crate::game::GameState;
 /// Context for resolving placeholder values in triggered effects
 ///
 /// This struct captures all the information needed to resolve placeholders
-/// like `PlayerId::new(0)` (controller) and `CardId::new(0)` (trigger source).
+/// like `PlayerId::placeholder()` (controller) and `CardId::placeholder()` (trigger source).
 #[derive(Debug, Clone)]
 pub struct TriggerContext {
     /// The card that owns the trigger (the trigger source)
@@ -104,10 +104,10 @@ impl TriggerContext {
 ///
 /// ## Placeholder Conventions
 ///
-/// - `PlayerId::new(0)` → controller of the trigger source
-/// - `CardId::new(0)` → the trigger source itself (for "put counter on ~")
+/// - `PlayerId::placeholder()` / `is_placeholder()` → controller of the trigger source
+/// - `CardId::placeholder()` / `is_placeholder()` → the trigger source itself (for "put counter on ~")
 /// - `TargetRef::None` for DealDamage → context-dependent (opponent, drawing player, etc.)
-/// - `CardId::reuse_previous()` → the last resolved target in a chain
+/// - `CardId::reuse_previous()` / `is_reuse_previous()` → the last resolved target in a chain
 ///
 /// ## Effect Coverage
 ///
@@ -130,27 +130,27 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         // =========================================================================
         // Player-targeting effects: PlayerId::new(0) → controller
         // =========================================================================
-        Effect::DrawCards { player, count } if player.as_u32() == 0 => Effect::DrawCards {
+        Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
             player: ctx.controller,
             count: *count,
         },
 
-        Effect::DiscardCards { player, count } if player.as_u32() == 0 => Effect::DiscardCards {
+        Effect::DiscardCards { player, count } if player.is_placeholder() => Effect::DiscardCards {
             player: ctx.controller,
             count: *count,
         },
 
-        Effect::GainLife { player, amount } if player.as_u32() == 0 => Effect::GainLife {
+        Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
             player: ctx.controller,
             amount: *amount,
         },
 
-        Effect::Mill { player, count } if player.as_u32() == 0 => Effect::Mill {
+        Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
             player: ctx.controller,
             count: *count,
         },
 
-        Effect::Scry { player, count } if player.as_u32() == 0 => Effect::Scry {
+        Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
             player: ctx.controller,
             count: *count,
         },
@@ -159,7 +159,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             player,
             discard_count,
             draw_count,
-        } if player.as_u32() == 0 => Effect::Loot {
+        } if player.is_placeholder() => Effect::Loot {
             player: ctx.controller,
             discard_count: *discard_count,
             draw_count: *draw_count,
@@ -169,7 +169,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             player,
             mana,
             produces_chosen_color,
-        } if player.as_u32() == 0 => Effect::AddMana {
+        } if player.is_placeholder() => Effect::AddMana {
             player: ctx.controller,
             mana: *mana,
             produces_chosen_color: *produces_chosen_color,
@@ -178,7 +178,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         // =========================================================================
         // Firebend: special handling for power-based mana
         // =========================================================================
-        Effect::Firebend { controller, amount } if controller.as_u32() == 0 => {
+        Effect::Firebend { controller, amount } if controller.is_placeholder() => {
             // amount=0 means "use creature's power" (Firebending X)
             // amount=254 means "use sacrificed creature's power" (Fire Lord Ozai)
             let actual_amount = match *amount {
@@ -199,7 +199,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             target,
             counter_type,
             amount,
-        } if target.as_u32() == 0 => Effect::PutCounter {
+        } if target.is_placeholder() => Effect::PutCounter {
             target: ctx.trigger_source,
             counter_type: *counter_type,
             amount: *amount,
@@ -218,7 +218,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         Effect::DealDamage {
             target: TargetRef::Player(player_id),
             amount,
-        } if player_id.as_u32() == 0 => Effect::DealDamage {
+        } if player_id.is_placeholder() => Effect::DealDamage {
             target: TargetRef::Player(ctx.controller),
             amount: *amount,
         },
@@ -246,7 +246,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             token_script,
             amount,
             for_each_player,
-        } if controller.as_u32() == 0 => Effect::CreateToken {
+        } if controller.is_placeholder() => Effect::CreateToken {
             controller: ctx.controller,
             token_script: token_script.clone(),
             amount: *amount,
@@ -261,7 +261,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             filter,
             power_bonus,
             toughness_bonus,
-        } if controller.as_u32() == 0 => Effect::PumpAllCreatures {
+        } if controller.is_placeholder() => Effect::PumpAllCreatures {
             controller: ctx.controller,
             filter: filter.clone(),
             power_bonus: *power_bonus,

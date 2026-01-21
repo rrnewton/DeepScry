@@ -695,7 +695,7 @@ impl<'a> GameLoop<'a> {
         // Placeholder target (CardId(0)) means the spell needs to choose a target when cast
         card.effects
             .iter()
-            .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.as_u32() == 0))
+            .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.is_placeholder()))
     }
 
     /// Check if a spell requires a battlefield target (e.g., Disenchant, Terror)
@@ -713,17 +713,17 @@ impl<'a> GameLoop<'a> {
         card.effects.iter().any(|effect| {
             match effect {
                 // DestroyPermanent with placeholder target (CardId(0))
-                Effect::DestroyPermanent { target, .. } if target.as_u32() == 0 => true,
+                Effect::DestroyPermanent { target, .. } if target.is_placeholder() => true,
                 // PumpCreature with placeholder target
-                Effect::PumpCreature { target, .. } if target.as_u32() == 0 => true,
+                Effect::PumpCreature { target, .. } if target.is_placeholder() => true,
                 // TapPermanent with placeholder target
-                Effect::TapPermanent { target } if target.as_u32() == 0 => true,
+                Effect::TapPermanent { target } if target.is_placeholder() => true,
                 // UntapPermanent with placeholder target
-                Effect::UntapPermanent { target } if target.as_u32() == 0 => true,
+                Effect::UntapPermanent { target } if target.is_placeholder() => true,
                 // ExilePermanent with placeholder target
-                Effect::ExilePermanent { target } if target.as_u32() == 0 => true,
+                Effect::ExilePermanent { target } if target.is_placeholder() => true,
                 // CopyPermanent with placeholder target
-                Effect::CopyPermanent { target, .. } if target.as_u32() == 0 => true,
+                Effect::CopyPermanent { target, .. } if target.is_placeholder() => true,
                 _ => false,
             }
         })

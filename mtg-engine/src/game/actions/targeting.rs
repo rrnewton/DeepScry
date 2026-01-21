@@ -105,7 +105,7 @@ impl GameState {
                     // Note: Players are also valid targets, but we handle them separately
                     // via TargetRef::Player since they don't have CardIds
                 }
-                Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                     // Destroy effect - check targeting restrictions
                     // Priority: 1) TargetRestriction from ValidTgts, 2) CardCache from oracle text
                     for &card_id in &self.battlefield.cards {
@@ -132,7 +132,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::PumpCreature { target, .. } if target.as_u32() == 0 => {
+                Effect::PumpCreature { target, .. } if target.is_placeholder() => {
                     // Pump can target any creature
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
@@ -142,7 +142,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::TapPermanent { target } if target.as_u32() == 0 => {
+                Effect::TapPermanent { target } if target.is_placeholder() => {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
@@ -152,7 +152,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                Effect::UntapPermanent { target } if target.is_placeholder() => {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
@@ -162,7 +162,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::CounterSpell { target } if target.as_u32() == 0 => {
+                Effect::CounterSpell { target } if target.is_placeholder() => {
                     // Counter can target spells on the stack (except self)
                     for &card_id in &self.stack.cards {
                         if card_id != spell_card_id {
@@ -170,7 +170,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+                Effect::ExilePermanent { target } if target.is_placeholder() => {
                     // Exile can target any permanent (typically creatures, like Swords to Plowshares)
                     // Use cached targeting restrictions like DestroyPermanent
                     for &card_id in &self.battlefield.cards {
@@ -193,7 +193,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::Airbend { target } if target.as_u32() == 0 => {
+                Effect::Airbend { target } if target.is_placeholder() => {
                     // Airbend targets creatures (CR 701.65b)
                     // Some Airbend cards target "nonland permanent" but creature is default
                     for &card_id in &self.battlefield.cards {
@@ -213,7 +213,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::GrantCantBeBlocked { target } if target.as_u32() == 0 => {
+                Effect::GrantCantBeBlocked { target } if target.is_placeholder() => {
                     // GrantCantBeBlocked targets creatures you control
                     // Deserter's Disciple: "Another target creature you control with power 2 or less"
                     // For now, we support basic creature targeting - power restriction checked at ability parse time
@@ -231,7 +231,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::RemoveCounter { target, .. } if target.as_u32() == 0 => {
+                Effect::RemoveCounter { target, .. } if target.is_placeholder() => {
                     // RemoveCounter targets creatures (e.g., Heartless Act mode 2)
                     // TODO: Some RemoveCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
@@ -242,7 +242,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::CreateDelayedTrigger { tracked_card, .. } if tracked_card.as_u32() == 0 => {
+                Effect::CreateDelayedTrigger { tracked_card, .. } if tracked_card.is_placeholder() => {
                     // CreateDelayedTrigger targets creatures (e.g., Fatal Fissure: "Choose target creature")
                     // The tracked_card field holds the target that will be watched for death
                     for &card_id in &self.battlefield.cards {
@@ -255,7 +255,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::PutCounter { target, .. } if target.as_u32() == 0 => {
+                Effect::PutCounter { target, .. } if target.is_placeholder() => {
                     // PutCounter targets creatures (e.g., +1/+1 counter effects)
                     // TODO: Some PutCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
@@ -268,7 +268,7 @@ impl GameState {
                 }
                 Effect::CopyPermanent {
                     target, restriction, ..
-                } if target.as_u32() == 0 => {
+                } if target.is_placeholder() => {
                     // CopyPermanent targets creatures with controller restrictions
                     // Cackling Counterpart: "target creature you control" (YouCtrl)
                     // Ember Island Production mode 2: "target creature an opponent controls" (OppCtrl)
@@ -306,7 +306,7 @@ impl GameState {
                     // For now, collect targets from ALL modes (will be filtered later).
                     for mode in modes {
                         match mode.effect.as_ref() {
-                            Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                            Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                                 // This mode destroys a permanent
                                 for &card_id in &self.battlefield.cards {
                                     if let Ok(target_card) = self.cards.get(card_id) {
@@ -319,7 +319,7 @@ impl GameState {
                             }
                             Effect::CopyPermanent {
                                 target, restriction, ..
-                            } if target.as_u32() == 0 => {
+                            } if target.is_placeholder() => {
                                 // This mode copies a permanent (e.g., Ember Island Production)
                                 // Use restriction for controller filtering (YouCtrl, OppCtrl)
                                 for &card_id in &self.battlefield.cards {
@@ -414,7 +414,7 @@ impl GameState {
                     // AttachEquipment targeting is handled via Equip keyword abilities
                 }
                 // Effects with already-specified targets (non-zero target field)
-                // The handlers above only match when target.as_u32() == 0
+                // The handlers above only match when target.is_placeholder()
                 Effect::DealDamage { .. } => {
                     // Either TargetRef::Player (already specified) or TargetRef::Permanent (already specified)
                     // TargetRef::None case handled above
@@ -588,7 +588,7 @@ impl GameState {
         // Check each effect to determine valid targets
         for effect in &ability.effects {
             match effect {
-                Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+                Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                     // Destroy effect needs targets matching restriction
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -637,7 +637,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::TapPermanent { target } if target.as_u32() == 0 => {
+                Effect::TapPermanent { target } if target.is_placeholder() => {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -649,7 +649,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+                Effect::UntapPermanent { target } if target.is_placeholder() => {
                     // Untap can target tapped permanents
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -676,7 +676,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::AttachEquipment { target_creature, .. } if target_creature.as_u32() == 0 => {
+                Effect::AttachEquipment { target_creature, .. } if target_creature.is_placeholder() => {
                     // Equip targets "creature you control" (CR 702.6a)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -701,7 +701,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::Airbend { target } if target.as_u32() == 0 => {
+                Effect::Airbend { target } if target.is_placeholder() => {
                     // Airbend targets creatures (or other permanents based on ValidTgts)
                     // CR 701.65b: Airbend exiles a target permanent
                     for &card_id in &self.battlefield.cards {
@@ -721,7 +721,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::GrantCantBeBlocked { target } if target.as_u32() == 0 => {
+                Effect::GrantCantBeBlocked { target } if target.is_placeholder() => {
                     // GrantCantBeBlocked targets creatures you control
                     // Deserter's Disciple: "Another target creature you control with power 2 or less"
                     // The "Other" and "powerLE2" restrictions should ideally be parsed from ValidTgts
@@ -752,7 +752,7 @@ impl GameState {
                         }
                     }
                 }
-                Effect::Earthbend { target, .. } if target.as_u32() == 0 => {
+                Effect::Earthbend { target, .. } if target.is_placeholder() => {
                     // Earthbend targets lands you control
                     // CR 701.65: Earthbend makes a land into a creature with counters
                     for &card_id in &self.battlefield.cards {
@@ -810,7 +810,7 @@ impl GameState {
                 | Effect::Earthbend { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
-                    // Earthbend target was handled above when target.as_u32() == 0
+                    // Earthbend target was handled above when target.is_placeholder()
                 }
             }
         }
@@ -910,7 +910,7 @@ impl GameState {
     /// - There exists at least one legal target for the effect
     fn effect_has_valid_targets(&self, effect: &Effect, spell_owner: PlayerId) -> bool {
         match effect {
-            Effect::DestroyPermanent { target, restriction } if target.as_u32() == 0 => {
+            Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                 // Check if any permanent matches the restriction
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -920,7 +920,7 @@ impl GameState {
                     }
                 })
             }
-            Effect::RemoveCounter { target, .. } if target.as_u32() == 0 => {
+            Effect::RemoveCounter { target, .. } if target.is_placeholder() => {
                 // RemoveCounter can target any creature (mode 2 of Heartless Act)
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -930,7 +930,7 @@ impl GameState {
                     }
                 })
             }
-            Effect::PumpCreature { target, .. } if target.as_u32() == 0 => {
+            Effect::PumpCreature { target, .. } if target.is_placeholder() => {
                 // Pump requires a creature target
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -940,7 +940,7 @@ impl GameState {
                     }
                 })
             }
-            Effect::TapPermanent { target } if target.as_u32() == 0 => {
+            Effect::TapPermanent { target } if target.is_placeholder() => {
                 // Tap requires an untapped permanent
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -950,7 +950,7 @@ impl GameState {
                     }
                 })
             }
-            Effect::UntapPermanent { target } if target.as_u32() == 0 => {
+            Effect::UntapPermanent { target } if target.is_placeholder() => {
                 // Untap requires a tapped permanent
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -968,7 +968,7 @@ impl GameState {
                 // (players are always valid targets)
                 true
             }
-            Effect::ExilePermanent { target } if target.as_u32() == 0 => {
+            Effect::ExilePermanent { target } if target.is_placeholder() => {
                 // Exile requires a permanent target
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -978,7 +978,7 @@ impl GameState {
                     }
                 })
             }
-            Effect::CounterSpell { target } if target.as_u32() == 0 => {
+            Effect::CounterSpell { target } if target.is_placeholder() => {
                 // Counter requires a spell on the stack
                 !self.stack.is_empty()
             }

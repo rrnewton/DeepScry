@@ -1,13 +1,14 @@
 ---
 title: Consolidate remaining placeholder validation checks
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - draft
 - refactoring
 created_at: 2026-01-21T00:27:33.552291262+00:00
-updated_at: 2026-01-21T00:27:33.552291262+00:00
+updated_at: 2026-01-21T10:37:41.469583278+00:00
+closed_at: 2026-01-21T10:37:41.469583197+00:00
 ---
 
 # Description

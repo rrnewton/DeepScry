@@ -89,7 +89,7 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::CounterSpell { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::CounterSpell { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
                         };
@@ -97,7 +97,7 @@ impl<'a> GameLoop<'a> {
                         replaced
                     }
                     Effect::DestroyPermanent { target, restriction }
-                        if target.as_u32() == 0 && target_index < targets.len() =>
+                        if target.is_placeholder() && target_index < targets.len() =>
                     {
                         let replaced = Effect::DestroyPermanent {
                             target: targets[target_index],
@@ -106,14 +106,14 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::TapPermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::TapPermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::TapPermanent {
                             target: targets[target_index],
                         };
                         target_index += 1;
                         replaced
                     }
-                    Effect::UntapPermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::UntapPermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::UntapPermanent {
                             target: targets[target_index],
                         };
@@ -125,7 +125,7 @@ impl<'a> GameLoop<'a> {
                         power_bonus,
                         toughness_bonus,
                         keywords_granted,
-                    } if target.as_u32() == 0 && target_index < targets.len() => {
+                    } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::PumpCreature {
                             target: targets[target_index],
                             power_bonus: *power_bonus,
@@ -135,7 +135,7 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::ExilePermanent { target } if target.as_u32() == 0 && target_index < targets.len() => {
+                    Effect::ExilePermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::ExilePermanent {
                             target: targets[target_index],
                         };
@@ -147,20 +147,20 @@ impl<'a> GameLoop<'a> {
                         player,
                         mana,
                         produces_chosen_color,
-                    } if player.as_u32() == 0 => Effect::AddMana {
+                    } if player.is_placeholder() => Effect::AddMana {
                         player: card_owner,
                         mana: *mana,
                         produces_chosen_color: *produces_chosen_color,
                     },
-                    Effect::DrawCards { player, count } if player.as_u32() == 0 => Effect::DrawCards {
+                    Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
                         player: card_owner,
                         count: *count,
                     },
-                    Effect::GainLife { player, amount } if player.as_u32() == 0 => Effect::GainLife {
+                    Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
                         player: card_owner,
                         amount: *amount,
                     },
-                    Effect::Mill { player, count } if player.as_u32() == 0 => Effect::Mill {
+                    Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
                         player: card_owner,
                         count: *count,
                     },
@@ -170,7 +170,7 @@ impl<'a> GameLoop<'a> {
                         destination,
                         enters_tapped,
                         shuffle,
-                    } if player.as_u32() == 0 => Effect::SearchLibrary {
+                    } if player.is_placeholder() => Effect::SearchLibrary {
                         player: card_owner,
                         card_type_filter: card_type_filter.clone(),
                         destination: *destination,
@@ -920,7 +920,7 @@ impl<'a> GameLoop<'a> {
                                                 player,
                                                 mana,
                                                 produces_chosen_color,
-                                            } if player.as_u32() == 0 => {
+                                            } if player.is_placeholder() => {
                                                 // Replace placeholder with current player
                                                 crate::core::Effect::AddMana {
                                                     player: current_priority,
@@ -929,7 +929,7 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                             crate::core::Effect::GainLife { player, amount }
-                                                if player.as_u32() == 0 =>
+                                                if player.is_placeholder() =>
                                             {
                                                 // Replace placeholder with current player
                                                 crate::core::Effect::GainLife {
@@ -938,7 +938,7 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                             crate::core::Effect::DrawCards { player, count }
-                                                if player.as_u32() == 0 =>
+                                                if player.is_placeholder() =>
                                             {
                                                 // Replace placeholder with current player
                                                 crate::core::Effect::DrawCards {
@@ -948,7 +948,7 @@ impl<'a> GameLoop<'a> {
                                             }
                                             // Replace placeholder targets with chosen targets
                                             crate::core::Effect::DestroyPermanent { target, restriction }
-                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
                                                 crate::core::Effect::DestroyPermanent {
                                                     target: chosen_targets_vec[0],
@@ -956,14 +956,14 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                             crate::core::Effect::TapPermanent { target }
-                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
                                                 crate::core::Effect::TapPermanent {
                                                     target: chosen_targets_vec[0],
                                                 }
                                             }
                                             crate::core::Effect::UntapPermanent { target }
-                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
                                                 crate::core::Effect::UntapPermanent {
                                                     target: chosen_targets_vec[0],
@@ -974,7 +974,7 @@ impl<'a> GameLoop<'a> {
                                                 power_bonus,
                                                 toughness_bonus,
                                                 keywords_granted,
-                                            } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: chosen_targets_vec[0],
                                                     power_bonus: *power_bonus,
@@ -989,7 +989,7 @@ impl<'a> GameLoop<'a> {
                                                 power_bonus,
                                                 toughness_bonus,
                                                 keywords_granted,
-                                            } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power_bonus: *power_bonus,
@@ -1003,7 +1003,7 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 counter_type,
                                                 amount,
-                                            } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PutCounter {
                                                     target: card_id, // Target self (the source of the ability)
                                                     counter_type: *counter_type,
@@ -1015,7 +1015,7 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 counter_type,
                                                 amount,
-                                            } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PutCounter {
                                                     target: chosen_targets_vec[0],
                                                     counter_type: *counter_type,
@@ -1026,7 +1026,7 @@ impl<'a> GameLoop<'a> {
                                                 target,
                                                 counter_type,
                                                 amount,
-                                            } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::RemoveCounter {
                                                     target: chosen_targets_vec[0],
                                                     counter_type: *counter_type,
@@ -1040,7 +1040,7 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
-                                            } if target.as_u32() == 0 && chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power: *power,
@@ -1054,7 +1054,7 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
-                                            } if target.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                            } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: chosen_targets_vec[0],
                                                     power: *power,
@@ -1065,7 +1065,7 @@ impl<'a> GameLoop<'a> {
                                             crate::core::Effect::AttachEquipment {
                                                 source_equipment,
                                                 target_creature,
-                                            } if target_creature.as_u32() == 0 && !chosen_targets_vec.is_empty() => {
+                                            } if target_creature.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::AttachEquipment {
                                                     source_equipment: *source_equipment,
                                                     target_creature: chosen_targets_vec[0],
@@ -1074,7 +1074,7 @@ impl<'a> GameLoop<'a> {
                                             // GrantCantBeBlocked: "Target creature can't be blocked this turn"
                                             // Used by Deserter's Disciple
                                             crate::core::Effect::GrantCantBeBlocked { target }
-                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
                                                 crate::core::Effect::GrantCantBeBlocked {
                                                     target: chosen_targets_vec[0],
@@ -1096,7 +1096,7 @@ impl<'a> GameLoop<'a> {
                                                 destination,
                                                 enters_tapped,
                                                 shuffle,
-                                            } if player.as_u32() == 0 => {
+                                            } if player.is_placeholder() => {
                                                 // Handle library search with controller input
                                                 let search_player = current_priority;
 
@@ -1171,7 +1171,7 @@ impl<'a> GameLoop<'a> {
                                             }
                                             // Earthbend: Target land becomes 0/0 creature with haste and N +1/+1 counters
                                             crate::core::Effect::Earthbend { target, num_counters }
-                                                if target.as_u32() == 0 && !chosen_targets_vec.is_empty() =>
+                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
                                                 crate::core::Effect::Earthbend {
                                                     target: chosen_targets_vec[0],
