@@ -136,6 +136,11 @@ pub struct TurnStructure {
 
     /// Priority player (who currently has priority)
     pub priority_player: Option<crate::core::PlayerId>,
+
+    /// Consecutive passes in current priority round (0, 1, or 2)
+    /// When both players pass consecutively (reaches 2), the stack resolves or phase advances.
+    /// This must persist across NeedInput returns for WASM non-blocking controllers.
+    pub consecutive_passes: u8,
 }
 
 impl TurnStructure {
@@ -146,6 +151,7 @@ impl TurnStructure {
             active_player: starting_player,
             active_player_idx: 0, // Default to first player, should be set by GameState
             priority_player: None,
+            consecutive_passes: 0,
         }
     }
 
@@ -156,6 +162,7 @@ impl TurnStructure {
             active_player: starting_player,
             active_player_idx: starting_idx,
             priority_player: None,
+            consecutive_passes: 0,
         }
     }
 
@@ -179,6 +186,7 @@ impl TurnStructure {
         self.current_step = Step::Untap;
         self.active_player = next_player;
         self.priority_player = None;
+        self.consecutive_passes = 0;
     }
 }
 

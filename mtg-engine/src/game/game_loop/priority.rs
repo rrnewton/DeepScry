@@ -264,11 +264,15 @@ impl<'a> GameLoop<'a> {
 
         // Outer loop: resolve stack until empty
         loop {
-            // Active player gets priority first in each round
-            let mut current_priority = active_player;
-            let mut consecutive_passes = 0;
+            // Use persistent priority state from TurnStructure (for WASM NeedInput resumption)
+            // If priority_player is None, this is a fresh priority round - start with active player
+            let mut current_priority = self.game.turn.priority_player.unwrap_or(active_player);
+            let mut consecutive_passes = self.game.turn.consecutive_passes;
             let mut action_count = 0;
             const MAX_ACTIONS_PER_PRIORITY: usize = 1000;
+
+            // Persist initial state
+            self.game.turn.priority_player = Some(current_priority);
 
             // Inner loop: pass priority until both players pass
             while consecutive_passes < 2 {
@@ -410,6 +414,7 @@ impl<'a> GameLoop<'a> {
                     None => {
                         // Controller chose to pass priority
                         consecutive_passes += 1;
+                        self.game.turn.consecutive_passes = consecutive_passes;
                         let view = GameStateView::new(self.game, current_priority);
                         controller.on_priority_passed(&view);
 
@@ -419,10 +424,12 @@ impl<'a> GameLoop<'a> {
                         } else {
                             active_player
                         };
+                        self.game.turn.priority_player = Some(current_priority);
                     }
                     Some(ability) => {
                         // Controller chose an ability to play
                         consecutive_passes = 0; // Reset pass counter
+                        self.game.turn.consecutive_passes = 0;
 
                         match ability {
                             crate::core::SpellAbility::PlayLand { card_id } => {
@@ -452,11 +459,13 @@ impl<'a> GameLoop<'a> {
                                     // Treat failed land play like passing priority to prevent infinite loops
                                     // This can happen if controller makes invalid choices
                                     consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
                                     current_priority = if current_priority == active_player {
                                         non_active_player
                                     } else {
                                         active_player
                                     };
+                                    self.game.turn.priority_player = Some(current_priority);
                                     continue;
                                 } else {
                                     let card_name = self
@@ -710,11 +719,13 @@ impl<'a> GameLoop<'a> {
                                     // Treat failed spell cast like passing priority to prevent infinite loops
                                     // This can happen if controller makes invalid choices or mana engine has stale state
                                     consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
                                     current_priority = if current_priority == active_player {
                                         non_active_player
                                     } else {
                                         active_player
                                     };
+                                    self.game.turn.priority_player = Some(current_priority);
                                     continue;
                                 } else {
                                     // Store targets for this spell (will be used when it resolves)
@@ -915,11 +926,13 @@ impl<'a> GameLoop<'a> {
                                         }
                                         // Treat failed ability activation like passing priority to prevent infinite loops
                                         consecutive_passes += 1;
+                                        self.game.turn.consecutive_passes = consecutive_passes;
                                         current_priority = if current_priority == active_player {
                                             non_active_player
                                         } else {
                                             active_player
                                         };
+                                        self.game.turn.priority_player = Some(current_priority);
                                         continue;
                                     }
 
@@ -1289,11 +1302,13 @@ impl<'a> GameLoop<'a> {
                                         self.game.logger.normal(&format!("Error moving from exile: {e}"));
                                     }
                                     consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
                                     current_priority = if current_priority == active_player {
                                         non_active_player
                                     } else {
                                         active_player
                                     };
+                                    self.game.turn.priority_player = Some(current_priority);
                                     continue;
                                 }
 
@@ -1520,11 +1535,16 @@ impl<'a> GameLoop<'a> {
                         } else {
                             active_player
                         };
+                        self.game.turn.priority_player = Some(current_priority);
                     }
                 }
             }
 
-            // Both players passed priority
+            // Both players passed priority - reset priority state for the next round
+            // (either after stack resolution or for next phase)
+            self.game.turn.priority_player = None;
+            self.game.turn.consecutive_passes = 0;
+
             // Check if there are spells on the stack to resolve
             if self.game.stack.is_empty() {
                 // Stack is empty, priority round is complete
