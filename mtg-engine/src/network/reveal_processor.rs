@@ -125,14 +125,25 @@ pub fn process_card_reveal<P: CardDefProvider>(
                     card_id
                 );
 
-                // For Draw/OpeningHand, also add to hand if not already there
-                // This is needed for WASM clients that start with empty game state
+                // For Draw/OpeningHand, add to hand ONLY if:
+                // 1. Card is NOT in hand, AND
+                // 2. Card is NOT in library (i.e., WASM clients with empty game state)
+                //
+                // Native clients have populated libraries (from init_game_reserve_only),
+                // so draw_card() will properly move the card from library to hand.
+                // We must NOT add to hand here or we'll get duplicates.
+                //
+                // WASM clients may start with empty game state where libraries are empty,
+                // so we need to add to hand directly for them.
                 let card_in_hand = game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
-                if !card_in_hand {
+                let card_in_library = game
+                    .get_player_zones(owner)
+                    .is_some_and(|z| z.library.contains(card_id));
+                if !card_in_hand && !card_in_library {
                     if let Some(zones) = game.get_player_zones_mut(owner) {
                         zones.hand.add(card_id);
                         log::debug!(
-                            "{}: Added {} to hand for {:?}: {} (id={})",
+                            "{}: Added {} to hand for {:?}: {} (id={}) [empty library mode]",
                             log_prefix,
                             if matches!(reason, RevealReason::Draw) {
                                 "drawn card"
@@ -144,6 +155,18 @@ pub fn process_card_reveal<P: CardDefProvider>(
                             card_id.as_u32()
                         );
                     }
+                } else if !card_in_hand && card_in_library {
+                    log::debug!(
+                        "{}: {} {} (id={}) is in library, letting draw_card() handle zone movement",
+                        log_prefix,
+                        if matches!(reason, RevealReason::Draw) {
+                            "Drawn card"
+                        } else {
+                            "Opening hand card"
+                        },
+                        reveal.name,
+                        card_id.as_u32()
+                    );
                 }
             }
         }
