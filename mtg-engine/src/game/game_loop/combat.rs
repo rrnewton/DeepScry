@@ -163,6 +163,11 @@ impl<'a> GameLoop<'a> {
                 // which now handles optional triggers with sacrifice costs. No need to call
                 // check_attack_triggers() here as it would duplicate trigger execution.
             }
+
+            // Fire AttackersDeclared triggers (batch triggers that fire once per declare attackers step)
+            // Example: "Whenever one or more creatures you control with flying attack"
+            // These are different from individual Attacks triggers which fire per-creature
+            self.check_attackers_declared_triggers(active_player)?;
         }
 
         // MTG Rules 508.4: After attackers are declared, players receive priority

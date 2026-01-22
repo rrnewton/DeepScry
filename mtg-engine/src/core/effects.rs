@@ -890,6 +890,11 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ Taps | ValidCard$ Card.Self
     /// Example: "Whenever CARDNAME becomes tapped, draw a card, then discard a card."
     Taps,
+
+    /// When one or more creatures attack (batch trigger, fires once per declare attackers step)
+    /// Corresponds to: T:Mode$ AttackersDeclared | AttackingPlayer$ You | ValidAttackers$ Creature.withFlying
+    /// Example: "Whenever one or more creatures you control with flying attack, draw a card."
+    AttackersDeclared,
 }
 
 /// A triggered ability that executes when an event occurs
@@ -953,6 +958,12 @@ pub struct Trigger {
     /// Example: "Whenever you cast a noncreature spell"
     #[serde(default)]
     pub requires_noncreature: bool,
+
+    /// For AttackersDeclared triggers: keyword required on attacking creatures
+    /// Corresponds to ValidAttackers$ Creature.withFlying (or other keywords)
+    /// None means any attacking creature triggers it
+    #[serde(default)]
+    pub valid_attackers_keyword: Option<crate::core::Keyword>,
 }
 
 impl Trigger {
@@ -972,6 +983,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            valid_attackers_keyword: None,
         }
     }
 
@@ -990,6 +1002,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            valid_attackers_keyword: None,
         }
     }
 
@@ -1014,6 +1027,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            valid_attackers_keyword: None,
         }
     }
 
@@ -1033,6 +1047,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            valid_attackers_keyword: None,
         }
     }
 }

@@ -2199,6 +2199,62 @@ impl CardDefinition {
 
                 triggers.push(trigger);
             }
+
+            // Parse AttackersDeclared triggers (Mode$ AttackersDeclared)
+            // Example: T:Mode$ AttackersDeclared | AttackingPlayer$ You | ValidAttackers$ Creature.withFlying | Execute$ TrigDraw
+            // This triggers once when attackers are declared, not per-creature
+            if mode == Some("AttackersDeclared") {
+                use crate::core::Keyword;
+
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Check AttackingPlayer$ to determine who triggers this
+                // You = triggers only when controller attacks (default)
+                // Opponent = triggers when opponent attacks
+                let attacking_player = params.get("AttackingPlayer").map(|s| s.as_str());
+                let controller_turn_only = match attacking_player {
+                    Some("You") | None => true,
+                    Some("Opponent") => false,
+                    _ => true,
+                };
+
+                // Check ValidAttackers$ for keyword filter
+                // Creature.withFlying = only triggers if a flying creature attacks
+                let valid_attackers = params.get("ValidAttackers").map(|s| s.as_str());
+                let valid_attackers_keyword = match valid_attackers {
+                    Some(s) if s.contains("withFlying") => Some(Keyword::Flying),
+                    Some(s) if s.contains("withVigilance") => Some(Keyword::Vigilance),
+                    Some(s) if s.contains("withTrample") => Some(Keyword::Trample),
+                    Some(s) if s.contains("withFirstStrike") => Some(Keyword::FirstStrike),
+                    Some(s) if s.contains("withDoubleStrike") => Some(Keyword::DoubleStrike),
+                    Some(s) if s.contains("withDeathtouch") => Some(Keyword::Deathtouch),
+                    Some(s) if s.contains("withLifelink") => Some(Keyword::Lifelink),
+                    Some(s) if s.contains("withHaste") => Some(Keyword::Haste),
+                    Some(s) if s.contains("withReach") => Some(Keyword::Reach),
+                    _ => None,
+                };
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever one or more creatures attack".to_string());
+
+                // Create trigger with AttackersDeclared event
+                // This is NOT a self-trigger - it monitors all attackers
+                let mut trigger = Trigger::new_any(TriggerEvent::AttackersDeclared, effects, description);
+                trigger.controller_turn_only = controller_turn_only;
+                trigger.valid_attackers_keyword = valid_attackers_keyword;
+
+                triggers.push(trigger);
+            }
         }
 
         triggers
@@ -4098,6 +4154,72 @@ Oracle:Exhaust — {6}: Put two +1/+1 counters on this creature, then earthbend 
             mana_cost.unwrap().generic,
             6,
             "Exhaust ability should cost 6 generic mana"
+        );
+    }
+
+    #[test]
+    fn test_parse_teo_attackers_declared_trigger() {
+        use crate::core::{Keyword, TriggerEvent};
+
+        // Test Teo's AttackersDeclared trigger:
+        // "Whenever one or more creatures you control with flying attack, draw a card, then discard a card."
+        let content = r#"
+Name:Teo, Spirited Glider
+ManaCost:3 U
+Types:Legendary Creature Human Pilot Ally
+PT:1/4
+K:Flying
+T:Mode$ AttackersDeclared | AttackingPlayer$ You | ValidAttackers$ Creature.withFlying | Execute$ TrigDraw | TriggerZones$ Battlefield | TriggerDescription$ Whenever one or more creatures you control with flying attack, draw a card, then discard a card.
+SVar:TrigDraw:DB$ Draw | SubAbility$ DBDiscard
+SVar:DBDiscard:DB$ Discard | Defined$ You | NumCards$ 1 | Mode$ TgtChoose
+Oracle:Flying\nWhenever one or more creatures you control with flying attack, draw a card, then discard a card.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Should have the AttackersDeclared trigger
+        assert!(
+            !triggers.is_empty(),
+            "Should have at least one trigger. Got: {:?}",
+            triggers
+        );
+
+        // Find the AttackersDeclared trigger
+        let attacker_trigger = triggers.iter().find(|t| t.event == TriggerEvent::AttackersDeclared);
+
+        assert!(
+            attacker_trigger.is_some(),
+            "Should have an AttackersDeclared trigger. Triggers: {:?}",
+            triggers
+        );
+
+        let trigger = attacker_trigger.unwrap();
+
+        // Check controller_turn_only is true (AttackingPlayer$ You)
+        assert!(
+            trigger.controller_turn_only,
+            "AttackersDeclared trigger should have controller_turn_only=true (AttackingPlayer$ You)"
+        );
+
+        // Check valid_attackers_keyword is Flying
+        assert_eq!(
+            trigger.valid_attackers_keyword,
+            Some(Keyword::Flying),
+            "AttackersDeclared trigger should filter for Flying creatures"
+        );
+
+        // Check trigger_self_only is false (it's a batch trigger, not per-creature)
+        assert!(
+            !trigger.trigger_self_only,
+            "AttackersDeclared trigger should NOT be self-only (it's a batch trigger)"
+        );
+
+        // Verify effects are present (DrawCards)
+        assert!(
+            !trigger.effects.is_empty(),
+            "AttackersDeclared trigger should have effects. Effects: {:?}",
+            trigger.effects
         );
     }
 

@@ -3,7 +3,7 @@
 //! This module contains the individual step handlers (untap, upkeep, draw, main, end, cleanup)
 //! that execute during each turn of the game.
 
-use crate::core::{CardId, Keyword, TriggerEvent};
+use crate::core::{CardId, Keyword, PlayerId, TriggerEvent};
 use crate::game::controller::{format_discard_prompt, ChoiceResult, GameStateView, PlayerController};
 use crate::{handle_choice_result_break, Result};
 use smallvec::SmallVec;
@@ -175,6 +175,93 @@ impl<'a> GameLoop<'a> {
         // Triggered abilities can draw cards, and clients need the card IDs
         self.push_reveals(active_player);
         if let Some(opponent) = self.game.get_other_player_id(active_player) {
+            self.push_reveals(opponent);
+        }
+
+        Ok(())
+    }
+
+    /// Check and fire AttackersDeclared triggers (batch triggers that fire once per declare attackers step)
+    /// These differ from Attacks triggers which fire per-creature
+    /// Example: "Whenever one or more creatures you control with flying attack"
+    pub(super) fn check_attackers_declared_triggers(&mut self, attacking_player: PlayerId) -> Result<()> {
+        // Get the list of attacking creatures (need to check keyword filters)
+        let attackers: SmallVec<[CardId; 8]> = self.game.combat.attackers.keys().copied().collect();
+
+        if attackers.is_empty() {
+            return Ok(()); // No attackers, no triggers
+        }
+
+        // Collect all permanents with AttackersDeclared triggers that should fire
+        let triggered_cards: SmallVec<[(CardId, String); 4]> = self
+            .game
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&card_id| {
+                if let Ok(card) = self.game.cards.get(card_id) {
+                    // Find matching AttackersDeclared triggers
+                    for trigger in &card.triggers {
+                        if trigger.event != TriggerEvent::AttackersDeclared {
+                            continue;
+                        }
+
+                        // Check controller_turn_only (AttackingPlayer$ You)
+                        if trigger.controller_turn_only && card.controller != attacking_player {
+                            continue;
+                        }
+
+                        // Check valid_attackers_keyword filter
+                        if let Some(required_keyword) = trigger.valid_attackers_keyword {
+                            // At least one attacker must have the required keyword
+                            let has_matching_attacker = attackers.iter().any(|&attacker_id| {
+                                if let Ok(attacker) = self.game.cards.get(attacker_id) {
+                                    // Check if attacker is controlled by the triggering player
+                                    if attacker.controller != card.controller {
+                                        return false;
+                                    }
+                                    // Check for the required keyword
+                                    attacker.keywords.contains(required_keyword)
+                                } else {
+                                    false
+                                }
+                            });
+
+                            if !has_matching_attacker {
+                                continue;
+                            }
+                        }
+
+                        // Trigger conditions met!
+                        return Some((card_id, trigger.description.clone()));
+                    }
+                    None
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Fire each trigger
+        for (card_id, description) in triggered_cards {
+            if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                if let Ok(card) = self.game.cards.get(card_id) {
+                    let message = format!("Trigger: {} - {}", card.name, description);
+                    self.log_verbose(&message);
+                }
+            }
+
+            // Execute the trigger effects
+            if let Ok(card) = self.game.cards.get(card_id) {
+                let controller = card.controller;
+                self.game
+                    .check_triggers_for_controller(TriggerEvent::AttackersDeclared, card_id, controller)?;
+            }
+        }
+
+        // Push reveals after triggers
+        self.push_reveals(attacking_player);
+        if let Some(opponent) = self.game.get_other_player_id(attacking_player) {
             self.push_reveals(opponent);
         }
 
