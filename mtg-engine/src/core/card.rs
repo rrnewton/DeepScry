@@ -599,6 +599,10 @@ pub struct Card {
     /// Is this a legendary permanent?
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
+
+    /// Indices of exhausted activated abilities (can only be activated once per game)
+    /// When an exhaust ability resolves, its index is added here to prevent reactivation
+    pub exhausted_abilities: SmallVec<[usize; 1]>,
 }
 
 impl Card {
@@ -644,6 +648,7 @@ impl Card {
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,
+            exhausted_abilities: SmallVec::new(),
         }
     }
 

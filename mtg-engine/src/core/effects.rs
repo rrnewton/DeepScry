@@ -1773,6 +1773,10 @@ pub struct ActivatedAbility {
     /// Less restrictive than sorcery_speed - only checks turn ownership
     pub your_turn_only: bool,
 
+    /// Whether this is an exhaust ability (can only be activated once per game)
+    /// "Exhaust$ True" - activate each exhaust ability only once
+    pub exhaust: bool,
+
     /// Cache for expensive string operations (computed at creation time)
     pub cache: AbilityCache,
 }
@@ -1789,6 +1793,7 @@ impl ActivatedAbility {
             is_mana_ability,
             sorcery_speed: false,  // Default to instant speed
             your_turn_only: false, // Default to any turn
+            exhaust: false,        // Default to non-exhaust
             cache,
         }
     }
@@ -1804,6 +1809,7 @@ impl ActivatedAbility {
             is_mana_ability: false, // Sorcery-speed abilities are not mana abilities
             sorcery_speed: true,
             your_turn_only: false, // sorcery_speed implies your turn already
+            exhaust: false,
             cache,
         }
     }
@@ -1825,6 +1831,7 @@ impl ActivatedAbility {
             is_mana_ability,
             sorcery_speed: false, // Not sorcery speed
             your_turn_only: true, // Your turn only
+            exhaust: false,
             cache,
         }
     }

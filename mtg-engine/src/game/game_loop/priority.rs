@@ -1200,6 +1200,15 @@ impl<'a> GameLoop<'a> {
                                         }
                                     }
 
+                                    // Mark exhaust ability as exhausted (can only be activated once per game)
+                                    if ability.exhaust {
+                                        if let Ok(card_mut) = self.game.cards.get_mut(card_id) {
+                                            if !card_mut.exhausted_abilities.contains(&ability_index) {
+                                                card_mut.exhausted_abilities.push(ability_index);
+                                            }
+                                        }
+                                    }
+
                                     // Push reveals after ability effects for network mode (server-side)
                                     // Abilities can draw cards, and clients need the card IDs before drawing
                                     self.push_reveals(current_priority);

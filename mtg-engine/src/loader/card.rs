@@ -2279,15 +2279,25 @@ impl CardDefinition {
                 .map(|s| s.eq_ignore_ascii_case("True"))
                 .unwrap_or(false);
 
+            // Check for Exhaust$ True parameter (can only activate once per game)
+            let is_exhaust = params
+                .get("Exhaust")
+                .map(|s| s.eq_ignore_ascii_case("True"))
+                .unwrap_or(false);
+
             // Only add if we have effects
             if !effects.is_empty() {
-                let ability = if is_sorcery_speed {
+                let mut ability = if is_sorcery_speed {
                     ActivatedAbility::new_sorcery_speed(cost, effects, description)
                 } else if is_your_turn_only {
                     ActivatedAbility::new_your_turn_only(cost, effects, description, is_mana_ability)
                 } else {
                     ActivatedAbility::new(cost, effects, description, is_mana_ability)
                 };
+                // Set exhaust flag if applicable
+                if is_exhaust {
+                    ability.exhaust = true;
+                }
                 abilities.push(ability);
             }
         }
@@ -4036,6 +4046,58 @@ Oracle:This creature can't be blocked by creatures with power 2 or less.\nWaterb
         assert!(
             !ability.sorcery_speed,
             "Waterbend ability should NOT be sorcery-speed (just your-turn-only)"
+        );
+    }
+
+    #[test]
+    fn test_parse_rebellious_captives_exhaust_ability() {
+        use crate::core::{CounterType, Effect};
+
+        // Test Rebellious Captives exhaust ability:
+        // "Exhaust — {6}: Put two +1/+1 counters on this creature, then earthbend 2."
+        let content = r#"
+Name:Rebellious Captives
+ManaCost:1 G
+Types:Creature Human Peasant Ally
+PT:2/2
+A:AB$ PutCounter | Cost$ 6 | Defined$ Self | CounterType$ P1P1 | CounterNum$ 2 | Exhaust$ True | SubAbility$ DBEarthbend | SpellDescription$ Put two +1/+1 counters on this creature, then earthbend 2. (Target land you control becomes a 0/0 creature with haste that's still a land. Put two +1/+1 counters on it. When it dies or is exiled, return it to the battlefield tapped. Activate each exhaust ability only once.)
+SVar:DBEarthbend:DB$ Earthbend | Num$ 2
+Oracle:Exhaust — {6}: Put two +1/+1 counters on this creature, then earthbend 2.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // Should have the exhaust ability
+        assert_eq!(
+            abilities.len(),
+            1,
+            "Should have 1 activated ability, got: {abilities:?}"
+        );
+
+        let ability = &abilities[0];
+
+        // Check the exhaust flag is set
+        assert!(ability.exhaust, "Exhaust ability should have exhaust=true");
+
+        // Check it has PutCounter effect (self-targeting)
+        let has_put_counter = ability.effects.iter().any(|e| {
+            matches!(e, Effect::PutCounter { counter_type, amount, .. }
+                if *counter_type == CounterType::P1P1 && *amount == 2)
+        });
+        assert!(
+            has_put_counter,
+            "Should have PutCounter effect with 2 +1/+1 counters. Effects: {:?}",
+            ability.effects
+        );
+
+        // Check cost is 6 generic mana
+        let mana_cost = ability.cost.get_mana_cost();
+        assert!(mana_cost.is_some(), "Exhaust ability should have mana cost");
+        assert_eq!(
+            mana_cost.unwrap().generic,
+            6,
+            "Exhaust ability should cost 6 generic mana"
         );
     }
 

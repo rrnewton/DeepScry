@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-01-17T23:09:03.931957063+00:00
-updated_at: 2026-01-21T20:14:49.106547137+00:00
+updated_at: 2026-01-21T21:05:04.564827619+00:00
 ---
 
 # Description
@@ -19,14 +19,15 @@ Key gaps affecting this deck:
 - ~~**T:Mode$ Drawn** - "When you draw your second card" triggers~~ **FULLY IMPLEMENTED 2026-01-19** (includes undo support, opponent draw triggers for Underworld Dreams)
 - ~~**T:Mode$ Taps** - "Whenever ~ becomes tapped" triggers (Gran-Gran)~~ **FULLY IMPLEMENTED 2026-01-20** (includes DiscardCards effect)
 - ~~**T:Mode$ Phase** - Beginning of combat triggers (Avatar Kyoshi)~~ **FIXED 2026-01-21** (SubAbility$ chain to DBUntap now followed)
-- **Count$YouDrewThisTurn** - Track cards drawn this turn (Messenger Hawk)
-- **Count$Valid** - Count creatures matching filter (Elephant-Mandrill)
+- ~~**Count$YouDrewThisTurn** - Track cards drawn this turn (Messenger Hawk)~~ **IMPLEMENTED 2026-01-21** (CountExpression::CardsDrawnThisTurn)
+- ~~**Count$Valid** - Count creatures matching filter (Elephant-Mandrill)~~ **IMPLEMENTED 2026-01-21** (CountExpression::ValidPermanents with filter parsing)
 - **Exhaust$ True** - Once-per-game activation (Rebellious Captives)
-- **Ward:Waterbend<N>** - Ward with Waterbend cost (The Unagi)
+- ~~**Ward:Waterbend<N>** - Ward with Waterbend cost (The Unagi)~~ **IMPLEMENTED 2026-01-21** (WardWaterbend keyword variant)
 - **S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)
 - **K:Affinity:Ally** - Cost reduction (Allies at Last)
 - **DB$ EachDamage** - Multiple sources dealing damage (Allies at Last)
 - ~~**DB$ Effect with StaticAbilities$** - Grant can't be blocked (Otter-Penguin, Giant Koi)~~ **FIXED 2026-01-21** (GrantCantBeBlocked placeholder resolution in CardDrawn triggers)
+- ~~**Conditional hexproof (Condition$ PlayerTurn)**~~ **IMPLEMENTED 2026-01-21** (StaticCondition enum, Avatar Kyoshi)
 
 ---
 
@@ -39,16 +40,14 @@ Key gaps affecting this deck:
 ### Creatures (15):
 
 **Avatar Kyoshi, Earthbender (x1)** - 8GGG 6/6 Legendary Human Avatar
-- [ ] Conditional hexproof during your turn (S:Mode$ Continuous | Condition$ PlayerTurn)
+- [x] Conditional hexproof during your turn (S:Mode$ Continuous | Condition$ PlayerTurn) **IMPLEMENTED 2026-01-21**
 - [x] Beginning of combat trigger earthbend 8 (T:Mode$ Phase | Phase$ BeginCombat) **FIXED 2026-01-21**
 - [x] Untap the earthbended land (SubAbility$ DBUntap) **FIXED 2026-01-21**
-- GAP: Conditional static abilities (hexproof on your turn)
 
 **Elephant-Mandrill (x1)** - 2G 3/2 Elephant Monkey
 - [x] Reach keyword (VERIFIED 2026-01-19)
 - [x] ETB each player creates Food token (VERIFIED 2026-01-19)
-- [ ] Beginning of combat pump based on opponent artifacts (Count$Valid Artifact.OppCtrl)
-- GAP: Count$Valid for variable pump
+- [x] Beginning of combat pump based on opponent artifacts (Count$Valid Artifact.OppCtrl) **IMPLEMENTED 2026-01-21**
 
 **Forecasting Fortune Teller (x2)** - 1U 1/3 Human Advisor Ally
 - [x] ETB create Clue token (VERIFIED 2026-01-18)
@@ -88,12 +87,16 @@ Key gaps affecting this deck:
 
 **The Unagi of Kyoshi Island (x1)** - 3UU 5/5 Legendary Serpent
 - [x] Flash (VERIFIED 2026-01-19)
-- [ ] Ward—Waterbend {4} (K:Ward:Waterbend<4>)
+- [x] Ward—Waterbend {4} (K:Ward:Waterbend<4>) **IMPLEMENTED 2026-01-21**
 - [x] Opponent draws second card trigger (T:Mode$ Drawn | ValidPlayer$ Opponent) - works with 2026-01-19 Drawn trigger implementation
-- GAP: Ward:Waterbend
 
 **Turtle-Duck (x1)** - 1U 0/4 Turtle Bird
 - [x] AB$ Animate ability (VERIFIED in Gabriel deck - mtg-5hvly)
+
+**Messenger Hawk (x1)** - 2UB 1/2 Bird Scout
+- [x] Flying (VERIFIED 2026-01-19)
+- [x] ETB create Clue token (VERIFIED 2026-01-19)
+- [x] Static pump based on cards drawn this turn (Count$YouDrewThisTurn) **IMPLEMENTED 2026-01-21**
 
 ### Spells/Other (8):
 
@@ -108,12 +111,6 @@ Key gaps affecting this deck:
 
 **Ember Island Production (x1)** - 3UU Sorcery
 - [x] SP$ Charm with CopyPermanent modes (VERIFIED 2026-01-18)
-
-**Messenger Hawk (x1)** - 2UB 1/2 Bird Scout
-- [x] Flying (VERIFIED 2026-01-19)
-- [x] ETB create Clue token (VERIFIED 2026-01-19)
-- [ ] Static pump based on cards drawn this turn (Count$YouDrewThisTurn)
-- GAP: Count$YouDrewThisTurn
 
 **Meteor Sword (x1)** - 7 Artifact Equipment
 - [x] ETB destroy target permanent (VERIFIED 2026-01-18)
@@ -131,7 +128,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (18/40 +3 fixed)
+## Verified Cards Summary (25/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -142,18 +139,34 @@ Working cards:
 6. **Ember Island Production** - SP$ Charm + CopyPermanent
 7. **Meteor Sword** - Equipment with ETB destroy, equip, +3/+3 bonus
 8. **Knowledge Seeker** - Vigilance + Dies trigger + Second draw trigger (FULLY WORKING 2026-01-19)
-9. **Messenger Hawk** - Flying + ETB Clue token (partial - Count$YouDrewThisTurn pump needs work)
-10. **Giant Koi** - Islandcycling works + "can't be blocked" effect **FIXED 2026-01-21** (partial - Ward:Waterbend needs work)
-11. **Elephant-Mandrill** - Reach + ETB Food for ALL players (partial - combat pump needs Count$Valid)
-12. **The Unagi** - Flash + Opponent Drawn trigger works (partial - Ward:Waterbend needs work)
+9. **Messenger Hawk** - Flying + ETB Clue token + Count$YouDrewThisTurn pump **FULLY WORKING 2026-01-21**
+10. **Giant Koi** - Islandcycling + "can't be blocked" effect (partial - Waterbend cost parsing)
+11. **Elephant-Mandrill** - Reach + ETB Food + Count$Valid combat pump **FULLY WORKING 2026-01-21**
+12. **The Unagi** - Flash + Opponent Drawn trigger + Ward:Waterbend **FULLY WORKING 2026-01-21**
 13. **Otter-Penguin** - Second draw trigger for +1/+2 pump + "can't be blocked" **FULLY WORKING 2026-01-21**
-14. **Gran-Gran** - Taps trigger for draw/discard works (VERIFIED 2026-01-20) (partial - ReduceCost static needs work)
-15. **Avatar Kyoshi** - BeginCombat trigger with Earthbend + Untap **FIXED 2026-01-21** (partial - conditional hexproof needs work)
+14. **Gran-Gran** - Taps trigger for draw/discard (partial - ReduceCost static needs work)
+15. **Avatar Kyoshi** - BeginCombat trigger + Earthbend + Untap + Conditional hexproof **FULLY WORKING 2026-01-21**
 
 ## Recent Fixes (2026-01-21)
 
 1. **Otter-Penguin can't be blocked effect**: Fixed GrantCantBeBlocked placeholder resolution in CardDrawn trigger execution - target now correctly resolves to self
 2. **Avatar Kyoshi BeginCombat trigger**: Fixed SubAbility$ chain to follow DBUntap after Earthbend effect
+3. **Count$Valid**: Added CountExpression enum with ValidPermanents variant, supports Artifact.OppCtrl, Creature.YouCtrl, etc.
+4. **Count$YouDrewThisTurn**: CountExpression::CardsDrawnThisTurn reads player.cards_drawn_this_turn
+5. **Ward:Waterbend<N>**: Added WardWaterbend keyword variant, parses Ward:Waterbend<4> pattern
+6. **Conditional hexproof (Condition$ PlayerTurn)**: Added StaticCondition enum, checks turn ownership when granting keywords
+
+## Remaining Gaps
+
+1. **Exhaust$ True** - Once-per-game activation
+2. **S:Mode$ ReduceCost** - Cost reduction static abilities
+3. **S:Mode$ RaiseCost** - Additional sacrifice costs
+4. **K:Affinity:Ally** - Cost reduction for ally type
+5. **DB$ EachDamage** - Multiple sources dealing damage
+6. **T:Mode$ AttackersDeclared** - Attackers declared triggers
+7. **ImmediateTrigger / RememberDiscarded** - Complex conditional triggers
+8. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
+9. **AddAbility$ for lands** - Grant abilities to land permanents
 
 ## Testing Protocol
 

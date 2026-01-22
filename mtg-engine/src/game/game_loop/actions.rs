@@ -515,6 +515,12 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
+                    // Check exhaust restriction (Exhaust$ True)
+                    // Exhaust abilities can only be activated once per game
+                    if can_activate && ability.exhaust && card.exhausted_abilities.contains(&ability_index) {
+                        can_activate = false;
+                    }
+
                     // TODO(mtg-70): Check if ability has valid targets
                     // For targeting abilities, check that there's at least one valid target
                     //
