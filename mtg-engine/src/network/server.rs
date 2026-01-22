@@ -140,6 +140,111 @@ struct RevealBroadcast {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// NETWORK DEBUG HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+use crate::network::protocol::DebugSyncInfo;
+
+/// Log detailed state hash mismatch information for debugging network sync issues.
+/// Called when server and client state hashes differ in network debug mode.
+fn log_state_hash_mismatch(
+    player: &str,
+    choice_seq: u32,
+    action_count: u64,
+    server_hash: u64,
+    client_hash: u64,
+    server_debug_info: &Option<DebugSyncInfo>,
+    client_debug_info: &Option<DebugSyncInfo>,
+) {
+    log::error!("╔══════════════════════════════════════════════════════════════════╗");
+    log::error!(
+        "║ NETWORK SYNC MISMATCH DETECTED - {} choice_seq={:<16} ║",
+        player,
+        choice_seq
+    );
+    log::error!("╠══════════════════════════════════════════════════════════════════╣");
+    log::error!(
+        "║ Server hash: {:016x}  Client hash: {:016x} ║",
+        server_hash,
+        client_hash
+    );
+    log::error!(
+        "║ Action count: {} (both should match)                             ║",
+        action_count
+    );
+
+    // Log server debug info
+    if let Some(ref srv) = server_debug_info {
+        log_debug_sync_info("SERVER", srv);
+    }
+
+    // Log client debug info
+    if let Some(ref cli) = client_debug_info {
+        log_debug_sync_info("CLIENT", cli);
+    }
+
+    // Compare and highlight differences
+    if let (Some(ref srv), Some(ref cli)) = (server_debug_info, client_debug_info) {
+        log_state_differences(srv, cli);
+    }
+
+    log::error!("╚══════════════════════════════════════════════════════════════════╝");
+}
+
+/// Log a single DebugSyncInfo block with a label
+fn log_debug_sync_info(label: &str, info: &DebugSyncInfo) {
+    log::error!("╠══════════════════════════════════════════════════════════════════╣");
+    log::error!("║ {} STATE:", label);
+    log::error!(
+        "║   Turn {} {:?} active={:?}",
+        info.turn,
+        info.phase,
+        info.active_player
+    );
+    log::error!(
+        "║   Life: {:?}  Hands: {:?}  Libs: {:?}",
+        info.life_totals,
+        info.hand_sizes,
+        info.library_sizes
+    );
+    log::error!(
+        "║   Battlefield: {}  Stack: {}  Graveyards: {:?}",
+        info.battlefield_count,
+        info.stack_size,
+        info.graveyard_sizes
+    );
+    if !info.requesting_player_hand_ids.is_empty() {
+        log::error!("║   Hand CardIds: {:?}", info.requesting_player_hand_ids);
+    }
+}
+
+/// Compare two DebugSyncInfo and log specific differences
+fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
+    log::error!("╠══════════════════════════════════════════════════════════════════╣");
+    log::error!("║ DIFFERENCES:");
+    if server.life_totals != client.life_totals {
+        log::error!("║   - Life totals DIFFER");
+    }
+    if server.hand_sizes != client.hand_sizes {
+        log::error!("║   - Hand sizes DIFFER");
+    }
+    if server.library_sizes != client.library_sizes {
+        log::error!("║   - Library sizes DIFFER");
+    }
+    if server.battlefield_count != client.battlefield_count {
+        log::error!("║   - Battlefield count DIFFERS");
+    }
+    if server.graveyard_sizes != client.graveyard_sizes {
+        log::error!("║   - Graveyard sizes DIFFER");
+    }
+    if server.requesting_player_hand_ids != client.requesting_player_hand_ids {
+        log::error!("║   - Hand CardIds DIFFER");
+        log::error!("║      Server: {:?}", server.requesting_player_hand_ids);
+        log::error!("║      Client: {:?}", client.requesting_player_hand_ids);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SINGLE-CHANNEL ARCHITECTURE (mtg-secqu)
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -1098,6 +1203,9 @@ async fn run_coordinator(
                         let action_count = choice_request.action_count;
                         let abilities = choice_request.abilities.clone();
                         let library_search_cards = choice_request.library_search_cards.clone();
+                        // For network debug: capture server's state hash and debug info
+                        let server_state_hash = choice_request.state_hash;
+                        let server_debug_info = choice_request.debug_info.clone();
 
                         // Forward to P1 handler
                         if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
@@ -1127,8 +1235,21 @@ async fn run_coordinator(
                                 }
 
                                 // Validate state hash in network debug mode
-                                // TODO(mtg-secqu): Add state hash validation here
-                                let _ = (network_debug, client_state_hash, client_debug_info);
+                                if network_debug {
+                                    if let Some(client_hash) = client_state_hash {
+                                        if client_hash != server_state_hash {
+                                            log_state_hash_mismatch(
+                                                "P1",
+                                                choice_seq,
+                                                action_count,
+                                                server_state_hash,
+                                                client_hash,
+                                                &server_debug_info,
+                                                &client_debug_info,
+                                            );
+                                        }
+                                    }
+                                }
 
                                 // Send response to NetworkController
                                 if p1_response_tx.send(response.clone()).is_err() {
@@ -1231,6 +1352,9 @@ async fn run_coordinator(
                         let action_count = choice_request.action_count;
                         let abilities = choice_request.abilities.clone();
                         let library_search_cards = choice_request.library_search_cards.clone();
+                        // For network debug: capture server's state hash and debug info
+                        let server_state_hash = choice_request.state_hash;
+                        let server_debug_info = choice_request.debug_info.clone();
 
                         // Forward to P2 handler
                         if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
@@ -1260,7 +1384,21 @@ async fn run_coordinator(
                                 }
 
                                 // Validate state hash in network debug mode
-                                let _ = (network_debug, client_state_hash, client_debug_info);
+                                if network_debug {
+                                    if let Some(client_hash) = client_state_hash {
+                                        if client_hash != server_state_hash {
+                                            log_state_hash_mismatch(
+                                                "P2",
+                                                choice_seq,
+                                                action_count,
+                                                server_state_hash,
+                                                client_hash,
+                                                &server_debug_info,
+                                                &client_debug_info,
+                                            );
+                                        }
+                                    }
+                                }
 
                                 // Send response to NetworkController
                                 if p2_response_tx.send(response.clone()).is_err() {
