@@ -1109,23 +1109,10 @@ impl WasmFancyTuiState {
                     &mut remote_controller,
                 );
             }
-            WasmControllerType::Random => {
-                // Random controller - runs directly without user input
-                let inner = RandomController::with_seed(our_player_id, 42);
-                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
-            }
-            WasmControllerType::Heuristic => {
-                // Heuristic controller
-                let inner = HeuristicController::new(our_player_id);
-                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
-            }
-            WasmControllerType::Zero => {
-                // Zero controller (always passes)
-                let inner = ZeroController::new(our_player_id);
-                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
+            WasmControllerType::Random | WasmControllerType::Heuristic | WasmControllerType::Zero => {
+                // AI controllers - respond directly to server's ChoiceRequest
+                // No local game loop needed - server tells us options, we pick one
+                self.run_network_mode_ai_direct(our_controller_type, network_client);
             }
             WasmControllerType::Remote => {
                 // This shouldn't happen - our_controller_type should never be Remote
@@ -1140,6 +1127,191 @@ impl WasmFancyTuiState {
                 self.needs_redraw = true;
             }
         }
+    }
+
+    /// Run network mode with AI controller - direct response to server
+    ///
+    /// Instead of running a local game loop (which requires synchronized game state),
+    /// AI controllers respond directly to the server's ChoiceRequest messages.
+    /// The server tells us what options are available, we pick one and send it back.
+    ///
+    /// This avoids the complexity of maintaining a shadow game state in WASM.
+    #[cfg(feature = "wasm-network")]
+    fn run_network_mode_ai_direct(&mut self, controller_type: WasmControllerType, network_client: SharedNetworkClient) {
+        // Check if there's a pending ChoiceRequest from the server
+        let choice_request = {
+            let client = network_client.borrow();
+            client.peek_choice_request().cloned()
+        };
+
+        let Some(request) = choice_request else {
+            // No ChoiceRequest yet - nothing to do
+            // The JavaScript layer will call us again when a message arrives
+            return;
+        };
+
+        // Check if we already submitted for this request
+        {
+            let client = network_client.borrow();
+            if client.last_submitted_choice_seq() == Some(request.choice_seq) {
+                // Already submitted, waiting for ack
+                return;
+            }
+        }
+
+        let num_options = request.options.len();
+        if num_options == 0 {
+            log::warn!("WASM AI: ChoiceRequest has 0 options, cannot respond");
+            return;
+        }
+
+        // Determine how many selections are needed based on choice_type
+        let required_count = self.get_required_selection_count(&request.choice_type, num_options);
+
+        // Pick choices based on controller type
+        let choice_indices = match controller_type {
+            WasmControllerType::Zero => {
+                // Zero controller: always pick first N options (usually "Pass/Done" or first cards)
+                (0..required_count.min(num_options)).collect()
+            }
+            WasmControllerType::Random => {
+                // Random controller: pick N random distinct options
+                self.pick_random_choices(request.choice_seq, num_options, required_count)
+            }
+            WasmControllerType::Heuristic => {
+                // Heuristic controller: pick based on simple heuristics
+                self.pick_heuristic_choices(&request.options, required_count)
+            }
+            _ => vec![0], // Fallback to first option
+        };
+
+        log::info!(
+            "WASM AI ({}): Responding to ChoiceRequest seq={} with indices {:?} of {} options",
+            match controller_type {
+                WasmControllerType::Zero => "Zero",
+                WasmControllerType::Random => "Random",
+                WasmControllerType::Heuristic => "Heuristic",
+                _ => "Unknown",
+            },
+            request.choice_seq,
+            choice_indices,
+            num_options,
+        );
+
+        // Submit the choice to the server
+        {
+            let mut client = network_client.borrow_mut();
+            client.submit_choice(choice_indices, request.action_count, None);
+        }
+
+        self.needs_redraw = true;
+    }
+
+    /// Get the required number of selections for a choice type
+    #[cfg(feature = "wasm-network")]
+    fn get_required_selection_count(&self, choice_type: &crate::network::ChoiceType, _num_options: usize) -> usize {
+        use crate::network::ChoiceType;
+        match choice_type {
+            ChoiceType::Priority { .. } => 1,
+            ChoiceType::Targets { target_count, .. } => *target_count,
+            ChoiceType::ManaSources { .. } => 1, // Usually single selection
+            ChoiceType::Attackers { .. } => 1,   // "Done" or single attacker per selection
+            ChoiceType::Blockers { .. } => 1,    // "Done" or single block assignment
+            ChoiceType::DamageOrder { blocker_count, .. } => *blocker_count, // Order all blockers
+            ChoiceType::Discard { count } => *count,
+            ChoiceType::LibrarySearchByName { .. } => 1,
+            ChoiceType::Sacrifice { count, .. } => *count,
+            ChoiceType::Modes { mode_count, .. } => *mode_count,
+        }
+    }
+
+    /// Pick N random distinct choices
+    #[cfg(feature = "wasm-network")]
+    fn pick_random_choices(&self, seed: u32, num_options: usize, count: usize) -> Vec<usize> {
+        if count == 0 || num_options == 0 {
+            return vec![];
+        }
+
+        let count = count.min(num_options);
+        let mut result = Vec::with_capacity(count);
+        let mut seed = seed as u64;
+
+        // Simple Fisher-Yates partial shuffle to pick distinct indices
+        let mut available: Vec<usize> = (0..num_options).collect();
+        for _ in 0..count {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let idx = (seed as usize) % available.len();
+            result.push(available.remove(idx));
+        }
+
+        result
+    }
+
+    /// Pick N choices using simple heuristics
+    #[cfg(feature = "wasm-network")]
+    fn pick_heuristic_choices(&self, options: &[String], count: usize) -> Vec<usize> {
+        if count == 0 || options.is_empty() {
+            return vec![];
+        }
+
+        let mut result = Vec::with_capacity(count);
+
+        // Simple heuristics - prioritize certain option types
+        // 1. Land plays (usually good to play lands)
+        // 2. Spell casts
+        // 3. Activations
+        // 4. First available options
+
+        for (i, opt) in options.iter().enumerate() {
+            if result.len() >= count {
+                break;
+            }
+            let lower = opt.to_lowercase();
+            if lower.contains("play")
+                && (lower.contains("land")
+                    || lower.contains("plains")
+                    || lower.contains("island")
+                    || lower.contains("swamp")
+                    || lower.contains("mountain")
+                    || lower.contains("forest"))
+            {
+                if !result.contains(&i) {
+                    result.push(i);
+                }
+            }
+        }
+
+        for (i, opt) in options.iter().enumerate() {
+            if result.len() >= count {
+                break;
+            }
+            let lower = opt.to_lowercase();
+            if lower.contains("cast") && !result.contains(&i) {
+                result.push(i);
+            }
+        }
+
+        for (i, opt) in options.iter().enumerate() {
+            if result.len() >= count {
+                break;
+            }
+            let lower = opt.to_lowercase();
+            if lower.contains("activate") && !result.contains(&i) {
+                result.push(i);
+            }
+        }
+
+        // Fill remaining with first available options
+        for i in 0..options.len() {
+            if result.len() >= count {
+                break;
+            }
+            if !result.contains(&i) {
+                result.push(i);
+            }
+        }
+
+        result
     }
 
     /// Run network mode with Human controller (uses rewind/replay pattern)
