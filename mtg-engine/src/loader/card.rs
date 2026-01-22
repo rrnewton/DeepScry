@@ -1367,6 +1367,7 @@ impl CardDefinition {
         use super::ability_parser::{AbilityParams, ApiType};
         use super::effect_converter::{
             params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect,
+            params_to_immediate_trigger_with_svars,
         };
 
         let mut effects = Vec::new();
@@ -1394,10 +1395,13 @@ impl CardDefinition {
             // Convert parameters to Effect (if supported)
             // For Charm abilities, use SVar-aware conversion to resolve mode effects
             // For DelayedTrigger abilities, use SVar-aware conversion to resolve Execute$ effect
+            // For ImmediateTrigger abilities, use SVar-aware conversion to resolve Execute$ effect
             let effect = if params.api_type == ApiType::Charm {
                 params_to_charm_effect_with_svars(&params, &self.svars)
             } else if params.api_type == ApiType::DelayedTrigger {
                 params_to_delayed_trigger_with_svars(&params, &self.svars)
+            } else if params.api_type == ApiType::ImmediateTrigger {
+                params_to_immediate_trigger_with_svars(&params, &self.svars)
             } else {
                 params_to_effect(&params)
             };

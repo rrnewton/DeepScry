@@ -52,11 +52,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
         ApiType::Discard => {
             // Extract card count from NumCards$ parameter (default to 1 if not specified)
-            // Example: DB$ Discard | Defined$ You | NumCards$ 1 | Mode$ TgtChoose
+            // Example: DB$ Discard | Defined$ You | NumCards$ 1 | Mode$ TgtChoose | RememberDiscarded$ True
             let count = params.get_u8("NumCards").unwrap_or(1);
+            let remember_discarded = params.get("RememberDiscarded") == Some("True");
             Some(Effect::DiscardCards {
                 player: PlayerId::new(0), // Placeholder - filled in at cast/resolve time
                 count,
+                remember_discarded,
             })
         }
 
@@ -772,6 +774,34 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::CopySpellAbility { may_choose_targets })
         }
 
+        ApiType::ImmediateTrigger => {
+            // Conditional sub-effect execution based on remembered cards
+            // Requires SVar resolution - use params_to_immediate_trigger_with_svars() instead
+            // For now, return None to indicate this needs special handling
+            log::debug!(
+                target: "effect_converter",
+                "ImmediateTrigger requires SVar resolution - use params_to_immediate_trigger_with_svars()"
+            );
+            None
+        }
+
+        ApiType::Cleanup => {
+            // Clear remembered cards storage
+            // Example: DB$ Cleanup | ClearRemembered$ True
+            let clear_remembered = params.get("ClearRemembered") == Some("True");
+
+            if clear_remembered {
+                Some(Effect::ClearRemembered)
+            } else {
+                // Other Cleanup modes not implemented
+                log::debug!(
+                    target: "effect_converter",
+                    "Cleanup without ClearRemembered$ True not implemented"
+                );
+                None
+            }
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -1069,6 +1099,59 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
         condition,
         effect: Box::new(execute_effect),
         expiry,
+    })
+}
+
+/// Convert ImmediateTrigger ability parameters to an ImmediateTrigger Effect with SVar resolution.
+///
+/// This resolves the Execute$ SVar to get the actual effect to execute when the condition is met.
+///
+/// # Arguments
+///
+/// * `params` - The parsed ability parameters (must be ApiType::ImmediateTrigger)
+/// * `svars` - The card's SVar definitions (name -> body)
+///
+/// # Example
+///
+/// ```ignore
+/// // Card has: DB$ ImmediateTrigger | ConditionDefined$ Remembered | ConditionPresent$ Card.nonLand | Execute$ TrigPutCounter
+/// // And SVar:TrigPutCounter:DB$ PutCounter | ValidTgts$ Creature.YouCtrl | CounterType$ P1P1 | CounterNum$ 1
+/// let params = AbilityParams::parse("A:DB$ ImmediateTrigger | ...")?;
+/// let effect = params_to_immediate_trigger_with_svars(&params, &card.svars);
+/// // Returns Effect::ImmediateTrigger with Effect::PutCounter inside
+/// ```
+pub fn params_to_immediate_trigger_with_svars(
+    params: &AbilityParams,
+    svars: &HashMap<String, String>,
+) -> Option<Effect> {
+    if params.api_type != ApiType::ImmediateTrigger {
+        return None;
+    }
+
+    // Parse condition based on ConditionPresent$
+    let condition_present = params.get("ConditionPresent");
+    let condition = match condition_present {
+        Some("Card.nonLand") => crate::core::ImmediateTriggerCondition::RememberedNonLand,
+        _ => crate::core::ImmediateTriggerCondition::AnyRemembered,
+    };
+
+    // Resolve Execute$ SVar to get the actual effect
+    let execute_svar = params.get("Execute")?;
+    let svar_body = svars.get(execute_svar)?;
+
+    // Parse the SVar as an ability
+    let execute_params = AbilityParams::parse(&format!("A:{}", svar_body)).ok()?;
+    let execute_effect = params_to_effect(&execute_params)?;
+
+    log::debug!(
+        target: "effect_converter",
+        "ImmediateTrigger with SVar resolution: condition={:?}, execute_svar={}, effect={:?}",
+        condition, execute_svar, execute_effect
+    );
+
+    Some(Effect::ImmediateTrigger {
+        condition,
+        sub_effects: vec![execute_effect],
     })
 }
 

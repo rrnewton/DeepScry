@@ -144,6 +144,19 @@ pub struct GameState {
     /// - Flicker: Return exiled creature at end of turn
     /// - Suspend: Cast spell when last time counter is removed
     pub delayed_triggers: DelayedTriggerStore,
+
+    /// Remembered cards for ImmediateTrigger effects.
+    ///
+    /// Temporary storage used during ability resolution chains to pass card
+    /// references between effects. For example:
+    /// - DB$ Discard with RememberDiscarded$ True stores discarded cards here
+    /// - DB$ ImmediateTrigger checks conditions against remembered cards
+    /// - DB$ Cleanup clears this storage
+    ///
+    /// This mirrors Java Forge's "remembered" mechanism for tracking cards
+    /// across linked effects in a resolution chain.
+    #[serde(default)]
+    pub remembered_cards: smallvec::SmallVec<[CardId; 4]>,
 }
 
 impl GameState {
@@ -216,6 +229,7 @@ impl GameState {
             skip_reveals: true, // Default: skip reveals for local games
             persistent_effects: PersistentEffectStore::new(),
             delayed_triggers: DelayedTriggerStore::new(),
+            remembered_cards: smallvec::SmallVec::new(),
         }
     }
 
@@ -2573,7 +2587,9 @@ impl GameState {
                     | crate::core::Effect::ModalChoice { .. }
                     | crate::core::Effect::Dig { .. }
                     | crate::core::Effect::CreateDelayedTrigger { .. }
-                    | crate::core::Effect::CopySpellAbility { .. } => {
+                    | crate::core::Effect::CopySpellAbility { .. }
+                    | crate::core::Effect::ImmediateTrigger { .. }
+                    | crate::core::Effect::ClearRemembered => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility
@@ -2657,6 +2673,7 @@ impl Clone for GameState {
             skip_reveals: self.skip_reveals,
             persistent_effects: self.persistent_effects.clone(),
             delayed_triggers: self.delayed_triggers.clone(),
+            remembered_cards: self.remembered_cards.clone(),
         }
     }
 }

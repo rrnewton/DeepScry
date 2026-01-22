@@ -135,9 +135,14 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             count: *count,
         },
 
-        Effect::DiscardCards { player, count } if player.is_placeholder() => Effect::DiscardCards {
+        Effect::DiscardCards {
+            player,
+            count,
+            remember_discarded,
+        } if player.is_placeholder() => Effect::DiscardCards {
             player: ctx.controller,
             count: *count,
+            remember_discarded: *remember_discarded,
         },
 
         Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
@@ -401,12 +406,13 @@ mod tests {
         let effect = Effect::DiscardCards {
             player: PlayerId::new(0), // placeholder
             count: 1,
+            remember_discarded: false,
         };
 
         let resolved = resolve_effect_placeholder(&effect, &ctx);
 
         match resolved {
-            Effect::DiscardCards { player, count } => {
+            Effect::DiscardCards { player, count, .. } => {
                 assert_eq!(player.as_u32(), 2);
                 assert_eq!(count, 1);
             }

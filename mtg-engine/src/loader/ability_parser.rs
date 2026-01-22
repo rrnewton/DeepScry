@@ -154,6 +154,15 @@ pub enum ApiType {
     ///   MayChooseTarget$ - can choose new targets for the copy
     CopySpellAbility,
 
+    /// Conditional sub-effect execution based on remembered cards
+    /// Corresponds to: DB$ ImmediateTrigger | ConditionDefined$ Remembered | ConditionPresent$ Card.nonLand | Execute$ SVar
+    /// Used by Teo to put counter when discarding nonland
+    ImmediateTrigger,
+
+    /// Clear remembered cards storage
+    /// Corresponds to: DB$ Cleanup | ClearRemembered$ True
+    Cleanup,
+
     // === Information ===
     Scry,
     Surveil,
@@ -279,6 +288,8 @@ impl ApiType {
             "Effect" => Self::Effect,
             "DelayedTrigger" => Self::DelayedTrigger,
             "CopySpellAbility" => Self::CopySpellAbility,
+            "ImmediateTrigger" => Self::ImmediateTrigger,
+            "Cleanup" => Self::Cleanup,
 
             // Information
             "Scry" => Self::Scry,
@@ -378,6 +389,8 @@ impl ApiType {
             Self::Earthbend => "Earthbend",
             Self::Charm => "Charm",
             Self::Discard => "Discard",
+            Self::ImmediateTrigger => "ImmediateTrigger",
+            Self::Cleanup => "Cleanup",
             Self::Unknown(s) => s.as_str(),
         }
     }

@@ -983,9 +983,14 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
-            Effect::DiscardCards { player, count } if player.is_placeholder() => Effect::DiscardCards {
+            Effect::DiscardCards {
+                player,
+                count,
+                remember_discarded,
+            } if player.is_placeholder() => Effect::DiscardCards {
                 player: card_owner,
                 count: *count,
+                remember_discarded: *remember_discarded,
             },
             Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
                 player: card_owner,
@@ -1165,11 +1170,19 @@ impl GameState {
                     self.check_card_drawn_triggers(*player, draw_num)?;
                 }
             }
-            Effect::DiscardCards { player, count } => {
+            Effect::DiscardCards {
+                player,
+                count,
+                remember_discarded,
+            } => {
                 // Discard cards (AI chooses which cards to discard)
                 for _ in 0..*count {
                     let card_to_discard = self.choose_card_to_discard(*player)?;
                     if let Some(card_id) = card_to_discard {
+                        // If RememberDiscarded$ True, store the discarded card for ImmediateTrigger
+                        if *remember_discarded {
+                            self.remembered_cards.push(card_id);
+                        }
                         self.discard_card(*player, card_id)?;
                     } else {
                         // No cards in hand to discard
@@ -2314,6 +2327,33 @@ impl GameState {
                     "CopySpellAbility reached execute_effect outside delayed trigger context. may_choose_targets={}",
                     may_choose_targets
                 );
+            }
+            Effect::ImmediateTrigger { condition, sub_effects } => {
+                // Check if remembered cards match the condition
+                let condition_met = match condition {
+                    crate::core::ImmediateTriggerCondition::RememberedNonLand => {
+                        // Check if any remembered card is a nonland
+                        self.remembered_cards.iter().any(|&card_id| {
+                            if let Ok(card) = self.cards.get(card_id) {
+                                !card.is_land()
+                            } else {
+                                false
+                            }
+                        })
+                    }
+                    crate::core::ImmediateTriggerCondition::AnyRemembered => !self.remembered_cards.is_empty(),
+                };
+
+                if condition_met {
+                    // Execute sub-effects
+                    for sub_effect in sub_effects {
+                        self.execute_effect(sub_effect)?;
+                    }
+                }
+            }
+            Effect::ClearRemembered => {
+                // Clear the remembered cards storage
+                self.remembered_cards.clear();
             }
         }
         Ok(())

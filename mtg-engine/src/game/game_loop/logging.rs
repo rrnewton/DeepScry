@@ -168,7 +168,7 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
                 self.game.logger.gamelog(&message);
             }
-            Effect::DiscardCards { player, count } => {
+            Effect::DiscardCards { player, count, .. } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to discard {count} card(s)");
                 self.game.logger.gamelog(&message);
@@ -623,6 +623,17 @@ impl<'a> GameLoop<'a> {
                         ""
                     }
                 );
+                self.game.logger.gamelog(&message);
+            }
+            Effect::ImmediateTrigger { condition, .. } => {
+                let message = format!(
+                    "{source_name} ({source_id}) checks immediate trigger condition: {:?}",
+                    condition
+                );
+                self.game.logger.gamelog(&message);
+            }
+            Effect::ClearRemembered => {
+                let message = format!("{source_name} ({source_id}) clears remembered cards");
                 self.game.logger.gamelog(&message);
             }
         }

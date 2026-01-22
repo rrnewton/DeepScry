@@ -336,8 +336,13 @@ pub enum Effect {
 
     /// Discard cards
     /// Example: "Discard a card"
-    /// Corresponds to: DB$ Discard | Defined$ You | NumCards$ 1
-    DiscardCards { player: PlayerId, count: u8 },
+    /// Corresponds to: DB$ Discard | Defined$ You | NumCards$ 1 | RememberDiscarded$ True
+    DiscardCards {
+        player: PlayerId,
+        count: u8,
+        /// If true, store discarded cards in game.remembered_cards for ImmediateTrigger
+        remember_discarded: bool,
+    },
 
     /// Gain life
     /// Example: "You gain 3 life"
@@ -741,6 +746,43 @@ pub enum Effect {
         /// Whether the player may choose new targets for the copy
         may_choose_targets: bool,
     },
+
+    /// Conditionally execute a sub-effect based on remembered cards
+    ///
+    /// Corresponds to: `DB$ ImmediateTrigger | ConditionDefined$ Remembered | ConditionPresent$ Card.nonLand | ConditionCompare$ GE1 | Execute$ TrigPutCounter`
+    ///
+    /// This effect checks if the remembered cards (stored by previous effects like DiscardCards
+    /// with RememberDiscarded$ True) meet a condition, and if so, executes the sub-effect.
+    ///
+    /// Cards using this:
+    /// - Teo, Spirited Glider: "When you discard a nonland card this way, put a +1/+1 counter on target creature"
+    ImmediateTrigger {
+        /// Condition to check against remembered cards
+        condition: ImmediateTriggerCondition,
+        /// Effect to execute if condition is met (SVar name resolved during parsing)
+        sub_effects: Vec<Effect>,
+    },
+
+    /// Clear remembered cards storage
+    ///
+    /// Corresponds to: `DB$ Cleanup | ClearRemembered$ True`
+    ///
+    /// This effect clears the game.remembered_cards storage after ImmediateTrigger has checked it.
+    ClearRemembered,
+}
+
+/// Condition for ImmediateTrigger effect
+///
+/// Used to check remembered cards against criteria before executing a sub-effect.
+/// Corresponds to: `ConditionDefined$ Remembered | ConditionPresent$ Card.nonLand | ConditionCompare$ GE1`
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ImmediateTriggerCondition {
+    /// At least one remembered card is a nonland card
+    /// Corresponds to: ConditionPresent$ Card.nonLand | ConditionCompare$ GE1
+    RememberedNonLand,
+    /// At least one remembered card exists (any card)
+    /// Corresponds to: ConditionCompare$ GE1
+    AnyRemembered,
 }
 
 /// Categorization of effects for targeting purposes.
@@ -785,7 +827,9 @@ impl Effect {
             | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }
-            | Effect::CopySpellAbility { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::CopySpellAbility { .. }
+            | Effect::ImmediateTrigger { .. }
+            | Effect::ClearRemembered => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. } => EffectTargetCategory::UsesFilter,

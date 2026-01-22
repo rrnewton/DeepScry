@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-01-17T23:09:03.931957063+00:00
-updated_at: 2026-01-22T17:45:43.223540723+00:00
+updated_at: 2026-01-22T20:47:41.079396656+00:00
 ---
 
 # Description
@@ -23,6 +23,8 @@ Key gaps affecting this deck:
 - ~~**Count$Valid** - Count creatures matching filter (Elephant-Mandrill)~~ **IMPLEMENTED 2026-01-21** (CountExpression::ValidPermanents with filter parsing)
 - ~~**Exhaust$ True** - Once-per-game activation (Rebellious Captives)~~ **IMPLEMENTED 2026-01-22** (exhaust field on ActivatedAbility, exhausted_abilities tracking on Card)
 - ~~**Ward:Waterbend<N>** - Ward with Waterbend cost (The Unagi)~~ **IMPLEMENTED 2026-01-21** (WardWaterbend keyword variant)
+- ~~**T:Mode$ AttackersDeclared** - Batch trigger when attackers declared (Teo)~~ **IMPLEMENTED 2026-01-22** (AttackersDeclared TriggerEvent, ValidAttackers$ keyword filter)
+- ~~**ImmediateTrigger / RememberDiscarded** - Complex conditional triggers (Teo's counter placement)~~ **IMPLEMENTED 2026-01-22** (remembered_cards on GameState, ImmediateTriggerCondition enum, DB$ Cleanup)
 - **S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)
 - **S:Mode$ ReduceCost** - Cost reduction static abilities (Gran-Gran)
 - **K:Affinity:Ally** - Cost reduction (Allies at Last)
@@ -80,10 +82,9 @@ Key gaps affecting this deck:
 - [x] Exhaust {6}: Put counters + earthbend 2 (Exhaust$ True) **IMPLEMENTED 2026-01-22**
 
 **Teo, Spirited Glider (x1)** - 3U 1/4 Legendary Human Pilot Ally
-- [ ] Flying (should work)
-- [ ] Flying attackers trigger: draw/discard (T:Mode$ AttackersDeclared)
-- [ ] Conditional counter on discard nonland (ImmediateTrigger, RememberDiscarded)
-- GAP: AttackersDeclared trigger, ImmediateTrigger, RememberDiscarded
+- [x] Flying (should work)
+- [x] Flying attackers trigger: draw/discard (T:Mode$ AttackersDeclared) **IMPLEMENTED 2026-01-22**
+- [x] Conditional counter on discard nonland (ImmediateTrigger, RememberDiscarded) **IMPLEMENTED 2026-01-22**
 
 **The Unagi of Kyoshi Island (x1)** - 3UU 5/5 Legendary Serpent
 - [x] Flash (VERIFIED 2026-01-19)
@@ -128,7 +129,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (26/40 fully working)
+## Verified Cards Summary (28/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -147,10 +148,13 @@ Working cards:
 14. **Gran-Gran** - Taps trigger for draw/discard (partial - ReduceCost static needs work)
 15. **Avatar Kyoshi** - BeginCombat trigger + Earthbend + Untap + Conditional hexproof **FULLY WORKING 2026-01-21**
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
+17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 
 ## Recent Fixes (2026-01-22)
 
 1. **Exhaust$ True**: Added exhaust field to ActivatedAbility and exhausted_abilities tracking on Card. Once activated, exhaust abilities cannot be activated again.
+2. **T:Mode$ AttackersDeclared**: Added batch trigger for "whenever one or more creatures attack". Supports ValidAttackers$ keyword filtering (e.g., Flying). Fires once per declare attackers step.
+3. **ImmediateTrigger / RememberDiscarded**: Added remembered_cards field to GameState, ImmediateTriggerCondition enum for conditional execution (RememberedNonLand, AnyRemembered), DB$ Cleanup effect, and DiscardCards remember_discarded parameter. Enables Teo's "when you discard a nonland card this way, put a +1/+1 counter" ability.
 
 ## Recent Fixes (2026-01-21)
 
@@ -167,10 +171,8 @@ Working cards:
 2. **S:Mode$ RaiseCost** - Additional sacrifice costs
 3. **K:Affinity:Ally** - Cost reduction for ally type
 4. **DB$ EachDamage** - Multiple sources dealing damage
-5. **T:Mode$ AttackersDeclared** - Attackers declared triggers (batch trigger)
-6. **ImmediateTrigger / RememberDiscarded** - Complex conditional triggers
-7. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
-8. **AddAbility$ for lands** - Grant abilities to land permanents
+5. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
+6. **AddAbility$ for lands** - Grant abilities to land permanents
 
 ## Testing Protocol
 
