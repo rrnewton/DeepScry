@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-01-17T23:09:03.931957063+00:00
-updated_at: 2026-01-21T21:05:04.564827619+00:00
+updated_at: 2026-01-22T17:45:43.223540723+00:00
 ---
 
 # Description
@@ -21,9 +21,10 @@ Key gaps affecting this deck:
 - ~~**T:Mode$ Phase** - Beginning of combat triggers (Avatar Kyoshi)~~ **FIXED 2026-01-21** (SubAbility$ chain to DBUntap now followed)
 - ~~**Count$YouDrewThisTurn** - Track cards drawn this turn (Messenger Hawk)~~ **IMPLEMENTED 2026-01-21** (CountExpression::CardsDrawnThisTurn)
 - ~~**Count$Valid** - Count creatures matching filter (Elephant-Mandrill)~~ **IMPLEMENTED 2026-01-21** (CountExpression::ValidPermanents with filter parsing)
-- **Exhaust$ True** - Once-per-game activation (Rebellious Captives)
+- ~~**Exhaust$ True** - Once-per-game activation (Rebellious Captives)~~ **IMPLEMENTED 2026-01-22** (exhaust field on ActivatedAbility, exhausted_abilities tracking on Card)
 - ~~**Ward:Waterbend<N>** - Ward with Waterbend cost (The Unagi)~~ **IMPLEMENTED 2026-01-21** (WardWaterbend keyword variant)
 - **S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)
+- **S:Mode$ ReduceCost** - Cost reduction static abilities (Gran-Gran)
 - **K:Affinity:Ally** - Cost reduction (Allies at Last)
 - **DB$ EachDamage** - Multiple sources dealing damage (Allies at Last)
 - ~~**DB$ Effect with StaticAbilities$** - Grant can't be blocked (Otter-Penguin, Giant Koi)~~ **FIXED 2026-01-21** (GrantCantBeBlocked placeholder resolution in CardDrawn triggers)
@@ -60,7 +61,7 @@ Key gaps affecting this deck:
 **Gran-Gran (x1)** - U 1/2 Legendary Human Peasant Ally
 - [x] Taps trigger: draw then discard (VERIFIED 2026-01-20)
 - [ ] Cost reduction static (S:Mode$ ReduceCost based on Lessons in graveyard)
-- GAP: ReduceCost static
+- GAP: ReduceCost static (complex feature requiring spell cost system changes)
 
 **Knowledge Seeker (x2)** - 1U 2/1 Fox Spirit
 - [x] Vigilance (should work)
@@ -76,8 +77,7 @@ Key gaps affecting this deck:
 - GAP: Count$Compare
 
 **Rebellious Captives (x1)** - 1G 2/2 Human Peasant Ally
-- [ ] Exhaust {6}: Put counters + earthbend 2 (Exhaust$ True)
-- GAP: Exhaust keyword (once-per-game activation)
+- [x] Exhaust {6}: Put counters + earthbend 2 (Exhaust$ True) **IMPLEMENTED 2026-01-22**
 
 **Teo, Spirited Glider (x1)** - 3U 1/4 Legendary Human Pilot Ally
 - [ ] Flying (should work)
@@ -128,7 +128,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (25/40 fully working)
+## Verified Cards Summary (26/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -146,6 +146,11 @@ Working cards:
 13. **Otter-Penguin** - Second draw trigger for +1/+2 pump + "can't be blocked" **FULLY WORKING 2026-01-21**
 14. **Gran-Gran** - Taps trigger for draw/discard (partial - ReduceCost static needs work)
 15. **Avatar Kyoshi** - BeginCombat trigger + Earthbend + Untap + Conditional hexproof **FULLY WORKING 2026-01-21**
+16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
+
+## Recent Fixes (2026-01-22)
+
+1. **Exhaust$ True**: Added exhaust field to ActivatedAbility and exhausted_abilities tracking on Card. Once activated, exhaust abilities cannot be activated again.
 
 ## Recent Fixes (2026-01-21)
 
@@ -156,17 +161,16 @@ Working cards:
 5. **Ward:Waterbend<N>**: Added WardWaterbend keyword variant, parses Ward:Waterbend<4> pattern
 6. **Conditional hexproof (Condition$ PlayerTurn)**: Added StaticCondition enum, checks turn ownership when granting keywords
 
-## Remaining Gaps
+## Remaining Gaps (Complex Features)
 
-1. **Exhaust$ True** - Once-per-game activation
-2. **S:Mode$ ReduceCost** - Cost reduction static abilities
-3. **S:Mode$ RaiseCost** - Additional sacrifice costs
-4. **K:Affinity:Ally** - Cost reduction for ally type
-5. **DB$ EachDamage** - Multiple sources dealing damage
-6. **T:Mode$ AttackersDeclared** - Attackers declared triggers
-7. **ImmediateTrigger / RememberDiscarded** - Complex conditional triggers
-8. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
-9. **AddAbility$ for lands** - Grant abilities to land permanents
+1. **S:Mode$ ReduceCost** - Cost reduction static abilities (affects spell casting system)
+2. **S:Mode$ RaiseCost** - Additional sacrifice costs
+3. **K:Affinity:Ally** - Cost reduction for ally type
+4. **DB$ EachDamage** - Multiple sources dealing damage
+5. **T:Mode$ AttackersDeclared** - Attackers declared triggers (batch trigger)
+6. **ImmediateTrigger / RememberDiscarded** - Complex conditional triggers
+7. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
+8. **AddAbility$ for lands** - Grant abilities to land permanents
 
 ## Testing Protocol
 
