@@ -2128,21 +2128,76 @@ pub fn launch_network_game(
     let starting_life = client_ref.starting_life();
     let our_player_id = client_ref.our_player_id();
     let opponent_name = client_ref.opponent_name().unwrap_or("Opponent").to_string();
+    let our_name = deck_name.to_string(); // Use deck name as our name for now
+
+    // CRITICAL: Get late-binding architecture data (mtg-d0jg3)
+    let deck_card_ids = client_ref.deck_card_ids().cloned();
+    let rng_state = client_ref.rng_state().to_vec();
 
     log::info!(
-        "launch_network_game: starting_life={}, our_player_id={:?}, opponent={}",
+        "launch_network_game: starting_life={}, our_player_id={:?}, opponent={}, deck_card_ids={:?}",
         starting_life,
         our_player_id,
-        opponent_name
+        opponent_name,
+        deck_card_ids
+            .as_ref()
+            .map(|r| format!("P1:[{}..{}), P2:[{}..{})", r.p1_start, r.p1_end, r.p2_start, r.p2_end))
     );
 
     // Drop the borrow before creating the game
     drop(client_ref);
 
-    // Create the game with correct starting life
-    // Use a timestamp seed for now - the game state is controlled by server anyway
-    let seed = crate::network::now_ms();
-    let game = create_game_from_database(card_db, deck_name, deck_name, starting_life, seed)?;
+    // Create the game using late-binding architecture (mtg-d0jg3)
+    // CRITICAL: Use init_game_reserve_only_wasm() with server's DeckCardIdRanges
+    // This ensures WASM uses the SAME CardIDs as the server for behavioral identity.
+    let game = if let Some(ref ranges) = deck_card_ids {
+        log::info!("launch_network_game: Using late-binding CardID architecture with ranges");
+
+        // Determine player names based on player assignment
+        let (p1_name, p2_name) = match our_player_id {
+            Some(pid) if pid.as_u32() == 0 => (our_name.clone(), opponent_name.clone()),
+            Some(pid) if pid.as_u32() == 1 => (opponent_name.clone(), our_name.clone()),
+            _ => (our_name.clone(), opponent_name.clone()),
+        };
+
+        // Create game with reserved CardID slots (same as native client)
+        let mut game = init_game_reserve_only_wasm(p1_name, p2_name, starting_life, ranges);
+
+        // Initialize RNG from server state for deterministic shuffles
+        if !rng_state.is_empty() {
+            use rand_chacha::ChaCha12Rng;
+            match bincode::deserialize::<ChaCha12Rng>(&rng_state) {
+                Ok(rng) => {
+                    *game.rng.borrow_mut() = rng;
+                    log::info!(
+                        "launch_network_game: Initialized RNG from server state ({} bytes)",
+                        rng_state.len()
+                    );
+                }
+                Err(e) => {
+                    log::error!(
+                        "launch_network_game: Failed to deserialize RNG state: {} - shuffles may diverge!",
+                        e
+                    );
+                }
+            }
+        } else {
+            log::warn!("launch_network_game: No RNG state from server - shuffles may diverge!");
+        }
+
+        // Enable reveal logging for network games (same as native)
+        game.set_skip_reveals(false);
+
+        game
+    } else {
+        // Fallback: legacy mode without late-binding (will cause CardID mismatches!)
+        log::warn!(
+            "launch_network_game: No DeckCardIdRanges from server! Using legacy initialization. \
+             This WILL cause CardID mismatches and state desync!"
+        );
+        let seed = crate::network::now_ms();
+        create_game_from_database(card_db, deck_name, deck_name, starting_life, seed)?
+    };
 
     // Determine controller types based on our player assignment
     // Our controller type is what we selected, opponent is always Remote
@@ -2446,6 +2501,64 @@ fn create_game_from_database(
     );
 
     Ok(game)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WASM NETWORK GAME INITIALIZATION (Late-Binding Architecture)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Initialize a game with reserved CardID slots for late-binding architecture (mtg-d0jg3)
+///
+/// This is the WASM equivalent of `GameInitializer::init_game_reserve_only()`.
+/// It creates CardID slots upfront without instantiating cards - card identities
+/// are revealed later via CardRevealed messages from the server.
+///
+/// CRITICAL: WASM must use this to ensure behavioral identity with native client.
+#[cfg(feature = "wasm-network")]
+fn init_game_reserve_only_wasm(
+    p1_name: String,
+    p2_name: String,
+    starting_life: i32,
+    ranges: &crate::network::DeckCardIdRanges,
+) -> GameState {
+    use crate::core::CardId;
+
+    let total_cards = ranges.total_cards() as usize;
+    let mut game = GameState::new_two_player_with_capacity(p1_name, p2_name, starting_life, total_cards);
+
+    // Reserve all CardID slots in EntityStore without instantiating cards
+    game.cards
+        .reserve_range(CardId::new(ranges.p1_start), ranges.p1_end - ranges.p1_start);
+    game.cards
+        .reserve_range(CardId::new(ranges.p2_start), ranges.p2_end - ranges.p2_start);
+
+    // Create CardID vectors for each player's library
+    let p1_id = game.players[0].id;
+    let p2_id = game.players[1].id;
+
+    let p1_card_ids: Vec<CardId> = (ranges.p1_start..ranges.p1_end).map(CardId::new).collect();
+    let p2_card_ids: Vec<CardId> = (ranges.p2_start..ranges.p2_end).map(CardId::new).collect();
+
+    // Add CardIDs to libraries
+    if let Some(zones) = game.get_player_zones_mut(p1_id) {
+        for card_id in p1_card_ids {
+            zones.library.add(card_id);
+        }
+    }
+    if let Some(zones) = game.get_player_zones_mut(p2_id) {
+        for card_id in p2_card_ids {
+            zones.library.add(card_id);
+        }
+    }
+
+    log::info!(
+        "init_game_reserve_only_wasm: Created game with {} reserved CardID slots (P1: {}, P2: {})",
+        total_cards,
+        ranges.p1_end - ranges.p1_start,
+        ranges.p2_end - ranges.p2_start
+    );
+
+    game
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

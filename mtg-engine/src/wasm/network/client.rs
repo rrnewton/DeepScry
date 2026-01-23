@@ -118,6 +118,15 @@ pub struct WasmNetworkClient {
     opponent_library_size: usize,
     /// Opponent's hand count
     opponent_hand_count: usize,
+    /// CardID ranges for late-binding architecture (mtg-d0jg3)
+    /// CRITICAL: WASM must use these ranges to initialize game state
+    /// with the same CardIDs as the server for behavioral identity.
+    deck_card_ids: Option<crate::network::DeckCardIdRanges>,
+    /// Serialized RNG state for deterministic shuffles
+    /// Must be deserialized and used to seed the game RNG for identical behavior.
+    rng_state: Vec<u8>,
+    /// Token definitions that may be created during the game
+    token_definitions: std::collections::HashMap<String, crate::loader::CardDefinition>,
 
     // Connection parameters (set before connecting)
     /// Server URL
@@ -152,6 +161,9 @@ impl WasmNetworkClient {
             library_size: 0,
             opponent_library_size: 0,
             opponent_hand_count: 0,
+            deck_card_ids: None,
+            rng_state: Vec::new(),
+            token_definitions: std::collections::HashMap::new(),
             server_url: None,
             password: None,
             player_name: None,
@@ -217,6 +229,27 @@ impl WasmNetworkClient {
     /// Get opponent's hand count (from GameStarted)
     pub fn opponent_hand_count(&self) -> usize {
         self.opponent_hand_count
+    }
+
+    /// Get CardID ranges for late-binding architecture (mtg-d0jg3)
+    ///
+    /// CRITICAL: WASM must use these ranges to initialize game state
+    /// with `init_game_reserve_only()` for behavioral identity with native.
+    pub fn deck_card_ids(&self) -> Option<&crate::network::DeckCardIdRanges> {
+        self.deck_card_ids.as_ref()
+    }
+
+    /// Get serialized RNG state for deterministic shuffles
+    ///
+    /// Must be deserialized and used to seed the game RNG for identical
+    /// shuffle behavior between server and client.
+    pub fn rng_state(&self) -> &[u8] {
+        &self.rng_state
+    }
+
+    /// Get token definitions for token creation
+    pub fn token_definitions(&self) -> &std::collections::HashMap<String, crate::loader::CardDefinition> {
+        &self.token_definitions
     }
 
     /// Set connection parameters before connecting
@@ -355,10 +388,13 @@ impl WasmNetworkClient {
                 opponent_hand_count,
                 library_size,
                 opponent_library_size,
+                opponent_decklist: _, // Not used in WASM client
                 starting_life,
                 initial_state_hash,
                 network_debug,
-                ..
+                deck_card_ids,
+                token_definitions,
+                rng_state,
             } => {
                 log::info!(
                     "WasmNetworkClient: Game started! We are {:?}, opponent: {}, life: {}",
@@ -366,6 +402,31 @@ impl WasmNetworkClient {
                     opponent_name,
                     starting_life
                 );
+
+                // Log critical sync data (mtg-d0jg3: behavioral identity)
+                if let Some(ref ranges) = deck_card_ids {
+                    log::info!(
+                        "WasmNetworkClient: DeckCardIdRanges received - P1:[{}..{}), P2:[{}..{})",
+                        ranges.p1_start,
+                        ranges.p1_end,
+                        ranges.p2_start,
+                        ranges.p2_end
+                    );
+                } else {
+                    log::warn!("WasmNetworkClient: No DeckCardIdRanges - late-binding CardIDs unavailable!");
+                }
+                if !rng_state.is_empty() {
+                    log::info!("WasmNetworkClient: RNG state received ({} bytes)", rng_state.len());
+                } else {
+                    log::warn!("WasmNetworkClient: No RNG state - shuffles may diverge!");
+                }
+                if !token_definitions.is_empty() {
+                    log::info!(
+                        "WasmNetworkClient: {} token definitions received",
+                        token_definitions.len()
+                    );
+                }
+
                 self.our_player_id = Some(your_player_id);
                 self.opponent_id = Some(if your_player_id.as_u32() == 0 {
                     PlayerId::new(1)
@@ -379,6 +440,10 @@ impl WasmNetworkClient {
                 self.library_size = library_size;
                 self.opponent_library_size = opponent_library_size;
                 self.opponent_hand_count = opponent_hand_count;
+                // CRITICAL: Store late-binding architecture data (mtg-d0jg3)
+                self.deck_card_ids = deck_card_ids;
+                self.rng_state = rng_state;
+                self.token_definitions = token_definitions;
                 self.state = NetworkState::InGame;
 
                 // NOTE: Do NOT queue opening_hand reveals here!
@@ -639,6 +704,10 @@ impl WasmNetworkClient {
         self.outbound_queue.clear();
         self.last_error = None;
         self.winner = None;
+        // Clear late-binding architecture data (mtg-d0jg3)
+        self.deck_card_ids = None;
+        self.rng_state.clear();
+        self.token_definitions.clear();
     }
 }
 
