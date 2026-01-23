@@ -314,8 +314,9 @@ impl PlayerController for RemoteController {
 
     fn choose_from_library(&mut self, view: &GameStateView, _valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
         // Use get_opponent_choice_full to get the authoritative library_search_result.
-        // The local valid_cards may have different CardIds due to library order differences,
-        // so we trust the server's library_search_result which contains the exact CardId chosen.
+        // The local valid_cards list is unavailable in network mode because unrevealed library
+        // cards are not instantiated in the shadow game (card slots are `None`).
+        // We trust the server's library_search_result which contains the exact CardId chosen.
         let (_indices, _spell_ability, library_search_result) =
             match self.get_opponent_choice_full(view.action_count() as u64) {
                 ChoiceResult::Ok(choice) => choice,

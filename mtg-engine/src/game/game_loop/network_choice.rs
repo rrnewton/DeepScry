@@ -392,9 +392,9 @@ impl<'a> GameLoop<'a> {
             }
             Some(PreChoiceResult::UseChoice(raw)) => {
                 debug_assert!(is_remote, "UseChoice returned for non-remote controller");
-                // For library searches, use the server's authoritative library_search_result
-                // instead of valid_cards[idx], because valid_cards may have different CardIds
-                // on the client's shadow game vs the server's game.
+                // For library searches, use the server's authoritative library_search_result.
+                // The valid_cards list is empty on the client because unrevealed library cards
+                // are not instantiated in the shadow game (card slots are `None`).
                 ChoiceResult::Ok(raw.library_search_result)
             }
             Some(PreChoiceResult::Exit) => ChoiceResult::ExitGame,

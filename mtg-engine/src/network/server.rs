@@ -1536,6 +1536,31 @@ async fn handle_player_websocket(
                             }
                         }
 
+                        // For LibrarySearchByName choices, reveal all searchable library cards
+                        // BEFORE sending ChoiceRequest so client can filter them (mtg-ondgo fix)
+                        if let Some(ref library_cards) = choice_request.library_search_cards {
+                            let game_guard = game.lock().await;
+                            log::debug!(
+                                "Handler P{}: Sending {} CardRevealed for library search (mtg-ondgo)",
+                                conn.player_id, library_cards.len()
+                            );
+                            for &card_id in library_cards {
+                                if let Some(card) = game_guard.cards.try_get(card_id) {
+                                    let card_def = game_guard.card_definitions.get(&card.name).cloned();
+                                    let card_reveal = CardReveal {
+                                        card_id,
+                                        name: card.name.to_string(),
+                                        card_def,
+                                    };
+                                    conn.send(&ServerMessage::CardRevealed {
+                                        owner: conn.player_id, // Player searching their own library
+                                        card: card_reveal,
+                                        reason: RevealReason::Searched,
+                                    }).await?;
+                                }
+                            }
+                        }
+
                         // Check if client already sent a choice (pending_choice)
                         if let Some(pending) = conn.pending_choice.take() {
                             log::debug!(

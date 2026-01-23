@@ -1134,6 +1134,10 @@ impl<'a> GameLoop<'a> {
                                                     .map(|(_, zones)| zones.library.cards.clone())
                                                     .unwrap_or_default();
 
+                                                // Sync network state to process pending CardRevealed messages
+                                                // before filtering library cards (mtg-ondgo fix)
+                                                self.sync_to_action();
+
                                                 // Filter cards by type
                                                 let mut valid_cards = Vec::new();
                                                 for &card_id in &library_cards {
@@ -1450,6 +1454,10 @@ impl<'a> GameLoop<'a> {
                                             .map(|(_, zones)| zones.library.cards.clone())
                                             .unwrap_or_default();
                                         log::debug!("[TYPECYCLING] Library has {} cards", library_cards.len());
+
+                                        // Sync network state to process pending CardRevealed messages
+                                        // before filtering library cards (mtg-ondgo fix)
+                                        self.sync_to_action();
 
                                         // Filter cards by type
                                         let mut valid_cards = Vec::new();
