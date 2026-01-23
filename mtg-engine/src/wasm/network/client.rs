@@ -446,16 +446,31 @@ impl WasmNetworkClient {
                 self.token_definitions = token_definitions;
                 self.state = NetworkState::InGame;
 
-                // NOTE: Do NOT queue opening_hand reveals here!
-                // The server sends individual CardRevealed messages for opening hand cards
-                // immediately after GameStarted. If we queue opening_hand here AND process
-                // the CardRevealed messages, we'd double-process the same cards.
+                // Queue opening_hand cards as pending reveals immediately.
+                // This is CRITICAL for WASM because:
+                // 1. The server sends CardRevealed messages AFTER GameStarted
+                // 2. The WASM game loop may start before those messages arrive
+                // 3. Without opening hand, sync_to_action() draws from empty library
+                // 4. Result: empty hand, only "Pass priority" available
                 //
-                // The native client also does NOT queue opening_hand as reveals - it just
-                // registers the card definitions for later reference.
+                // The opening_hand field contains the same cards as the upcoming
+                // CardRevealed messages, so we queue them now. The CardRevealed
+                // messages will be deduplicated by the reveal processor (which checks
+                // card_already_known before instantiating).
                 //
-                // The opening_hand field is informational only (hand count, which cards we got).
-                let _ = opening_hand; // Acknowledge we intentionally ignore
+                // Note: We use OpeningHand reason so reveal_processor adds directly to
+                // hand (since we're in empty library mode).
+                log::info!(
+                    "WasmNetworkClient: Queueing {} opening hand cards from GameStarted",
+                    opening_hand.len()
+                );
+                for card in opening_hand {
+                    self.pending_reveals.push_back((
+                        your_player_id,
+                        card,
+                        crate::network::RevealReason::OpeningHand,
+                    ));
+                }
             }
 
             ServerMessage::CardRevealed { owner, card, reason } => {

@@ -184,16 +184,40 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
 
+        // Get server's option count from ChoiceRequest - this is the source of truth
+        // The local game state may have diverged, so we must use server's option count
+        let server_option_count = self
+            .network_client
+            .borrow()
+            .peek_choice_request()
+            .map(|req| req.options.len())
+            .unwrap_or(1);
+
         // ChoiceRequest is ready - delegate to inner controller
         let sorted = sort_spell_abilities(available);
         match self.inner.choose_spell_ability_to_play(view, available) {
             ChoiceResult::Ok(choice) => {
-                // Submit choice to server and consume the ChoiceRequest
-                let choice_indices = match &choice {
-                    None => vec![0], // Pass
-                    Some(ability) => vec![sorted.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0)],
+                // Convert choice to index, but CLAMP to server's option count
+                // This handles state divergence where local state has more options
+                let raw_index = match &choice {
+                    None => 0, // Pass
+                    Some(ability) => sorted.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0),
                 };
-                self.submit_choice_to_server(choice_indices, view);
+
+                // CRITICAL: Clamp to server's option count to prevent desync
+                // If local state has more options than server, we pass priority
+                let clamped_index = if raw_index >= server_option_count {
+                    log::warn!(
+                        "WasmNetworkLocalController: Local choice index {} exceeds server options {} - clamping to pass",
+                        raw_index,
+                        server_option_count
+                    );
+                    0 // Fall back to pass priority
+                } else {
+                    raw_index
+                };
+
+                self.submit_choice_to_server(vec![clamped_index], view);
 
                 // Return the choice immediately - local game can advance
                 // The ack will arrive asynchronously and be handled next time

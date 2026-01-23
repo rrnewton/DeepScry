@@ -2513,7 +2513,15 @@ fn create_game_from_database(
 /// It creates CardID slots upfront without instantiating cards - card identities
 /// are revealed later via CardRevealed messages from the server.
 ///
-/// CRITICAL: WASM must use this to ensure behavioral identity with native client.
+/// CRITICAL: Unlike native `init_game_reserve_only()`, we do NOT add CardIDs to libraries.
+/// This is because:
+/// 1. The server shuffled its library in a specific order using its RNG
+/// 2. WASM doesn't have access to that shuffle order
+/// 3. If we added CardIDs to library in our own order, draws would be wrong
+///
+/// Instead, we use "empty library mode" where the reveal_processor adds cards directly
+/// to hand. The game loop's draw_card() calls will return None (empty library).
+/// This is the correct behavior because reveals contain the server's shuffled order.
 #[cfg(feature = "wasm-network")]
 fn init_game_reserve_only_wasm(
     p1_name: String,
@@ -2527,32 +2535,14 @@ fn init_game_reserve_only_wasm(
     let mut game = GameState::new_two_player_with_capacity(p1_name, p2_name, starting_life, total_cards);
 
     // Reserve all CardID slots in EntityStore without instantiating cards
+    // NOTE: We do NOT add CardIDs to libraries - reveals will handle zone placement
     game.cards
         .reserve_range(CardId::new(ranges.p1_start), ranges.p1_end - ranges.p1_start);
     game.cards
         .reserve_range(CardId::new(ranges.p2_start), ranges.p2_end - ranges.p2_start);
 
-    // Create CardID vectors for each player's library
-    let p1_id = game.players[0].id;
-    let p2_id = game.players[1].id;
-
-    let p1_card_ids: Vec<CardId> = (ranges.p1_start..ranges.p1_end).map(CardId::new).collect();
-    let p2_card_ids: Vec<CardId> = (ranges.p2_start..ranges.p2_end).map(CardId::new).collect();
-
-    // Add CardIDs to libraries
-    if let Some(zones) = game.get_player_zones_mut(p1_id) {
-        for card_id in p1_card_ids {
-            zones.library.add(card_id);
-        }
-    }
-    if let Some(zones) = game.get_player_zones_mut(p2_id) {
-        for card_id in p2_card_ids {
-            zones.library.add(card_id);
-        }
-    }
-
     log::info!(
-        "init_game_reserve_only_wasm: Created game with {} reserved CardID slots (P1: {}, P2: {})",
+        "init_game_reserve_only_wasm: Created game with {} reserved CardID slots (P1: {}, P2: {}) - empty library mode",
         total_cards,
         ranges.p1_end - ranges.p1_start,
         ranges.p2_end - ranges.p2_start
