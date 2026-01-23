@@ -403,6 +403,11 @@ struct WasmFancyTuiState {
     /// In network mode, P1 uses WasmNetworkLocalController and P2 uses WasmRemoteController
     #[cfg(feature = "wasm-network")]
     is_network_mode: bool,
+    /// Controller seed for deterministic RandomController (network mode)
+    /// IMPORTANT: This must match the seed used by native client to ensure identical behavior.
+    /// See mtg-d0jg3 for WASM/native behavioral identity requirements.
+    #[cfg(feature = "wasm-network")]
+    controller_seed: u64,
     /// High-water mark for action count (for monotonicity invariant checking)
     /// This tracks the maximum action count seen during FORWARD progress.
     /// During rewind/replay, action count is allowed to decrease, but after
@@ -419,15 +424,20 @@ struct WasmFancyTuiState {
 impl WasmFancyTuiState {
     /// Create a new WASM fancy TUI state from a GameState (local game mode)
     fn new(game: GameState, p1_controller_type: WasmControllerType, p2_controller_type: WasmControllerType) -> Self {
-        Self::new_with_network_mode(game, p1_controller_type, p2_controller_type, false)
+        Self::new_with_network_mode(game, p1_controller_type, p2_controller_type, false, 0)
     }
 
     /// Create a new WASM fancy TUI state with explicit network mode flag
+    ///
+    /// # Parameters
+    /// - `controller_seed`: Seed for RandomController. MUST match native client's seed
+    ///   for behavioral identity (see mtg-d0jg3).
     fn new_with_network_mode(
         game: GameState,
         p1_controller_type: WasmControllerType,
         p2_controller_type: WasmControllerType,
         #[allow(unused_variables)] is_network_mode: bool,
+        #[allow(unused_variables)] controller_seed: u64,
     ) -> Self {
         // Create renderer for player 1's perspective in GUI mode
         // This enables image layout bounds and pane background colors
@@ -497,6 +507,8 @@ impl WasmFancyTuiState {
             needs_redraw: true, // Initial draw required
             #[cfg(feature = "wasm-network")]
             is_network_mode,
+            #[cfg(feature = "wasm-network")]
+            controller_seed,
             high_water_action_count: 0,
             high_water_log_count: 0,
             in_rewind_replay: false,
@@ -1111,7 +1123,8 @@ impl WasmFancyTuiState {
             }
             WasmControllerType::Random => {
                 // Random controller - runs directly without user input
-                let inner = RandomController::with_seed(our_player_id, 42);
+                // IMPORTANT: Use self.controller_seed to match native client behavior (mtg-d0jg3)
+                let inner = RandomController::with_seed(our_player_id, self.controller_seed);
                 let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
                 self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
             }
@@ -1697,6 +1710,10 @@ impl WasmFancyTuiState {
     }
 
     /// Create an AI controller based on type
+    ///
+    /// NOTE: This is used for LOCAL (non-network) games only. In network mode,
+    /// controllers are created directly with the proper seed from self.controller_seed
+    /// to ensure behavioral identity with native client (see mtg-d0jg3).
     fn create_ai_controller(
         &self,
         controller_type: WasmControllerType,
@@ -1704,6 +1721,7 @@ impl WasmFancyTuiState {
     ) -> Box<dyn PlayerController> {
         match controller_type {
             WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
+            // For local games, seed doesn't need to match native - use arbitrary seed
             WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
             WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
             WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
@@ -2067,20 +2085,32 @@ pub fn launch_network_game(
     card_db: &WasmCardDatabase,
     deck_name: &str,
     controller_type: &str,
+    controller_seed: u64,
     _canvas_width: u32,
     _canvas_height: u32,
 ) -> Result<(), JsValue> {
     log::info!(
-        "launch_network_game: Initializing network game TUI with controller={}",
-        controller_type
+        "launch_network_game: Initializing network game TUI with controller={}, seed={}",
+        controller_type,
+        controller_seed
     );
 
     // Parse the controller type from JavaScript
+    // IMPORTANT: Only human and random are currently supported in WASM network mode.
+    // Heuristic and zero are disabled until we achieve proper state synchronization
+    // with the native client (mtg-d0jg3).
     let our_controller_type = match controller_type {
         "human" => WasmControllerType::Human,
         "random" => WasmControllerType::Random,
-        "heuristic" => WasmControllerType::Heuristic,
-        "zero" => WasmControllerType::Zero,
+        "heuristic" | "zero" => {
+            log::warn!(
+                "launch_network_game: Controller '{}' disabled in WASM network mode. \
+                 Only 'human' and 'random' are supported until state sync is fixed (mtg-d0jg3). \
+                 Defaulting to Human.",
+                controller_type
+            );
+            WasmControllerType::Human
+        }
         _ => {
             log::warn!(
                 "launch_network_game: Unknown controller type '{}', defaulting to Human",
@@ -2140,6 +2170,7 @@ pub fn launch_network_game(
         p1_controller_type,
         p2_controller_type,
         true, // is_network_mode = true
+        controller_seed,
     )));
 
     // Run until the first choice point

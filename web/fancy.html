@@ -1415,9 +1415,10 @@ Name=My Deck
                 p2Pane.style.display = isNetworkMode ? 'none' : 'block';
             }
 
-            // Hide seed in network mode (server controls it)
+            // Show seed in network mode too - needed for deterministic random controller (mtg-d0jg3)
+            // IMPORTANT: For WASM/native behavioral identity, both clients MUST use the same seed!
             if (seedRow) {
-                seedRow.style.display = isNetworkMode ? 'none' : 'flex';
+                seedRow.style.display = 'flex'; // Always show - coordination needed for testing
             }
         }
 
@@ -2500,11 +2501,19 @@ Name=My Deck
 
                     networkClient.onGameReady = () => {
                         console.log('[Network] Game is ready!');
+
+                        // Get controller seed from UI (IMPORTANT for WASM/native behavioral identity)
+                        // Both clients MUST use the same seed for random controllers to behave identically
+                        const seedInput = document.getElementById('game-seed').value;
+                        const controllerSeed = seedInput ? BigInt(seedInput) : BigInt(0);
+                        console.log(`[Network] Using controller seed: ${controllerSeed} (mtg-d0jg3)`);
+
                         // Launch network TUI mode with selected controller
                         launch_network_game(
                             cardDb,
                             ourDeck,
                             ourControllerValue,  // Pass controller type (human, random, etc.)
+                            controllerSeed,       // Seed for RandomController - MUST match native!
                             canvasWidth,
                             canvasHeight
                         );
