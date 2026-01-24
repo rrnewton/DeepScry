@@ -636,6 +636,20 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) clears remembered cards");
                 self.game.logger.gamelog(&message);
             }
+            Effect::EachDamage { damagers, receiver, .. } => {
+                let damager_count = damagers.len();
+                let receiver_name = self
+                    .game
+                    .cards
+                    .get(*receiver)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) causes {} creature(s) to deal damage to {} ({receiver})",
+                    damager_count, receiver_name
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

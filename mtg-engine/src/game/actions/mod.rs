@@ -889,6 +889,51 @@ impl GameState {
                     effect.clone()
                 }
             }
+
+            // EachDamage: multiple creatures deal damage to one target
+            // Empty damagers vector means "use parent targets" - all chosen_targets except last
+            // Placeholder receiver means "use last chosen_target"
+            Effect::EachDamage {
+                damagers,
+                receiver,
+                use_card_power,
+                fixed_damage,
+            } if damagers.is_empty() && receiver.is_placeholder() => {
+                if chosen_targets.len() >= 2 {
+                    // Damagers = all targets except the last one
+                    // Receiver = the last target
+                    let resolved_damagers: smallvec::SmallVec<[CardId; 4]> =
+                        chosen_targets[..chosen_targets.len() - 1].iter().copied().collect();
+                    let resolved_receiver = chosen_targets[chosen_targets.len() - 1];
+
+                    // Consume all targets
+                    *target_index = chosen_targets.len();
+                    *last_resolved_target = Some(resolved_receiver);
+
+                    Effect::EachDamage {
+                        damagers: resolved_damagers,
+                        receiver: resolved_receiver,
+                        use_card_power: *use_card_power,
+                        fixed_damage: *fixed_damage,
+                    }
+                } else if chosen_targets.len() == 1 {
+                    // Only one target = no damagers, just the receiver
+                    // This happens when TargetMin$ 0 and user selected 0 damagers
+                    *target_index = 1;
+                    *last_resolved_target = Some(chosen_targets[0]);
+
+                    Effect::EachDamage {
+                        damagers: smallvec::SmallVec::new(),
+                        receiver: chosen_targets[0],
+                        use_card_power: *use_card_power,
+                        fixed_damage: *fixed_damage,
+                    }
+                } else {
+                    // No targets at all - effect fizzles
+                    effect.clone()
+                }
+            }
+
             Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -1163,6 +1208,70 @@ impl GameState {
                     ));
                 }
             },
+
+            Effect::EachDamage {
+                damagers,
+                receiver,
+                use_card_power,
+                fixed_damage,
+            } => {
+                // Each damager deals damage to the receiver
+                // If receiver is placeholder, the effect wasn't resolved - fizzle
+                if receiver.is_placeholder() {
+                    log::debug!("EachDamage: receiver not resolved, fizzling");
+                    return Ok(());
+                }
+
+                // Check if receiver is still valid
+                if !self.battlefield.contains(*receiver) {
+                    log::debug!("EachDamage: receiver {} no longer on battlefield", receiver.as_u32());
+                    return Ok(());
+                }
+
+                for damager_id in damagers {
+                    // Check if damager is still on battlefield
+                    if !self.battlefield.contains(*damager_id) {
+                        log::debug!(
+                            "EachDamage: damager {} no longer on battlefield, skipping",
+                            damager_id.as_u32()
+                        );
+                        continue;
+                    }
+
+                    // Calculate damage amount
+                    let damage = if *use_card_power {
+                        // Get damager's current power (includes counters and bonuses)
+                        self.cards
+                            .get(*damager_id)
+                            .map(|c| i32::from(c.current_power()))
+                            .unwrap_or(0)
+                    } else {
+                        *fixed_damage
+                    };
+
+                    if damage > 0 {
+                        // Get names for logging
+                        let damager_name = self
+                            .cards
+                            .get(*damager_id)
+                            .map(|c| c.name.to_string())
+                            .unwrap_or_else(|_| "creature".to_string());
+                        let receiver_name = self
+                            .cards
+                            .get(*receiver)
+                            .map(|c| c.name.to_string())
+                            .unwrap_or_else(|_| "creature".to_string());
+
+                        self.logger.normal(&format!(
+                            "{} deals {} damage to {}",
+                            damager_name, damage, receiver_name
+                        ));
+
+                        self.deal_damage_to_creature(*receiver, damage)?;
+                    }
+                }
+            }
+
             Effect::DrawCards { player, count } => {
                 for _ in 0..*count {
                     let (_, draw_num) = self.draw_card(*player)?;

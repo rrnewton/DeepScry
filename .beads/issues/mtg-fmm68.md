@@ -25,10 +25,10 @@ Key gaps affecting this deck:
 - ~~**Ward:Waterbend<N>** - Ward with Waterbend cost (The Unagi)~~ **IMPLEMENTED 2026-01-21** (WardWaterbend keyword variant)
 - ~~**T:Mode$ AttackersDeclared** - Batch trigger when attackers declared (Teo)~~ **IMPLEMENTED 2026-01-22** (AttackersDeclared TriggerEvent, ValidAttackers$ keyword filter)
 - ~~**ImmediateTrigger / RememberDiscarded** - Complex conditional triggers (Teo's counter placement)~~ **IMPLEMENTED 2026-01-22** (remembered_cards on GameState, ImmediateTriggerCondition enum, DB$ Cleanup)
+- ~~**DB$ EachDamage** - Multiple sources dealing damage (Allies at Last)~~ **IMPLEMENTED 2026-01-24** (Effect::EachDamage variant, damagers from parent targets, power-based damage)
 - **S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)
 - **S:Mode$ ReduceCost** - Cost reduction static abilities (Gran-Gran)
 - **K:Affinity:Ally** - Cost reduction (Allies at Last)
-- **DB$ EachDamage** - Multiple sources dealing damage (Allies at Last)
 - ~~**DB$ Effect with StaticAbilities$** - Grant can't be blocked (Otter-Penguin, Giant Koi)~~ **FIXED 2026-01-21** (GrantCantBeBlocked placeholder resolution in CardDrawn triggers)
 - ~~**Conditional hexproof (Condition$ PlayerTurn)**~~ **IMPLEMENTED 2026-01-21** (StaticCondition enum, Avatar Kyoshi)
 
@@ -107,8 +107,8 @@ Key gaps affecting this deck:
 
 **Allies at Last (x2)** - 2G Instant
 - [ ] Affinity for Allies (K:Affinity:Ally)
-- [ ] Multi-target creature damage (DB$ EachDamage | ValidTgts$ Creature.OppCtrl)
-- GAP: Affinity, EachDamage
+- [x] Multi-target creature damage (DB$ EachDamage | ValidTgts$ Creature.OppCtrl) **IMPLEMENTED 2026-01-24**
+- GAP: Affinity (EachDamage now works)
 
 **Ember Island Production (x1)** - 3UU Sorcery
 - [x] SP$ Charm with CopyPermanent modes (VERIFIED 2026-01-18)
@@ -150,6 +150,10 @@ Working cards:
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 
+## Recent Fixes (2026-01-24)
+
+1. **DB$ EachDamage**: Added Effect::EachDamage variant for multiple creatures dealing damage to a single target. Supports DefinedDamagers$ ParentTarget (parent ability's targets become damagers) and NumDmg$ Count$CardPower (damage equals each damager's power). Used by Allies at Last, Band Together, Tandem Takedown.
+
 ## Recent Fixes (2026-01-22)
 
 1. **Exhaust$ True**: Added exhaust field to ActivatedAbility and exhausted_abilities tracking on Card. Once activated, exhaust abilities cannot be activated again.
@@ -170,9 +174,8 @@ Working cards:
 1. **S:Mode$ ReduceCost** - Cost reduction static abilities (affects spell casting system)
 2. **S:Mode$ RaiseCost** - Additional sacrifice costs
 3. **K:Affinity:Ally** - Cost reduction for ally type
-4. **DB$ EachDamage** - Multiple sources dealing damage
-5. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
-6. **AddAbility$ for lands** - Grant abilities to land permanents
+4. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
+5. **AddAbility$ for lands** - Grant abilities to land permanents
 
 ## Testing Protocol
 

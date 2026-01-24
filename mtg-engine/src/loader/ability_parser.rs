@@ -58,6 +58,13 @@ impl AbilityRecordType {
 pub enum ApiType {
     // === Damage & Life ===
     DealDamage,
+    /// Multiple creatures deal damage to a single target
+    /// Used by Allies at Last, Band Together, Tandem Takedown
+    /// Parameters:
+    ///   DefinedDamagers$ ParentTarget - damagers come from parent ability's targets
+    ///   ValidTgts$ Creature - the target receiving damage
+    ///   NumDmg$ Count$CardPower - damage equals each damager's power
+    EachDamage,
     GainLife,
     LoseLife,
     SetLife,
@@ -212,6 +219,7 @@ impl ApiType {
         match s {
             // Damage & Life
             "DealDamage" => Self::DealDamage,
+            "EachDamage" => Self::EachDamage,
             "GainLife" => Self::GainLife,
             "LoseLife" => Self::LoseLife,
             "SetLife" => Self::SetLife,
@@ -324,6 +332,7 @@ impl ApiType {
     pub fn as_str(&self) -> &str {
         match self {
             Self::DealDamage => "DealDamage",
+            Self::EachDamage => "EachDamage",
             Self::GainLife => "GainLife",
             Self::LoseLife => "LoseLife",
             Self::SetLife => "SetLife",

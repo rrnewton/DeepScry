@@ -2558,6 +2558,7 @@ impl GameState {
                         }
                     }
                     crate::core::Effect::DealDamage { .. }
+                    | crate::core::Effect::EachDamage { .. }
                     | crate::core::Effect::DrawCards { .. }
                     | crate::core::Effect::DiscardCards { .. }
                     | crate::core::Effect::Loot { .. }

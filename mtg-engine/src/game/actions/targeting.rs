@@ -357,6 +357,7 @@ impl GameState {
                             // Modal effects that don't need permanent/creature targets
                             // (target players, self, or have targets pre-specified)
                             Effect::DealDamage { .. }
+                            | Effect::EachDamage { .. }
                             | Effect::DrawCards { .. }
                             | Effect::DiscardCards { .. }
                             | Effect::Loot { .. }
@@ -448,13 +449,15 @@ impl GameState {
                 | Effect::CreateDelayedTrigger { .. }
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
-                | Effect::ClearRemembered => {
+                | Effect::ClearRemembered
+                | Effect::EachDamage { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // This means the effect has a concrete target already assigned
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // CreateDelayedTrigger with non-zero tracked_card already has target
                     // CopySpellAbility doesn't use explicit targets - copies triggering spell
                     // ImmediateTrigger/ClearRemembered don't need targets - work with remembered state
+                    // EachDamage gets targets from parent ability's ValidTgts, resolved at spell resolution
                 }
             }
         }
@@ -804,11 +807,13 @@ impl GameState {
                 | Effect::CreateDelayedTrigger { .. }
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
-                | Effect::ClearRemembered => {
+                | Effect::ClearRemembered
+                | Effect::EachDamage { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
                     // ImmediateTrigger/ClearRemembered work with remembered state, no targeting
+                    // EachDamage targeting is handled via parent ability's ValidTgts$
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. } => {
@@ -1024,7 +1029,8 @@ impl GameState {
             | Effect::CreateDelayedTrigger { .. }
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
-            | Effect::ClearRemembered => true, // PumpAllCreatures uses filter, not explicit targets
+            | Effect::ClearRemembered
+            | Effect::EachDamage { .. } => true, // PumpAllCreatures uses filter, not explicit targets
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

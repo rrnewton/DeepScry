@@ -321,6 +321,28 @@ pub enum Effect {
     /// Example: "Lightning Bolt deals 3 damage to any target"
     DealDamage { target: TargetRef, amount: i32 },
 
+    /// Multiple creatures deal damage to a single target
+    /// Example: "Up to two target creatures you control each deal damage equal to their power
+    /// to target creature an opponent controls"
+    /// Corresponds to: DB$ EachDamage | DefinedDamagers$ ParentTarget | NumDmg$ Count$CardPower
+    ///
+    /// Used by cards like Allies at Last, Band Together, Tandem Takedown
+    ///
+    /// At parse time: damagers is empty, receiver is placeholder
+    /// At spell resolution: filled via resolve_effect_target from chosen_targets
+    EachDamage {
+        /// Creatures dealing damage (resolved from chosen_targets at spell resolution)
+        /// Empty Vec at parse time means "use parent targets" (DefinedDamagers$ ParentTarget)
+        damagers: smallvec::SmallVec<[CardId; 4]>,
+        /// Target receiving damage (placeholder CardId::new(0) at parse, resolved at spell resolution)
+        receiver: CardId,
+        /// Whether each damager deals damage equal to its power (NumDmg$ Count$CardPower)
+        /// If false, uses fixed_damage
+        use_card_power: bool,
+        /// Fixed damage per damager (used if !use_card_power)
+        fixed_damage: i32,
+    },
+
     /// Draw cards
     /// Example: "Draw a card"
     DrawCards { player: PlayerId, count: u8 },
@@ -839,6 +861,7 @@ impl Effect {
 
             // Effects requiring creature/permanent/spell targets
             Effect::DealDamage { .. }
+            | Effect::EachDamage { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }

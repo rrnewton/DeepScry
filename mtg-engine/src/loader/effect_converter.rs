@@ -41,6 +41,35 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::EachDamage => {
+            // Multiple creatures deal damage to a single target
+            // Example: DB$ EachDamage | DefinedDamagers$ ParentTarget | ValidTgts$ Creature.OppCtrl | NumDmg$ Count$CardPower
+            //
+            // DefinedDamagers$ ParentTarget = damagers come from parent ability's targets
+            // NumDmg$ Count$CardPower = each damager deals damage equal to its power
+            //
+            // At parse time:
+            // - damagers is empty (signals "use parent targets" at resolution)
+            // - receiver is placeholder CardId::new(0) (filled at resolution)
+            // At spell resolution, resolve_effect_target fills these from chosen_targets
+
+            // Parse damage source: Count$CardPower means use creature's power
+            let num_dmg = params.get("NumDmg").unwrap_or("0");
+            let use_card_power = num_dmg.contains("CardPower");
+            let fixed_damage = if use_card_power {
+                0
+            } else {
+                num_dmg.parse::<i32>().unwrap_or(0)
+            };
+
+            Some(Effect::EachDamage {
+                damagers: smallvec::SmallVec::new(), // Empty = use parent targets
+                receiver: CardId::new(0),            // Placeholder = fill at resolution
+                use_card_power,
+                fixed_damage,
+            })
+        }
+
         ApiType::Draw => {
             // Extract card count from NumCards$ parameter (default to 1 if not specified)
             let count = params.get_u8("NumCards").unwrap_or(1);
