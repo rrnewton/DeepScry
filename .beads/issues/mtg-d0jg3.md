@@ -8,7 +8,7 @@ labels:
 - network
 - tracking
 created_at: 2026-01-23T01:47:39.764992958+00:00
-updated_at: 2026-01-23T18:13:32.072082213+00:00
+updated_at: 2026-01-25T18:06:54.083509404+00:00
 ---
 
 # Description
@@ -23,20 +23,9 @@ These principles are **non-negotiable** and must be followed for all WASM networ
 
 **The WASM web client MUST behave IDENTICALLY to the native network client.**
 
-- Same RNG sequences for the same seeds
-- Same game state at every point
-- Same controller decisions given same inputs
-- Same state hashes at every action count
-- If you run native/native and wasm/native with the same seed, they produce the same game log
-
 ### 2. No WASM-Specific Controllers
 
 **NEVER create any unique-to-WASM controller logic.**
-
-- No "direct response" patterns that bypass game loop
-- No WASM-specific AI decision making
-- Controllers (random, heuristic, zero) must use the SAME code paths as native
-- WASM wraps common controller code, it doesn't replace it
 
 ### 3. Only Blocking/Non-Blocking Differs
 
@@ -47,14 +36,14 @@ These principles are **non-negotiable** and must be followed for all WASM networ
 
 ### 4. Proper State Synchronization Required
 
-**WASM must maintain synchronized local game state with server:**
+**WASM must maintain synchronized local game state with server.**
 
 - Use action-count keyed reveal processing (same as native)
 - Process CardRevealed messages to instantiate cards in shadow state
 - Track server_action_count
 - Use drain_reveals_up_to() for sync points
 
-## Current Status (2026-01-23)
+## Current Status (2026-01-25)
 
 - [x] WASM network client builds with wasm-network feature
 - [x] WASM connects to server and authenticates
@@ -62,73 +51,69 @@ These principles are **non-negotiable** and must be followed for all WASM networ
 - [x] WASM captures rng_state from GameStarted (commit 13e6cae1)
 - [x] WASM uses init_game_reserve_only_wasm() with server CardID ranges (commit 13e6cae1)
 - [x] Disabled heuristic/zero controllers in WASM until sync fixed (commit 36a39a2e)
-- [x] WASM uses empty library mode - reveals add cards directly to hand (prevents shuffle divergence)
-- [x] WASM queues opening_hand from GameStarted immediately (prevents timing issues)
-- [x] WasmNetworkLocalController clamps choice indices to server option count (prevents desync)
-- [x] network_random_e2e test passes without DESYNC errors
-- [ ] random/random games produce identical results (native vs WASM) (partial - no desync, but full parity testing needed)
-- [ ] State hashes match at each action count (needs verification)
-- [ ] --network-debug works in WASM
+- [ ] Native network random/random games work without desync (BLOCKED - see bug below)
+- [ ] WASM random/random games produce identical results as native
 
-## Implementation Progress
+---
 
-### Phase 1: Late-Binding Architecture (COMPLETED)
+## NATIVE DESYNC BUG (2026-01-25)
 
-**commit 13e6cae1** - Added late-binding CardID architecture to WASM:
-- WasmNetworkClient now stores deck_card_ids, rng_state, token_definitions
-- New init_game_reserve_only_wasm() creates games with reserved CardID slots
-- launch_network_game() uses DeckCardIdRanges from server
+**IMPORTANT**: Before fixing WASM-specific issues, we need to fix NATIVE network desync first!
 
-### Phase 2: Controller Restrictions (COMPLETED)
+Discovered a DESYNC bug that affects NATIVE random-vs-random network games (not WASM-specific!).
 
-**commit 36a39a2e** - Restricted to safe controllers:
-- Only human and random controllers allowed in WASM network mode
-- Heuristic and zero disabled until state sync is verified
-- Added controller_seed parameter for deterministic random
+### Symptoms
+- Client has 3 extra cards (46, 47, 52) in Gabriel's hand that server doesn't have
+- First mismatch at Turn 20, choice_seq=222, action_count=1008
+- Both have same action_count but different state hashes
 
-### Phase 3: State Synchronization Fixes (COMPLETED)
+### Investigation Findings
 
-**Session 2026-01-23** - Fixed critical state sync issues:
+1. **Wrong `owner` in `collect_reveals_since_last_choice`** (controller.rs:439)
+   - Was using `self.player_id` (the player making choice) as placeholder
+   - Should use actual card owner from `view.get_card(card_id).owner`
+   - FIX APPLIED but issue persists - may be partial fix
 
-1. **Empty library mode**: `init_game_reserve_only_wasm()` no longer adds CardIDs to libraries.
-   - Server shuffles libraries in specific order using its RNG
-   - WASM doesn't have access to that shuffle order
-   - If we added CardIDs to library, draws would be in wrong order
-   - Fix: Reveals add cards directly to hand (reveal_processor's "empty library mode")
+2. **Reveal Processing Logic** (reveal_processor.rs)
+   - For Draw/OpeningHand reveals, checks if card is in `owner`'s library
+   - If wrong owner passed, checks wrong player's library
+   - Could cause cards to be added to hand directly when they shouldn't
 
-2. **Opening hand queueing**: GameStarted handler now queues `opening_hand` cards immediately.
-   - Server sends CardRevealed messages AFTER GameStarted
-   - WASM game loop may start before those messages arrive
-   - Without opening hand, sync_to_action() draws from empty library → empty hand
-   - Fix: Queue opening_hand cards from GameStarted as pending reveals
+3. **GameLoop draws opening hands even with `skip_opening_hands=true`** (game_loop/mod.rs:1073-1079)
+   - Named misleadingly - only skips shuffle, still draws 7 cards per player
+   - This is probably intentional but confusing
 
-3. **Choice index clamping**: WasmNetworkLocalController clamps indices to server option count.
-   - Local game state can diverge from server
-   - RandomController picks index from LOCAL available options
-   - If local has more options than server, desync occurs
-   - Fix: Clamp choice index to server's option count, log warning if clamped
+### Root Cause (Suspected)
 
-### Phase 4: Full Parity Testing (TODO)
+The `collect_reveals_since_last_choice` function was setting `owner: self.player_id` for all reveals, regardless of which player actually owns the card. This caused:
+1. Reveal for Gabriel's card collected by Ryan's controller
+2. Reveal sent to client with owner=Ryan
+3. Client's reveal_processor checks Ryan's zones, card not found
+4. Card added to wrong player's hand directly
 
-- Compare state hashes between WASM and native at each choice point
-- Run extended games with --network-debug enabled
-- Verify no clamping warnings occur (indicates state divergence)
-- Test with various decks and scenarios
+However, the fix didn't fully resolve the issue, suggesting there may be MULTIPLE sources of incorrect reveal ownership or another related bug.
 
-## Anti-Patterns to Avoid
+### Next Steps
+1. Verify the fix is actually being used (rebuild and test)
+2. Check if there are other code paths that send CardRevealed with wrong owner
+3. Add debug logging to trace exact reveal flow
+4. Consider stricter validation that reveals match expected CardID ranges
 
-These are WRONG approaches that have been tried before:
+---
+
+## Anti-Patterns (NEVER DO THESE)
 
 1. **"Direct response" to server** - Bypasses game loop, loses state sync (commit 1715f546, wasm-direct-response-bad.v1)
 2. **WASM-specific AI logic** - Violates behavioral identity principle
 3. **Removing state sync to "fix" sync issues** - Makes problem worse
 4. **Server-centric protocol changes** - WASM and native must use same protocol
 
-## Related Files
+## Key Files
 
-- `mtg-engine/src/wasm/network/client.rs` - WASM network client (updated)
+- `mtg-engine/src/network/controller.rs` - NetworkController with collect_reveals_since_last_choice
+- `mtg-engine/src/network/reveal_processor.rs` - Shared reveal processing logic
+- `mtg-engine/src/wasm/network/client.rs` - WASM network client
 - `mtg-engine/src/wasm/network/local_controller.rs` - Local player controller wrapper
-- `mtg-engine/src/wasm/network/remote_controller.rs` - Remote player controller
 - `mtg-engine/src/wasm/fancy_tui.rs` - Main WASM TUI (updated with init_game_reserve_only_wasm)
 - `docs/NETWORK_ARCHITECTURE.md` - Network protocol documentation
 

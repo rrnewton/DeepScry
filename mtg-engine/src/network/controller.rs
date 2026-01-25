@@ -432,11 +432,17 @@ impl NetworkController {
 
                     // Only include reveals with actual card names (not dummy reveals for opponents)
                     if should_reveal && name.is_some() {
-                        // Use placeholder zone info - CardRevealInfo may need updating
-                        // to better match the RevealCard architecture
+                        // Look up the actual card owner from the game state
+                        // CRITICAL: Using self.player_id was WRONG - it caused cards to be
+                        // assigned to the wrong player when the reveal was collected by
+                        // a different player's controller (mtg-d0jg3 DESYNC fix)
+                        let card_owner = view.get_card(*card_id)
+                            .map(|c| c.owner)
+                            .unwrap_or(self.player_id); // Fallback to self if card not found
+
                         reveals.push(CardRevealInfo {
                             card_id: *card_id,
-                            owner: self.player_id,    // Placeholder
+                            owner: card_owner,
                             from_zone: Zone::Library, // Placeholder
                             to_zone: Zone::Hand,      // Placeholder
                         });
