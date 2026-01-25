@@ -56,6 +56,9 @@ struct ChoiceInfoResult {
     /// Server's unique card names for LibrarySearchByName choices
     /// Used when client can't compute valid_cards due to hidden card identities
     library_search_names: Option<Vec<String>>,
+    /// Server's count of cards for each unique name (enables instance selection)
+    /// Same length as library_search_names
+    library_search_counts: Option<Vec<usize>>,
 }
 
 /// A controller that wraps a local controller and sends choices to the server.
@@ -156,6 +159,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                     action_count,
                     abilities,
                     library_search_names,
+                    library_search_counts,
                 }) => {
                     log::debug!(
                         "NetworkLocalController: got ChoiceRequest seq={} action={} abilities={} lib_search={}",
@@ -169,6 +173,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                         server_action_count: action_count,
                         abilities,
                         library_search_names,
+                        library_search_counts,
                     })
                 }
                 Some(LocalChoiceInfo::Exit { winner }) => {
@@ -191,6 +196,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 server_action_count: 0,
                 abilities: None,
                 library_search_names: None,
+                library_search_counts: None,
             })
         }
     }
@@ -551,22 +557,80 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         if let Some(ref names) = info.library_search_names {
             // Server encoding: options = ["Decline to find", name1, name2, ...]
             // Index 0 = Decline, Index 1+ = card names
-            let idx = if names.is_empty() {
+            // With counts, client can pick a specific instance for LOCAL/NETWORK equivalence.
+            let counts = info.library_search_counts.as_ref();
+
+            let (name_idx, instance_idx) = if names.is_empty() {
                 // No valid cards found by server - decline
-                0
+                (0, 0)
             } else {
-                // ZeroController-like behavior: pick first card (index 1)
-                // For other controllers, we would need to implement name-based selection
-                1
+                // Build synthetic CardIds for the inner controller
+                // Each CardId represents one instance of a card name
+                // Format: CardId((name_idx << 16) | instance_idx)
+                let mut synthetic_cards: Vec<CardId> = Vec::new();
+                for (name_idx, name) in names.iter().enumerate() {
+                    let count = counts.and_then(|c| c.get(name_idx).copied()).unwrap_or(1);
+                    for instance in 0..count {
+                        // Encode (name_idx, instance) into a synthetic CardId
+                        // Server will decode this back using the indices we send
+                        let encoded = ((name_idx as u32) << 16) | (instance as u32);
+                        synthetic_cards.push(CardId::new(encoded));
+                    }
+                    log::trace!(
+                        "[NetworkLocalController] LibrarySearchByName: name={}, count={}",
+                        name,
+                        count
+                    );
+                }
+
+                if synthetic_cards.is_empty() {
+                    (0, 0) // Decline
+                } else {
+                    // Call inner controller to make the selection
+                    // This will use the RandomController's RNG if inner is RandomController
+                    let inner_result = self.inner.choose_from_library(view, &synthetic_cards);
+                    match inner_result {
+                        ChoiceResult::Ok(Some(chosen_card)) => {
+                            // Decode the synthetic CardId back to (name_idx, instance_idx)
+                            let encoded = chosen_card.as_u32();
+                            let decoded_name_idx = (encoded >> 16) as usize;
+                            let decoded_instance_idx = (encoded & 0xFFFF) as usize;
+                            // Protocol uses 1-based indexing (0 = decline)
+                            (decoded_name_idx + 1, decoded_instance_idx)
+                        }
+                        ChoiceResult::Ok(None) => (0, 0), // Declined
+                        ChoiceResult::ExitGame => return ChoiceResult::ExitGame,
+                        ChoiceResult::Error(e) => {
+                            log::error!("[NetworkLocalController] inner choose_from_library error: {}", e);
+                            (1, 0) // Fallback to first card
+                        }
+                        ChoiceResult::UndoRequest(_) | ChoiceResult::NeedInput(_) => {
+                            // These shouldn't happen in NetworkLocalController with AI inner controller
+                            log::warn!(
+                                "[NetworkLocalController] unexpected UndoRequest/NeedInput from inner choose_from_library"
+                            );
+                            (1, 0) // Fallback to first card
+                        }
+                    }
+                }
             };
 
             log::debug!(
-                "[NetworkLocalController] choose_from_library (LibrarySearchByName): names={:?}, idx={}",
+                "[NetworkLocalController] choose_from_library (LibrarySearchByName): names={:?}, name_idx={}, instance_idx={}",
                 names,
-                idx
+                name_idx,
+                instance_idx
             );
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+            // Send [name_idx, instance_idx] - server will use both to pick the specific CardId
+            self.send_choice(
+                choice_seq,
+                vec![name_idx, instance_idx],
+                server_action_count,
+                hash,
+                debug,
+                None,
+            );
 
             // Wait for ChoiceAccepted to confirm the server processed our choice.
             // Use the server's library_search_result directly - the shadow game is

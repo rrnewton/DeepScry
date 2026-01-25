@@ -601,6 +601,10 @@ pub enum ChoiceType {
         /// Unique card names matching the search filter
         /// (derived from valid_cards, deduplicated by name)
         unique_names: Vec<String>,
+        /// Number of copies of each unique name in the library.
+        /// Same length as unique_names. Allows client to pick a specific
+        /// instance when multiple cards have the same name (for LOCAL/NETWORK equivalence).
+        name_counts: Vec<usize>,
         /// Description of what's being searched for (e.g., "a basic land")
         filter_description: String,
     },
@@ -1276,6 +1280,7 @@ mod tests {
             ChoiceType::Discard { count: 2 },
             ChoiceType::LibrarySearchByName {
                 unique_names: vec!["Island".to_string(), "Swamp".to_string()],
+                name_counts: vec![2, 3], // 2 Islands, 3 Swamps
                 filter_description: "a basic land".to_string(),
             },
             ChoiceType::Sacrifice {

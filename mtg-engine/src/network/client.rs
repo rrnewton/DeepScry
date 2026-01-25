@@ -72,6 +72,8 @@ pub enum NetworkMessage {
         /// Server's unique card names for LibrarySearchByName choices
         /// Used when client can't compute valid_cards due to hidden card identities
         library_search_names: Option<Vec<String>>,
+        /// Count of cards for each unique name (enables random instance selection)
+        library_search_counts: Option<Vec<usize>>,
     },
     /// Server acknowledged our previous choice
     ChoiceAccepted {
@@ -114,19 +116,22 @@ impl NetworkMessage {
                 choice_type,
                 ..
             } => {
-                // Extract library_search_names from LibrarySearchByName choice type
+                // Extract library_search_names and counts from LibrarySearchByName choice type
                 #[allow(clippy::wildcard_enum_match_arm)] // Intentionally match only one variant
-                let library_search_names = match choice_type {
-                    crate::network::protocol::ChoiceType::LibrarySearchByName { unique_names, .. } => {
-                        Some(unique_names)
-                    }
-                    _ => None,
+                let (library_search_names, library_search_counts) = match choice_type {
+                    crate::network::protocol::ChoiceType::LibrarySearchByName {
+                        unique_names,
+                        name_counts,
+                        ..
+                    } => (Some(unique_names), Some(name_counts)),
+                    _ => (None, None),
                 };
                 Some(NetworkMessage::ChoiceRequest {
                     action_count,
                     choice_seq,
                     abilities,
                     library_search_names,
+                    library_search_counts,
                 })
             }
             ServerMessage::ChoiceAccepted {
@@ -195,6 +200,8 @@ pub enum LocalChoiceInfo {
         /// Server's unique card names for LibrarySearchByName choices
         /// Used when client can't compute valid_cards due to hidden card identities
         library_search_names: Option<Vec<String>>,
+        /// Count of cards for each unique name (enables random instance selection)
+        library_search_counts: Option<Vec<usize>>,
     },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
@@ -502,8 +509,9 @@ impl SharedNetworkState {
                 self.push_local_choice(LocalChoiceInfo::Request {
                     action_count,
                     choice_seq,
-                    abilities: None,            // Legacy path doesn't have abilities
-                    library_search_names: None, // Legacy path doesn't have library search names
+                    abilities: None,             // Legacy path doesn't have abilities
+                    library_search_names: None,  // Legacy path doesn't have library search names
+                    library_search_counts: None, // Legacy path doesn't have counts
                 });
             }
             ChoiceInfo::Opponent {
@@ -1614,6 +1622,7 @@ async fn run_ws_reader_shared(
                                 choice_seq,
                                 abilities,
                                 library_search_names,
+                                library_search_counts,
                             } => {
                                 // Update tracked action count (for sync targeting)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
@@ -1631,6 +1640,7 @@ async fn run_ws_reader_shared(
                                     choice_seq,
                                     abilities,
                                     library_search_names,
+                                    library_search_counts,
                                 });
                             }
                             NetworkMessage::ChoiceAccepted {

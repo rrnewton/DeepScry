@@ -1268,20 +1268,25 @@ async fn run_coordinator(
                                 };
 
                                 // Extract library_search_result for LibrarySearchByName choices
-                                // Index 0 = "Decline", so name_idx = idx - 1
-                                let library_search_result = if matches!(choice_type, ChoiceType::LibrarySearchByName { .. }) {
-                                    let idx = response.choice_indices.first().copied().unwrap_or(0);
+                                // Client sends [name_idx+1, instance_idx] where name_idx+1=0 means "Decline"
+                                // We decode using name_counts to find the flat index in library_search_cards
+                                let library_search_result = if let ChoiceType::LibrarySearchByName { ref name_counts, .. } = choice_type {
+                                    let name_idx_raw = response.choice_indices.first().copied().unwrap_or(0);
+                                    let instance_idx = response.choice_indices.get(1).copied().unwrap_or(0);
                                     log::debug!(
-                                        "Coordinator P1: LibrarySearchByName idx={}, library_search_cards={:?}",
-                                        idx, library_search_cards
+                                        "Coordinator P1: LibrarySearchByName name_idx_raw={}, instance_idx={}, name_counts={:?}, library_search_cards={:?}",
+                                        name_idx_raw, instance_idx, name_counts, library_search_cards
                                     );
-                                    if idx > 0 {
-                                        let name_idx = idx - 1;
+                                    if name_idx_raw > 0 {
+                                        let name_idx = name_idx_raw - 1;
+                                        // Calculate flat index: sum of counts for names before name_idx, plus instance_idx
+                                        let base_offset: usize = name_counts.iter().take(name_idx).sum();
+                                        let flat_idx = base_offset + instance_idx;
                                         let result = library_search_cards.as_ref()
-                                            .and_then(|cards| cards.get(name_idx).copied());
+                                            .and_then(|cards| cards.get(flat_idx).copied());
                                         log::debug!(
-                                            "Coordinator P1: name_idx={}, result={:?}",
-                                            name_idx, result
+                                            "Coordinator P1: name_idx={}, base_offset={}, flat_idx={}, result={:?}",
+                                            name_idx, base_offset, flat_idx, result
                                         );
                                         result
                                     } else {
@@ -1417,13 +1422,27 @@ async fn run_coordinator(
                                 };
 
                                 // Extract library_search_result for LibrarySearchByName choices
-                                // Index 0 = "Decline", so name_idx = idx - 1
-                                let library_search_result = if matches!(choice_type, ChoiceType::LibrarySearchByName { .. }) {
-                                    let idx = response.choice_indices.first().copied().unwrap_or(0);
-                                    if idx > 0 {
-                                        let name_idx = idx - 1;
-                                        library_search_cards.as_ref()
-                                            .and_then(|cards| cards.get(name_idx).copied())
+                                // Client sends [name_idx+1, instance_idx] where name_idx+1=0 means "Decline"
+                                // We decode using name_counts to find the flat index in library_search_cards
+                                let library_search_result = if let ChoiceType::LibrarySearchByName { ref name_counts, .. } = choice_type {
+                                    let name_idx_raw = response.choice_indices.first().copied().unwrap_or(0);
+                                    let instance_idx = response.choice_indices.get(1).copied().unwrap_or(0);
+                                    log::debug!(
+                                        "Coordinator P2: LibrarySearchByName name_idx_raw={}, instance_idx={}, name_counts={:?}",
+                                        name_idx_raw, instance_idx, name_counts
+                                    );
+                                    if name_idx_raw > 0 {
+                                        let name_idx = name_idx_raw - 1;
+                                        // Calculate flat index: sum of counts for names before name_idx, plus instance_idx
+                                        let base_offset: usize = name_counts.iter().take(name_idx).sum();
+                                        let flat_idx = base_offset + instance_idx;
+                                        let result = library_search_cards.as_ref()
+                                            .and_then(|cards| cards.get(flat_idx).copied());
+                                        log::debug!(
+                                            "Coordinator P2: name_idx={}, base_offset={}, flat_idx={}, result={:?}",
+                                            name_idx, base_offset, flat_idx, result
+                                        );
+                                        result
                                     } else {
                                         None // Declined to find
                                     }

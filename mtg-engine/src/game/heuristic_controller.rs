@@ -140,9 +140,15 @@ impl HeuristicController {
     ) -> i32 {
         let mut value = 80;
 
-        // Get the card from the view
+        // Get the card from the view - MUST be visible or it's a missing reveal bug
         let Some(card) = view.get_card(card_id) else {
-            return 0; // Card not found, return minimal value
+            panic!(
+                "FATAL: evaluate_creature called on invisible card {:?}. \
+                This indicates a missing CardRevealed message from the server. \
+                The network architecture requires all cards be revealed before \
+                they can be evaluated for decision-making.",
+                card_id
+            );
         };
 
         // Tokens are worth less than actual cards
@@ -152,12 +158,24 @@ impl HeuristicController {
         value += 20;
 
         // Use effective P/T after all continuous effects (anthem, equipment, counters)
-        let power = view
-            .get_effective_power(card_id)
-            .unwrap_or_else(|| i32::from(card.current_power()));
-        let toughness = view
-            .get_effective_toughness(card_id)
-            .unwrap_or_else(|| i32::from(card.current_toughness()));
+        // CRITICAL: get_effective_power should ALWAYS succeed for battlefield creatures.
+        // If it fails (returns None), that indicates a bug - an unrevealed card somewhere
+        // in the continuous effects calculation chain. The fallback hides the bug!
+        let effective_power_opt = view.get_effective_power(card_id);
+        let effective_toughness_opt = view.get_effective_toughness(card_id);
+
+        // Check if we're being forced to use the fallback
+        if effective_power_opt.is_none() || effective_toughness_opt.is_none() {
+            eprintln!(
+                "WARNING: get_effective_power/toughness returned None for battlefield creature {:?} '{}'. \
+                 This indicates a bug in the continuous effects chain (likely an unrevealed card). \
+                 Falling back to base P/T which may cause divergence.",
+                card_id, card.name
+            );
+        }
+
+        let power = effective_power_opt.unwrap_or_else(|| i32::from(card.current_power()));
+        let toughness = effective_toughness_opt.unwrap_or_else(|| i32::from(card.current_toughness()));
 
         // Stats scoring
         if consider_pt {
@@ -4275,18 +4293,47 @@ impl PlayerController for HeuristicController {
             .unwrap_or(0);
 
         // Create a sorted list of blockers by evaluation (best first)
-        let mut blocker_list: Vec<(CardId, i32, i32)> = blockers
+        // All blockers MUST be visible - they declared as blockers so server must have revealed them
+        let mut blocker_list: Vec<(CardId, i32, i32, String)> = blockers
             .iter()
-            .filter_map(|&id| {
-                view.get_card(id).map(|card| {
-                    let eval = self.evaluate_creature(view, id);
-                    let toughness = view
-                        .get_effective_toughness(id)
-                        .unwrap_or_else(|| i32::from(card.current_toughness()));
-                    (id, eval, toughness)
-                })
+            .map(|&id| {
+                let card = view.get_card(id).unwrap_or_else(|| {
+                    panic!(
+                        "FATAL: choose_damage_assignment_order called with invisible blocker {:?}. \
+                        Blockers must be revealed before damage assignment. \
+                        This indicates a missing CardRevealed message from the server.",
+                        id
+                    );
+                });
+                let eval = self.evaluate_creature(view, id);
+                let toughness = view
+                    .get_effective_toughness(id)
+                    .unwrap_or_else(|| i32::from(card.current_toughness()));
+                let eff_power = view
+                    .get_effective_power(id)
+                    .unwrap_or_else(|| i32::from(card.current_power()));
+                (
+                    id,
+                    eval,
+                    toughness,
+                    format!("{}({}/{})", card.name, eff_power, toughness),
+                )
             })
             .collect();
+
+        // DEBUG: Log evaluations before sorting to detect divergence
+        if blocker_list.len() > 1 {
+            let attacker_name = view.get_card(attacker).map(|c| c.name.as_str()).unwrap_or("?");
+            eprintln!(
+                "[DEBUG-DAMAGE-ORDER] Player {:?} choosing damage order for {} attacking: {:?}",
+                self.player_id,
+                attacker_name,
+                blocker_list
+                    .iter()
+                    .map(|(id, eval, tough, name)| format!("{} id={:?} eval={} tough={}", name, id, eval, tough))
+                    .collect::<Vec<_>>()
+            );
+        }
 
         // Sort by evaluation (descending - best creatures first)
         blocker_list.sort_by(|a, b| b.1.cmp(&a.1));
@@ -4300,7 +4347,7 @@ impl PlayerController for HeuristicController {
         let mut killable: SmallVec<[CardId; 4]> = SmallVec::new();
         let mut unkillable: SmallVec<[CardId; 4]> = SmallVec::new();
 
-        for (blocker_id, _eval, toughness) in blocker_list {
+        for (blocker_id, _eval, toughness, _name) in blocker_list {
             // Check if blocker has indestructible - can't be killed by damage
             // MTG Rules 702.12: An indestructible creature is not destroyed by lethal damage
             let blocker_has_indestructible =

@@ -68,10 +68,11 @@ pub struct ChoiceRequest {
     /// This allows the handler to look up the chosen ability directly
     /// without a separate channel round-trip. (mtg-e66iz channel consolidation)
     pub abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
-    /// For LibrarySearchByName choices, the first CardId for each name.
+    /// For LibrarySearchByName choices, ALL CardIds in flat order.
     ///
-    /// Index 0 corresponds to unique_names[0], etc.
-    /// Allows the coordinator to determine which CardId was chosen.
+    /// Cards are ordered by name (matching unique_names order), with all
+    /// instances of each name grouped together. Combined with name_counts,
+    /// allows the coordinator to decode (name_index, instance_index).
     pub library_search_cards: Option<Vec<CardId>>,
 }
 
@@ -261,6 +262,10 @@ impl NetworkController {
             None
         };
 
+        // Check if this is a LibrarySearchByName BEFORE moving choice_type into request
+        // This is used later for validation (LibrarySearchByName has special validation rules)
+        let is_library_search = matches!(choice_type, ChoiceType::LibrarySearchByName { .. });
+
         let request = ChoiceRequest {
             choice_seq: self.choice_seq + 1,
             choice_type,
@@ -302,7 +307,17 @@ impl NetworkController {
         // Validate choice indices - FATAL ERROR on invalid index (desync detection)
         // Per mtg-wsl8g: "Desync is ALWAYS a Fatal Error" - we do NOT paper over desync
         // with recovery hacks like clamping. Instead, we crash with a clear error message.
-        for idx in &response.choice_indices {
+        //
+        // Special case: LibrarySearchByName sends [name_idx+1, instance_idx] where:
+        // - name_idx+1 should be validated against options.len() (name selection)
+        // - instance_idx is validated separately in choose_from_library (instance within name)
+        // Note: is_library_search was computed earlier before choice_type was moved
+        for (i, idx) in response.choice_indices.iter().enumerate() {
+            // For LibrarySearchByName, only validate the first index (name selection)
+            // The second index (instance_idx) can be any value and is validated in choose_from_library
+            if is_library_search && i >= 1 {
+                continue;
+            }
             if *idx >= options.len() {
                 // This is a FATAL desync error - the client and server have different views
                 // of the available choices. This should NEVER happen with a properly
@@ -836,13 +851,13 @@ impl PlayerController for NetworkController {
     }
 
     fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Name-based library search protocol:
+        // Name-based library search protocol with instance selection:
         // 1. Build mapping from unique card names to CardIds
-        // 2. Send unique names as options (not CardIds)
-        // 3. Client picks a name index
-        // 4. Server picks a CardId with that name
+        // 2. Send unique names AND counts as options (not CardIds)
+        // 3. Client picks a name index AND an instance index (for multiple same-name cards)
+        // 4. Server picks the specific CardId using (name_idx, instance_idx)
         //
-        // This avoids revealing CardId<->name bindings for unselected cards.
+        // This enables proper random selection among same-named cards for LOCAL/NETWORK equivalence.
 
         // Build name -> [CardId] mapping
         let mut name_to_cards: HashMap<String, Vec<CardId>> = HashMap::new();
@@ -856,6 +871,12 @@ impl PlayerController for NetworkController {
         let mut unique_names: Vec<String> = name_to_cards.keys().cloned().collect();
         unique_names.sort();
 
+        // Build counts for each unique name (how many copies exist)
+        let name_counts: Vec<usize> = unique_names
+            .iter()
+            .map(|name| name_to_cards.get(name).map(|v| v.len()).unwrap_or(0))
+            .collect();
+
         // Build options for display: [0] = Decline, [1..] = card names
         let mut options = vec!["Decline to find".to_string()];
         options.extend(unique_names.iter().cloned());
@@ -863,17 +884,19 @@ impl PlayerController for NetworkController {
         // Compute state hash
         let state_hash = self.compute_view_hash(view);
 
-        // Send request with new ChoiceType
+        // Send request with new ChoiceType (includes counts)
         let choice_type = ChoiceType::LibrarySearchByName {
             unique_names: unique_names.clone(),
+            name_counts,
             filter_description: "matching cards".to_string(),
         };
 
-        // Build library_search_cards: first CardId for each unique name (in order)
-        // This allows the coordinator to determine which CardId was chosen
+        // Build library_search_cards: ALL CardIds in flat order, grouped by name
+        // The flat list is ordered: [name0_instance0, name0_instance1, ..., name1_instance0, ...]
+        // This allows the coordinator to pick the correct instance using (name_idx, instance_idx)
         let library_search_cards: Vec<CardId> = unique_names
             .iter()
-            .filter_map(|name| name_to_cards.get(name).and_then(|cards| cards.first().copied()))
+            .flat_map(|name| name_to_cards.get(name).cloned().unwrap_or_default())
             .collect();
 
         match self.request_choice(view, choice_type, options, state_hash, None, Some(library_search_cards)) {
@@ -883,16 +906,21 @@ impl PlayerController for NetworkController {
             }
             Ok(result) => {
                 self.increment_choice_seq();
-                let idx = result.indices.first().copied().unwrap_or(0);
-                if idx == 0 {
+                let name_idx_raw = result.indices.first().copied().unwrap_or(0);
+                if name_idx_raw == 0 {
                     return ChoiceResult::Ok(None); // Declined
                 }
-                let name_idx = idx - 1; // Adjust for "Decline" at index 0
+                let name_idx = name_idx_raw - 1; // Adjust for "Decline" at index 0
+                                                 // Instance index defaults to 0 if not provided (backward compatibility)
+                let instance_idx = result.indices.get(1).copied().unwrap_or(0);
+
                 if name_idx < unique_names.len() {
                     let chosen_name = &unique_names[name_idx];
-                    // Pick the first CardId with this name
+                    // Pick the specific CardId using instance_idx
                     if let Some(card_ids) = name_to_cards.get(chosen_name) {
-                        if let Some(&card_id) = card_ids.first() {
+                        // Clamp instance_idx to valid range
+                        let safe_idx = instance_idx.min(card_ids.len().saturating_sub(1));
+                        if let Some(&card_id) = card_ids.get(safe_idx) {
                             return ChoiceResult::Ok(Some(card_id));
                         }
                     }

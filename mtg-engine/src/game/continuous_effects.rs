@@ -607,7 +607,14 @@ impl GameState {
         // Check all permanents on the battlefield for static abilities
         // This includes Equipment, enchantments, creatures (like Spider-Ham), etc.
         for &source_id in &self.battlefield.cards {
-            let source = self.cards.get(source_id)?;
+            let source = self.cards.get(source_id).unwrap_or_else(|_| {
+                panic!(
+                    "FATAL: calculate_modifypt_effects found unrevealed card {:?} on battlefield. \
+                    All battlefield permanents must be revealed via CardRevealed messages. \
+                    This indicates a missing reveal when the card entered the battlefield.",
+                    source_id
+                );
+            });
 
             // Process all static abilities on this permanent
             for ability in &source.static_abilities {
