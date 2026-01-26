@@ -59,6 +59,11 @@ pub struct ChoiceRequestData {
     pub options: Vec<String>,
     pub state_hash: u64,
     pub action_count: u64,
+    /// Server's authoritative list of available abilities for Priority choices.
+    /// Index 0 is "Pass priority" (None), indices 1+ are the actual abilities.
+    /// CRITICAL: Use these instead of locally-computed abilities to avoid DESYNC
+    /// caused by race conditions with CardRevealed message processing.
+    pub abilities: Option<Vec<Option<SpellAbility>>>,
 }
 
 /// WASM Network Client
@@ -474,13 +479,15 @@ impl WasmNetworkClient {
                 options,
                 state_hash,
                 action_count,
+                abilities,
                 ..
             } => {
                 log::debug!(
-                    "WasmNetworkClient: ChoiceRequest seq={} type={:?} action_count={}",
+                    "WasmNetworkClient: ChoiceRequest seq={} type={:?} action_count={} abilities={}",
                     choice_seq,
                     choice_type,
-                    action_count
+                    action_count,
+                    abilities.as_ref().map(|a| a.len()).unwrap_or(0)
                 );
                 self.current_choice_request = Some(ChoiceRequestData {
                     choice_seq,
@@ -488,6 +495,7 @@ impl WasmNetworkClient {
                     options,
                     state_hash,
                     action_count,
+                    abilities,
                 });
             }
 
