@@ -370,24 +370,22 @@ impl PlayerController for RichInputController {
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
         // RichInputController: Auto-select first valid card
         // TODO: Implement rich syntax for library search selection
-        if valid_cards.is_empty() {
+        if valid_card_names.is_empty() {
             view.logger()
                 .controller_choice("RICHINPUT", "Library search: fail to find (no valid cards)");
             return ChoiceResult::Ok(None);
         }
 
-        let chosen = valid_cards[0];
-        if let Some(card_name) = view.get_card_name(chosen) {
-            view.logger().controller_choice(
-                "RICHINPUT",
-                &format!("Library search: found {} (auto-selected first)", card_name),
-            );
-        }
+        let card_name = valid_card_names[0];
+        view.logger().controller_choice(
+            "RICHINPUT",
+            &format!("Library search: found {} (auto-selected first)", card_name),
+        );
 
-        ChoiceResult::Ok(Some(chosen))
+        ChoiceResult::Ok(Some(0))
     }
 
     fn choose_permanents_to_sacrifice(

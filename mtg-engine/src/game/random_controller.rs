@@ -308,11 +308,11 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(hand_vec.iter().take(num_discarding).copied().collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
         // Randomly choose a card from the library, or decline to find
         let log_active = view.logger().is_choice_logging_active();
 
-        if valid_cards.is_empty() {
+        if valid_card_names.is_empty() {
             // No valid cards - must fail to find
             if log_active {
                 view.logger()
@@ -325,19 +325,16 @@ impl PlayerController for RandomController {
         let find_card = self.rng.gen_bool(0.9);
 
         if find_card {
-            // Pick a random card from valid options
-            let choice = valid_cards.choose(&mut self.rng).copied();
+            // Pick a random index from valid options
+            let index = self.rng.gen_range(0..valid_card_names.len());
 
-            if let Some(card_id) = choice {
-                // Log the choice with card name if available (only if logging active)
-                if log_active {
-                    let card_name = view.get_card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
-                    view.logger()
-                        .controller_choice("RANDOM", &format!("Library search: found {}", card_name));
-                }
+            // Log the choice with card name (only if logging active)
+            if log_active {
+                view.logger()
+                    .controller_choice("RANDOM", &format!("Library search: found {}", valid_card_names[index]));
             }
 
-            ChoiceResult::Ok(choice)
+            ChoiceResult::Ok(Some(index))
         } else {
             // Randomly decide to fail to find
             if log_active {

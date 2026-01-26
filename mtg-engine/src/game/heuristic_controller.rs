@@ -121,6 +121,78 @@ impl HeuristicController {
         self.evaluate_creature_impl(view, card_id, true, true)
     }
 
+    /// Evaluate a card by name for library search decisions.
+    ///
+    /// Strategy:
+    /// 1. Try to find a visible card with the same name (battlefield, hand, graveyard)
+    ///    and use existing evaluation functions
+    /// 2. Fall back to name-based heuristics for basic lands and common patterns
+    fn evaluate_card_by_name_for_library(&self, view: &GameStateView, card_name: &str) -> i32 {
+        // First, try to find a visible instance of this card in visible zones
+        // Check battlefield first (most relevant for evaluation)
+        for &card_id in view.battlefield() {
+            if let Some(card) = view.get_card(card_id) {
+                if card.name.as_str() == card_name {
+                    // Found a match - use appropriate evaluation
+                    if card.is_creature() {
+                        return self.evaluate_creature(view, card_id);
+                    } else if card.is_land() {
+                        return crate::game::game_state_evaluator::GameStateEvaluator::evaluate_land(card);
+                    } else {
+                        // Other permanents: use CMC-based heuristic
+                        return 50 + 30 * i32::from(card.mana_cost.cmc());
+                    }
+                }
+            }
+        }
+
+        // Check our hand
+        for &card_id in view.player_hand(self.player_id) {
+            if let Some(card) = view.get_card(card_id) {
+                if card.name.as_str() == card_name {
+                    if card.is_creature() {
+                        return self.evaluate_creature(view, card_id);
+                    } else if card.is_land() {
+                        return crate::game::game_state_evaluator::GameStateEvaluator::evaluate_land(card);
+                    } else {
+                        return 50 + 30 * i32::from(card.mana_cost.cmc());
+                    }
+                }
+            }
+        }
+
+        // Check graveyard
+        for &card_id in view.graveyard() {
+            if let Some(card) = view.get_card(card_id) {
+                if card.name.as_str() == card_name {
+                    if card.is_creature() {
+                        return self.evaluate_creature(view, card_id);
+                    } else if card.is_land() {
+                        return crate::game::game_state_evaluator::GameStateEvaluator::evaluate_land(card);
+                    } else {
+                        return 50 + 30 * i32::from(card.mana_cost.cmc());
+                    }
+                }
+            }
+        }
+
+        // Fall back to name-based heuristics for known card types
+        match card_name {
+            // Basic lands - low but consistent value
+            "Plains" | "Island" | "Swamp" | "Mountain" | "Forest" => 100,
+            // Snow basics
+            "Snow-Covered Plains" | "Snow-Covered Island" | "Snow-Covered Swamp"
+            | "Snow-Covered Mountain" | "Snow-Covered Forest" => 105,
+            // Wastes (colorless basic)
+            "Wastes" => 95,
+            _ => {
+                // Unknown card - use moderate value
+                // This encourages finding spells over basic lands in most cases
+                150
+            }
+        }
+    }
+
     /// Internal implementation of creature evaluation with optional P/T and CMC consideration
     ///
     /// Parameters:
@@ -4512,50 +4584,34 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(hand_cards.iter().take(count).map(|c| c.id).collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Heuristic: Choose the best card from library based on game state evaluation
-        if valid_cards.is_empty() {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+        // Name-based interface: we only receive names, not CardIds.
+        // This ensures network/local equivalence since clients don't have library CardIds.
+        if valid_card_names.is_empty() {
             view.logger()
                 .controller_choice("HEURISTIC", "Library search: fail to find (no valid cards)");
             return ChoiceResult::Ok(None);
         }
 
-        // Evaluate each valid card and pick the best one
-        let mut best_card = None;
+        // Score each card by name using name-based heuristics and visible card evaluation
+        let mut best_index = 0;
         let mut best_score = i32::MIN;
 
-        for &card_id in valid_cards {
-            if let Some(card) = view.get_card(card_id) {
-                let score = if card.is_land() {
-                    // For lands, prefer dual lands > basic lands
-                    use crate::game::game_state_evaluator::GameStateEvaluator;
-                    GameStateEvaluator::evaluate_land(card)
-                } else if card.is_creature() {
-                    // For creatures, evaluate based on P/T and abilities
-                    self.evaluate_creature(view, card_id)
-                } else {
-                    // For spells, use a simple value heuristic
-                    // Lower CMC is better (can cast sooner)
-                    let cmc = card.mana_cost.cmc();
-                    100 - i32::from(cmc)
-                };
-
-                if score > best_score {
-                    best_score = score;
-                    best_card = Some(card_id);
-                }
+        for (idx, &name) in valid_card_names.iter().enumerate() {
+            let score = Self::evaluate_card_by_name_for_library(self, view, name);
+            if score > best_score {
+                best_score = score;
+                best_index = idx;
             }
         }
 
-        if let Some(card_id) = best_card {
-            let card_name = view.get_card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
-            view.logger().controller_choice(
-                "HEURISTIC",
-                &format!("Library search: found {} (score: {})", card_name, best_score),
-            );
-        }
+        let chosen_name = valid_card_names[best_index];
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!("Library search: found {} (score: {})", chosen_name, best_score),
+        );
 
-        ChoiceResult::Ok(best_card)
+        ChoiceResult::Ok(Some(best_index))
     }
 
     fn choose_permanents_to_sacrifice(
