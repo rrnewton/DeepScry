@@ -389,9 +389,9 @@ impl PlayerController for FancyFixedController {
         self.delegate.choose_cards_to_discard(view, hand, count)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
         // Skip screenshot for library choice
-        self.delegate.choose_from_library(view, valid_cards)
+        self.delegate.choose_from_library(view, valid_card_names)
     }
 
     fn choose_permanents_to_sacrifice(

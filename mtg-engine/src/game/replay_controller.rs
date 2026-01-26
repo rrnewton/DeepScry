@@ -25,8 +25,8 @@ pub enum ReplayChoice {
     DamageOrder(SmallVec<[CardId; 4]>),
     /// Choice of cards to discard
     Discard(SmallVec<[CardId; 7]>),
-    /// Choice of card from library (or None to fail to find)
-    LibrarySearch(Option<CardId>),
+    /// Choice of card from library (or None to fail to find) - stores index, not CardId
+    LibrarySearch(Option<usize>),
     /// Choice of permanents to sacrifice
     Sacrifice(SmallVec<[CardId; 8]>),
     /// Choice of modes for a modal spell
@@ -260,7 +260,7 @@ impl PlayerController for ReplayController {
         self.inner.choose_cards_to_discard(view, hand, count)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
         // Try to consume a replay choice first
         if let Some(choice) = self.consume_replay_choice(|c| {
             if let ReplayChoice::LibrarySearch(card_opt) = c {
@@ -273,7 +273,7 @@ impl PlayerController for ReplayController {
         }
 
         // No replay choice available, delegate to inner controller
-        self.inner.choose_from_library(view, valid_cards)
+        self.inner.choose_from_library(view, valid_card_names)
     }
 
     fn choose_permanents_to_sacrifice(

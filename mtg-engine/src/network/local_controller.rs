@@ -58,6 +58,7 @@ struct ChoiceInfoResult {
     library_search_names: Option<Vec<String>>,
     /// Server's count of cards for each unique name (enables instance selection)
     /// Same length as library_search_names
+    #[allow(dead_code)] // Kept for protocol compatibility, may be used in future
     library_search_counts: Option<Vec<usize>>,
 }
 
@@ -538,7 +539,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         result
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
         let info = match self.get_choice_info() {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
@@ -548,191 +549,97 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         self.verify_action_count_sync(view, server_action_count);
 
         // Check if server provided library_search_names (late-binding architecture)
-        // In this case, client can't compute valid_cards locally due to hidden card identities
+        // In this case, client can't compute valid_card_names locally due to hidden card identities
         log::info!(
-            "[NetworkLocalController] choose_from_library: library_search_names={:?}, valid_cards.len={}",
+            "[NetworkLocalController] choose_from_library: library_search_names={:?}, valid_card_names.len={}",
             info.library_search_names.as_ref().map(|n| n.len()),
-            valid_cards.len()
+            valid_card_names.len()
         );
-        if let Some(ref names) = info.library_search_names {
-            // Server encoding: options = ["Decline to find", name1, name2, ...]
-            // Index 0 = Decline, Index 1+ = card names
-            // With counts, client can pick a specific instance for LOCAL/NETWORK equivalence.
-            let counts = info.library_search_counts.as_ref();
 
-            let (name_idx, instance_idx) = if names.is_empty() {
-                // No valid cards found by server - decline
-                (0, 0)
-            } else {
-                // Build synthetic CardIds for the inner controller
-                // Each CardId represents one instance of a card name
-                // Format: CardId((name_idx << 16) | instance_idx)
-                let mut synthetic_cards: Vec<CardId> = Vec::new();
-                for (name_idx, name) in names.iter().enumerate() {
-                    let count = counts.and_then(|c| c.get(name_idx).copied()).unwrap_or(1);
-                    for instance in 0..count {
-                        // Encode (name_idx, instance) into a synthetic CardId
-                        // Server will decode this back using the indices we send
-                        let encoded = ((name_idx as u32) << 16) | (instance as u32);
-                        synthetic_cards.push(CardId::new(encoded));
-                    }
-                    log::trace!(
-                        "[NetworkLocalController] LibrarySearchByName: name={}, count={}",
-                        name,
-                        count
-                    );
-                }
+        // Build the names list for the inner controller
+        // Prefer server-provided names if available (for hidden library cards)
+        let names_for_inner: Vec<&str> = if let Some(ref names) = info.library_search_names {
+            names.iter().map(|s| s.as_str()).collect()
+        } else {
+            valid_card_names.to_vec()
+        };
 
-                if synthetic_cards.is_empty() {
-                    (0, 0) // Decline
+        // Call inner controller with names - it returns an index directly
+        let inner_result = self.inner.choose_from_library(view, &names_for_inner);
+
+        // Map inner result to protocol format
+        let (name_idx, instance_idx) = match &inner_result {
+            ChoiceResult::Ok(Some(index)) => {
+                // Protocol uses 1-based indexing (0 = decline)
+                (*index + 1, 0)
+            }
+            ChoiceResult::Ok(None) => (0, 0), // Declined
+            ChoiceResult::ExitGame => return ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => {
+                log::error!("[NetworkLocalController] inner choose_from_library error: {}", e);
+                if names_for_inner.is_empty() {
+                    (0, 0)
                 } else {
-                    // Call inner controller to make the selection
-                    // This will use the RandomController's RNG if inner is RandomController
-                    let inner_result = self.inner.choose_from_library(view, &synthetic_cards);
-                    match inner_result {
-                        ChoiceResult::Ok(Some(chosen_card)) => {
-                            // Decode the synthetic CardId back to (name_idx, instance_idx)
-                            let encoded = chosen_card.as_u32();
-                            let decoded_name_idx = (encoded >> 16) as usize;
-                            let decoded_instance_idx = (encoded & 0xFFFF) as usize;
-                            // Protocol uses 1-based indexing (0 = decline)
-                            (decoded_name_idx + 1, decoded_instance_idx)
-                        }
-                        ChoiceResult::Ok(None) => (0, 0), // Declined
-                        ChoiceResult::ExitGame => return ChoiceResult::ExitGame,
-                        ChoiceResult::Error(e) => {
-                            log::error!("[NetworkLocalController] inner choose_from_library error: {}", e);
-                            (1, 0) // Fallback to first card
-                        }
-                        ChoiceResult::UndoRequest(_) | ChoiceResult::NeedInput(_) => {
-                            // These shouldn't happen in NetworkLocalController with AI inner controller
-                            log::warn!(
-                                "[NetworkLocalController] unexpected UndoRequest/NeedInput from inner choose_from_library"
-                            );
-                            (1, 0) // Fallback to first card
-                        }
-                    }
-                }
-            };
-
-            log::debug!(
-                "[NetworkLocalController] choose_from_library (LibrarySearchByName): names={:?}, name_idx={}, instance_idx={}",
-                names,
-                name_idx,
-                instance_idx
-            );
-            let (hash, debug) = self.get_debug_fields(view);
-            // Send [name_idx, instance_idx] - server will use both to pick the specific CardId
-            self.send_choice(
-                choice_seq,
-                vec![name_idx, instance_idx],
-                server_action_count,
-                hash,
-                debug,
-                None,
-            );
-
-            // Wait for ChoiceAccepted to confirm the server processed our choice.
-            // Use the server's library_search_result directly - the shadow game is
-            // synchronized with the server (same RNG state, same CardIds).
-            // IMPORTANT: Use take_choice_accepted_for_seq to skip stale ChoiceAccepted
-            // messages from previous (non-library-search) choices that weren't consumed.
-            if let Some(ref state) = self.shared_state {
-                match state.take_choice_accepted_for_seq(choice_seq) {
-                    Some(ChoiceAcceptedInfo::Accepted {
-                        library_search_result, ..
-                    }) => {
-                        // Use the server's library_search_result directly.
-                        // The shadow game is synchronized with the server (same RNG state, same CardIds),
-                        // so the server's CardId is valid in the client's shadow game.
-                        log::info!(
-                            "[NetworkLocalController] LibrarySearchByName: ChoiceAccepted received, library_search_result={:?}",
-                            library_search_result
-                        );
-                        return ChoiceResult::Ok(library_search_result);
-                    }
-                    Some(ChoiceAcceptedInfo::Exit { .. }) => {
-                        log::info!(
-                            "[NetworkLocalController] choose_from_library: game ended while waiting for ChoiceAccepted"
-                        );
-                        return ChoiceResult::ExitGame;
-                    }
-                    Some(ChoiceAcceptedInfo::Error { message }) => {
-                        log::error!(
-                            "[NetworkLocalController] choose_from_library: error while waiting for ChoiceAccepted: {}",
-                            message
-                        );
-                        return ChoiceResult::ExitGame;
-                    }
-                    None => {
-                        log::warn!("[NetworkLocalController] choose_from_library: take_choice_accepted returned None (exit signaled)");
-                        return ChoiceResult::ExitGame;
-                    }
-                }
-            } else {
-                // Legacy mode - no shared_state, cannot get library_search_result
-                // This path should not be reached in normal operation
-                log::warn!("[NetworkLocalController] choose_from_library (LibrarySearchByName): legacy mode without shared_state - returning None");
-                return ChoiceResult::Ok(None);
+                    (1, 0)
+                } // Fallback
             }
-        }
+            ChoiceResult::UndoRequest(_) | ChoiceResult::NeedInput(_) => {
+                log::warn!("[NetworkLocalController] unexpected UndoRequest/NeedInput from inner choose_from_library");
+                if names_for_inner.is_empty() {
+                    (0, 0)
+                } else {
+                    (1, 0)
+                } // Fallback
+            }
+        };
 
-        // Fall back to local computation (non-network or visible library)
-        // Even for this path, we need to wait for ChoiceAccepted to get library_search_result
-        // because the server's valid_cards may have different CardIds than the client's shadow game.
-        let result = self.inner.choose_from_library(view, valid_cards);
+        log::debug!(
+            "[NetworkLocalController] choose_from_library: names_for_inner.len={}, name_idx={}, instance_idx={}",
+            names_for_inner.len(),
+            name_idx,
+            instance_idx
+        );
+        let (hash, debug) = self.get_debug_fields(view);
+        // Send [name_idx, instance_idx] - server will use both to pick the specific CardId
+        self.send_choice(
+            choice_seq,
+            vec![name_idx, instance_idx],
+            server_action_count,
+            hash,
+            debug,
+            None,
+        );
 
-        if let ChoiceResult::Ok(ref choice) = result {
-            // Encoding: index = position in valid_cards, out-of-bounds = decline
-            let idx = match choice {
-                Some(card) => valid_cards.iter().position(|c| c == card).unwrap_or(valid_cards.len()),
-                None => valid_cards.len(),
-            };
-            log::debug!(
-                "[NetworkLocalController] choose_from_library (fallback): choice={:?}, valid_cards.len={}, sending idx={}",
-                choice,
-                valid_cards.len(),
-                idx
-            );
-            let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
-
-            // Wait for ChoiceAccepted to get server's authoritative library_search_result
-            // This ensures the shadow game stays synchronized with the server even in fallback path
-            // IMPORTANT: Use take_choice_accepted_for_seq to skip stale ChoiceAccepted messages
-            if let Some(ref state) = self.shared_state {
-                log::info!(
-                    "[NetworkLocalController] Fallback path: waiting for ChoiceAccepted after sending idx={}, valid_cards.len={}",
-                    idx,
-                    valid_cards.len()
-                );
-                match state.take_choice_accepted_for_seq(choice_seq) {
-                    Some(ChoiceAcceptedInfo::Accepted {
-                        library_search_result, ..
-                    }) => {
-                        log::info!(
-                            "[NetworkLocalController] Fallback: ChoiceAccepted received, library_search_result={:?}",
-                            library_search_result
-                        );
-                        return ChoiceResult::Ok(library_search_result);
-                    }
-                    Some(ChoiceAcceptedInfo::Exit { .. }) => {
-                        log::info!("[NetworkLocalController] choose_from_library (fallback): game ended while waiting for ChoiceAccepted");
-                        return ChoiceResult::ExitGame;
-                    }
-                    Some(ChoiceAcceptedInfo::Error { message }) => {
-                        log::error!("[NetworkLocalController] choose_from_library (fallback): error while waiting for ChoiceAccepted: {}", message);
-                        return ChoiceResult::ExitGame;
-                    }
-                    None => {
-                        log::warn!("[NetworkLocalController] choose_from_library (fallback): take_choice_accepted returned None (exit signaled)");
-                        return ChoiceResult::ExitGame;
-                    }
+        // Wait for ChoiceAccepted to confirm the server processed our choice
+        // The server returns the index it used, which should match what we sent
+        if let Some(ref state) = self.shared_state {
+            match state.take_choice_accepted_for_seq(choice_seq) {
+                Some(ChoiceAcceptedInfo::Accepted { .. }) => {
+                    log::info!("[NetworkLocalController] choose_from_library: ChoiceAccepted received");
+                    // Return the index we chose (0-based for the trait interface)
+                    return inner_result;
+                }
+                Some(ChoiceAcceptedInfo::Exit { .. }) => {
+                    log::info!(
+                        "[NetworkLocalController] choose_from_library: game ended while waiting for ChoiceAccepted"
+                    );
+                    return ChoiceResult::ExitGame;
+                }
+                Some(ChoiceAcceptedInfo::Error { message }) => {
+                    log::error!(
+                        "[NetworkLocalController] choose_from_library: error while waiting for ChoiceAccepted: {}",
+                        message
+                    );
+                    return ChoiceResult::ExitGame;
+                }
+                None => {
+                    log::warn!("[NetworkLocalController] choose_from_library: take_choice_accepted returned None (exit signaled)");
+                    return ChoiceResult::ExitGame;
                 }
             }
         }
 
-        result
+        inner_result
     }
 
     fn choose_permanents_to_sacrifice(

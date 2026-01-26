@@ -11,7 +11,6 @@ use crate::network::protocol::ChoiceType;
 use crate::undo::GameAction;
 use crate::zones::Zone;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -850,56 +849,31 @@ impl PlayerController for NetworkController {
         }
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Name-based library search protocol with instance selection:
-        // 1. Build mapping from unique card names to CardIds
-        // 2. Send unique names AND counts as options (not CardIds)
-        // 3. Client picks a name index AND an instance index (for multiple same-name cards)
-        // 4. Server picks the specific CardId using (name_idx, instance_idx)
-        //
-        // This enables proper random selection among same-named cards for LOCAL/NETWORK equivalence.
-
-        // Build name -> [CardId] mapping
-        let mut name_to_cards: HashMap<String, Vec<CardId>> = HashMap::new();
-        for &card_id in valid_cards {
-            if let Some(name) = view.card_name(card_id) {
-                name_to_cards.entry(name.to_string()).or_default().push(card_id);
-            }
-        }
-
-        // Extract unique names (sorted for determinism)
-        let mut unique_names: Vec<String> = name_to_cards.keys().cloned().collect();
-        unique_names.sort();
-
-        // Build counts for each unique name (how many copies exist)
-        let name_counts: Vec<usize> = unique_names
-            .iter()
-            .map(|name| name_to_cards.get(name).map(|v| v.len()).unwrap_or(0))
-            .collect();
+    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+        // Name-based library search protocol:
+        // 1. Send unique names as options to client
+        // 2. Client picks a name index
+        // 3. Return the index (game loop maps back to CardId)
 
         // Build options for display: [0] = Decline, [1..] = card names
         let mut options = vec!["Decline to find".to_string()];
-        options.extend(unique_names.iter().cloned());
+        options.extend(valid_card_names.iter().map(|s| s.to_string()));
 
         // Compute state hash
         let state_hash = self.compute_view_hash(view);
 
-        // Send request with new ChoiceType (includes counts)
+        // Send request with LibrarySearchByName choice type
+        // Note: name_counts is now simplified since the trait gives us deduplicated names
+        let unique_names: Vec<String> = valid_card_names.iter().map(|s| s.to_string()).collect();
+        let name_counts: Vec<usize> = vec![1; unique_names.len()]; // Each name appears once in the list
+
         let choice_type = ChoiceType::LibrarySearchByName {
             unique_names: unique_names.clone(),
             name_counts,
             filter_description: "matching cards".to_string(),
         };
 
-        // Build library_search_cards: ALL CardIds in flat order, grouped by name
-        // The flat list is ordered: [name0_instance0, name0_instance1, ..., name1_instance0, ...]
-        // This allows the coordinator to pick the correct instance using (name_idx, instance_idx)
-        let library_search_cards: Vec<CardId> = unique_names
-            .iter()
-            .flat_map(|name| name_to_cards.get(name).cloned().unwrap_or_default())
-            .collect();
-
-        match self.request_choice(view, choice_type, options, state_hash, None, Some(library_search_cards)) {
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) if result.indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Declined to find
@@ -911,20 +885,9 @@ impl PlayerController for NetworkController {
                     return ChoiceResult::Ok(None); // Declined
                 }
                 let name_idx = name_idx_raw - 1; // Adjust for "Decline" at index 0
-                                                 // Instance index defaults to 0 if not provided (backward compatibility)
-                let instance_idx = result.indices.get(1).copied().unwrap_or(0);
 
-                if name_idx < unique_names.len() {
-                    let chosen_name = &unique_names[name_idx];
-                    // Pick the specific CardId using instance_idx
-                    if let Some(card_ids) = name_to_cards.get(chosen_name) {
-                        // Clamp instance_idx to valid range
-                        let safe_idx = instance_idx.min(card_ids.len().saturating_sub(1));
-                        if let Some(&card_id) = card_ids.get(safe_idx) {
-                            return ChoiceResult::Ok(Some(card_id));
-                        }
-                    }
-                    ChoiceResult::Error(format!("No CardId found for name '{}'", chosen_name))
+                if name_idx < valid_card_names.len() {
+                    ChoiceResult::Ok(Some(name_idx))
                 } else {
                     ChoiceResult::Error("Invalid library search index from network".to_string())
                 }
