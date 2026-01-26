@@ -42,7 +42,9 @@ The refactoring changes cause:
 2. Different binary layout affecting timing
 3. Exposing a latent race condition in network synchronization
 
-## Files Changed (WIP - not committed)
+## Changes Preserved
+
+The refactoring changes are preserved on branch `choose-from-library-refactor` (commit 58aee7d8):
 
 - `mtg-engine/src/game/controller.rs` - Trait signature
 - `mtg-engine/src/game/*_controller.rs` - All controller implementations
@@ -55,7 +57,7 @@ The refactoring changes cause:
 
 ## To Reproduce
 
-Apply the stashed changes and run:
+Checkout the branch and run:
 ```bash
 ./tests/network_vs_local_equivalence_e2e.sh 3
 ```
