@@ -576,6 +576,9 @@ impl CardDefinition {
         card.cache
             .update_from_abilities_with_name(&card.activated_abilities, card.name.as_str());
 
+        // Store the original CardDefinition for name-based card evaluation
+        card.definition = Some(Box::new(self.clone()));
+
         card
     }
 

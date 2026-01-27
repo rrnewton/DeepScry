@@ -4,6 +4,7 @@ use crate::core::{
     CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, ManaCost, ManaProduction, PlayerId,
     Subtype, Trigger,
 };
+use crate::loader::CardDefinition;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -603,6 +604,11 @@ pub struct Card {
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
+
+    /// Original card definition this was instantiated from
+    /// Stored as owned copy for name-based card evaluation (library search, etc.)
+    /// Box reduces inline size; Option allows Card::new() without definition
+    pub definition: Option<Box<CardDefinition>>,
 }
 
 impl Card {
@@ -649,6 +655,7 @@ impl Card {
             revealed_to_mask: 0,
             is_legendary: false,
             exhausted_abilities: SmallVec::new(),
+            definition: None,
         }
     }
 
