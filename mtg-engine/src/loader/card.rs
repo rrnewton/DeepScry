@@ -321,6 +321,30 @@ pub struct CardDefinition {
     pub is_legendary: bool,
 }
 
+impl Default for CardDefinition {
+    fn default() -> Self {
+        Self {
+            name: CardName::from(""),
+            mana_cost: ManaCost::new(),
+            types: Vec::new(),
+            subtypes: Vec::new(),
+            colors: Vec::new(),
+            power: None,
+            toughness: None,
+            oracle: String::new(),
+            raw_abilities: Vec::new(),
+            raw_keywords: Vec::new(),
+            svars: std::collections::HashMap::new(),
+            parsed_svars: std::collections::HashMap::new(),
+            enters_tapped: false,
+            etb_choose_color: false,
+            etb_exclude_colors: Vec::new(),
+            script_name: None,
+            is_legendary: false,
+        }
+    }
+}
+
 impl CardDefinition {
     /// Rebuild parsed_svars from svars after deserialization
     ///
@@ -577,7 +601,7 @@ impl CardDefinition {
             .update_from_abilities_with_name(&card.activated_abilities, card.name.as_str());
 
         // Store the original CardDefinition for name-based card evaluation
-        card.definition = Some(Box::new(self.clone()));
+        card.definition = self.clone();
 
         card
     }

@@ -607,8 +607,8 @@ pub struct Card {
 
     /// Original card definition this was instantiated from
     /// Stored as owned copy for name-based card evaluation (library search, etc.)
-    /// Box reduces inline size; Option allows Card::new() without definition
-    pub definition: Option<Box<CardDefinition>>,
+    /// Inline storage avoids pointer indirection when accessing definition fields
+    pub definition: CardDefinition,
 }
 
 impl Card {
@@ -655,7 +655,7 @@ impl Card {
             revealed_to_mask: 0,
             is_legendary: false,
             exhausted_abilities: SmallVec::new(),
-            definition: None,
+            definition: CardDefinition::default(),
         }
     }
 
