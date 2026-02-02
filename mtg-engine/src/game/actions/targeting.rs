@@ -77,9 +77,9 @@ impl GameState {
             (
                 spell_card.owner,
                 spell_card.effects.len(),
-                spell_card.cache.spell_targets_land,
-                spell_card.cache.spell_targets_creature,
-                spell_card.cache.spell_targets_any,
+                spell_card.definition.cache.spell_targets_land,
+                spell_card.definition.cache.spell_targets_creature,
+                spell_card.definition.cache.spell_targets_any,
             )
         };
 
@@ -1196,7 +1196,7 @@ mod tests {
         let mut sinkhole_card = Card::new(sinkhole_id, "Sinkhole", player1);
         sinkhole_card.add_type(CardType::Sorcery);
         sinkhole_card.text = "Destroy target land.".to_string();
-        sinkhole_card.cache = crate::core::CardCache::new(&sinkhole_card.text, sinkhole_card.name.as_str());
+        sinkhole_card.definition.cache = crate::core::CardCache::new(&sinkhole_card.text, sinkhole_card.name.as_str());
         sinkhole_card.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
@@ -1242,7 +1242,7 @@ mod tests {
         let mut terror_card = Card::new(terror_id, "Terror", player1);
         terror_card.add_type(CardType::Instant);
         terror_card.text = "Destroy target nonartifact, nonblack creature. It can't be regenerated.".to_string();
-        terror_card.cache = crate::core::CardCache::new(&terror_card.text, terror_card.name.as_str());
+        terror_card.definition.cache = crate::core::CardCache::new(&terror_card.text, terror_card.name.as_str());
         terror_card.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),

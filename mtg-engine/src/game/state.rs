@@ -732,7 +732,7 @@ impl GameState {
         // Handle cards that enter the battlefield tapped (e.g., Thriving lands)
         if to == Zone::Battlefield {
             if let Ok(card) = self.cards.get(card_id) {
-                if card.cache.enters_tapped {
+                if card.definition.cache.enters_tapped {
                     // Must drop the immutable borrow before getting mutable borrow
                     let card_name = card.name.clone();
                     if let Ok(card_mut) = self.cards.get_mut(card_id) {
@@ -745,8 +745,8 @@ impl GameState {
 
             // Handle ETB color choice (e.g., Thriving lands)
             if let Ok(card) = self.cards.get(card_id) {
-                if card.cache.etb_choose_color {
-                    let exclude_colors = card.cache.etb_exclude_colors.clone();
+                if card.definition.cache.etb_choose_color {
+                    let exclude_colors = card.definition.cache.etb_exclude_colors.clone();
                     let card_name = card.name.clone();
 
                     // Pick the most prominent color in the player's deck (excluding excluded colors)

@@ -863,7 +863,7 @@ impl<'a> GameLoop<'a> {
                                             // Update remaining hint based on what color this source produced
                                             if let Some(card) = self.game.cards.try_get(source_id) {
                                                 use crate::core::{ManaColor, ManaProductionKind};
-                                                match &card.cache.mana_production.kind {
+                                                match &card.definition.cache.mana_production.kind {
                                                     ManaProductionKind::Fixed(color) => match color {
                                                         ManaColor::White => {
                                                             remaining_hint.white =
