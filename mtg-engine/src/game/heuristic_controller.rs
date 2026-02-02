@@ -2705,9 +2705,9 @@ impl HeuristicController {
         // Check for enchantments with static abilities
         // Reference: AttachAi.java:47-91 (checkApiLogic) for Auras
         // Reference: PumpAllAi.java:29-240 (checkApiLogic) for global enchantments
-        if spell.cache.is_enchantment {
+        if spell.definition.cache.is_enchantment {
             // Handle Auras (require targeting)
-            if spell.cache.is_aura {
+            if spell.definition.cache.is_aura {
                 if self.should_cast_aura(spell, view) {
                     return true;
                 }

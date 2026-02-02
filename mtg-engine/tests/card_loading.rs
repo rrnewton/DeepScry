@@ -287,15 +287,15 @@ fn test_load_mishras_factory_colorless_mana() -> Result<()> {
 
     // Verify the cache detects colorless mana production
     assert!(
-        card.cache.mana_production.produces_mana(),
+        card.definition.cache.mana_production.produces_mana(),
         "Mishra's Factory should be detected as producing mana. Card text: {}",
         card.text
     );
     assert_eq!(
-        card.cache.mana_production.kind,
+        card.definition.cache.mana_production.kind,
         ManaProductionKind::Colorless,
         "Mishra's Factory should produce Colorless mana, not {:?}. Card text: {}",
-        card.cache.mana_production.kind,
+        card.definition.cache.mana_production.kind,
         card.text
     );
 
@@ -618,10 +618,10 @@ fn test_load_black_lotus_mana_ability() -> Result<()> {
 
     // Verify the cache detects it as a mana source
     assert!(
-        card.cache.mana_production.produces_mana(),
+        card.definition.cache.mana_production.produces_mana(),
         "Black Lotus should be detected as producing mana"
     );
-    assert!(card.cache.is_mana_source, "Black Lotus should be a mana source");
+    assert!(card.definition.cache.is_mana_source, "Black Lotus should be a mana source");
 
     Ok(())
 }
@@ -751,21 +751,21 @@ fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
     let card = def.instantiate(card_id, player_id);
 
     assert!(
-        card.cache.has_island_subtype,
+        card.definition.cache.has_island_subtype,
         "Cache should have has_island_subtype=true"
     );
     assert!(
-        card.cache.has_mountain_subtype,
+        card.definition.cache.has_mountain_subtype,
         "Cache should have has_mountain_subtype=true for red mana production"
     );
-    assert!(card.cache.is_land, "Cache should have is_land=true");
+    assert!(card.definition.cache.is_land, "Cache should have is_land=true");
 
     // Critical test: mana production should be Choice (dual land) not just Blue
     use mtg_forge_rs::core::ManaProductionKind;
-    assert!(card.cache.is_mana_source, "Volcanic Island should be a mana source");
+    assert!(card.definition.cache.is_mana_source, "Volcanic Island should be a mana source");
 
     // Check that mana production is Choice (can produce either Blue or Red)
-    match &card.cache.mana_production.kind {
+    match &card.definition.cache.mana_production.kind {
         ManaProductionKind::Choice(colors) => {
             assert!(
                 colors.contains(mtg_forge_rs::core::ManaColor::Blue),
@@ -1586,17 +1586,17 @@ fn test_load_thriving_grove_mana_ability() -> Result<()> {
 
     // Verify the cache detects it as a mana source
     assert!(
-        card.cache.is_mana_source,
+        card.definition.cache.is_mana_source,
         "Thriving Grove should be detected as a mana source (is_mana_source flag)"
     );
     assert!(
-        card.cache.mana_production.produces_mana(),
+        card.definition.cache.mana_production.produces_mana(),
         "Thriving Grove should be detected as producing mana"
     );
 
     // Check the production kind - should be Fixed(Green) or Choice containing Green
     // (Since "Chosen" is not a parseable color, only "G" is recognized)
-    match &card.cache.mana_production.kind {
+    match &card.definition.cache.mana_production.kind {
         ManaProductionKind::Fixed(color) => {
             assert_eq!(
                 *color,
@@ -1659,7 +1659,7 @@ async fn test_thriving_grove_mana_cache_population() -> Result<()> {
 
     // Verify instantiated card has correct mana source flag
     assert!(
-        card.cache.is_mana_source,
+        card.definition.cache.is_mana_source,
         "Instantiated Thriving Grove should have is_mana_source=true"
     );
 
@@ -1755,18 +1755,18 @@ async fn test_ba_sing_se_mana_detection() -> Result<()> {
 
     // Verify the cache detects it as a mana source
     assert!(
-        card.cache.is_mana_source,
+        card.definition.cache.is_mana_source,
         "Ba Sing Se should be detected as a mana source (is_mana_source flag). Card text: {}",
         card.text
     );
     assert!(
-        card.cache.mana_production.produces_mana(),
+        card.definition.cache.mana_production.produces_mana(),
         "Ba Sing Se should be detected as producing mana. Card text: {}",
         card.text
     );
 
     // Check the production kind - should be Fixed(Green)
-    match &card.cache.mana_production.kind {
+    match &card.definition.cache.mana_production.kind {
         ManaProductionKind::Fixed(color) => {
             assert_eq!(color, &ManaColor::Green, "Ba Sing Se should produce Green mana");
         }
@@ -1818,7 +1818,7 @@ async fn test_ba_sing_se_mana_cache_population() -> Result<()> {
 
     // Verify card cache BEFORE adding to game
     assert!(
-        ba_sing_se.cache.is_mana_source,
+        ba_sing_se.definition.cache.is_mana_source,
         "Ba Sing Se should have is_mana_source=true BEFORE entering battlefield"
     );
 
@@ -1991,18 +1991,18 @@ fn test_foggy_swamp_vinebender_not_mana_source() -> Result<()> {
     // Check that is_mana_source is FALSE
     // The waterbend ability does NOT produce mana
     assert!(
-        !card.cache.is_mana_source,
+        !card.definition.cache.is_mana_source,
         "Foggy Swamp Vinebender should NOT be marked as a mana source. \
         It has Waterbend (helps pay costs by tapping creatures/artifacts) \
         but does NOT produce mana. mana_production: {:?}",
-        card.cache.mana_production
+        card.definition.cache.mana_production
     );
 
     // Also check that mana_production.produces_mana() is false
     assert!(
-        !card.cache.mana_production.produces_mana(),
+        !card.definition.cache.mana_production.produces_mana(),
         "Foggy Swamp Vinebender should NOT produce mana. Got: {:?}",
-        card.cache.mana_production
+        card.definition.cache.mana_production
     );
 
     Ok(())

@@ -274,7 +274,7 @@ impl ManaEngine {
         for &card_id in &game.battlefield.cards {
             if let Some(card) = game.cards.try_get(card_id) {
                 // Only process mana sources owned by this player
-                if card.owner != player_id || !card.cache.is_mana_source {
+                if card.owner != player_id || !card.definition.cache.is_mana_source {
                     continue;
                 }
 
@@ -289,7 +289,7 @@ impl ManaEngine {
                     false
                 };
 
-                let production = &card.cache.mana_production;
+                let production = &card.definition.cache.mana_production;
 
                 // Creatures with mana abilities are always complex sources
                 // (due to summoning sickness and other creature-specific rules)
@@ -426,7 +426,7 @@ impl ManaEngine {
                 if let Some(card) = game.cards.try_get(card_id) {
                     cached_card_info.push_str(&format!(
                         "\n    Card {:?} ({}): tapped={}, owner={:?}, production={:?}",
-                        card_id, card.name, card.tapped, card.owner, card.cache.mana_production.kind
+                        card_id, card.name, card.tapped, card.owner, card.definition.cache.mana_production.kind
                     ));
                 }
             }
@@ -436,7 +436,7 @@ impl ManaEngine {
                 if let Some(card) = game.cards.try_get(card_id) {
                     scratch_card_info.push_str(&format!(
                         "\n    Card {:?} ({}): tapped={}, owner={:?}, production={:?}",
-                        card_id, card.name, card.tapped, card.owner, card.cache.mana_production.kind
+                        card_id, card.name, card.tapped, card.owner, card.definition.cache.mana_production.kind
                     ));
                 }
             }
@@ -550,7 +550,7 @@ impl ManaEngine {
         for &card_id in &game.battlefield.cards {
             if let Some(card) = game.cards.try_get(card_id) {
                 // Only process mana sources owned by this player
-                if card.owner != player_id || !card.cache.is_mana_source {
+                if card.owner != player_id || !card.definition.cache.is_mana_source {
                     continue;
                 }
 
@@ -565,7 +565,7 @@ impl ManaEngine {
                     false
                 };
 
-                let production = &card.cache.mana_production;
+                let production = &card.definition.cache.mana_production;
 
                 // Creatures with mana abilities are always complex sources
                 // (due to summoning sickness and other creature-specific rules)
@@ -807,7 +807,7 @@ impl ManaEngine {
                 };
 
                 // Get production from card's cached mana_production
-                let production = card.cache.mana_production;
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
                     production,
@@ -1191,7 +1191,7 @@ mod tests {
             "Add {G}".to_string(),
             true, // is_mana_ability
         ));
-        elf.cache.update_from_abilities(&elf.activated_abilities);
+        elf.definition.cache.update_from_abilities(&elf.activated_abilities);
         elf.turn_entered_battlefield = Some(game.turn.turn_number - 1); // Not summoning sick
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
@@ -1244,7 +1244,7 @@ mod tests {
             "Add {G}".to_string(),
             true, // is_mana_ability
         ));
-        elf.cache.update_from_abilities(&elf.activated_abilities);
+        elf.definition.cache.update_from_abilities(&elf.activated_abilities);
         elf.turn_entered_battlefield = Some(game.turn.turn_number); // Summoning sick!
         game.cards.insert(elf_id, elf);
         game.battlefield.add(elf_id);
@@ -1296,15 +1296,15 @@ mod tests {
             "Add {C}".to_string(),
             true, // is_mana_ability
         ));
-        factory.cache.update_from_abilities(&factory.activated_abilities);
+        factory.definition.cache.update_from_abilities(&factory.activated_abilities);
 
         // Verify the cache detects colorless mana production
         assert!(
-            factory.cache.mana_production.produces_mana(),
+            factory.definition.cache.mana_production.produces_mana(),
             "Mishra's Factory cache should detect mana production"
         );
         assert_eq!(
-            factory.cache.mana_production.kind,
+            factory.definition.cache.mana_production.kind,
             ManaProductionKind::Colorless,
             "Mishra's Factory should produce Colorless mana"
         );
@@ -1490,8 +1490,8 @@ mod tests {
             let mut forest = Card::new(forest_id, format!("Forest{}", i), p1_id);
             forest.types.push(CardType::Land);
             forest.controller = p1_id;
-            forest.cache.is_mana_source = true;
-            forest.cache.mana_production = crate::core::ManaProduction::free(crate::core::ManaProductionKind::Fixed(
+            forest.definition.cache.is_mana_source = true;
+            forest.definition.cache.mana_production = crate::core::ManaProduction::free(crate::core::ManaProductionKind::Fixed(
                 crate::core::ManaColor::Green,
             ));
             game.cards.insert(forest_id, forest);

@@ -731,7 +731,7 @@ mod tests {
         let mut aura = Card::new(aura_id, "Holy Strength", player_id);
         aura.add_type(CardType::Enchantment);
         aura.subtypes.push(Subtype::new("Aura"));
-        aura.cache.update_from_subtypes(&aura.subtypes, "Holy Strength");
+        aura.definition.cache.update_from_subtypes(&aura.subtypes, "Holy Strength");
 
         // Add the static ability that grants +1/+2
         aura.static_abilities.push(StaticAbility::ModifyPT {
@@ -783,7 +783,7 @@ mod tests {
         let mut aura = Card::new(aura_id, "Flight", player_id);
         aura.add_type(CardType::Enchantment);
         aura.subtypes.push(Subtype::new("Aura"));
-        aura.cache.update_from_subtypes(&aura.subtypes, "Flight");
+        aura.definition.cache.update_from_subtypes(&aura.subtypes, "Flight");
 
         // Add the static ability that grants Flying
         aura.static_abilities.push(StaticAbility::GrantKeyword {
