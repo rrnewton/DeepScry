@@ -754,7 +754,7 @@ impl GameState {
             // Update remaining hint based on what color this source produced
             // Check mana production kind to know what color was produced
             if let Some(card) = self.cards.try_get(source_id) {
-                match &card.cache.mana_production.kind {
+                match &card.definition.cache.mana_production.kind {
                     crate::core::ManaProductionKind::Fixed(color) => {
                         // Deduct the fixed color from remaining hint
                         match color {
@@ -4025,7 +4025,12 @@ impl GameState {
             let is_any_color = self
                 .cards
                 .get(card_id)
-                .map(|c| matches!(c.cache.mana_production.kind, crate::core::ManaProductionKind::AnyColor))
+                .map(|c| {
+                    matches!(
+                        c.definition.cache.mana_production.kind,
+                        crate::core::ManaProductionKind::AnyColor
+                    )
+                })
                 .unwrap_or(false);
 
             // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
@@ -4173,11 +4178,11 @@ impl GameState {
             let card = self.cards.get(card_id)?;
             // Use pre-computed cache for mana production type (derived from abilities, not text)
             let is_any_color = matches!(
-                card.cache.mana_production.kind,
+                card.definition.cache.mana_production.kind,
                 crate::core::ManaProductionKind::AnyColor
             );
             let is_colorless = matches!(
-                card.cache.mana_production.kind,
+                card.definition.cache.mana_production.kind,
                 crate::core::ManaProductionKind::Colorless
             );
 
@@ -4187,26 +4192,26 @@ impl GameState {
             let mut colors = Vec::new();
 
             // First, add colors from land subtypes
-            if card.cache.has_plains_subtype {
+            if card.definition.cache.has_plains_subtype {
                 colors.push(crate::core::Color::White);
             }
-            if card.cache.has_island_subtype {
+            if card.definition.cache.has_island_subtype {
                 colors.push(crate::core::Color::Blue);
             }
-            if card.cache.has_swamp_subtype {
+            if card.definition.cache.has_swamp_subtype {
                 colors.push(crate::core::Color::Black);
             }
-            if card.cache.has_mountain_subtype {
+            if card.definition.cache.has_mountain_subtype {
                 colors.push(crate::core::Color::Red);
             }
-            if card.cache.has_forest_subtype {
+            if card.definition.cache.has_forest_subtype {
                 colors.push(crate::core::Color::Green);
             }
 
             // Second, add colors from mana production cache (for non-basic lands)
             // This handles lands without basic land subtypes
             use crate::core::ManaColor;
-            match &card.cache.mana_production.kind {
+            match &card.definition.cache.mana_production.kind {
                 crate::core::ManaProductionKind::Fixed(mana_color) => {
                     // Non-basic land that produces a fixed color (e.g., Ba Sing Se produces {G})
                     let color = match mana_color {

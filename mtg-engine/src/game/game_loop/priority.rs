@@ -863,7 +863,7 @@ impl<'a> GameLoop<'a> {
                                             // Update remaining hint based on what color this source produced
                                             if let Some(card) = self.game.cards.try_get(source_id) {
                                                 use crate::core::{ManaColor, ManaProductionKind};
-                                                match &card.cache.mana_production.kind {
+                                                match &card.definition.cache.mana_production.kind {
                                                     ManaProductionKind::Fixed(color) => match color {
                                                         ManaColor::White => {
                                                             remaining_hint.white =
@@ -1161,9 +1161,11 @@ impl<'a> GameLoop<'a> {
                                                 let chosen_card_opt =
                                                     handle_choice_result_break!(choice, self.game, current_priority);
 
-                                                // Log the choice for replay
+                                                // Log the choice for replay - convert CardId to index
+                                                let chosen_index = chosen_card_opt
+                                                    .and_then(|card_id| valid_cards.iter().position(|&c| c == card_id));
                                                 let replay_choice =
-                                                    crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
+                                                    crate::game::ReplayChoice::LibrarySearch(chosen_index);
                                                 self.log_choice_point(
                                                     current_priority,
                                                     Some(replay_choice),
@@ -1491,8 +1493,10 @@ impl<'a> GameLoop<'a> {
                                             handle_choice_result_break!(choice, self.game, current_priority);
                                         log::debug!("[TYPECYCLING] chosen_card_opt = {:?}", chosen_card_opt);
 
-                                        // Log the choice for replay
-                                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
+                                        // Log the choice for replay - convert CardId to index
+                                        let chosen_index = chosen_card_opt
+                                            .and_then(|card_id| valid_cards.iter().position(|&c| c == card_id));
+                                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
                                         // If a card was chosen, move it to hand

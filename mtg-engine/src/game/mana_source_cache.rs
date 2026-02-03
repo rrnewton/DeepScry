@@ -175,7 +175,7 @@ impl ManaSourceCache {
         }
 
         // Quick filter: only track mana sources (O(1) cache check)
-        if !card.cache.is_mana_source {
+        if !card.definition.cache.is_mana_source {
             return;
         }
 
@@ -194,7 +194,7 @@ impl ManaSourceCache {
         }
 
         // Classify card based on mana production type
-        let production = &card.cache.mana_production;
+        let production = &card.definition.cache.mana_production;
 
         match &production.kind {
             ManaProductionKind::Fixed(color) => {
@@ -258,7 +258,7 @@ impl ManaSourceCache {
         }
 
         // Quick filter: only mana sources
-        if !card.cache.is_mana_source {
+        if !card.definition.cache.is_mana_source {
             return;
         }
 
@@ -317,7 +317,7 @@ impl ManaSourceCache {
         }
 
         // Quick filter: only mana sources
-        if !card.cache.is_mana_source {
+        if !card.definition.cache.is_mana_source {
             return;
         }
 
@@ -349,7 +349,7 @@ impl ManaSourceCache {
         }
 
         // Quick filter: only mana sources
-        if !card.cache.is_mana_source {
+        if !card.definition.cache.is_mana_source {
             return;
         }
 

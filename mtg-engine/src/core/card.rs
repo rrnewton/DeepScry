@@ -4,6 +4,7 @@ use crate::core::{
     CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, ManaCost, ManaProduction, PlayerId,
     Subtype, Trigger,
 };
+use crate::loader::CardDefinition;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -131,6 +132,12 @@ pub struct CardCache {
     /// Colors to exclude from the choice (e.g., "green" for Thriving Grove)
     /// Derived from SVar:ChooseColor with Exclude$ parameter
     pub etb_exclude_colors: SmallVec<[Color; 1]>,
+}
+
+impl Default for CardCache {
+    fn default() -> Self {
+        CardCache::new("", "")
+    }
 }
 
 impl CardCache {
@@ -592,10 +599,6 @@ pub struct Card {
     /// Used to avoid logging redundant RevealCard actions.
     pub revealed_to_mask: u8,
 
-    /// Cache for expensive string operations (computed at load time)
-    /// Avoids repeated to_lowercase() and contains() allocations during gameplay
-    pub cache: CardCache,
-
     /// Is this a legendary permanent?
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
@@ -603,6 +606,11 @@ pub struct Card {
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
+
+    /// Original card definition this was instantiated from
+    /// Stored as owned copy for name-based card evaluation (library search, etc.)
+    /// Inline storage avoids pointer indirection when accessing definition fields
+    pub definition: CardDefinition,
 }
 
 impl Card {
@@ -617,9 +625,14 @@ impl Card {
         cache.mana_production = CardCache::derive_mana_production_from_name(name.as_str());
         cache.is_mana_source = cache.mana_production.produces_mana();
 
+        // Create definition with populated cache
+        let definition = CardDefinition {
+            cache,
+            ..Default::default()
+        };
+
         Card {
             id,
-            cache,
             name,
             mana_cost: ManaCost::new(),
             types: SmallVec::new(),
@@ -649,6 +662,7 @@ impl Card {
             revealed_to_mask: 0,
             is_legendary: false,
             exhausted_abilities: SmallVec::new(),
+            definition,
         }
     }
 
@@ -665,7 +679,7 @@ impl Card {
     /// Only manual Card creation (e.g., in tests) needs to call this explicitly.
     #[inline]
     pub fn refresh_type_cache(&mut self) {
-        self.cache.update_from_types(&self.types);
+        self.definition.cache.update_from_types(&self.types);
     }
 
     /// Add a type to this card and update the cache
@@ -678,16 +692,18 @@ impl Card {
         // Update cache inline for commonly checked types
         match card_type {
             CardType::Land => {
-                self.cache.is_land = true;
+                self.definition.cache.is_land = true;
                 // Also update land subtype cache based on card name
                 // This handles test cards that use add_type() without explicit subtypes
-                self.cache.update_from_subtypes(&self.subtypes, self.name.as_str());
+                self.definition
+                    .cache
+                    .update_from_subtypes(&self.subtypes, self.name.as_str());
             }
-            CardType::Creature => self.cache.is_creature = true,
-            CardType::Artifact => self.cache.is_artifact = true,
-            CardType::Instant => self.cache.is_instant = true,
-            CardType::Sorcery => self.cache.is_sorcery = true,
-            CardType::Enchantment => self.cache.is_enchantment = true,
+            CardType::Creature => self.definition.cache.is_creature = true,
+            CardType::Artifact => self.definition.cache.is_artifact = true,
+            CardType::Instant => self.definition.cache.is_instant = true,
+            CardType::Sorcery => self.definition.cache.is_sorcery = true,
+            CardType::Enchantment => self.definition.cache.is_enchantment = true,
             CardType::Planeswalker => {} // No cache flag for Planeswalker yet
         }
     }
@@ -698,7 +714,7 @@ impl Card {
     #[inline]
     pub fn set_types(&mut self, new_types: SmallVec<[CardType; 2]>) {
         self.types = new_types;
-        self.cache.update_from_types(&self.types);
+        self.definition.cache.update_from_types(&self.types);
     }
 
     /// Set the subtypes of this card and update the cache
@@ -708,43 +724,45 @@ impl Card {
     #[inline]
     pub fn set_subtypes(&mut self, new_subtypes: SmallVec<[Subtype; 3]>) {
         self.subtypes = new_subtypes;
-        self.cache.update_from_subtypes(&self.subtypes, self.name.as_str());
+        self.definition
+            .cache
+            .update_from_subtypes(&self.subtypes, self.name.as_str());
     }
 
     /// Check if this card is a creature (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_creature(&self) -> bool {
-        self.cache.is_creature
+        self.definition.cache.is_creature
     }
 
     /// Check if this card is a land (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_land(&self) -> bool {
-        self.cache.is_land
+        self.definition.cache.is_land
     }
 
     /// Check if this card is an instant (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_instant(&self) -> bool {
-        self.cache.is_instant
+        self.definition.cache.is_instant
     }
 
     /// Check if this card is a sorcery (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_sorcery(&self) -> bool {
-        self.cache.is_sorcery
+        self.definition.cache.is_sorcery
     }
 
     /// Check if this card is an artifact (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_artifact(&self) -> bool {
-        self.cache.is_artifact
+        self.definition.cache.is_artifact
     }
 
     /// Check if this card is an enchantment (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_enchantment(&self) -> bool {
-        self.cache.is_enchantment
+        self.definition.cache.is_enchantment
     }
 
     pub fn is_planeswalker(&self) -> bool {
@@ -754,13 +772,13 @@ impl Card {
     /// Check if this card is an Aura (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_aura(&self) -> bool {
-        self.cache.is_aura
+        self.definition.cache.is_aura
     }
 
     /// Check if this card is Equipment (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_equipment(&self) -> bool {
-        self.cache.is_equipment
+        self.definition.cache.is_equipment
     }
 
     /// Check if this Equipment/Aura is currently attached to something

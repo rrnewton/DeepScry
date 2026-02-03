@@ -16,6 +16,7 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::{GameState, Step};
+use crate::loader::CardDefinition;
 use crate::zones::Zone;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -1378,9 +1379,14 @@ pub trait PlayerController {
     /// Called when a SearchLibrary effect executes (e.g., Vibrant Cityscape,
     /// fetchlands, Demonic Tutor, Evolving Wilds).
     ///
-    /// The controller receives a list of cards in the library that match the
-    /// search filter (e.g., "Land.Basic" for basic lands). The controller chooses
-    /// one card to move to the destination zone, or returns None to decline to find.
+    /// The controller receives a list of card NAMES from the library that match the
+    /// search filter. The list may contain duplicates if multiple cards share the same
+    /// name (e.g., `["Mountain", "Mountain", "Swamp"]`). The controller chooses an
+    /// INDEX into this list, or returns None to decline to find ("fail to find").
+    ///
+    /// This name-based interface supports both LOCAL and NETWORK modes:
+    /// - LOCAL: Game engine builds names from CardIds, maps returned index back to CardId
+    /// - NETWORK: Server sends names directly, client returns index, server maps to CardId
     ///
     /// MTG Rules 701.19a: To search a zone, a player looks at all cards in that zone
     /// and may find a card that matches the given description.
@@ -1388,12 +1394,20 @@ pub trait PlayerController {
     /// MTG Rules 701.19b: If a player is searching a hidden zone for cards with
     /// a stated quality, they don't have to find a card (they can "fail to find").
     ///
-    /// Returns ChoiceResult with the chosen card (or None to fail to find),
+    /// Returns ChoiceResult with the chosen index (or None to fail to find),
     /// or a special request (UndoRequest, ExitGame, Error).
+    ///
+    /// The `valid_cards` parameter provides full CardDefinition data for each
+    /// searchable card, enabling proper evaluation of card properties (types,
+    /// mana cost, power/toughness, keywords, etc.) for AI decision-making.
     ///
     /// ## Java Forge Equivalent
     /// Matches `PlayerController.chooseCardsForEffect(..., "Search library")`
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>>;
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&CardDefinition],
+    ) -> ChoiceResult<Option<usize>>;
 
     /// Choose permanents to sacrifice
     ///

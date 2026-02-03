@@ -1088,7 +1088,11 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Interactive: Show library and let user choose
         if valid_cards.is_empty() {
             println!("\nLibrary search: No valid cards found.");
@@ -1097,30 +1101,8 @@ impl PlayerController for InteractiveController {
 
         println!("\n=== Library Search ===");
         println!("Choose a card from your library (or enter 'n' to fail to find):");
-        for (i, &card_id) in valid_cards.iter().enumerate() {
-            if let Some(card_name) = view.get_card_name(card_id) {
-                let card = view.get_card(card_id);
-                if let Some(c) = card {
-                    // Show card details
-                    let mana_str = c.mana_cost.to_string();
-                    let type_str = c.types.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(" ");
-
-                    if c.is_creature() {
-                        let power_str = c.base_power().map(|p| p.to_string()).unwrap_or_else(|| "*".to_string());
-                        let toughness_str = c
-                            .base_toughness()
-                            .map(|t| t.to_string())
-                            .unwrap_or_else(|| "*".to_string());
-                        println!("  [{}] {} {} - {}/{}", i, mana_str, card_name, power_str, toughness_str);
-                        println!("       Type: {}", type_str);
-                    } else {
-                        println!("  [{}] {} {}", i, mana_str, card_name);
-                        println!("       Type: {}", type_str);
-                    }
-                } else {
-                    println!("  [{}] {}", i, card_name);
-                }
-            }
+        for (i, &card_def) in valid_cards.iter().enumerate() {
+            println!("  [{}] {}", i, card_def.name);
         }
 
         println!("\nEnter choice (0-{}, or 'n' to fail to find):", valid_cards.len() - 1);
@@ -1128,7 +1110,7 @@ impl PlayerController for InteractiveController {
         let mut input = String::new();
         if io::stdin().read_line(&mut input).is_err() {
             // On input error, auto-select first card
-            return ChoiceResult::Ok(Some(valid_cards[0]));
+            return ChoiceResult::Ok(Some(0));
         }
 
         let trimmed = input.trim();
@@ -1142,17 +1124,14 @@ impl PlayerController for InteractiveController {
         // Parse numeric choice
         if let Ok(idx) = trimmed.parse::<usize>() {
             if idx < valid_cards.len() {
-                let chosen = valid_cards[idx];
-                if let Some(card_name) = view.get_card_name(chosen) {
-                    println!("Selected: {}", card_name);
-                }
-                return ChoiceResult::Ok(Some(chosen));
+                println!("Selected: {}", valid_cards[idx].name);
+                return ChoiceResult::Ok(Some(idx));
             }
         }
 
         // Invalid input - auto-select first card
         println!("Invalid choice, auto-selecting first card.");
-        ChoiceResult::Ok(Some(valid_cards[0]))
+        ChoiceResult::Ok(Some(0))
     }
 
     fn choose_permanents_to_sacrifice(

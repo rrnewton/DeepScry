@@ -145,8 +145,8 @@ mod tests {
         let aura_id = game.next_card_id();
         let mut aura = Card::new(aura_id, "Pacifism".to_string(), p1_id);
         aura.add_type(CardType::Enchantment);
-        aura.cache.is_enchantment = true;
-        aura.cache.is_aura = true;
+        aura.definition.cache.is_enchantment = true;
+        aura.definition.cache.is_aura = true;
         aura.attached_to = Some(creature_id);
         game.cards.insert(aura_id, aura);
         game.battlefield.add(aura_id);
@@ -194,7 +194,7 @@ mod tests {
         let equip_id = game.next_card_id();
         let mut equipment = Card::new(equip_id, "Bonesplitter".to_string(), p1_id);
         equipment.add_type(CardType::Artifact);
-        equipment.cache.is_equipment = true;
+        equipment.definition.cache.is_equipment = true;
         equipment.attached_to = Some(creature_id);
         game.cards.insert(equip_id, equipment);
         game.battlefield.add(equip_id);
@@ -241,7 +241,7 @@ mod tests {
         let equip_id = game.next_card_id();
         let mut equipment = Card::new(equip_id, "Animated Sword".to_string(), p1_id);
         equipment.add_type(CardType::Artifact);
-        equipment.cache.is_equipment = true;
+        equipment.definition.cache.is_equipment = true;
         equipment.attached_to = Some(creature_id);
         game.cards.insert(equip_id, equipment);
         game.battlefield.add(equip_id);

@@ -301,8 +301,25 @@ impl PlayerController for WasmRemoteController {
         }
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        self.select_from_slice(valid_cards)
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
+        // Server sends the index (or None for decline)
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                if indices.is_empty() || (indices.len() == 1 && indices[0] >= valid_cards.len()) {
+                    ChoiceResult::Ok(None)
+                } else {
+                    ChoiceResult::Ok(Some(indices[0]))
+                }
+            }
+            ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+        }
     }
 
     fn choose_permanents_to_sacrifice(

@@ -312,7 +312,7 @@ impl GameState {
                 creature_id != source_id
                     && creature.controller == source.controller
                     && match card_type {
-                        CardType::Artifact => creature.cache.is_artifact,
+                        CardType::Artifact => creature.definition.cache.is_artifact,
                         CardType::Creature
                         | CardType::Instant
                         | CardType::Sorcery
@@ -324,7 +324,7 @@ impl GameState {
             AffectedSelector::CreatureCardTypeYouControl { card_type } => {
                 creature.controller == source.controller
                     && match card_type {
-                        CardType::Artifact => creature.cache.is_artifact,
+                        CardType::Artifact => creature.definition.cache.is_artifact,
                         CardType::Creature
                         | CardType::Instant
                         | CardType::Sorcery
@@ -358,10 +358,12 @@ impl GameState {
             AffectedSelector::TopCardOfLibrary => false,               // Library, not battlefield
             AffectedSelector::CreatureAttachedBy => source.attached_to == Some(creature_id),
             AffectedSelector::ArtifactsYouControl => {
-                creature.controller == source.controller && creature.cache.is_artifact
+                creature.controller == source.controller && creature.definition.cache.is_artifact
             }
             AffectedSelector::ArtifactsYouControlOther => {
-                creature_id != source_id && creature.controller == source.controller && creature.cache.is_artifact
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.definition.cache.is_artifact
             }
             AffectedSelector::AllLands => creature.is_land(),
             AffectedSelector::PermanentsYouControl => creature.controller == source.controller,
@@ -493,8 +495,8 @@ impl GameState {
             }
             AffectedSelector::TopOfLibraryYouOwn => false, // Library cards
             AffectedSelector::PermanentAttachedBy => source.attached_to == Some(creature_id),
-            AffectedSelector::ArtifactsNonCreature => creature.cache.is_artifact && !creature.is_creature(),
-            AffectedSelector::AllArtifacts => creature.cache.is_artifact,
+            AffectedSelector::ArtifactsNonCreature => creature.definition.cache.is_artifact && !creature.is_creature(),
+            AffectedSelector::AllArtifacts => creature.definition.cache.is_artifact,
             AffectedSelector::BasicLandsYouControl => {
                 creature.is_land()
                     && creature.controller == source.controller
@@ -554,13 +556,15 @@ impl GameState {
             }
             // Non-creature artifacts you control
             AffectedSelector::ArtifactsNonCreatureYouControl => {
-                creature.controller == source.controller && creature.cache.is_artifact && !creature.is_creature()
+                creature.controller == source.controller
+                    && creature.definition.cache.is_artifact
+                    && !creature.is_creature()
             }
             // Other artifact creatures you control
             AffectedSelector::ArtifactCreaturesYouControlOther => {
                 creature_id != source_id
                     && creature.controller == source.controller
-                    && creature.cache.is_artifact
+                    && creature.definition.cache.is_artifact
                     && creature.is_creature()
             }
             // Treasure tokens you control
@@ -772,8 +776,8 @@ impl GameState {
                                 // Check if creature has the specified card type
                                 // Use the cached type flags for efficiency where available
                                 let has_type = match card_type {
-                                    CardType::Artifact => creature.cache.is_artifact,
-                                    CardType::Land => creature.cache.is_land,
+                                    CardType::Artifact => creature.definition.cache.is_artifact,
+                                    CardType::Land => creature.definition.cache.is_land,
                                     CardType::Creature => creature.is_creature(),
                                     // Enchantment and other types use direct check
                                     CardType::Instant
@@ -802,8 +806,8 @@ impl GameState {
 
                                 // Check if creature has the specified card type
                                 let has_type = match card_type {
-                                    CardType::Artifact => creature.cache.is_artifact,
-                                    CardType::Land => creature.cache.is_land,
+                                    CardType::Artifact => creature.definition.cache.is_artifact,
+                                    CardType::Land => creature.definition.cache.is_land,
                                     CardType::Creature => creature.is_creature(),
                                     CardType::Instant
                                     | CardType::Sorcery
@@ -831,7 +835,7 @@ impl GameState {
 
                                 // Check if creature is both a Creature and a Land
                                 // (animated lands like Dryad Arbor or man-lands)
-                                if creature.is_creature() && creature.cache.is_land {
+                                if creature.is_creature() && creature.definition.cache.is_land {
                                     power_bonus += power;
                                     toughness_bonus += toughness;
                                 }

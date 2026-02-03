@@ -282,7 +282,8 @@ impl ManaProducerIndex {
 
         // Check if it's a land or has mana ability
         let is_land = card.types.contains(&CardType::Land);
-        let has_mana_ability = card.types.contains(&CardType::Creature) && card.cache.mana_production.produces_mana();
+        let has_mana_ability =
+            card.types.contains(&CardType::Creature) && card.definition.cache.mana_production.produces_mana();
 
         if !is_land && !has_mana_ability {
             return buckets;
@@ -320,8 +321,8 @@ impl ManaProducerIndex {
         }
 
         // Check cached mana production (covers creatures and complex lands)
-        if card.cache.mana_production.produces_mana() {
-            match &card.cache.mana_production.kind {
+        if card.definition.cache.mana_production.produces_mana() {
+            match &card.definition.cache.mana_production.kind {
                 ManaProductionKind::Fixed(color) => {
                     buckets.push(ManaColorBucket::from_color(*color));
                 }

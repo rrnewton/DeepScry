@@ -123,9 +123,13 @@ impl PlayerController for ZeroController {
         ChoiceResult::Ok(hand.iter().take(count.min(hand.len())).copied().collect())
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Always choose first valid card (or None if empty)
-        ChoiceResult::Ok(valid_cards.first().copied())
+        ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
     }
 
     fn choose_permanents_to_sacrifice(

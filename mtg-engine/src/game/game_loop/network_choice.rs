@@ -368,6 +368,10 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Choose a card from library (network-aware)
+    ///
+    /// This is the bridge between game loop (which has CardIds) and controllers
+    /// (which work with CardDefinitions). The controller receives CardDefinitions
+    /// and returns an index, which we map back to a CardId.
     pub(super) fn choose_from_library_with_hook(
         &mut self,
         controller: &mut dyn PlayerController,
@@ -377,8 +381,24 @@ impl<'a> GameLoop<'a> {
         let player = controller.player_id();
 
         if !self.is_network_mode() {
+            // Build CardDefinition references for the controller
+            let valid_card_definitions: Vec<&crate::loader::CardDefinition> = valid_cards
+                .iter()
+                .filter_map(|&card_id| self.game.cards.get(card_id).ok().map(|c| &c.definition))
+                .collect();
+            // Call controller with CardDefinitions, get back index, map to CardId
             let view = GameStateView::new(self.game, viewer_player);
-            return controller.choose_from_library(&view, valid_cards);
+            let result = controller.choose_from_library(&view, &valid_card_definitions);
+            return match result {
+                ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
+                    ChoiceResult::Ok(Some(valid_cards[index]))
+                }
+                ChoiceResult::Ok(_) => ChoiceResult::Ok(None),
+                ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+                ChoiceResult::UndoRequest(n) => ChoiceResult::UndoRequest(n),
+                ChoiceResult::Error(e) => ChoiceResult::Error(e),
+                ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            };
         }
 
         let is_remote = controller.get_controller_type() == ControllerType::Remote;
@@ -387,8 +407,24 @@ impl<'a> GameLoop<'a> {
         let result = match hook_result {
             Some(PreChoiceResult::AskController) => {
                 debug_assert!(!is_remote, "AskController returned for remote controller");
+                // Build CardDefinition references after the hook call to avoid borrow conflict
+                let valid_card_definitions: Vec<&crate::loader::CardDefinition> = valid_cards
+                    .iter()
+                    .filter_map(|&card_id| self.game.cards.get(card_id).ok().map(|c| &c.definition))
+                    .collect();
+                // Call controller with CardDefinitions, get back index, map to CardId
                 let view = GameStateView::new(self.game, viewer_player);
-                controller.choose_from_library(&view, valid_cards)
+                let choice = controller.choose_from_library(&view, &valid_card_definitions);
+                match choice {
+                    ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
+                        ChoiceResult::Ok(Some(valid_cards[index]))
+                    }
+                    ChoiceResult::Ok(_) => ChoiceResult::Ok(None),
+                    ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+                    ChoiceResult::UndoRequest(n) => ChoiceResult::UndoRequest(n),
+                    ChoiceResult::Error(e) => ChoiceResult::Error(e),
+                    ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+                }
             }
             Some(PreChoiceResult::UseChoice(raw)) => {
                 debug_assert!(is_remote, "UseChoice returned for non-remote controller");

@@ -3,8 +3,8 @@
 //! Loads card definitions from Forge's cardsfolder format
 
 use crate::core::{
-    Card, CardId, CardName, CardType, Color, Effect, Keyword, KeywordArgs, KeywordSet, ManaCost, PlayerId, Subtype,
-    TargetRef, Trigger, TriggerEvent,
+    Card, CardCache, CardId, CardName, CardType, Color, Effect, Keyword, KeywordArgs, KeywordSet, ManaCost, PlayerId,
+    Subtype, TargetRef, Trigger, TriggerEvent,
 };
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
@@ -254,6 +254,9 @@ impl CardLoader {
             }
         }
 
+        // Build cache BEFORE constructing struct (avoids borrow-after-move)
+        let cache = CardCache::new(&oracle, name.as_str());
+
         Ok(CardDefinition {
             name,
             mana_cost,
@@ -272,6 +275,7 @@ impl CardLoader {
             etb_exclude_colors,
             script_name: None, // Set by token loader
             is_legendary,
+            cache,
         })
     }
 }
@@ -319,6 +323,34 @@ pub struct CardDefinition {
     /// Derived from "Legendary" in Types line (e.g., "Types:Legendary Creature Human Noble")
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
+    /// Precomputed cache for static card properties (computed at load time)
+    /// Avoids repeated string operations during gameplay
+    pub cache: CardCache,
+}
+
+impl Default for CardDefinition {
+    fn default() -> Self {
+        Self {
+            name: CardName::from(""),
+            mana_cost: ManaCost::new(),
+            types: Vec::new(),
+            subtypes: Vec::new(),
+            colors: Vec::new(),
+            power: None,
+            toughness: None,
+            oracle: String::new(),
+            raw_abilities: Vec::new(),
+            raw_keywords: Vec::new(),
+            svars: std::collections::HashMap::new(),
+            parsed_svars: std::collections::HashMap::new(),
+            enters_tapped: false,
+            etb_choose_color: false,
+            etb_exclude_colors: Vec::new(),
+            script_name: None,
+            is_legendary: false,
+            cache: CardCache::default(),
+        }
+    }
 }
 
 impl CardDefinition {
@@ -382,14 +414,20 @@ impl CardDefinition {
         card.text = self.oracle.clone();
         card.is_legendary = self.is_legendary;
 
+        // Store the original CardDefinition BEFORE updating cache
+        // (cache updates must apply to card.definition, not self which will be discarded)
+        card.definition = self.clone();
+
         // Initialize cache with type flags (for O(1) is_land/is_creature/is_artifact checks)
         // and empty mana production (will be populated after abilities are parsed)
-        card.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
-        card.cache.update_from_types(&card.types);
-        card.cache.update_from_subtypes(&card.subtypes, card.name.as_str());
-        card.cache.enters_tapped = self.enters_tapped;
-        card.cache.etb_choose_color = self.etb_choose_color;
-        card.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
+        card.definition.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
+        card.definition.cache.update_from_types(&card.types);
+        card.definition
+            .cache
+            .update_from_subtypes(&card.subtypes, card.name.as_str());
+        card.definition.cache.enters_tapped = self.enters_tapped;
+        card.definition.cache.etb_choose_color = self.etb_choose_color;
+        card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
 
         // Parse keywords
         card.keywords = self.parse_keywords();
@@ -573,7 +611,8 @@ impl CardDefinition {
         // This derives mana production from Effect::AddMana in the abilities,
         // following Java Forge's approach of using structured Produced$ data.
         // Falls back to land name detection for test cards without explicit abilities.
-        card.cache
+        card.definition
+            .cache
             .update_from_abilities_with_name(&card.activated_abilities, card.name.as_str());
 
         card

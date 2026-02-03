@@ -415,7 +415,7 @@ impl<'a> GameLoop<'a> {
                     // When the ability includes a tap cost and the source card is a mana source,
                     // we can't use that card's mana ability to pay the cost (it's already being tapped).
                     if let Some(mana_cost) = ability.cost.get_mana_cost() {
-                        let can_pay = if ability.cost.includes_tap() && card.cache.is_mana_source {
+                        let can_pay = if ability.cost.includes_tap() && card.definition.cache.is_mana_source {
                             // Filter out this card from mana sources and check affordability
                             use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
                             let all_sources = self.mana_engine.all_sources();

@@ -312,12 +312,14 @@ impl PlayerController for RemoteController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, _valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Use get_opponent_choice_full to get the authoritative library_search_result.
-        // The local valid_cards list is unavailable in network mode because unrevealed library
-        // cards are not instantiated in the shadow game (card slots are `None`).
-        // We trust the server's library_search_result which contains the exact CardId chosen.
-        let (_indices, _spell_ability, library_search_result) =
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        _valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
+        // Get the opponent's choice indices from the network
+        // Protocol: index 0 = decline, index 1+ = name indices (1-based)
+        let (indices, _spell_ability, _library_search_result) =
             match self.get_opponent_choice_full(view.action_count() as u64) {
                 ChoiceResult::Ok(choice) => choice,
                 ChoiceResult::UndoRequest(_)
@@ -326,11 +328,20 @@ impl PlayerController for RemoteController {
                 | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
             };
 
+        // Convert from protocol format (1-based with 0=decline) to trait format (0-based Option)
+        let name_idx_raw = indices.first().copied().unwrap_or(0);
+        let result = if name_idx_raw == 0 {
+            None // Declined
+        } else {
+            Some(name_idx_raw - 1) // Convert to 0-based index
+        };
+
         log::debug!(
-            "RemoteController::choose_from_library: using library_search_result={:?}",
-            library_search_result
+            "RemoteController::choose_from_library: indices={:?}, result={:?}",
+            indices,
+            result
         );
-        ChoiceResult::Ok(library_search_result)
+        ChoiceResult::Ok(result)
     }
 
     fn choose_permanents_to_sacrifice(

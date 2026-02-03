@@ -301,7 +301,11 @@ impl PlayerController for FixedScriptController {
         ChoiceResult::Ok(hand.iter().take(num_discarding).copied().collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Script controller just picks the first valid card (or None if empty)
         if valid_cards.is_empty() {
             view.logger()
@@ -309,12 +313,13 @@ impl PlayerController for FixedScriptController {
             return ChoiceResult::Ok(None);
         }
 
-        let chosen_card = valid_cards[0];
-        let card_name = view.get_card_name(chosen_card).unwrap_or_else(|| "Unknown".to_string());
-        view.logger()
-            .controller_choice("SCRIPT", &format!("Library search: chose first card ({})", card_name));
+        let card_def = valid_cards[0];
+        view.logger().controller_choice(
+            "SCRIPT",
+            &format!("Library search: chose first card ({})", card_def.name),
+        );
 
-        ChoiceResult::Ok(Some(chosen_card))
+        ChoiceResult::Ok(Some(0))
     }
 
     fn choose_permanents_to_sacrifice(

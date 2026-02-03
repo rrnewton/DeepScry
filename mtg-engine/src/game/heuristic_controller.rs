@@ -121,6 +121,65 @@ impl HeuristicController {
         self.evaluate_creature_impl(view, card_id, true, true)
     }
 
+    /// Evaluate a CardDefinition for library search selection
+    ///
+    /// Uses the card's definition properties (types, mana cost, power/toughness)
+    /// to compute a heuristic score. Higher scores = better cards to search for.
+    ///
+    /// Strategy:
+    /// - Creatures: Base score + power/toughness contribution + CMC efficiency bonus
+    /// - Lands: Basic lands = 100, non-basic lands get bonus for color production
+    /// - Other spells: Score based on CMC (higher = more impactful)
+    fn evaluate_card_definition_for_library(
+        &self,
+        _view: &GameStateView,
+        card_def: &crate::loader::CardDefinition,
+    ) -> i32 {
+        let cmc = i32::from(card_def.mana_cost.cmc());
+
+        // Check card type via cache flags
+        if card_def.cache.is_creature {
+            // Creatures: value based on power + toughness and CMC efficiency
+            // Base score: 80
+            // P/T contribution: (power + toughness) * 10 (e.g., 4/4 = +80)
+            // CMC efficiency: higher CMC creatures are generally more impactful
+            let power = card_def.power.unwrap_or(0) as i32;
+            let toughness = card_def.toughness.unwrap_or(0) as i32;
+            let stats_score = (power + toughness) * 10;
+            let cmc_bonus = cmc * 5;
+            80 + stats_score + cmc_bonus
+        } else if card_def.cache.is_land {
+            // Lands: basic lands get 100, non-basic lands get bonus
+            let name = card_def.name.as_str();
+            let is_basic = matches!(
+                name,
+                "Plains"
+                    | "Island"
+                    | "Swamp"
+                    | "Mountain"
+                    | "Forest"
+                    | "Snow-Covered Plains"
+                    | "Snow-Covered Island"
+                    | "Snow-Covered Swamp"
+                    | "Snow-Covered Mountain"
+                    | "Snow-Covered Forest"
+                    | "Wastes"
+            );
+            if is_basic {
+                100
+            } else {
+                // Non-basic lands: bonus for color flexibility
+                // +5 per color the land can produce
+                100 + 5 * (card_def.colors.len() as i32).max(1)
+            }
+        } else {
+            // Instants, sorceries, enchantments, artifacts, planeswalkers
+            // Higher CMC spells are generally more impactful (board wipes, finishers)
+            // Base score: 50, +30 per CMC
+            50 + 30 * cmc
+        }
+    }
+
     /// Internal implementation of creature evaluation with optional P/T and CMC consideration
     ///
     /// Parameters:
@@ -2633,9 +2692,9 @@ impl HeuristicController {
         // Check for enchantments with static abilities
         // Reference: AttachAi.java:47-91 (checkApiLogic) for Auras
         // Reference: PumpAllAi.java:29-240 (checkApiLogic) for global enchantments
-        if spell.cache.is_enchantment {
+        if spell.definition.cache.is_enchantment {
             // Handle Auras (require targeting)
-            if spell.cache.is_aura {
+            if spell.definition.cache.is_aura {
                 if self.should_cast_aura(spell, view) {
                     return true;
                 }
@@ -4512,50 +4571,36 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(hand_cards.iter().take(count).map(|c| c.id).collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
-        // Heuristic: Choose the best card from library based on game state evaluation
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         if valid_cards.is_empty() {
             view.logger()
                 .controller_choice("HEURISTIC", "Library search: fail to find (no valid cards)");
             return ChoiceResult::Ok(None);
         }
 
-        // Evaluate each valid card and pick the best one
-        let mut best_card = None;
+        // Score each card using CardDefinition properties (types, P/T, CMC)
+        let mut best_index = 0;
         let mut best_score = i32::MIN;
 
-        for &card_id in valid_cards {
-            if let Some(card) = view.get_card(card_id) {
-                let score = if card.is_land() {
-                    // For lands, prefer dual lands > basic lands
-                    use crate::game::game_state_evaluator::GameStateEvaluator;
-                    GameStateEvaluator::evaluate_land(card)
-                } else if card.is_creature() {
-                    // For creatures, evaluate based on P/T and abilities
-                    self.evaluate_creature(view, card_id)
-                } else {
-                    // For spells, use a simple value heuristic
-                    // Lower CMC is better (can cast sooner)
-                    let cmc = card.mana_cost.cmc();
-                    100 - i32::from(cmc)
-                };
-
-                if score > best_score {
-                    best_score = score;
-                    best_card = Some(card_id);
-                }
+        for (idx, &card_def) in valid_cards.iter().enumerate() {
+            let score = self.evaluate_card_definition_for_library(view, card_def);
+            if score > best_score {
+                best_score = score;
+                best_index = idx;
             }
         }
 
-        if let Some(card_id) = best_card {
-            let card_name = view.get_card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
-            view.logger().controller_choice(
-                "HEURISTIC",
-                &format!("Library search: found {} (score: {})", card_name, best_score),
-            );
-        }
+        let chosen_def = valid_cards[best_index];
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!("Library search: found {} (score: {})", chosen_def.name, best_score),
+        );
 
-        ChoiceResult::Ok(best_card)
+        ChoiceResult::Ok(Some(best_index))
     }
 
     fn choose_permanents_to_sacrifice(
