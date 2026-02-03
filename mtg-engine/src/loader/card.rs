@@ -422,7 +422,9 @@ impl CardDefinition {
         // and empty mana production (will be populated after abilities are parsed)
         card.definition.cache = crate::core::CardCache::new(&card.text, card.name.as_str());
         card.definition.cache.update_from_types(&card.types);
-        card.definition.cache.update_from_subtypes(&card.subtypes, card.name.as_str());
+        card.definition
+            .cache
+            .update_from_subtypes(&card.subtypes, card.name.as_str());
         card.definition.cache.enters_tapped = self.enters_tapped;
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
@@ -609,7 +611,8 @@ impl CardDefinition {
         // This derives mana production from Effect::AddMana in the abilities,
         // following Java Forge's approach of using structured Produced$ data.
         // Falls back to land name detection for test cards without explicit abilities.
-        card.definition.cache
+        card.definition
+            .cache
             .update_from_abilities_with_name(&card.activated_abilities, card.name.as_str());
 
         card

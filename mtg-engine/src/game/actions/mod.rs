@@ -4025,7 +4025,12 @@ impl GameState {
             let is_any_color = self
                 .cards
                 .get(card_id)
-                .map(|c| matches!(c.definition.cache.mana_production.kind, crate::core::ManaProductionKind::AnyColor))
+                .map(|c| {
+                    matches!(
+                        c.definition.cache.mana_production.kind,
+                        crate::core::ManaProductionKind::AnyColor
+                    )
+                })
                 .unwrap_or(false);
 
             // Capture log size before mana addition (before get_player_mut to avoid borrow issues)

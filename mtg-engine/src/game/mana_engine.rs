@@ -1296,7 +1296,10 @@ mod tests {
             "Add {C}".to_string(),
             true, // is_mana_ability
         ));
-        factory.definition.cache.update_from_abilities(&factory.activated_abilities);
+        factory
+            .definition
+            .cache
+            .update_from_abilities(&factory.activated_abilities);
 
         // Verify the cache detects colorless mana production
         assert!(
@@ -1491,9 +1494,9 @@ mod tests {
             forest.types.push(CardType::Land);
             forest.controller = p1_id;
             forest.definition.cache.is_mana_source = true;
-            forest.definition.cache.mana_production = crate::core::ManaProduction::free(crate::core::ManaProductionKind::Fixed(
-                crate::core::ManaColor::Green,
-            ));
+            forest.definition.cache.mana_production = crate::core::ManaProduction::free(
+                crate::core::ManaProductionKind::Fixed(crate::core::ManaColor::Green),
+            );
             game.cards.insert(forest_id, forest);
             game.battlefield.add(forest_id);
         }

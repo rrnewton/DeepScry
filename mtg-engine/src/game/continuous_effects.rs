@@ -361,7 +361,9 @@ impl GameState {
                 creature.controller == source.controller && creature.definition.cache.is_artifact
             }
             AffectedSelector::ArtifactsYouControlOther => {
-                creature_id != source_id && creature.controller == source.controller && creature.definition.cache.is_artifact
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.definition.cache.is_artifact
             }
             AffectedSelector::AllLands => creature.is_land(),
             AffectedSelector::PermanentsYouControl => creature.controller == source.controller,
@@ -554,7 +556,9 @@ impl GameState {
             }
             // Non-creature artifacts you control
             AffectedSelector::ArtifactsNonCreatureYouControl => {
-                creature.controller == source.controller && creature.definition.cache.is_artifact && !creature.is_creature()
+                creature.controller == source.controller
+                    && creature.definition.cache.is_artifact
+                    && !creature.is_creature()
             }
             // Other artifact creatures you control
             AffectedSelector::ArtifactCreaturesYouControlOther => {

@@ -282,7 +282,8 @@ impl ManaProducerIndex {
 
         // Check if it's a land or has mana ability
         let is_land = card.types.contains(&CardType::Land);
-        let has_mana_ability = card.types.contains(&CardType::Creature) && card.definition.cache.mana_production.produces_mana();
+        let has_mana_ability =
+            card.types.contains(&CardType::Creature) && card.definition.cache.mana_production.produces_mana();
 
         if !is_land && !has_mana_ability {
             return buckets;

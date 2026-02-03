@@ -370,8 +370,8 @@ impl<'a> GameLoop<'a> {
     /// Choose a card from library (network-aware)
     ///
     /// This is the bridge between game loop (which has CardIds) and controllers
-    /// (which work with unique names). The controller receives names and returns
-    /// an index, which we map back to a CardId.
+    /// (which work with CardDefinitions). The controller receives CardDefinitions
+    /// and returns an index, which we map back to a CardId.
     pub(super) fn choose_from_library_with_hook(
         &mut self,
         controller: &mut dyn PlayerController,
@@ -380,21 +380,15 @@ impl<'a> GameLoop<'a> {
     ) -> ChoiceResult<Option<CardId>> {
         let player = controller.player_id();
 
-        // Build unique names list from valid_cards for the controller
-        // Controllers only see names (network-friendly), not CardIds
-        let valid_card_names: Vec<String> = {
-            let view = GameStateView::new(self.game, viewer_player);
-            valid_cards
-                .iter()
-                .filter_map(|&card_id| view.card_name(card_id))
-                .collect()
-        };
-        let valid_card_names_refs: Vec<&str> = valid_card_names.iter().map(|s| s.as_str()).collect();
-
         if !self.is_network_mode() {
-            // Call controller with names, get back index, map to CardId
+            // Build CardDefinition references for the controller
+            let valid_card_definitions: Vec<&crate::loader::CardDefinition> = valid_cards
+                .iter()
+                .filter_map(|&card_id| self.game.cards.get(card_id).ok().map(|c| &c.definition))
+                .collect();
+            // Call controller with CardDefinitions, get back index, map to CardId
             let view = GameStateView::new(self.game, viewer_player);
-            let result = controller.choose_from_library(&view, &valid_card_names_refs);
+            let result = controller.choose_from_library(&view, &valid_card_definitions);
             return match result {
                 ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
                     ChoiceResult::Ok(Some(valid_cards[index]))
@@ -413,9 +407,14 @@ impl<'a> GameLoop<'a> {
         let result = match hook_result {
             Some(PreChoiceResult::AskController) => {
                 debug_assert!(!is_remote, "AskController returned for remote controller");
-                // Call controller with names, get back index, map to CardId
+                // Build CardDefinition references after the hook call to avoid borrow conflict
+                let valid_card_definitions: Vec<&crate::loader::CardDefinition> = valid_cards
+                    .iter()
+                    .filter_map(|&card_id| self.game.cards.get(card_id).ok().map(|c| &c.definition))
+                    .collect();
+                // Call controller with CardDefinitions, get back index, map to CardId
                 let view = GameStateView::new(self.game, viewer_player);
-                let choice = controller.choose_from_library(&view, &valid_card_names_refs);
+                let choice = controller.choose_from_library(&view, &valid_card_definitions);
                 match choice {
                     ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
                         ChoiceResult::Ok(Some(valid_cards[index]))

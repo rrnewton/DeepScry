@@ -849,7 +849,11 @@ impl PlayerController for NetworkController {
         }
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Name-based library search protocol:
         // 1. Send unique names as options to client
         // 2. Client picks a name index
@@ -857,18 +861,18 @@ impl PlayerController for NetworkController {
 
         // Build options for display: [0] = Decline, [1..] = card names
         let mut options = vec!["Decline to find".to_string()];
-        options.extend(valid_card_names.iter().map(|s| s.to_string()));
+        options.extend(valid_cards.iter().map(|def| def.name.to_string()));
 
         // Compute state hash
         let state_hash = self.compute_view_hash(view);
 
         // Send request with LibrarySearchByName choice type
         // Note: name_counts is now simplified since the trait gives us deduplicated names
-        let unique_names: Vec<String> = valid_card_names.iter().map(|s| s.to_string()).collect();
+        let unique_names: Vec<String> = valid_cards.iter().map(|def| def.name.to_string()).collect();
         let name_counts: Vec<usize> = vec![1; unique_names.len()]; // Each name appears once in the list
 
         let choice_type = ChoiceType::LibrarySearchByName {
-            unique_names: unique_names.clone(),
+            unique_names,
             name_counts,
             filter_description: "matching cards".to_string(),
         };
@@ -886,7 +890,7 @@ impl PlayerController for NetworkController {
                 }
                 let name_idx = name_idx_raw - 1; // Adjust for "Decline" at index 0
 
-                if name_idx < valid_card_names.len() {
+                if name_idx < valid_cards.len() {
                     ChoiceResult::Ok(Some(name_idx))
                 } else {
                     ChoiceResult::Error("Invalid library search index from network".to_string())

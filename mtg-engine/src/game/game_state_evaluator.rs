@@ -731,7 +731,9 @@ mod tests {
         let mut aura = Card::new(aura_id, "Holy Strength", player_id);
         aura.add_type(CardType::Enchantment);
         aura.subtypes.push(Subtype::new("Aura"));
-        aura.definition.cache.update_from_subtypes(&aura.subtypes, "Holy Strength");
+        aura.definition
+            .cache
+            .update_from_subtypes(&aura.subtypes, "Holy Strength");
 
         // Add the static ability that grants +1/+2
         aura.static_abilities.push(StaticAbility::ModifyPT {

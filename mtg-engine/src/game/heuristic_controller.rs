@@ -181,8 +181,11 @@ impl HeuristicController {
             // Basic lands - low but consistent value
             "Plains" | "Island" | "Swamp" | "Mountain" | "Forest" => 100,
             // Snow basics
-            "Snow-Covered Plains" | "Snow-Covered Island" | "Snow-Covered Swamp"
-            | "Snow-Covered Mountain" | "Snow-Covered Forest" => 105,
+            "Snow-Covered Plains"
+            | "Snow-Covered Island"
+            | "Snow-Covered Swamp"
+            | "Snow-Covered Mountain"
+            | "Snow-Covered Forest" => 105,
             // Wastes (colorless basic)
             "Wastes" => 95,
             _ => {
@@ -4584,10 +4587,14 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(hand_cards.iter().take(count).map(|c| c.id).collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Name-based interface: we only receive names, not CardIds.
         // This ensures network/local equivalence since clients don't have library CardIds.
-        if valid_card_names.is_empty() {
+        if valid_cards.is_empty() {
             view.logger()
                 .controller_choice("HEURISTIC", "Library search: fail to find (no valid cards)");
             return ChoiceResult::Ok(None);
@@ -4597,18 +4604,18 @@ impl PlayerController for HeuristicController {
         let mut best_index = 0;
         let mut best_score = i32::MIN;
 
-        for (idx, &name) in valid_card_names.iter().enumerate() {
-            let score = Self::evaluate_card_by_name_for_library(self, view, name);
+        for (idx, &card_def) in valid_cards.iter().enumerate() {
+            let score = Self::evaluate_card_by_name_for_library(self, view, card_def.name.as_str());
             if score > best_score {
                 best_score = score;
                 best_index = idx;
             }
         }
 
-        let chosen_name = valid_card_names[best_index];
+        let chosen_def = valid_cards[best_index];
         view.logger().controller_choice(
             "HEURISTIC",
-            &format!("Library search: found {} (score: {})", chosen_name, best_score),
+            &format!("Library search: found {} (score: {})", chosen_def.name, best_score),
         );
 
         ChoiceResult::Ok(Some(best_index))

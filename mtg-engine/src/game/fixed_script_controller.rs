@@ -301,17 +301,23 @@ impl PlayerController for FixedScriptController {
         ChoiceResult::Ok(hand.iter().take(num_discarding).copied().collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Script controller just picks the first valid card (or None if empty)
-        if valid_card_names.is_empty() {
+        if valid_cards.is_empty() {
             view.logger()
                 .controller_choice("SCRIPT", "Library search: no valid cards found");
             return ChoiceResult::Ok(None);
         }
 
-        let card_name = valid_card_names[0];
-        view.logger()
-            .controller_choice("SCRIPT", &format!("Library search: chose first card ({})", card_name));
+        let card_def = valid_cards[0];
+        view.logger().controller_choice(
+            "SCRIPT",
+            &format!("Library search: chose first card ({})", card_def.name),
+        );
 
         ChoiceResult::Ok(Some(0))
     }

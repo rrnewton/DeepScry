@@ -1014,9 +1014,9 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
         fn choose_from_library(
             &mut self,
             _view: &GameStateView,
-            valid_card_names: &[&str],
+            valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
         ) -> ChoiceResult<Option<usize>> {
-            ChoiceResult::Ok(if valid_card_names.is_empty() { None } else { Some(0) })
+            ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
         }
 
         fn choose_permanents_to_sacrifice(

@@ -626,8 +626,10 @@ impl Card {
         cache.is_mana_source = cache.mana_production.produces_mana();
 
         // Create definition with populated cache
-        let mut definition = CardDefinition::default();
-        definition.cache = cache;
+        let definition = CardDefinition {
+            cache,
+            ..Default::default()
+        };
 
         Card {
             id,
@@ -693,7 +695,9 @@ impl Card {
                 self.definition.cache.is_land = true;
                 // Also update land subtype cache based on card name
                 // This handles test cards that use add_type() without explicit subtypes
-                self.definition.cache.update_from_subtypes(&self.subtypes, self.name.as_str());
+                self.definition
+                    .cache
+                    .update_from_subtypes(&self.subtypes, self.name.as_str());
             }
             CardType::Creature => self.definition.cache.is_creature = true,
             CardType::Artifact => self.definition.cache.is_artifact = true,
@@ -720,7 +724,9 @@ impl Card {
     #[inline]
     pub fn set_subtypes(&mut self, new_subtypes: SmallVec<[Subtype; 3]>) {
         self.subtypes = new_subtypes;
-        self.definition.cache.update_from_subtypes(&self.subtypes, self.name.as_str());
+        self.definition
+            .cache
+            .update_from_subtypes(&self.subtypes, self.name.as_str());
     }
 
     /// Check if this card is a creature (uses cached value for O(1) lookup)
