@@ -539,7 +539,11 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         result
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         let info = match self.get_choice_info() {
             Some(info) => info,
             None => return ChoiceResult::ExitGame,
@@ -549,23 +553,18 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         self.verify_action_count_sync(view, server_action_count);
 
         // Check if server provided library_search_names (late-binding architecture)
-        // In this case, client can't compute valid_card_names locally due to hidden card identities
+        // In this case, client can't compute valid_cards locally due to hidden card identities
         log::info!(
-            "[NetworkLocalController] choose_from_library: library_search_names={:?}, valid_card_names.len={}",
+            "[NetworkLocalController] choose_from_library: library_search_names={:?}, valid_cards.len={}",
             info.library_search_names.as_ref().map(|n| n.len()),
-            valid_card_names.len()
+            valid_cards.len()
         );
 
-        // Build the names list for the inner controller
-        // Prefer server-provided names if available (for hidden library cards)
-        let names_for_inner: Vec<&str> = if let Some(ref names) = info.library_search_names {
-            names.iter().map(|s| s.as_str()).collect()
-        } else {
-            valid_card_names.to_vec()
-        };
-
-        // Call inner controller with names - it returns an index directly
-        let inner_result = self.inner.choose_from_library(view, &names_for_inner);
+        // Call inner controller with CardDefinitions - it returns an index directly
+        // Note: In network mode, server may provide library_search_names for hidden cards,
+        // but the inner controller now uses CardDefinitions directly
+        let inner_result = self.inner.choose_from_library(view, valid_cards);
+        let names_for_inner_len = valid_cards.len();
 
         // Map inner result to protocol format
         let (name_idx, instance_idx) = match &inner_result {
@@ -577,7 +576,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             ChoiceResult::ExitGame => return ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => {
                 log::error!("[NetworkLocalController] inner choose_from_library error: {}", e);
-                if names_for_inner.is_empty() {
+                if names_for_inner_len == 0 {
                     (0, 0)
                 } else {
                     (1, 0)
@@ -585,7 +584,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             }
             ChoiceResult::UndoRequest(_) | ChoiceResult::NeedInput(_) => {
                 log::warn!("[NetworkLocalController] unexpected UndoRequest/NeedInput from inner choose_from_library");
-                if names_for_inner.is_empty() {
+                if names_for_inner_len == 0 {
                     (0, 0)
                 } else {
                     (1, 0)
@@ -594,8 +593,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         };
 
         log::debug!(
-            "[NetworkLocalController] choose_from_library: names_for_inner.len={}, name_idx={}, instance_idx={}",
-            names_for_inner.len(),
+            "[NetworkLocalController] choose_from_library: valid_cards.len={}, name_idx={}, instance_idx={}",
+            names_for_inner_len,
             name_idx,
             instance_idx
         );

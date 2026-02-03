@@ -308,11 +308,15 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(hand_vec.iter().take(num_discarding).copied().collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Randomly choose a card from the library, or decline to find
         let log_active = view.logger().is_choice_logging_active();
 
-        if valid_card_names.is_empty() {
+        if valid_cards.is_empty() {
             // No valid cards - must fail to find
             if log_active {
                 view.logger()
@@ -326,12 +330,12 @@ impl PlayerController for RandomController {
 
         if find_card {
             // Pick a random index from valid options
-            let index = self.rng.gen_range(0..valid_card_names.len());
+            let index = self.rng.gen_range(0..valid_cards.len());
 
             // Log the choice with card name (only if logging active)
             if log_active {
                 view.logger()
-                    .controller_choice("RANDOM", &format!("Library search: found {}", valid_card_names[index]));
+                    .controller_choice("RANDOM", &format!("Library search: found {}", valid_cards[index].name));
             }
 
             ChoiceResult::Ok(Some(index))

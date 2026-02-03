@@ -1088,23 +1088,24 @@ impl PlayerController for InteractiveController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Interactive: Show library and let user choose
-        if valid_card_names.is_empty() {
+        if valid_cards.is_empty() {
             println!("\nLibrary search: No valid cards found.");
             return ChoiceResult::Ok(None);
         }
 
         println!("\n=== Library Search ===");
         println!("Choose a card from your library (or enter 'n' to fail to find):");
-        for (i, &card_name) in valid_card_names.iter().enumerate() {
-            println!("  [{}] {}", i, card_name);
+        for (i, &card_def) in valid_cards.iter().enumerate() {
+            println!("  [{}] {}", i, card_def.name);
         }
 
-        println!(
-            "\nEnter choice (0-{}, or 'n' to fail to find):",
-            valid_card_names.len() - 1
-        );
+        println!("\nEnter choice (0-{}, or 'n' to fail to find):", valid_cards.len() - 1);
 
         let mut input = String::new();
         if io::stdin().read_line(&mut input).is_err() {
@@ -1122,8 +1123,8 @@ impl PlayerController for InteractiveController {
 
         // Parse numeric choice
         if let Ok(idx) = trimmed.parse::<usize>() {
-            if idx < valid_card_names.len() {
-                println!("Selected: {}", valid_card_names[idx]);
+            if idx < valid_cards.len() {
+                println!("Selected: {}", valid_cards[idx].name);
                 return ChoiceResult::Ok(Some(idx));
             }
         }

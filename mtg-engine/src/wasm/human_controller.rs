@@ -267,14 +267,18 @@ impl PlayerController for WasmHumanController {
         })
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Check for pending choice
         if let Some(PendingChoice::LibrarySearch(choice)) = self.pending_choice.take() {
             return match choice {
                 None => ChoiceResult::Ok(None), // Fail to find
                 Some(idx) => {
                     if idx < valid_cards.len() {
-                        ChoiceResult::Ok(Some(valid_cards[idx]))
+                        ChoiceResult::Ok(Some(idx))
                     } else {
                         ChoiceResult::Ok(None)
                     }
@@ -283,9 +287,11 @@ impl PlayerController for WasmHumanController {
         }
 
         // No pending choice - request input
+        // Note: We no longer have CardIds, so we provide indices and formatted names
+        let formatted_cards: Vec<String> = valid_cards.iter().map(|def| def.name.to_string()).collect();
         ChoiceResult::NeedInput(ChoiceContext::LibrarySearch {
-            valid_cards: valid_cards.to_vec(),
-            formatted_cards: format_card_choices(view, valid_cards, self.player_id),
+            valid_cards: vec![], // CardIds not available in new architecture
+            formatted_cards,
         })
     }
 

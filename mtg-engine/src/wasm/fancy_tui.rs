@@ -767,17 +767,10 @@ impl WasmFancyTuiState {
                 }
             }
             PendingChoice::LibrarySearch(opt_idx) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::LibrarySearch { valid_cards, .. } = context {
-                        match opt_idx {
-                            None => ReplayChoice::LibrarySearch(None),
-                            Some(idx) => ReplayChoice::LibrarySearch(valid_cards.get(*idx).copied()),
-                        }
-                    } else {
-                        ReplayChoice::LibrarySearch(None)
-                    }
-                } else {
-                    ReplayChoice::LibrarySearch(None)
+                // Return the index directly - the game loop converts to CardId
+                match opt_idx {
+                    None => ReplayChoice::LibrarySearch(None),
+                    Some(idx) => ReplayChoice::LibrarySearch(Some(*idx)),
                 }
             }
             PendingChoice::Sacrifice(indices) => {

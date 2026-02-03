@@ -621,7 +621,10 @@ fn test_load_black_lotus_mana_ability() -> Result<()> {
         card.definition.cache.mana_production.produces_mana(),
         "Black Lotus should be detected as producing mana"
     );
-    assert!(card.definition.cache.is_mana_source, "Black Lotus should be a mana source");
+    assert!(
+        card.definition.cache.is_mana_source,
+        "Black Lotus should be a mana source"
+    );
 
     Ok(())
 }
@@ -762,7 +765,10 @@ fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
 
     // Critical test: mana production should be Choice (dual land) not just Blue
     use mtg_forge_rs::core::ManaProductionKind;
-    assert!(card.definition.cache.is_mana_source, "Volcanic Island should be a mana source");
+    assert!(
+        card.definition.cache.is_mana_source,
+        "Volcanic Island should be a mana source"
+    );
 
     // Check that mana production is Choice (can produce either Blue or Red)
     match &card.definition.cache.mana_production.kind {

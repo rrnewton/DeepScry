@@ -362,14 +362,18 @@ impl PlayerController for WasmRichInputController {
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Check for pending choice
         if let Some(PendingChoice::LibrarySearch(choice)) = self.pending_choice.take() {
             return match choice {
                 None => ChoiceResult::Ok(None),
                 Some(idx) => {
                     if idx < valid_cards.len() {
-                        ChoiceResult::Ok(Some(valid_cards[idx]))
+                        ChoiceResult::Ok(Some(idx))
                     } else {
                         ChoiceResult::Ok(None)
                     }
@@ -377,8 +381,8 @@ impl PlayerController for WasmRichInputController {
             };
         }
 
-        // Select first valid card
-        ChoiceResult::Ok(valid_cards.first().copied())
+        // Select first valid card index
+        ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
     }
 
     fn choose_permanents_to_sacrifice(

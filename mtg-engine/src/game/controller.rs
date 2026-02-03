@@ -16,6 +16,7 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::{GameState, Step};
+use crate::loader::CardDefinition;
 use crate::zones::Zone;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -1396,9 +1397,17 @@ pub trait PlayerController {
     /// Returns ChoiceResult with the chosen index (or None to fail to find),
     /// or a special request (UndoRequest, ExitGame, Error).
     ///
+    /// The `valid_cards` parameter provides full CardDefinition data for each
+    /// searchable card, enabling proper evaluation of card properties (types,
+    /// mana cost, power/toughness, keywords, etc.) for AI decision-making.
+    ///
     /// ## Java Forge Equivalent
     /// Matches `PlayerController.chooseCardsForEffect(..., "Search library")`
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>>;
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&CardDefinition],
+    ) -> ChoiceResult<Option<usize>>;
 
     /// Choose permanents to sacrifice
     ///

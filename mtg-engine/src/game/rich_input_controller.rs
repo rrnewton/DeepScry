@@ -370,19 +370,23 @@ impl PlayerController for RichInputController {
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // RichInputController: Auto-select first valid card
         // TODO: Implement rich syntax for library search selection
-        if valid_card_names.is_empty() {
+        if valid_cards.is_empty() {
             view.logger()
                 .controller_choice("RICHINPUT", "Library search: fail to find (no valid cards)");
             return ChoiceResult::Ok(None);
         }
 
-        let card_name = valid_card_names[0];
+        let card_def = valid_cards[0];
         view.logger().controller_choice(
             "RICHINPUT",
-            &format!("Library search: found {} (auto-selected first)", card_name),
+            &format!("Library search: found {} (auto-selected first)", card_def.name),
         );
 
         ChoiceResult::Ok(Some(0))

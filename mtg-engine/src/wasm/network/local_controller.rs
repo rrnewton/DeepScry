@@ -523,7 +523,11 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         }
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_cards: &[CardId]) -> ChoiceResult<Option<CardId>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Check if ChoiceRequest is ready
         if self.check_choice_request_ready().is_none() {
             if self.has_pending_submission() {
@@ -539,7 +543,7 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             ChoiceResult::Ok(choice) => {
                 let choice_index = match choice {
                     None => valid_cards.len(),
-                    Some(card) => valid_cards.iter().position(|&c| c == card).unwrap_or(0),
+                    Some(idx) => idx,
                 };
                 self.submit_choice_to_server(vec![choice_index], view);
                 ChoiceResult::Ok(choice)

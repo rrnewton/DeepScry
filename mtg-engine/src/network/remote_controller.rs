@@ -312,7 +312,11 @@ impl PlayerController for RemoteController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, _valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        _valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Get the opponent's choice indices from the network
         // Protocol: index 0 = decline, index 1+ = name indices (1-based)
         let (indices, _spell_ability, _library_search_result) =

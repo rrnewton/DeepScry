@@ -119,9 +119,13 @@ impl PlayerController for AliceController {
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Alice picks the first valid card if available
-        ChoiceResult::Ok(if valid_card_names.is_empty() { None } else { Some(0) })
+        ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
     }
 
     fn choose_permanents_to_sacrifice(
@@ -270,9 +274,13 @@ impl PlayerController for BobController {
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
-    fn choose_from_library(&mut self, _view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
+    fn choose_from_library(
+        &mut self,
+        _view: &GameStateView,
+        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
         // Bob picks the first valid card if available
-        ChoiceResult::Ok(if valid_card_names.is_empty() { None } else { Some(0) })
+        ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
     }
 
     fn choose_permanents_to_sacrifice(

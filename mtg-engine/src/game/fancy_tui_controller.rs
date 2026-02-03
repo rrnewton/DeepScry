@@ -1219,14 +1219,18 @@ impl PlayerController for FancyTuiController {
         ChoiceResult::Ok(discards)
     }
 
-    fn choose_from_library(&mut self, view: &GameStateView, valid_card_names: &[&str]) -> ChoiceResult<Option<usize>> {
-        if valid_card_names.is_empty() {
+    fn choose_from_library(
+        &mut self,
+        view: &GameStateView,
+        valid_cards: &[&crate::loader::CardDefinition],
+    ) -> ChoiceResult<Option<usize>> {
+        if valid_cards.is_empty() {
             return ChoiceResult::Ok(None);
         }
 
         let prompt = "Search library: Choose a card";
         let choices: Vec<String> = std::iter::once("Fail to find".to_string())
-            .chain(valid_card_names.iter().map(|&name| name.to_string()))
+            .chain(valid_cards.iter().map(|&def| def.name.to_string()))
             .collect();
 
         match self.prompt_for_choice(view, prompt, &choices) {
@@ -1235,10 +1239,10 @@ impl PlayerController for FancyTuiController {
                 view.logger().controller_choice("TUI", "Chose to fail to find");
                 ChoiceResult::Ok(None)
             }
-            Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_card_names.len() => {
-                let name = valid_card_names[idx - 1];
+            Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_cards.len() => {
+                let def = valid_cards[idx - 1];
                 view.logger()
-                    .controller_choice("TUI", &format!("Chose {} from library", name));
+                    .controller_choice("TUI", &format!("Chose {} from library", def.name));
                 ChoiceResult::Ok(Some(idx - 1))
             }
             Ok(PromptResult::Choice(_)) => ChoiceResult::Ok(None),
