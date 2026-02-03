@@ -46,7 +46,9 @@ SAFETY! This is a safe-rust project. We will not introduce the `unsafe` keyword 
 
 ### Network Architecture: Desync is ALWAYS Fatal
 
-For network multiplayer code, the **deterministic sequential simulation** model in `docs/NETWORK_ARCHITECTURE.md` is inviolable. Any desynchronization between server and client is an **immediate fatal error** - never paper over desync with recovery hacks. Extra validation data in messages is for early detection only, NOT for recovering from inconsistent state. See the full architecture document for details.
+For network multiplayer code, the **deterministic sequential simulation** model in `docs/NETWORK_ARCHITECTURE.md` is inviolable. Any desynchronization between server and client is an **immediate fatal error** - never paper over desync with recovery hacks. Extra validation data in messages is for early detection only, NOT for recovering from inconsistent state.
+
+**Controllers must be information-independent**: ALL controller types (heuristic, random, zero, etc.) MUST produce identical decisions whether running on the server (full state) or on a client (shadow state). Controllers must NEVER use hidden information (opponent hand contents, library order, RNG state). If a controller produces different gamelogs in local vs network mode, it has an information-leakage bug. See `docs/NETWORK_ARCHITECTURE.md` for details.
 
 ### NO HACKY STRING OPERATIONS ON STRUCTURED DATA
 

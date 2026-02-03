@@ -29,9 +29,10 @@ The divergence was caused by multiple issues, now all fixed:
      synthetic CardIds encoding (name_idx, instance_idx) for inner controller to pick
    - Client decodes response [name_idx+1, instance_idx] to select specific card
 
-3. **Heuristic Controller Information Visibility** (ARCHITECTURAL - NOT A BUG):
-   - `heuristic` controller uses `GameStateView` which may differ between CLIENT/SERVER
-   - This is expected - use `zero` or `random` for deterministic equivalence testing
+3. **Heuristic Controller Information Visibility** (WAS BUG, NOW FIXED):
+   - Controllers must NEVER depend on hidden information (opponent hand, library order)
+   - Any controller that produces different results on server vs client has an info-leakage bug
+   - ALL controller types (heuristic, random, zero) must produce identical gamelogs
 
 ### Test Status
 

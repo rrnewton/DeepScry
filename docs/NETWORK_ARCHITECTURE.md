@@ -279,6 +279,30 @@ Reveals are generated in the **core GameLoop** as deterministic game actions:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+## CRITICAL: Controllers Must Be Information-Independent
+
+**All controllers (heuristic, random, zero, etc.) MUST produce identical decisions
+whether running on the server (full state) or on a client (shadow state).**
+
+This is a direct consequence of the deterministic simulation model:
+
+1. **Controllers must NEVER depend on hidden information** - opponent hand contents,
+   library order, or RNG state are not legally visible. A controller that reads this
+   information and uses it to make decisions is cheating AND will cause network desync.
+
+2. **Any divergence is a bug** - If a controller produces different gamelogs when run
+   locally (where GameStateView exposes everything) vs in network mode (where shadow
+   state hides opponent cards), the controller has an information-leakage bug.
+
+3. **GameStateView exposes more than it should in local mode** - Methods like
+   `player_hand(opponent_id)` return real data locally but empty data on clients.
+   Controllers must not call these methods for opponents, or must handle the empty
+   case identically to having data.
+
+4. **Testing requirement** - The network vs local equivalence E2E test
+   (`tests/network_vs_local_equivalence_e2e.sh`) validates gamelog identity across
+   ALL controller types. This is not optional - it catches info-leakage bugs.
+
 ## Related Issues
 
 - `mtg-secqu`: Single-channel architecture to eliminate select! nondeterminism

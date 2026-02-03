@@ -89,10 +89,10 @@ if [[ ! -f "$DECK2" ]]; then
 fi
 
 # Parse arguments with defaults
-# Default to "zero" controller for deterministic equivalence testing.
-# "zero" always picks the first option, independent of information visibility,
-# which ensures LOCAL and NETWORK modes produce identical decisions.
-# Use "heuristic" to test realistic play (but gamelogs will differ).
+# ALL controllers (heuristic, random, zero) MUST produce identical gamelogs
+# between LOCAL and NETWORK modes. Controllers must NEVER depend on hidden
+# information (opponent hand contents, library order) - any divergence between
+# local and network is a bug. See docs/NETWORK_ARCHITECTURE.md.
 SEED="${1:-3}"
 CONTROLLER_P1="${2:-zero}"
 CONTROLLER_P2="${3:-$CONTROLLER_P1}"  # Default P2 to same as P1
@@ -107,10 +107,10 @@ for ctrl in "$CONTROLLER_P1" "$CONTROLLER_P2"; do
 done
 
 # Controller type notes:
-# - "heuristic": Best for realistic games, but local vs network will differ due to
-#   information visibility (local sees all cards, network only sees revealed cards)
-# - "zero"/"random": Causes client/server desync due to shadow state drift
-# NOTE: This test validates both modes complete successfully, not identical outcomes.
+# ALL controller types must produce identical gamelogs between local and network modes.
+# Controllers must NEVER use hidden information (opponent hand, library order, RNG).
+# If a controller produces different results on server (full state) vs client (shadow
+# state), that controller has an information-leakage bug. See NETWORK_ARCHITECTURE.md.
 
 # Output directories
 OUTPUT_DIR="/tmp/network_vs_local_e2e_$$"
