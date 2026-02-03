@@ -386,12 +386,23 @@ impl<'a> GameLoop<'a> {
                 .iter()
                 .filter_map(|&card_id| self.game.cards.get(card_id).ok().map(|c| &c.definition))
                 .collect();
+            // Provide CardIds to NetworkController so it can include them in
+            // the ChoiceRequest for the coordinator to resolve back to CardId.
+            // No-op for non-network controllers (trait default is empty).
+            controller.set_pending_library_search_card_ids(valid_cards);
             // Call controller with CardDefinitions, get back index, map to CardId
             let view = GameStateView::new(self.game, viewer_player);
             let result = controller.choose_from_library(&view, &valid_card_definitions);
-            return match result {
+            let mapped = match result {
                 ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
                     ChoiceResult::Ok(Some(valid_cards[index]))
+                }
+                ChoiceResult::Ok(Some(_)) if valid_cards.is_empty() => {
+                    // Client shadow game: valid_cards is empty because unrevealed
+                    // library cards are not instantiated. The NLC communicated with
+                    // the server and stored the authoritative CardId. Retrieve it.
+                    let lib_result = controller.take_library_search_result();
+                    ChoiceResult::Ok(lib_result)
                 }
                 ChoiceResult::Ok(_) => ChoiceResult::Ok(None),
                 ChoiceResult::ExitGame => ChoiceResult::ExitGame,
@@ -399,6 +410,12 @@ impl<'a> GameLoop<'a> {
                 ChoiceResult::Error(e) => ChoiceResult::Error(e),
                 ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             };
+            // After library search, sync pending reveals so the card entity
+            // exists in the shadow game before move_card is attempted.
+            if let ChoiceResult::Ok(Some(_)) = &mapped {
+                self.sync_to_action();
+            }
+            return mapped;
         }
 
         let is_remote = controller.get_controller_type() == ControllerType::Remote;
@@ -407,6 +424,9 @@ impl<'a> GameLoop<'a> {
         let result = match hook_result {
             Some(PreChoiceResult::AskController) => {
                 debug_assert!(!is_remote, "AskController returned for remote controller");
+                // Provide CardIds to NetworkController so it can include them in
+                // the ChoiceRequest for the coordinator to resolve back to CardId.
+                controller.set_pending_library_search_card_ids(valid_cards);
                 // Build CardDefinition references after the hook call to avoid borrow conflict
                 let valid_card_definitions: Vec<&crate::loader::CardDefinition> = valid_cards
                     .iter()
@@ -418,6 +438,12 @@ impl<'a> GameLoop<'a> {
                 match choice {
                     ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
                         ChoiceResult::Ok(Some(valid_cards[index]))
+                    }
+                    ChoiceResult::Ok(Some(_)) if valid_cards.is_empty() => {
+                        // Network mode: valid_cards is empty because unrevealed library cards
+                        // are not instantiated in the shadow game. Use the server-authoritative
+                        // CardId stored by NetworkLocalController from ChoiceAccepted.
+                        ChoiceResult::Ok(controller.take_library_search_result())
                     }
                     ChoiceResult::Ok(_) => ChoiceResult::Ok(None),
                     ChoiceResult::ExitGame => ChoiceResult::ExitGame,

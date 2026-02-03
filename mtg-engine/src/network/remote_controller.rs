@@ -28,6 +28,10 @@ pub struct RemoteController {
     player_id: PlayerId,
     /// Shared network state (MVar architecture) - if set, reads choices from MVar
     shared_state: Option<Arc<SharedNetworkState>>,
+    /// Last library search result from server, consumed by take_library_search_result.
+    /// Stored here so the game loop can retrieve the authoritative CardId after
+    /// choose_from_library returns an index into an empty valid_cards list.
+    last_library_search_result: Option<CardId>,
 }
 
 impl RemoteController {
@@ -36,6 +40,7 @@ impl RemoteController {
         Self {
             player_id,
             shared_state: None,
+            last_library_search_result: None,
         }
     }
 
@@ -44,6 +49,7 @@ impl RemoteController {
         Self {
             player_id,
             shared_state: Some(shared_state),
+            last_library_search_result: None,
         }
     }
 
@@ -319,7 +325,7 @@ impl PlayerController for RemoteController {
     ) -> ChoiceResult<Option<usize>> {
         // Get the opponent's choice indices from the network
         // Protocol: index 0 = decline, index 1+ = name indices (1-based)
-        let (indices, _spell_ability, _library_search_result) =
+        let (indices, _spell_ability, library_search_result) =
             match self.get_opponent_choice_full(view.action_count() as u64) {
                 ChoiceResult::Ok(choice) => choice,
                 ChoiceResult::UndoRequest(_)
@@ -327,6 +333,10 @@ impl PlayerController for RemoteController {
                 | ChoiceResult::Error(_)
                 | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
             };
+
+        // Store the server-authoritative CardId so game loop can retrieve it
+        // via take_library_search_result() after this method returns.
+        self.last_library_search_result = library_search_result;
 
         // Convert from protocol format (1-based with 0=decline) to trait format (0-based Option)
         let name_idx_raw = indices.first().copied().unwrap_or(0);
@@ -413,6 +423,10 @@ impl PlayerController for RemoteController {
 
     fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {
         // No-op for remote controller
+    }
+
+    fn take_library_search_result(&mut self) -> Option<CardId> {
+        self.last_library_search_result.take()
     }
 
     fn get_controller_type(&self) -> ControllerType {

@@ -365,8 +365,40 @@ impl GameState {
             // Capture the previous order for undo
             let previous_order = zones.library.cards.clone();
 
+            // DEBUG: Log RNG state hash before shuffle (mtg-ar269 investigation)
+            let rng_hash_before = {
+                let rng = self.rng.borrow();
+                let serialized = bincode::serialize(&*rng).unwrap_or_default();
+                // Simple hash of serialized bytes
+                serialized
+                    .iter()
+                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+            };
+            log::info!(
+                "[SHUFFLE-DEBUG] Before shuffle: player={:?}, rng_hash={:016x}, lib_len={}, first_5_cards={:?}",
+                player_id,
+                rng_hash_before,
+                zones.library.cards.len(),
+                zones.library.cards.iter().rev().take(5).collect::<Vec<_>>()
+            );
+
             // Perform the shuffle
             zones.library.cards.shuffle(&mut *self.rng.borrow_mut());
+
+            // DEBUG: Log RNG state hash after shuffle (mtg-ar269 investigation)
+            let rng_hash_after = {
+                let rng = self.rng.borrow();
+                let serialized = bincode::serialize(&*rng).unwrap_or_default();
+                serialized
+                    .iter()
+                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+            };
+            log::info!(
+                "[SHUFFLE-DEBUG] After shuffle: player={:?}, rng_hash={:016x}, first_5_cards={:?}",
+                player_id,
+                rng_hash_after,
+                zones.library.cards.iter().rev().take(5).collect::<Vec<_>>()
+            );
 
             // Log the action with the previous order and prior log size
             let prior_log_size = self.logger.log_count();
