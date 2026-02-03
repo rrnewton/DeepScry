@@ -121,78 +121,62 @@ impl HeuristicController {
         self.evaluate_creature_impl(view, card_id, true, true)
     }
 
-    /// Evaluate a card by name for library search decisions.
+    /// Evaluate a CardDefinition for library search selection
+    ///
+    /// Uses the card's definition properties (types, mana cost, power/toughness)
+    /// to compute a heuristic score. Higher scores = better cards to search for.
     ///
     /// Strategy:
-    /// 1. Try to find a visible card with the same name (battlefield, hand, graveyard)
-    ///    and use existing evaluation functions
-    /// 2. Fall back to name-based heuristics for basic lands and common patterns
-    fn evaluate_card_by_name_for_library(&self, view: &GameStateView, card_name: &str) -> i32 {
-        // First, try to find a visible instance of this card in visible zones
-        // Check battlefield first (most relevant for evaluation)
-        for &card_id in view.battlefield() {
-            if let Some(card) = view.get_card(card_id) {
-                if card.name.as_str() == card_name {
-                    // Found a match - use appropriate evaluation
-                    if card.is_creature() {
-                        return self.evaluate_creature(view, card_id);
-                    } else if card.is_land() {
-                        return crate::game::game_state_evaluator::GameStateEvaluator::evaluate_land(card);
-                    } else {
-                        // Other permanents: use CMC-based heuristic
-                        return 50 + 30 * i32::from(card.mana_cost.cmc());
-                    }
-                }
-            }
-        }
+    /// - Creatures: Base score + power/toughness contribution + CMC efficiency bonus
+    /// - Lands: Basic lands = 100, non-basic lands get bonus for color production
+    /// - Other spells: Score based on CMC (higher = more impactful)
+    fn evaluate_card_definition_for_library(
+        &self,
+        _view: &GameStateView,
+        card_def: &crate::loader::CardDefinition,
+    ) -> i32 {
+        let cmc = i32::from(card_def.mana_cost.cmc());
 
-        // Check our hand
-        for &card_id in view.player_hand(self.player_id) {
-            if let Some(card) = view.get_card(card_id) {
-                if card.name.as_str() == card_name {
-                    if card.is_creature() {
-                        return self.evaluate_creature(view, card_id);
-                    } else if card.is_land() {
-                        return crate::game::game_state_evaluator::GameStateEvaluator::evaluate_land(card);
-                    } else {
-                        return 50 + 30 * i32::from(card.mana_cost.cmc());
-                    }
-                }
+        // Check card type via cache flags
+        if card_def.cache.is_creature {
+            // Creatures: value based on power + toughness and CMC efficiency
+            // Base score: 80
+            // P/T contribution: (power + toughness) * 10 (e.g., 4/4 = +80)
+            // CMC efficiency: higher CMC creatures are generally more impactful
+            let power = card_def.power.unwrap_or(0) as i32;
+            let toughness = card_def.toughness.unwrap_or(0) as i32;
+            let stats_score = (power + toughness) * 10;
+            let cmc_bonus = cmc * 5;
+            80 + stats_score + cmc_bonus
+        } else if card_def.cache.is_land {
+            // Lands: basic lands get 100, non-basic lands get bonus
+            let name = card_def.name.as_str();
+            let is_basic = matches!(
+                name,
+                "Plains"
+                    | "Island"
+                    | "Swamp"
+                    | "Mountain"
+                    | "Forest"
+                    | "Snow-Covered Plains"
+                    | "Snow-Covered Island"
+                    | "Snow-Covered Swamp"
+                    | "Snow-Covered Mountain"
+                    | "Snow-Covered Forest"
+                    | "Wastes"
+            );
+            if is_basic {
+                100
+            } else {
+                // Non-basic lands: bonus for color flexibility
+                // +5 per color the land can produce
+                100 + 5 * (card_def.colors.len() as i32).max(1)
             }
-        }
-
-        // Check graveyard
-        for &card_id in view.graveyard() {
-            if let Some(card) = view.get_card(card_id) {
-                if card.name.as_str() == card_name {
-                    if card.is_creature() {
-                        return self.evaluate_creature(view, card_id);
-                    } else if card.is_land() {
-                        return crate::game::game_state_evaluator::GameStateEvaluator::evaluate_land(card);
-                    } else {
-                        return 50 + 30 * i32::from(card.mana_cost.cmc());
-                    }
-                }
-            }
-        }
-
-        // Fall back to name-based heuristics for known card types
-        match card_name {
-            // Basic lands - low but consistent value
-            "Plains" | "Island" | "Swamp" | "Mountain" | "Forest" => 100,
-            // Snow basics
-            "Snow-Covered Plains"
-            | "Snow-Covered Island"
-            | "Snow-Covered Swamp"
-            | "Snow-Covered Mountain"
-            | "Snow-Covered Forest" => 105,
-            // Wastes (colorless basic)
-            "Wastes" => 95,
-            _ => {
-                // Unknown card - use moderate value
-                // This encourages finding spells over basic lands in most cases
-                150
-            }
+        } else {
+            // Instants, sorceries, enchantments, artifacts, planeswalkers
+            // Higher CMC spells are generally more impactful (board wipes, finishers)
+            // Base score: 50, +30 per CMC
+            50 + 30 * cmc
         }
     }
 
@@ -4592,20 +4576,18 @@ impl PlayerController for HeuristicController {
         view: &GameStateView,
         valid_cards: &[&crate::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
-        // Name-based interface: we only receive names, not CardIds.
-        // This ensures network/local equivalence since clients don't have library CardIds.
         if valid_cards.is_empty() {
             view.logger()
                 .controller_choice("HEURISTIC", "Library search: fail to find (no valid cards)");
             return ChoiceResult::Ok(None);
         }
 
-        // Score each card by name using name-based heuristics and visible card evaluation
+        // Score each card using CardDefinition properties (types, P/T, CMC)
         let mut best_index = 0;
         let mut best_score = i32::MIN;
 
         for (idx, &card_def) in valid_cards.iter().enumerate() {
-            let score = Self::evaluate_card_by_name_for_library(self, view, card_def.name.as_str());
+            let score = self.evaluate_card_definition_for_library(view, card_def);
             if score > best_score {
                 best_score = score;
                 best_index = idx;
