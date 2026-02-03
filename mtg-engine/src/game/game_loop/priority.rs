@@ -1491,7 +1491,6 @@ impl<'a> GameLoop<'a> {
                                         );
                                         let chosen_card_opt =
                                             handle_choice_result_break!(choice, self.game, current_priority);
-                                        log::debug!("[TYPECYCLING] chosen_card_opt = {:?}", chosen_card_opt);
 
                                         // Log the choice for replay - convert CardId to index
                                         let chosen_index = chosen_card_opt

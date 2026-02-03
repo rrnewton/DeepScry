@@ -85,6 +85,9 @@ pub struct NetworkLocalController<C: PlayerController> {
     shared_state: Option<Arc<SharedNetworkState>>,
     /// Legacy: Shared choice sequence number (pre-choice hook updates it, controller reads it)
     choice_seq: Rc<Cell<u32>>,
+    /// Server-authoritative library search result from ChoiceAccepted
+    /// Set during choose_from_library, consumed by game loop via take_library_search_result
+    last_library_search_result: Option<CardId>,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -102,6 +105,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             _our_player_id: None,
             shared_state: None,
             choice_seq,
+            last_library_search_result: None,
         }
     }
 
@@ -125,6 +129,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             _our_player_id: Some(player_id),
             shared_state: Some(shared_state),
             choice_seq: Rc::new(Cell::new(0)), // Not used in MVar mode
+            last_library_search_result: None,
         }
     }
 
@@ -560,11 +565,19 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             valid_cards.len()
         );
 
-        // Call inner controller with CardDefinitions - it returns an index directly
-        // Note: In network mode, server may provide library_search_names for hidden cards,
-        // but the inner controller now uses CardDefinitions directly
-        let inner_result = self.inner.choose_from_library(view, valid_cards);
-        let names_for_inner_len = valid_cards.len();
+        // Call inner controller - use library_search_names fallback when valid_cards is empty
+        // (network mode: client can't see hidden library card identities)
+        let (inner_result, names_for_inner_len) = if valid_cards.is_empty() {
+            if let Some(ref names) = info.library_search_names {
+                let result = self.inner.choose_from_library_by_names(view, names);
+                (result, names.len())
+            } else {
+                (self.inner.choose_from_library(view, valid_cards), 0)
+            }
+        } else {
+            let len = valid_cards.len();
+            (self.inner.choose_from_library(view, valid_cards), len)
+        };
 
         // Map inner result to protocol format
         let (name_idx, instance_idx) = match &inner_result {
@@ -613,8 +626,12 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         // The server returns the index it used, which should match what we sent
         if let Some(ref state) = self.shared_state {
             match state.take_choice_accepted_for_seq(choice_seq) {
-                Some(ChoiceAcceptedInfo::Accepted { .. }) => {
-                    log::info!("[NetworkLocalController] choose_from_library: ChoiceAccepted received");
+                Some(ChoiceAcceptedInfo::Accepted {
+                    library_search_result, ..
+                }) => {
+                    log::info!("[NetworkLocalController] choose_from_library: ChoiceAccepted received, library_search_result={:?}", library_search_result);
+                    // Store the server-authoritative CardId so game loop can use it
+                    self.last_library_search_result = library_search_result;
                     // Return the index we chose (0-based for the trait interface)
                     return inner_result;
                 }
@@ -737,6 +754,10 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
 
     fn on_game_end(&mut self, view: &GameStateView, won: bool) {
         self.inner.on_game_end(view, won);
+    }
+
+    fn take_library_search_result(&mut self) -> Option<CardId> {
+        self.last_library_search_result.take()
     }
 
     fn get_controller_type(&self) -> ControllerType {

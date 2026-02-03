@@ -168,6 +168,13 @@ pub struct NetworkController {
     shared_reveal_index: Arc<AtomicUsize>,
     /// Network debug mode - include debug info in choice requests
     network_debug: bool,
+    /// Pending library search CardIds set by game loop before choose_from_library
+    ///
+    /// The game loop sets this via `set_pending_library_search_card_ids` before
+    /// calling `choose_from_library`. This allows the ChoiceRequest to include
+    /// the CardIds so the coordinator can resolve the client's name index back
+    /// to an authoritative CardId.
+    pending_library_search_card_ids: Option<Vec<CardId>>,
 }
 
 impl NetworkController {
@@ -188,6 +195,7 @@ impl NetworkController {
             choice_seq: 0,
             shared_reveal_index,
             network_debug: false,
+            pending_library_search_card_ids: None,
         }
     }
 
@@ -853,6 +861,10 @@ impl PlayerController for NetworkController {
         }
     }
 
+    fn set_pending_library_search_card_ids(&mut self, card_ids: &[CardId]) {
+        self.pending_library_search_card_ids = Some(card_ids.to_vec());
+    }
+
     fn choose_from_library(
         &mut self,
         view: &GameStateView,
@@ -881,7 +893,8 @@ impl PlayerController for NetworkController {
             filter_description: "matching cards".to_string(),
         };
 
-        match self.request_choice(view, choice_type, options, state_hash, None, None) {
+        let library_search_cards = self.pending_library_search_card_ids.take();
+        match self.request_choice(view, choice_type, options, state_hash, None, library_search_cards) {
             Ok(result) if result.indices.first() == Some(&0) => {
                 self.increment_choice_seq();
                 ChoiceResult::Ok(None) // Declined to find

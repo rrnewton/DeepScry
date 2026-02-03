@@ -1409,6 +1409,42 @@ pub trait PlayerController {
         valid_cards: &[&CardDefinition],
     ) -> ChoiceResult<Option<usize>>;
 
+    /// Choose a card from library using only card names (network fallback)
+    ///
+    /// Called when the client can't see library card identities (hidden zone in
+    /// network mode), but the server has provided the names of valid cards.
+    /// The default implementation picks the first card, matching ZeroController
+    /// behavior. Controllers that want smarter name-based evaluation can override.
+    ///
+    /// Returns the same semantics as `choose_from_library`: `Some(index)` to
+    /// select a card, or `None` to decline (fail to find).
+    fn choose_from_library_by_names(
+        &mut self,
+        _view: &GameStateView,
+        card_names: &[String],
+    ) -> ChoiceResult<Option<usize>> {
+        ChoiceResult::Ok(if card_names.is_empty() { None } else { Some(0) })
+    }
+
+    /// Take the server-authoritative library search result CardId (network mode only)
+    ///
+    /// After `choose_from_library` in network mode, the server sends back the actual
+    /// CardId that was selected via ChoiceAccepted. The game loop calls this method
+    /// to retrieve that CardId when `valid_cards` is empty (hidden library on client).
+    /// Returns `None` by default (non-network controllers don't use this).
+    fn take_library_search_result(&mut self) -> Option<CardId> {
+        None
+    }
+
+    /// Set the pending library search CardIds (server-side network mode only)
+    ///
+    /// Called by the game loop before `choose_from_library` to provide the actual
+    /// CardIds corresponding to the valid library cards. The NetworkController
+    /// stores these and includes them in the ChoiceRequest so the coordinator
+    /// can resolve the client's name index back to an authoritative CardId.
+    /// No-op for non-network controllers.
+    fn set_pending_library_search_card_ids(&mut self, _card_ids: &[CardId]) {}
+
     /// Choose permanents to sacrifice
     ///
     /// Called when a player must sacrifice a specific number of permanents,
