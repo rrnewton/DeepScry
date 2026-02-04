@@ -6,7 +6,7 @@ issue_type: feature
 depends_on:
   mtg-secqu: discovered-from
 created_at: 2026-01-13T18:49:07.043506364+00:00
-updated_at: 2026-01-13T18:49:07.043506364+00:00
+updated_at: 2026-02-04T18:05:55.087398850+00:00
 ---
 
 # Description
@@ -42,6 +42,7 @@ Implemented the name-based library search protocol. This addresses the issue whe
 - [x] Added ShuffleLibrary to GameAction enum for undo log tracking
 - [x] Modified shuffle_library() to log action with previous order
 - [x] Implemented undo logic for ShuffleLibrary in both undo.rs and state.rs
+- [x] **Fixed RandomController RNG divergence** (commit 599688d2): Added choose_from_library_by_names override that mirrors choose_from_library RNG consumption pattern. Without this, the default impl (no RNG) was used in network mode causing stream divergence vs local mode.
 
 ### Deferred
 - [ ] Emit LibraryReordered from server after library shuffle
@@ -53,3 +54,4 @@ Implemented the name-based library search protocol. This addresses the issue whe
 - mtg-engine/src/network/client.rs - LibraryReordered handler stub
 - mtg-engine/src/undo.rs - ShuffleLibrary GameAction variant
 - mtg-engine/src/game/state.rs - shuffle_library() logging, undo support
+- mtg-engine/src/game/random_controller.rs - choose_from_library_by_names override (RNG parity fix)
