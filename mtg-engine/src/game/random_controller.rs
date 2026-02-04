@@ -45,17 +45,6 @@ impl RandomController {
             rng: rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed),
         }
     }
-
-    /// Get a debug representation of the RNG state
-    ///
-    /// This is useful for debugging non-determinism issues. The RNG state
-    /// consists of 4 u64 values that fully determine future random numbers.
-    pub fn debug_rng_state(&self) -> String {
-        match serde_json::to_string(&self.rng) {
-            Ok(json) => json,
-            Err(_) => "<serialization failed>".to_string(),
-        }
-    }
 }
 
 impl PlayerController for RandomController {
@@ -108,18 +97,18 @@ impl PlayerController for RandomController {
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // For now, just pick a random target if any are available
         // TODO: Improve targeting logic based on spell requirements
-        let result = if valid_targets.is_empty() {
+        if valid_targets.is_empty() {
             // Only log when there are no targets (could be meaningful)
             if view.logger().is_choice_logging_active() {
                 view.logger()
                     .controller_choice("RANDOM", "Chose no targets (none available)");
             }
-            SmallVec::new()
+            ChoiceResult::Ok(SmallVec::new())
         } else if valid_targets.len() == 1 {
             // Only one target available - no choice to make, don't log
             let mut targets = SmallVec::new();
             targets.push(valid_targets[0]);
-            targets
+            ChoiceResult::Ok(targets)
         } else {
             // Multiple targets - this is a real choice
             let index = self.rng.gen_range(0..valid_targets.len());
@@ -131,9 +120,8 @@ impl PlayerController for RandomController {
             }
             let mut targets = SmallVec::new();
             targets.push(valid_targets[index]);
-            targets
-        };
-        ChoiceResult::Ok(result)
+            ChoiceResult::Ok(targets)
+        }
     }
 
     fn choose_mana_sources_to_pay(
@@ -344,6 +332,47 @@ impl PlayerController for RandomController {
             if log_active {
                 view.logger()
                     .controller_choice("RANDOM", "Library search: fail to find (declined)");
+            }
+            ChoiceResult::Ok(None)
+        }
+    }
+
+    fn choose_from_library_by_names(
+        &mut self,
+        view: &GameStateView,
+        card_names: &[String],
+    ) -> ChoiceResult<Option<usize>> {
+        // IMPORTANT: This must consume RNG identically to choose_from_library
+        // so that network mode (which calls this with card names when the client
+        // can't see library contents) produces the same RNG stream as local mode
+        // (which calls choose_from_library with full CardDefinition references).
+        let log_active = view.logger().is_choice_logging_active();
+
+        if card_names.is_empty() {
+            if log_active {
+                view.logger()
+                    .controller_choice("RANDOM", "Library search by names: fail to find (no valid cards)");
+            }
+            return ChoiceResult::Ok(None);
+        }
+
+        // Mirror choose_from_library: 90% chance to find, 10% to fail
+        let find_card = self.rng.gen_bool(0.9);
+
+        if find_card {
+            let index = self.rng.gen_range(0..card_names.len());
+
+            if log_active {
+                view.logger().controller_choice(
+                    "RANDOM",
+                    &format!("Library search by names: found {}", card_names[index]),
+                );
+            }
+            ChoiceResult::Ok(Some(index))
+        } else {
+            if log_active {
+                view.logger()
+                    .controller_choice("RANDOM", "Library search by names: fail to find (declined)");
             }
             ChoiceResult::Ok(None)
         }

@@ -143,8 +143,8 @@ impl HeuristicController {
             // Base score: 80
             // P/T contribution: (power + toughness) * 10 (e.g., 4/4 = +80)
             // CMC efficiency: higher CMC creatures are generally more impactful
-            let power = card_def.power.unwrap_or(0) as i32;
-            let toughness = card_def.toughness.unwrap_or(0) as i32;
+            let power = i32::from(card_def.power.unwrap_or(0));
+            let toughness = i32::from(card_def.toughness.unwrap_or(0));
             let stats_score = (power + toughness) * 10;
             let cmc_bonus = cmc * 5;
             80 + stats_score + cmc_bonus

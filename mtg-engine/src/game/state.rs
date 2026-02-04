@@ -372,7 +372,7 @@ impl GameState {
                 // Simple hash of serialized bytes
                 serialized
                     .iter()
-                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(u64::from(b)))
             };
             log::info!(
                 "[SHUFFLE-DEBUG] Before shuffle: player={:?}, rng_hash={:016x}, lib_len={}, first_5_cards={:?}",
@@ -391,7 +391,7 @@ impl GameState {
                 let serialized = bincode::serialize(&*rng).unwrap_or_default();
                 serialized
                     .iter()
-                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+                    .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(u64::from(b)))
             };
             log::info!(
                 "[SHUFFLE-DEBUG] After shuffle: player={:?}, rng_hash={:016x}, first_5_cards={:?}",
