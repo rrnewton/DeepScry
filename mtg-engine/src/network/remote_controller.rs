@@ -300,6 +300,72 @@ impl PlayerController for RemoteController {
         ChoiceResult::Ok(order)
     }
 
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        view: &GameStateView,
+        _attacker: CardId,
+        killable_blockers: &[(CardId, i32)],
+        _remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
+            ChoiceResult::Ok(choice) => choice,
+            ChoiceResult::UndoRequest(_)
+            | ChoiceResult::ExitGame
+            | ChoiceResult::Error(_)
+            | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
+        };
+
+        // Get the selected blocker from the index
+        let idx = indices.first().copied().unwrap_or(0);
+        if let Some((blocker_id, _)) = killable_blockers.get(idx) {
+            ChoiceResult::Ok(*blocker_id)
+        } else {
+            log::warn!(
+                "RemoteController: invalid blocker index {} (killable={})",
+                idx,
+                killable_blockers.len()
+            );
+            // Fallback to first blocker
+            killable_blockers
+                .first()
+                .map(|(id, _)| ChoiceResult::Ok(*id))
+                .unwrap_or_else(|| ChoiceResult::Error("No killable blockers".to_string()))
+        }
+    }
+
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        view: &GameStateView,
+        _attacker: CardId,
+        remaining_blockers: &[CardId],
+        _remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
+            ChoiceResult::Ok(choice) => choice,
+            ChoiceResult::UndoRequest(_)
+            | ChoiceResult::ExitGame
+            | ChoiceResult::Error(_)
+            | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
+        };
+
+        // Get the selected blocker from the index
+        let idx = indices.first().copied().unwrap_or(0);
+        if let Some(&blocker_id) = remaining_blockers.get(idx) {
+            ChoiceResult::Ok(blocker_id)
+        } else {
+            log::warn!(
+                "RemoteController: invalid remaining blocker index {} (remaining={})",
+                idx,
+                remaining_blockers.len()
+            );
+            // Fallback to first blocker
+            remaining_blockers
+                .first()
+                .map(|&id| ChoiceResult::Ok(id))
+                .unwrap_or_else(|| ChoiceResult::Error("No remaining blockers".to_string()))
+        }
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         view: &GameStateView,

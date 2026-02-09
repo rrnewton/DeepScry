@@ -516,6 +516,67 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         result
     }
 
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        killable_blockers: &[(CardId, i32)],
+        remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        let info = match self.get_choice_info() {
+            Some(info) => info,
+            None => return ChoiceResult::ExitGame,
+        };
+        let choice_seq = info.choice_seq;
+        let server_action_count = info.server_action_count;
+        self.verify_action_count_sync(view, server_action_count);
+
+        let result = self
+            .inner
+            .choose_blocker_for_lethal_damage(view, attacker, killable_blockers, remaining_power);
+
+        if let ChoiceResult::Ok(ref blocker_id) = result {
+            // Find the index of the chosen blocker in killable_blockers
+            let idx = killable_blockers
+                .iter()
+                .position(|(id, _)| id == blocker_id)
+                .unwrap_or(0);
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+        }
+
+        result
+    }
+
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        remaining_blockers: &[CardId],
+        remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        let info = match self.get_choice_info() {
+            Some(info) => info,
+            None => return ChoiceResult::ExitGame,
+        };
+        let choice_seq = info.choice_seq;
+        let server_action_count = info.server_action_count;
+        self.verify_action_count_sync(view, server_action_count);
+
+        let result =
+            self.inner
+                .choose_blocker_for_remaining_damage(view, attacker, remaining_blockers, remaining_damage);
+
+        if let ChoiceResult::Ok(ref blocker_id) = result {
+            // Find the index of the chosen blocker in remaining_blockers
+            let idx = remaining_blockers.iter().position(|id| id == blocker_id).unwrap_or(0);
+            let (hash, debug) = self.get_debug_fields(view);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+        }
+
+        result
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         view: &GameStateView,

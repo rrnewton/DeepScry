@@ -49,13 +49,26 @@ results_collected: List[TestResult] = []
 error_buckets_collected: Dict[str, List[TestResult]] = defaultdict(list)
 
 
-def generate_configs(num_configs: int = 50) -> List[TestConfig]:
-    """Generate diverse test configurations."""
+def generate_configs(num_configs: int = 50,
+                     controller_filter: str = None) -> List[TestConfig]:
+    """Generate diverse test configurations.
+
+    Args:
+        num_configs: Maximum number of configs to generate
+        controller_filter: If set, only generate configs where BOTH players
+                          use this controller type
+    """
     configs = []
 
+    # Determine which controllers to use
+    if controller_filter:
+        controllers_to_test = [controller_filter]
+    else:
+        controllers_to_test = CONTROLLERS
+
     # Test all controller combinations with first 5 seeds
-    for c1 in CONTROLLERS:
-        for c2 in CONTROLLERS:
+    for c1 in controllers_to_test:
+        for c2 in controllers_to_test:
             for seed in SEEDS[:5]:
                 configs.append(TestConfig(
                     seed=seed,
@@ -69,8 +82,8 @@ def generate_configs(num_configs: int = 50) -> List[TestConfig]:
     while len(configs) < num_configs:
         configs.append(TestConfig(
             seed=random.randint(1, 1000),
-            controller_p1=random.choice(CONTROLLERS),
-            controller_p2=random.choice(CONTROLLERS),
+            controller_p1=random.choice(controllers_to_test),
+            controller_p2=random.choice(controllers_to_test),
             deck1=random.choice(DECKS),
             deck2=random.choice(DECKS)
         ))
@@ -234,6 +247,9 @@ def main():
                              '(slower but catches divergence bugs)')
     parser.add_argument('--duration', type=int, default=0,
                         help='Run for this many seconds then stop (0=unlimited)')
+    parser.add_argument('--controller', type=str, default=None,
+                        help='Filter to only test specific controller type '
+                             '(heuristic, random, zero)')
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -285,9 +301,10 @@ def main():
             elapsed = time.time() - start_wall_time
             print(f"\n=== Batch {batch_num} (elapsed: {elapsed:.0f}s) ===")
 
-        configs = generate_configs(args.configs)
+        configs = generate_configs(args.configs, args.controller)
         if not args.infinite and args.duration == 0:
-            print(f"Generated {len(configs)} test configurations")
+            filter_msg = f" (controller={args.controller})" if args.controller else ""
+            print(f"Generated {len(configs)} test configurations{filter_msg}")
         print()
 
         print("Running tests...")
