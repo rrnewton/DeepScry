@@ -82,6 +82,8 @@ impl<'a> GameLoop<'a> {
         if should_log {
             use crate::core::{Effect, TargetRef};
             let mut target_index = 0;
+            // Track last resolved target for SubAbility chains using Defined$ Targeted
+            let mut last_resolved_target: Option<CardId> = None;
             for effect in &card_effects {
                 // Replace placeholder targets with chosen targets for logging
                 let effect_to_log = match effect {
@@ -134,14 +136,25 @@ impl<'a> GameLoop<'a> {
                         toughness_bonus,
                         keywords_granted,
                     } if target.is_placeholder() && target_index < targets.len() => {
+                        let resolved_target = targets[target_index];
+                        last_resolved_target = Some(resolved_target);
                         let replaced = Effect::PumpCreature {
-                            target: targets[target_index],
+                            target: resolved_target,
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
                         };
                         target_index += 1;
                         replaced
+                    }
+                    // Handle UntapPermanent with reuse_previous sentinel (from Defined$ Targeted in SubAbility)
+                    Effect::UntapPermanent { target } if target.is_reuse_previous() => {
+                        if let Some(prev_target) = last_resolved_target {
+                            Effect::UntapPermanent { target: prev_target }
+                        } else {
+                            // No previous target available, use as-is (will show Unknown in log)
+                            effect.clone()
+                        }
                     }
                     Effect::ExilePermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::ExilePermanent {
