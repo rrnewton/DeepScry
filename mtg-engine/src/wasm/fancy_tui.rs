@@ -1216,6 +1216,7 @@ impl WasmFancyTuiState {
             let result = {
                 // Create sync callback that processes pending reveals
                 let client_for_sync = network_client.clone();
+                let local_player = our_id;
                 let sync_callback = move |game: &mut GameState, _target_action: u64| {
                     let reveals = client_for_sync.borrow_mut().drain_reveals();
                     if !reveals.is_empty() {
@@ -1225,7 +1226,7 @@ impl WasmFancyTuiState {
                             game.action_count()
                         );
                         for (owner, card, reason) in reveals {
-                            process_card_reveal_wasm(game, owner, card, reason);
+                            process_card_reveal_wasm(game, owner, card, reason, Some(local_player));
                         }
                     }
                 };
@@ -1283,6 +1284,7 @@ impl WasmFancyTuiState {
                 let result = {
                     // Create sync callback that processes pending reveals
                     let client_for_sync = network_client.clone();
+                    let local_player = our_id;
                     let sync_callback = move |game: &mut GameState, _target_action: u64| {
                         let reveals = client_for_sync.borrow_mut().drain_reveals();
                         if !reveals.is_empty() {
@@ -1292,7 +1294,7 @@ impl WasmFancyTuiState {
                                 game.action_count()
                             );
                             for (owner, card, reason) in reveals {
-                                process_card_reveal_wasm(game, owner, card, reason);
+                                process_card_reveal_wasm(game, owner, card, reason, Some(local_player));
                             }
                         }
                     };
@@ -1345,7 +1347,7 @@ impl WasmFancyTuiState {
     #[cfg(feature = "wasm-network")]
     fn run_network_mode_ai_v2<C: PlayerController>(
         &mut self,
-        _our_id: PlayerId,
+        our_id: PlayerId,
         we_are_p1: bool,
         our_controller: &mut WasmNetworkLocalController<C>,
         remote_controller: &mut WasmRemoteController,
@@ -1366,6 +1368,7 @@ impl WasmFancyTuiState {
             // Create sync callback that processes pending reveals
             // This is the WASM equivalent of the native client's sync_callback
             let client_for_sync = network_client.clone();
+            let local_player = our_id;
             let sync_callback = move |game: &mut GameState, _target_action: u64| {
                 // Drain all pending reveals and process them
                 let reveals = client_for_sync.borrow_mut().drain_reveals();
@@ -1376,7 +1379,7 @@ impl WasmFancyTuiState {
                         game.action_count()
                     );
                     for (owner, card, reason) in reveals {
-                        process_card_reveal_wasm(game, owner, card, reason);
+                        process_card_reveal_wasm(game, owner, card, reason, Some(local_player));
                     }
                 }
             };
@@ -2568,9 +2571,10 @@ fn process_card_reveal_wasm(
     owner: PlayerId,
     card_reveal: crate::network::CardReveal,
     reason: crate::network::RevealReason,
+    local_player: Option<PlayerId>,
 ) {
     use crate::network::{process_card_reveal, WasmCardDefProvider};
 
     let provider = WasmCardDefProvider;
-    process_card_reveal(game, &provider, owner, card_reveal, reason, "WASM");
+    process_card_reveal(game, &provider, owner, card_reveal, reason, "WASM", local_player);
 }

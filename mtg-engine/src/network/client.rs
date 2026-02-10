@@ -795,15 +795,12 @@ impl ClientGameState {
                     }
                 }
                 RevealReason::Played => {
-                    // Opponent plays a card - CardID slot was pre-reserved
+                    // Opponent plays a card FROM hand - CardID slot was pre-reserved.
+                    // We only instantiate the card so it can be recognized when the GameLoop
+                    // executes the action. We do NOT add it to hand - the card is being
+                    // played FROM hand, and the GameLoop will move it to stack/battlefield.
                     if !self.game.cards.is_revealed(card.card_id) {
                         self.game.cards.insert(card.card_id, card_instance);
-                    }
-                    // Add to hand if not already there (card will be moved to stack/battlefield)
-                    if let Some(zones) = self.game.get_player_zones_mut(owner) {
-                        if !zones.hand.contains(card.card_id) {
-                            zones.hand.add(card.card_id);
-                        }
                     }
                 }
                 RevealReason::Targeting | RevealReason::Effect | RevealReason::Searched => {
@@ -1520,7 +1517,14 @@ impl NetworkClient {
                         reveal.action_count,
                         game_action
                     );
-                    process_card_reveal(game, &card_db_for_sync, reveal.owner, reveal.card, reveal.reason);
+                    process_card_reveal(
+                        game,
+                        &card_db_for_sync,
+                        reveal.owner,
+                        reveal.card,
+                        reveal.reason,
+                        our_player_id,
+                    );
                 }
             };
 
@@ -1875,11 +1879,20 @@ fn process_card_reveal(
     owner: PlayerId,
     card_reveal: CardReveal,
     reason: RevealReason,
+    local_player: PlayerId,
 ) {
     use super::reveal_processor::{process_card_reveal as shared_process, NativeCardDefProvider};
 
     let provider = NativeCardDefProvider::new(card_db);
-    shared_process(game, &provider, owner, card_reveal, reason, "Native");
+    shared_process(
+        game,
+        &provider,
+        owner,
+        card_reveal,
+        reason,
+        "Native",
+        Some(local_player),
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

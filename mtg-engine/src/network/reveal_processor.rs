@@ -54,6 +54,9 @@ pub fn is_dummy_reveal(reveal: &CardReveal) -> bool {
 /// * `reveal` - The card reveal information from the server
 /// * `reason` - Why the card was revealed
 /// * `log_prefix` - Prefix for log messages (e.g., "Native" or "WASM")
+/// * `local_player` - The player this client controls. Used to determine if we should
+///   manipulate hand zones (only for our own cards). For opponent cards, the shadow
+///   state doesn't have their library populated, so we can't reliably add to hand.
 ///
 /// Note: Wildcard match is intentional - RevealReason has 7 variants; we handle
 /// specific ones (Draw, OpeningHand, Played, TokenCreated) and log the rest.
@@ -65,6 +68,7 @@ pub fn process_card_reveal<P: CardDefProvider>(
     reveal: CardReveal,
     reason: RevealReason,
     log_prefix: &str,
+    local_player: Option<PlayerId>,
 ) {
     let card_id = reveal.card_id;
 
@@ -126,38 +130,26 @@ pub fn process_card_reveal<P: CardDefProvider>(
                 );
 
                 // For Draw/OpeningHand, add to hand ONLY if:
-                // 1. Card is NOT in hand, AND
-                // 2. Card is NOT in library (i.e., WASM clients with empty game state)
+                // 1. This is OUR card (owner == local_player), AND
+                // 2. Card is NOT in hand, AND
+                // 3. Card is NOT in library (i.e., WASM clients with empty game state)
+                //
+                // CRITICAL: For OPPONENT cards, we must NOT try to add to hand!
+                // The opponent's library is empty in our shadow state, so the
+                // "empty library mode" check would incorrectly trigger.
+                // Opponent draws are handled by the GameLoop when it processes
+                // the DrawCard action - we just need to instantiate the card.
                 //
                 // Native clients have populated libraries (from init_game_reserve_only),
                 // so draw_card() will properly move the card from library to hand.
                 // We must NOT add to hand here or we'll get duplicates.
                 //
                 // WASM clients may start with empty game state where libraries are empty,
-                // so we need to add to hand directly for them.
-                let card_in_hand = game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
-                let card_in_library = game
-                    .get_player_zones(owner)
-                    .is_some_and(|z| z.library.contains(card_id));
-                if !card_in_hand && !card_in_library {
-                    if let Some(zones) = game.get_player_zones_mut(owner) {
-                        zones.hand.add(card_id);
-                        log::debug!(
-                            "{}: Added {} to hand for {:?}: {} (id={}) [empty library mode]",
-                            log_prefix,
-                            if matches!(reason, RevealReason::Draw) {
-                                "drawn card"
-                            } else {
-                                "opening hand card"
-                            },
-                            owner,
-                            reveal.name,
-                            card_id.as_u32()
-                        );
-                    }
-                } else if !card_in_hand && card_in_library {
+                // so we need to add to hand directly for them (only for LOCAL player).
+                let is_our_card = local_player.is_some_and(|lp| lp == owner);
+                if !is_our_card {
                     log::debug!(
-                        "{}: {} {} (id={}) is in library, letting draw_card() handle zone movement",
+                        "{}: {} {} (id={}) is opponent's card, skipping hand zone manipulation",
                         log_prefix,
                         if matches!(reason, RevealReason::Draw) {
                             "Drawn card"
@@ -167,6 +159,40 @@ pub fn process_card_reveal<P: CardDefProvider>(
                         reveal.name,
                         card_id.as_u32()
                     );
+                } else {
+                    let card_in_hand = game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
+                    let card_in_library = game
+                        .get_player_zones(owner)
+                        .is_some_and(|z| z.library.contains(card_id));
+                    if !card_in_hand && !card_in_library {
+                        if let Some(zones) = game.get_player_zones_mut(owner) {
+                            zones.hand.add(card_id);
+                            log::debug!(
+                                "{}: Added {} to hand for {:?}: {} (id={}) [empty library mode]",
+                                log_prefix,
+                                if matches!(reason, RevealReason::Draw) {
+                                    "drawn card"
+                                } else {
+                                    "opening hand card"
+                                },
+                                owner,
+                                reveal.name,
+                                card_id.as_u32()
+                            );
+                        }
+                    } else if !card_in_hand && card_in_library {
+                        log::debug!(
+                            "{}: {} {} (id={}) is in library, letting draw_card() handle zone movement",
+                            log_prefix,
+                            if matches!(reason, RevealReason::Draw) {
+                                "Drawn card"
+                            } else {
+                                "Opening hand card"
+                            },
+                            reveal.name,
+                            card_id.as_u32()
+                        );
+                    }
                 }
             }
         }
