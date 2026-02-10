@@ -916,6 +916,54 @@ async fn run_game(
 
     log::info!("Game {}: Sent GameStarted to both players", game_id);
 
+    // Send LibraryReordered messages to sync initial library order with clients.
+    // The server shuffles deck definitions BEFORE assigning CardIDs (via init_game_with_positional_ids).
+    // This means CardID 0 is the top of the shuffled P1 library, not the first card in the deck file.
+    // Clients use init_game_reserve_only which creates sequential CardIDs without shuffle knowledge.
+    // Without this sync, clients would have [0, 1, 2, ...] as top-to-bottom order, causing desync
+    // when the GameLoop draws cards.
+    //
+    // Format: top-to-bottom (reversed from internal Vec representation which is bottom-to-top)
+    let p1_lib_order: Vec<CardId> = game
+        .get_player_zones(p1_id)
+        .map(|z| z.library.cards.iter().rev().copied().collect())
+        .unwrap_or_default();
+    let p2_lib_order: Vec<CardId> = game
+        .get_player_zones(p2_id)
+        .map(|z| z.library.cards.iter().rev().copied().collect())
+        .unwrap_or_default();
+
+    // Both clients receive both library orders for symmetry
+    p1_conn
+        .send(&ServerMessage::LibraryReordered {
+            player: p1_id,
+            new_order: p1_lib_order.clone(),
+        })
+        .await?;
+    p1_conn
+        .send(&ServerMessage::LibraryReordered {
+            player: p2_id,
+            new_order: p2_lib_order.clone(),
+        })
+        .await?;
+    p2_conn
+        .send(&ServerMessage::LibraryReordered {
+            player: p1_id,
+            new_order: p1_lib_order,
+        })
+        .await?;
+    p2_conn
+        .send(&ServerMessage::LibraryReordered {
+            player: p2_id,
+            new_order: p2_lib_order,
+        })
+        .await?;
+
+    log::debug!(
+        "Game {}: Sent initial LibraryReordered to sync client library zones",
+        game_id
+    );
+
     // Send CardRevealed messages for opening hands (for synchronized GameLoop mode)
     // ALL players receive reveals for ALL cards to keep action_count in sync.
     // But opponent's cards are sent as "dummy reveals" with name stripped.

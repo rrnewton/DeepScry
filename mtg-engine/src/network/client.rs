@@ -288,6 +288,17 @@ pub struct PendingReveal {
     pub reason: RevealReason,
 }
 
+/// Pending library reorder for sync callback processing
+///
+/// Contains a LibraryReordered message. Library reorders are processed
+/// BEFORE reveals to ensure libraries are in sync before cards are drawn.
+#[derive(Debug, Clone)]
+pub struct PendingLibraryReorder {
+    pub player: PlayerId,
+    /// New library order, top-to-bottom (protocol format)
+    pub new_order: Vec<CardId>,
+}
+
 /// Shared network state for synchronization between network loop and game loop
 ///
 /// This structure implements queued choice synchronization using the MVar pattern:
@@ -322,6 +333,15 @@ pub struct SharedNetworkState {
     /// Keyed by action count for deterministic processing
     pending_reveals: std::sync::Mutex<std::collections::VecDeque<PendingReveal>>,
 
+    /// Pending library reorders for sync callback processing
+    /// Library reorders are processed BEFORE reveals to ensure libraries are in sync
+    /// before cards are drawn from them.
+    pending_library_reorders: std::sync::Mutex<std::collections::VecDeque<PendingLibraryReorder>>,
+
+    /// Condvar for waiting on library reorders to arrive
+    /// Used to synchronize between async WS reader and blocking game loop
+    library_reorder_condvar: std::sync::Condvar,
+
     /// MVar for local player choice requests (ChoiceRequest messages)
     local_choice_mvar: super::mvar::MVar<LocalChoiceInfo>,
 
@@ -353,6 +373,8 @@ impl SharedNetworkState {
     pub fn new() -> Self {
         Self {
             pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            pending_library_reorders: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            library_reorder_condvar: std::sync::Condvar::new(),
             local_choice_mvar: super::mvar::MVar::new(),
             remote_choice_mvar: super::mvar::MVar::new(),
             choice_accepted_mvar: super::mvar::MVar::new(),
@@ -446,6 +468,72 @@ impl SharedNetworkState {
 
         let mut queue = self.pending_reveals.lock().unwrap();
         (queue.drain(..).collect(), true)
+    }
+
+    /// Push a pending library reorder (called by network loop)
+    ///
+    /// Library reorders are sent after GameStarted to sync the initial shuffled
+    /// library order between server and client. The server uses positional CardIDs
+    /// (CardID 0 = top of shuffled library) but clients don't know the shuffle.
+    pub fn push_library_reorder(&self, player: PlayerId, new_order: Vec<CardId>) {
+        let mut queue = self.pending_library_reorders.lock().unwrap();
+        queue.push_back(PendingLibraryReorder { player, new_order });
+        // Notify any waiting threads that a library reorder is available
+        self.library_reorder_condvar.notify_all();
+    }
+
+    /// Wait until at least `count` library reorders have been received
+    ///
+    /// Used to synchronize the blocking game loop with the async WS reader.
+    /// The game loop needs library reorders to be applied BEFORE the first
+    /// DrawCard action, but the WS reader runs concurrently.
+    ///
+    /// Returns true if enough reorders arrived, false on timeout.
+    pub fn wait_for_library_reorders(&self, count: usize, timeout: std::time::Duration) -> bool {
+        let start = std::time::Instant::now();
+        let mut queue = self.pending_library_reorders.lock().unwrap();
+
+        while queue.len() < count {
+            let elapsed = start.elapsed();
+            if elapsed >= timeout {
+                log::warn!(
+                    "wait_for_library_reorders: timeout after {:?}, only got {} of {} reorders",
+                    elapsed,
+                    queue.len(),
+                    count
+                );
+                return false;
+            }
+
+            let remaining = timeout - elapsed;
+            let result = self.library_reorder_condvar.wait_timeout(queue, remaining).unwrap();
+            queue = result.0;
+
+            if result.1.timed_out() {
+                log::warn!(
+                    "wait_for_library_reorders: condvar timed out, got {} of {} reorders",
+                    queue.len(),
+                    count
+                );
+                return false;
+            }
+        }
+
+        log::debug!(
+            "wait_for_library_reorders: received {} reorders in {:?}",
+            queue.len(),
+            start.elapsed()
+        );
+        true
+    }
+
+    /// Drain ALL pending library reorders (greedy mode)
+    ///
+    /// Library reorders must be processed BEFORE reveals to ensure the library
+    /// is in the correct order before cards are drawn.
+    pub fn drain_all_library_reorders(&self) -> Vec<PendingLibraryReorder> {
+        let mut queue = self.pending_library_reorders.lock().unwrap();
+        queue.drain(..).collect()
     }
 
     /// Push a local choice request (ChoiceRequest from server)
@@ -933,6 +1021,9 @@ pub struct NetworkClient {
     tag_gamelogs: bool,
     /// Output file for gamelogs (None = stdout)
     gamelog_output: Option<PathBuf>,
+    /// Library reorders received during wait_for_game_start (before run_game task spawns)
+    /// These are transferred to the run_game spawn_blocking closure directly
+    pending_library_reorders: Vec<PendingLibraryReorder>,
 }
 
 impl NetworkClient {
@@ -950,6 +1041,7 @@ impl NetworkClient {
             network_debug: false,
             tag_gamelogs: false,
             gamelog_output: None,
+            pending_library_reorders: Vec::new(),
         }
     }
 
@@ -1360,13 +1452,29 @@ impl NetworkClient {
                     }
                     log::warn!("Server warning: {}", message);
                 }
+                ServerMessage::LibraryReordered { player, new_order } => {
+                    // CRITICAL: Server sends LibraryReordered during opening hands phase.
+                    // We must capture these and apply them in run_game before GameLoop starts.
+                    // Without this, the client has wrong library order and draws wrong cards.
+                    log::info!(
+                        "Captured LibraryReordered for {:?} ({} cards) during wait_for_game_start",
+                        player,
+                        new_order.len()
+                    );
+                    self.pending_library_reorders
+                        .push(PendingLibraryReorder { player, new_order });
+                }
                 _ => {
                     log::debug!("Unexpected message while waiting for opening reveals: {:?}", msg);
                 }
             }
         }
 
-        log::info!("Received {} opening hand reveals, shadow state ready", reveals_received);
+        log::info!(
+            "Received {} opening hand reveals, {} library reorders queued, shadow state ready",
+            reveals_received,
+            self.pending_library_reorders.len()
+        );
         Ok(())
     }
 
@@ -1505,6 +1613,11 @@ impl NetworkClient {
         let network_debug = self.network_debug;
         let card_db = self.card_db.clone().expect("Card DB not loaded");
 
+        // Take pending library reorders captured during wait_for_game_start
+        // These MUST be applied before the game loop starts since they were received
+        // before the WS reader task was spawned.
+        let pending_library_reorders = std::mem::take(&mut self.pending_library_reorders);
+
         // Configure game state
         let mut game = client_state.game;
         if self.tag_gamelogs {
@@ -1557,6 +1670,31 @@ impl NetworkClient {
             // - Reveals only arrive when they're actually needed
             let sync_callback = move |game: &mut GameState, _target_action: u64| {
                 let game_action = game.undo_log.len() as u64;
+
+                // FIRST: Apply library reorders BEFORE reveals
+                // This ensures libraries are in the correct server-shuffled order
+                // before cards are drawn from them.
+                let reorders = sync_state.drain_all_library_reorders();
+                for reorder in reorders {
+                    log::debug!(
+                        "sync_callback: applying library reorder for {:?}, {} cards",
+                        reorder.player,
+                        reorder.new_order.len()
+                    );
+                    if let Some(zones) = game.get_player_zones_mut(reorder.player) {
+                        // Protocol sends top-to-bottom, but library Vec is bottom-to-top
+                        // (index 0 = bottom, last = top; draw_top uses pop())
+                        // So we reverse to convert top-to-bottom -> bottom-to-top
+                        zones.library.cards = reorder.new_order.into_iter().rev().collect();
+                        log::trace!(
+                            "sync_callback: library reordered for {:?}, new top={}",
+                            reorder.player,
+                            zones.library.cards.last().map(|c| c.as_u32()).unwrap_or(0)
+                        );
+                    }
+                }
+
+                // SECOND: Process reveals
                 // Greedy: drain ALL pending reveals
                 let reveals = sync_state.drain_all_reveals();
 
@@ -1585,6 +1723,42 @@ impl NetworkClient {
                     );
                 }
             };
+
+            // IMMEDIATE LIBRARY REORDER: Apply pending library reorders NOW, before GameLoop starts.
+            //
+            // CRITICAL: These were captured during wait_for_game_start() BEFORE the WS reader
+            // task was spawned. The server sends LibraryReordered messages right after GameStarted
+            // to sync the initial shuffled library order. These MUST be applied before the first
+            // action (DrawCard for opening hands) or the client will draw from the wrong position.
+            //
+            // The sync_callback also handles library reorders for any that arrive later during
+            // the game (e.g., from tutor shuffles), but initial reorders come before the game loop.
+            if !pending_library_reorders.is_empty() {
+                log::info!(
+                    "run_game: applying {} pending library reorders BEFORE GameLoop starts",
+                    pending_library_reorders.len()
+                );
+                for reorder in pending_library_reorders {
+                    log::debug!(
+                        "run_game: applying library reorder for {:?}, {} cards",
+                        reorder.player,
+                        reorder.new_order.len()
+                    );
+                    if let Some(zones) = game.get_player_zones_mut(reorder.player) {
+                        // Protocol sends top-to-bottom, but library Vec is bottom-to-top
+                        // (index 0 = bottom, last = top; draw_top uses pop())
+                        // So we reverse to convert top-to-bottom -> bottom-to-top
+                        zones.library.cards = reorder.new_order.into_iter().rev().collect();
+                        log::debug!(
+                            "run_game: library reordered for {:?}, new top={}",
+                            reorder.player,
+                            zones.library.cards.last().map(|c| c.as_u32()).unwrap_or(0)
+                        );
+                    }
+                }
+            } else {
+                log::warn!("run_game: no pending library reorders - library order may be wrong!");
+            }
 
             // Create game loop with sync callback (no pre-choice hook)
             // defer_game_end_check: Server is authoritative about game end - client waits for GameEnded
@@ -1785,7 +1959,8 @@ async fn run_ws_reader_shared(
                                     player,
                                     new_order.len()
                                 );
-                                // Informational only
+                                // Queue for sync_callback to apply
+                                shared_state.push_library_reorder(player, new_order);
                             }
                         }
                     }
