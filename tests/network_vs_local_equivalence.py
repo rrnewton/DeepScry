@@ -9,9 +9,9 @@ Usage:
     python3 tests/network_vs_local_equivalence.py [SEED] [CONTROLLER_P1] [CONTROLLER_P2]
 
 Examples:
-    python3 tests/network_vs_local_equivalence.py              # seed=3, both zero
-    python3 tests/network_vs_local_equivalence.py 5            # seed=5, both zero
-    python3 tests/network_vs_local_equivalence.py 5 random     # seed=5, both random
+    python3 tests/network_vs_local_equivalence.py              # seed=3, both random
+    python3 tests/network_vs_local_equivalence.py 5            # seed=5, both random
+    python3 tests/network_vs_local_equivalence.py 5 zero       # seed=5, both zero
     python3 tests/network_vs_local_equivalence.py 5 random heuristic  # seed=5, p1=random, p2=heuristic
 
 Exit codes:
@@ -34,7 +34,7 @@ from network_test_lib import (
 def main():
     # Parse arguments with defaults
     seed = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-    controller_p1 = sys.argv[2] if len(sys.argv) > 2 else "zero"
+    controller_p1 = sys.argv[2] if len(sys.argv) > 2 else "random"
     controller_p2 = sys.argv[3] if len(sys.argv) > 3 else controller_p1
 
     # Validate controllers
