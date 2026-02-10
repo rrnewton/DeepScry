@@ -171,6 +171,10 @@ pub fn process_card_reveal<P: CardDefProvider>(
             }
         }
         RevealReason::Played => {
+            // Played reveals tell us what card the opponent is playing FROM hand.
+            // We only instantiate the card so it can be recognized when the GameLoop
+            // executes the action. We do NOT add it to hand - the card is being
+            // played FROM hand, and the GameLoop will move it to stack/battlefield.
             let card_already_known = game.cards.get(card_id).is_ok();
             log::debug!(
                 "{} Played: {} (id={}) card_already_known={}",
@@ -190,22 +194,6 @@ pub fn process_card_reveal<P: CardDefProvider>(
                     reveal.name,
                     card_id
                 );
-
-                // If card isn't in hand or battlefield, add to hand
-                let card_in_hand = game.get_player_zones(owner).is_some_and(|z| z.hand.contains(card_id));
-                let card_on_battlefield = game.battlefield.cards.contains(&card_id);
-
-                if !card_in_hand && !card_on_battlefield {
-                    if let Some(zones) = game.get_player_zones_mut(owner) {
-                        zones.hand.add(card_id);
-                        log::debug!(
-                            "{}: Added revealed card to hand: {} (id={})",
-                            log_prefix,
-                            reveal.name,
-                            card_id.as_u32()
-                        );
-                    }
-                }
             }
         }
         RevealReason::TokenCreated => {
