@@ -587,6 +587,60 @@ impl GameState {
     // based on effect type (damage, destroy, tap, etc.), targeting restrictions (hexproof,
     // shroud, protection), controller ownership, and zone requirements.
 
+    /// Calculate effective mana cost after applying cost reduction effects like Affinity.
+    ///
+    /// Affinity for X reduces generic mana cost by 1 for each permanent of type X you control.
+    /// Example: "Affinity for Allies" on a 2G spell with 3 Allies in play = G (0 generic + G)
+    ///
+    /// # Parameters
+    /// - `card_id`: The card being cast
+    /// - `player_id`: The player casting the spell
+    ///
+    /// # Returns
+    /// The effective mana cost after applying all cost reductions, or the original cost on error
+    pub fn calculate_effective_cost(&self, card_id: CardId, player_id: PlayerId) -> crate::core::ManaCost {
+        use crate::core::{Keyword, KeywordArgs};
+
+        let card = match self.cards.get(card_id) {
+            Ok(c) => c,
+            Err(_) => return crate::core::ManaCost::new(),
+        };
+
+        let mut effective_cost = card.mana_cost;
+
+        // Check for Affinity keyword
+        // Affinity for X: This spell costs {1} less for each X you control
+        if let Some(KeywordArgs::Affinity { card_type }) = card.keywords.get_args(Keyword::Affinity) {
+            // Count permanents of the specified type controlled by the player
+            let count = self
+                .battlefield
+                .cards
+                .iter()
+                .filter(|&&bf_card_id| {
+                    self.cards
+                        .try_get(bf_card_id)
+                        .is_some_and(|c| c.controller == player_id && c.subtypes.contains(card_type))
+                })
+                .count() as u8;
+
+            // Reduce generic cost (minimum 0)
+            effective_cost.generic = effective_cost.generic.saturating_sub(count);
+
+            if count > 0 {
+                log::debug!(
+                    "Affinity for {:?}: {} permanents controlled, reducing generic cost by {} (was {}, now {})",
+                    card_type,
+                    count,
+                    count,
+                    card.mana_cost.generic,
+                    effective_cost.generic
+                );
+            }
+        }
+
+        effective_cost
+    }
+
     /// Cast a spell following the full 8-step process (MTG Rules 601.2)
     ///
     /// This method implements the complete spell casting sequence:
@@ -651,11 +705,8 @@ impl GameState {
         // Step 4: Divide effects
         // TODO: Implement dividing damage/counters among targets
 
-        // Step 5: Determine total cost
-        let mana_cost = {
-            let card = self.cards.get(card_id)?;
-            card.mana_cost
-        };
+        // Step 5: Determine total cost (after applying Affinity and other reductions)
+        let mana_cost = self.calculate_effective_cost(card_id, player_id);
 
         // Step 6: Activate mana abilities
         // This is where mana gets tapped - AFTER the spell is on the stack

@@ -839,4 +839,112 @@ mod tests {
             "Creature should still be on battlefield"
         );
     }
+
+    #[test]
+    fn test_affinity_cost_reduction() {
+        use crate::core::{KeywordArgs, ManaCost, Subtype};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a spell with Affinity for Ally (like Allies at Last: 2G with Affinity:Ally)
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Allies at Last".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("2G"); // Base cost: 2G
+        spell.keywords.insert_complex(KeywordArgs::Affinity {
+            card_type: Subtype::new("Ally"),
+        });
+        game.cards.insert(spell_id, spell);
+
+        // Add to hand
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Test 1: Without any Allies, effective cost should be 2G (generic = 2)
+        let cost_no_allies = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(cost_no_allies.generic, 2, "Without allies, generic cost should be 2");
+        assert_eq!(cost_no_allies.green, 1, "Green cost should remain 1");
+
+        // Create 2 Ally creatures on battlefield
+        for i in 0..2 {
+            let ally_id = game.next_card_id();
+            let mut ally = Card::new(ally_id, format!("Ally Creature {}", i), p1_id);
+            ally.add_type(CardType::Creature);
+            ally.subtypes.push(Subtype::new("Ally"));
+            ally.controller = p1_id;
+            game.cards.insert(ally_id, ally);
+            game.battlefield.add(ally_id);
+        }
+
+        // Test 2: With 2 Allies, effective cost should be G (generic = 0)
+        let cost_with_allies = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(
+            cost_with_allies.generic, 0,
+            "With 2 allies, generic cost should be reduced to 0"
+        );
+        assert_eq!(cost_with_allies.green, 1, "Green cost should remain 1");
+
+        // Create 3 more Ally creatures (total 5)
+        for i in 2..5 {
+            let ally_id = game.next_card_id();
+            let mut ally = Card::new(ally_id, format!("Ally Creature {}", i), p1_id);
+            ally.add_type(CardType::Creature);
+            ally.subtypes.push(Subtype::new("Ally"));
+            ally.controller = p1_id;
+            game.cards.insert(ally_id, ally);
+            game.battlefield.add(ally_id);
+        }
+
+        // Test 3: With 5 Allies, cost should still be G (generic can't go negative)
+        let cost_many_allies = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(
+            cost_many_allies.generic, 0,
+            "With 5 allies, generic cost should stay at 0 (not negative)"
+        );
+        assert_eq!(cost_many_allies.green, 1, "Green cost should remain 1");
+    }
+
+    #[test]
+    fn test_affinity_different_subtypes() {
+        use crate::core::{KeywordArgs, ManaCost, Subtype};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a spell with Affinity for Artifact (like Thoughtcast: 4U with Affinity:Artifact)
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Thoughtcast".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.mana_cost = ManaCost::from_string("4U"); // Base cost: 4U
+        spell.keywords.insert_complex(KeywordArgs::Affinity {
+            card_type: Subtype::new("Artifact"),
+        });
+        game.cards.insert(spell_id, spell);
+
+        // Add to hand
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Create some Artifacts on battlefield
+        for i in 0..3 {
+            let artifact_id = game.next_card_id();
+            let mut artifact = Card::new(artifact_id, format!("Artifact {}", i), p1_id);
+            artifact.add_type(CardType::Artifact);
+            // Note: Artifact is a card type, not a subtype. But Affinity:Artifact traditionally
+            // works based on artifact permanents. Let's also add Artifact as a subtype to match
+            // the Affinity pattern for this test.
+            artifact.subtypes.push(Subtype::new("Artifact"));
+            artifact.controller = p1_id;
+            game.cards.insert(artifact_id, artifact);
+            game.battlefield.add(artifact_id);
+        }
+
+        // With 3 Artifacts, cost should be 1U (4 - 3 = 1 generic)
+        let cost = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(cost.generic, 1, "With 3 artifacts, generic cost should be 1");
+        assert_eq!(cost.blue, 1, "Blue cost should remain 1");
+    }
 }

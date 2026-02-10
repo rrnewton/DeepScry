@@ -162,6 +162,57 @@ impl<'a> GameLoop<'a> {
             .filter(move |&card_id| cards.try_get(card_id).is_some_and(|card| card.is_land()))
     }
 
+    /// Calculate effective mana cost after applying cost reduction effects like Affinity.
+    ///
+    /// Affinity for X reduces generic mana cost by 1 for each permanent of type X you control.
+    /// Example: "Affinity for Allies" on a 2G spell with 3 Allies in play = G (0 generic + G)
+    ///
+    /// # Parameters
+    /// - `card`: The card being cast
+    /// - `player_id`: The player casting the spell
+    ///
+    /// # Returns
+    /// The effective mana cost after applying all cost reductions
+    fn calculate_effective_cost(&self, card: &crate::core::Card, player_id: PlayerId) -> crate::core::ManaCost {
+        use crate::core::KeywordArgs;
+
+        let mut effective_cost = card.mana_cost;
+
+        // Check for Affinity keyword
+        // Affinity for X: This spell costs {1} less for each X you control
+        if let Some(KeywordArgs::Affinity { card_type }) = card.keywords.get_args(Keyword::Affinity) {
+            // Count permanents of the specified type controlled by the player
+            let count = self
+                .game
+                .battlefield
+                .cards
+                .iter()
+                .filter(|&&card_id| {
+                    self.game
+                        .cards
+                        .try_get(card_id)
+                        .is_some_and(|c| c.controller == player_id && c.subtypes.contains(card_type))
+                })
+                .count() as u8;
+
+            // Reduce generic cost (minimum 0)
+            effective_cost.generic = effective_cost.generic.saturating_sub(count);
+
+            if count > 0 {
+                log::debug!(
+                    "Affinity for {:?}: {} permanents controlled, reducing generic cost by {} (was {}, now {})",
+                    card_type,
+                    count,
+                    count,
+                    card.mana_cost.generic,
+                    effective_cost.generic
+                );
+            }
+        }
+
+        effective_cost
+    }
+
     /// Push castable spells directly to abilities_buffer
     ///
     /// Zero allocation - pushes SpellAbility::CastSpell directly to the buffer
@@ -206,9 +257,12 @@ impl<'a> GameLoop<'a> {
                         };
 
                         if can_cast_now {
-                            // Check if we can pay for this spell's mana cost
+                            // Calculate effective cost (applies Affinity and other cost reductions)
+                            let effective_cost = self.calculate_effective_cost(card, player_id);
+
+                            // Check if we can pay for this spell's effective mana cost
                             // Use can_pay_with_pool to consider floating mana from rituals like Dark Ritual
-                            if self.mana_engine.can_pay_with_pool(&card.mana_cost, &mana_pool) {
+                            if self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool) {
                                 // For Aura spells, check if there are valid targets
                                 // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
                                 if card.is_aura() {

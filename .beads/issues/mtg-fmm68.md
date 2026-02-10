@@ -26,9 +26,9 @@ Key gaps affecting this deck:
 - ~~**T:Mode$ AttackersDeclared** - Batch trigger when attackers declared (Teo)~~ **IMPLEMENTED 2026-01-22** (AttackersDeclared TriggerEvent, ValidAttackers$ keyword filter)
 - ~~**ImmediateTrigger / RememberDiscarded** - Complex conditional triggers (Teo's counter placement)~~ **IMPLEMENTED 2026-01-22** (remembered_cards on GameState, ImmediateTriggerCondition enum, DB$ Cleanup)
 - ~~**DB$ EachDamage** - Multiple sources dealing damage (Allies at Last)~~ **IMPLEMENTED 2026-01-24** (Effect::EachDamage variant, damagers from parent targets, power-based damage)
+- ~~**K:Affinity:Ally** - Cost reduction (Allies at Last)~~ **IMPLEMENTED 2026-02-10** (calculate_effective_cost in GameState and GameLoop, counts controlled permanents of specified type)
 - **S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)
 - **S:Mode$ ReduceCost** - Cost reduction static abilities (Gran-Gran)
-- **K:Affinity:Ally** - Cost reduction (Allies at Last)
 - ~~**DB$ Effect with StaticAbilities$** - Grant can't be blocked (Otter-Penguin, Giant Koi)~~ **FIXED 2026-01-21** (GrantCantBeBlocked placeholder resolution in CardDrawn triggers)
 - ~~**Conditional hexproof (Condition$ PlayerTurn)**~~ **IMPLEMENTED 2026-01-21** (StaticCondition enum, Avatar Kyoshi)
 
@@ -106,9 +106,8 @@ Key gaps affecting this deck:
 - GAP: UnlessCost/UnlessSwitched optional cost
 
 **Allies at Last (x2)** - 2G Instant
-- [ ] Affinity for Allies (K:Affinity:Ally)
+- [x] Affinity for Allies (K:Affinity:Ally) **IMPLEMENTED 2026-02-10**
 - [x] Multi-target creature damage (DB$ EachDamage | ValidTgts$ Creature.OppCtrl) **IMPLEMENTED 2026-01-24**
-- GAP: Affinity (EachDamage now works)
 
 **Ember Island Production (x1)** - 3UU Sorcery
 - [x] SP$ Charm with CopyPermanent modes (VERIFIED 2026-01-18)
@@ -129,7 +128,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (28/40 fully working)
+## Verified Cards Summary (29/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -149,6 +148,11 @@ Working cards:
 15. **Avatar Kyoshi** - BeginCombat trigger + Earthbend + Untap + Conditional hexproof **FULLY WORKING 2026-01-21**
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
+18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
+
+## Recent Fixes (2026-02-10)
+
+1. **K:Affinity:Ally**: Implemented Affinity keyword cost reduction. Reduces generic mana cost by 1 for each permanent of the specified type you control. Added `calculate_effective_cost` methods to both `GameState` and `GameLoop` for consistent cost calculation in both spell affordability checks and actual mana payment. Works for any Affinity type (Ally, Artifact, Spirit, etc.). Allies at Last now fully functional.
 
 ## Recent Fixes (2026-01-24)
 
@@ -173,9 +177,8 @@ Working cards:
 
 1. **S:Mode$ ReduceCost** - Cost reduction static abilities (affects spell casting system)
 2. **S:Mode$ RaiseCost** - Additional sacrifice costs
-3. **K:Affinity:Ally** - Cost reduction for ally type
-4. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
-5. **AddAbility$ for lands** - Grant abilities to land permanents
+3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
+4. **AddAbility$ for lands** - Grant abilities to land permanents
 
 ## Testing Protocol
 
