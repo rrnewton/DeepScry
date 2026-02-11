@@ -425,6 +425,16 @@ impl NetworkController {
         // Read the shared index - this may have been updated by the immediate reveal pusher
         let last_reveal_index = self.shared_reveal_index.load(Ordering::Acquire);
 
+        // First pass: build a map of card_id -> to_zone from MoveCard actions
+        // This lets us determine the actual destination zone for each revealed card
+        // (mtg-ar269 fix: milled cards were incorrectly revealed as Draw instead of Effect)
+        let mut card_zones: std::collections::HashMap<CardId, Zone> = std::collections::HashMap::new();
+        for action in actions.iter().skip(last_reveal_index) {
+            if let GameAction::MoveCard { card_id, to_zone, .. } = action {
+                card_zones.insert(*card_id, *to_zone);
+            }
+        }
+
         // Scan backwards from the end of the log, but stop at last_reveal_index
         for (rev_idx, action) in actions.iter().rev().enumerate() {
             // Convert reverse index to forward index
@@ -460,11 +470,20 @@ impl NetworkController {
                         // a different player's controller (mtg-d0jg3 DESYNC fix)
                         let card_owner = view.get_card(*card_id).map(|c| c.owner).unwrap_or(self.player_id); // Fallback to self if card not found
 
+                        // Look up actual destination zone from MoveCard actions
+                        // This is critical for determining the correct RevealReason:
+                        // - Hand -> Draw (e.g., regular draw, tutored card)
+                        // - Graveyard -> Effect (e.g., mill, discard from library)
+                        // - Battlefield/Stack -> Played
+                        // (mtg-ar269 fix: using placeholder Zone::Hand caused milled cards
+                        // to be treated as draws, triggering incorrect "empty library mode")
+                        let to_zone = card_zones.get(card_id).copied().unwrap_or(Zone::Hand);
+
                         reveals.push(CardRevealInfo {
                             card_id: *card_id,
                             owner: card_owner,
-                            from_zone: Zone::Library, // Placeholder
-                            to_zone: Zone::Hand,      // Placeholder
+                            from_zone: Zone::Library, // Still a placeholder, but less critical
+                            to_zone,
                         });
                     }
                 }
