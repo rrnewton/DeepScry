@@ -87,8 +87,12 @@ pub fn now_ms() -> u64 {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Messages sent from client to server
+///
+/// Note: SubmitChoice variant is intentionally large (contains multiple Option<Vec<_>> fields
+/// for various choice data). Boxing would complicate the protocol code for marginal benefit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum ClientMessage {
     /// Initial authentication and deck submission
     Authenticate {
@@ -131,6 +135,13 @@ pub enum ClientMessage {
         /// This is more robust against client/server state divergence since it
         /// identifies the ability by CardId rather than position in a list.
         spell_ability: Option<SpellAbility>,
+        /// Actual target CardIds for target choices
+        ///
+        /// When present, server forwards these to opponent in OpponentChoice.
+        /// This ensures the opponent's shadow game uses the correct CardIds
+        /// even if its valid_targets list differs.
+        #[serde(default)]
+        target_card_ids: Option<Vec<CardId>>,
     },
 
     /// Request to disconnect gracefully
@@ -343,6 +354,13 @@ pub enum ServerMessage {
         /// determine which CardId was chosen from the name alone (libraries are hidden).
         #[serde(default)]
         library_search_result: Option<CardId>,
+        /// Actual target CardIds for target choices
+        ///
+        /// When the opponent chooses targets, this contains the actual CardIds chosen.
+        /// Client uses these directly instead of mapping indices, which can fail if
+        /// the client's valid_targets list differs from the server's.
+        #[serde(default)]
+        target_card_ids: Option<Vec<CardId>>,
         /// State hash AFTER applying this choice (for client validation)
         state_hash_after: Option<u64>,
         /// Debug synchronization info (only in network debug mode)
@@ -1189,6 +1207,7 @@ mod tests {
                 state_hash_after: None,
                 debug_info: None,
                 library_search_result: None,
+                target_card_ids: None,
             },
             ServerMessage::GameEnded {
                 winner: Some(player_id),
@@ -1240,6 +1259,7 @@ mod tests {
                 client_state_hash: None,
                 debug_info: None,
                 spell_ability: None,
+                target_card_ids: None,
             },
             ClientMessage::Ping {
                 timestamp_ms: 9876543210,

@@ -92,6 +92,12 @@ pub struct ChoiceResponse {
     /// this spell_ability, it indicates a desync and is a FATAL ERROR.
     /// See docs/NETWORK_ARCHITECTURE.md for the "desync is always fatal" principle.
     pub spell_ability: Option<crate::core::SpellAbility>,
+    /// Actual target CardIds for target choices
+    ///
+    /// Used to synchronize opponent's shadow game - the actual CardIds are sent
+    /// so the opponent doesn't need to rely on index-based lookup which can fail
+    /// if their valid_targets list differs from ours.
+    pub target_card_ids: Option<Vec<crate::core::CardId>>,
 }
 
 /// Result of request_choice including both indices and optional spell_ability
@@ -1149,6 +1155,7 @@ mod tests {
                     choice_seq: 1,
                     choice_indices: vec![2],
                     spell_ability: None,
+                    target_card_ids: None,
                 })
                 .unwrap();
         });
@@ -1187,6 +1194,7 @@ mod tests {
                     choice_seq: 999, // Wrong sequence
                     choice_indices: vec![0],
                     spell_ability: None,
+                    target_card_ids: None,
                 })
                 .unwrap();
         });
@@ -1225,6 +1233,7 @@ mod tests {
                     choice_seq: 1,
                     choice_indices: vec![10], // Invalid - only 2 options
                     spell_ability: None,
+                    target_card_ids: None,
                 })
                 .unwrap();
         });

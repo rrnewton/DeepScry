@@ -62,8 +62,24 @@ impl RemoteController {
     /// If the choice's action_count doesn't match, this indicates a sync issue.
     fn get_opponent_choice(&self, expected_action: u64) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
         match self.get_opponent_choice_full(expected_action) {
-            ChoiceResult::Ok((indices, spell_ability, _library_search_result)) => {
+            ChoiceResult::Ok((indices, spell_ability, _library_search_result, _target_card_ids)) => {
                 ChoiceResult::Ok((indices, spell_ability))
+            }
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::UndoRequest(n) => ChoiceResult::UndoRequest(n),
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::NeedInput(i) => ChoiceResult::NeedInput(i),
+        }
+    }
+
+    /// Get opponent's choice with target CardIds (for target selections)
+    fn get_opponent_choice_with_targets(
+        &self,
+        expected_action: u64,
+    ) -> ChoiceResult<(Vec<usize>, Option<Vec<CardId>>)> {
+        match self.get_opponent_choice_full(expected_action) {
+            ChoiceResult::Ok((indices, _spell_ability, _library_search_result, target_card_ids)) => {
+                ChoiceResult::Ok((indices, target_card_ids))
             }
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::UndoRequest(n) => ChoiceResult::UndoRequest(n),
@@ -76,10 +92,11 @@ impl RemoteController {
     ///
     /// This is the underlying implementation that returns all choice info.
     /// Used by choose_from_library to get the authoritative CardId for library searches.
+    #[allow(clippy::type_complexity)]
     fn get_opponent_choice_full(
         &self,
         expected_action: u64,
-    ) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>, Option<CardId>)> {
+    ) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>, Option<CardId>, Option<Vec<CardId>>)> {
         if let Some(ref state) = self.shared_state {
             // MVar mode: take from REMOTE choice MVar (dedicated for this controller)
             match state.take_remote_choice() {
@@ -88,6 +105,7 @@ impl RemoteController {
                     indices,
                     spell_ability,
                     library_search_result,
+                    target_card_ids,
                 }) => {
                     // Validate action count ordering
                     if action_count != expected_action {
@@ -100,12 +118,13 @@ impl RemoteController {
                         // Continue anyway - server is authoritative, but log the discrepancy
                     }
                     log::debug!(
-                        "RemoteController: got OpponentChoice indices={:?} action={} lib_search={:?}",
+                        "RemoteController: got OpponentChoice indices={:?} action={} lib_search={:?} targets={:?}",
                         indices,
                         action_count,
-                        library_search_result
+                        library_search_result,
+                        target_card_ids
                     );
-                    ChoiceResult::Ok((indices, spell_ability, library_search_result))
+                    ChoiceResult::Ok((indices, spell_ability, library_search_result, target_card_ids))
                 }
                 Some(RemoteChoiceInfo::Exit { winner }) => {
                     log::info!("RemoteController: game ended, winner={:?}", winner);
@@ -175,7 +194,7 @@ impl PlayerController for RemoteController {
         _spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
+        let (indices, target_card_ids) = match self.get_opponent_choice_with_targets(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -183,6 +202,18 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
+        // Use server-provided target CardIds directly if available
+        // This is more reliable than index-based lookup which can fail
+        // if the client's valid_targets list differs from the server's
+        if let Some(card_ids) = target_card_ids {
+            log::debug!(
+                "RemoteController::choose_targets: using server-provided targets {:?}",
+                card_ids
+            );
+            return ChoiceResult::Ok(card_ids.into_iter().collect());
+        }
+
+        // Fallback to index-based lookup (legacy compatibility)
         let targets: SmallVec<[CardId; 4]> = indices
             .into_iter()
             .filter_map(|idx| valid_targets.get(idx).copied())
@@ -391,7 +422,7 @@ impl PlayerController for RemoteController {
     ) -> ChoiceResult<Option<usize>> {
         // Get the opponent's choice indices from the network
         // Protocol: index 0 = decline, index 1+ = name indices (1-based)
-        let (indices, _spell_ability, library_search_result) =
+        let (indices, _spell_ability, library_search_result, _target_card_ids) =
             match self.get_opponent_choice_full(view.action_count() as u64) {
                 ChoiceResult::Ok(choice) => choice,
                 ChoiceResult::UndoRequest(_)

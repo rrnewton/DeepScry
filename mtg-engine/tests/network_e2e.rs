@@ -110,6 +110,7 @@ mod async_tests {
             client_state_hash: None,
             debug_info: None,
             spell_ability: None,
+            target_card_ids: None,
         };
 
         let response_json = serde_json::to_string(&response).expect("serialize response");
@@ -649,6 +650,7 @@ mod websocket_integration {
                             client_state_hash: None,
                             debug_info: None,
                             spell_ability: None,
+                            target_card_ids: None,
                         },
                     )
                     .await

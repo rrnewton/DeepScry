@@ -242,6 +242,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
     /// For Priority choices, `spell_ability` should contain the actual ability chosen.
     /// This is more robust than relying on indices, which can mismatch if client/server
     /// have different views of available options due to sync drift.
+    #[allow(clippy::too_many_arguments)]
     fn send_choice(
         &self,
         choice_seq: u32,
@@ -250,6 +251,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
         client_state_hash: Option<u64>,
         debug_info: Option<super::DebugSyncInfo>,
         spell_ability: Option<SpellAbility>,
+        target_card_ids: Option<Vec<CardId>>,
     ) {
         let client_msg = ClientMessage::SubmitChoice {
             choice_seq,
@@ -259,6 +261,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             client_state_hash,
             debug_info,
             spell_ability,
+            target_card_ids,
         };
 
         // Fire and forget
@@ -295,7 +298,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
     ) -> ChoiceResult<T> {
         if let ChoiceResult::Ok(_) = &result {
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug, None);
+            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug, None, None);
         }
         result
     }
@@ -363,7 +366,15 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             };
             let (hash, debug) = self.get_debug_fields(view);
             // Pass the chosen spell ability so server can match by CardId if indices don't match
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, choice.clone());
+            self.send_choice(
+                choice_seq,
+                vec![idx],
+                server_action_count,
+                hash,
+                debug,
+                choice.clone(),
+                None,
+            );
         }
 
         result
@@ -391,7 +402,17 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|t| valid_targets.iter().position(|v| v == t))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            // Include actual target CardIds for opponent's shadow game synchronization
+            let target_card_ids = Some(targets.iter().copied().collect());
+            self.send_choice(
+                choice_seq,
+                indices,
+                server_action_count,
+                hash,
+                debug,
+                None,
+                target_card_ids,
+            );
         }
 
         result
@@ -419,7 +440,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| available_sources.iter().position(|a| a == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -448,7 +469,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .collect();
             let indices = if indices.is_empty() { vec![0] } else { indices };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -482,7 +503,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .collect();
             let indices = if indices.is_empty() { vec![0] } else { indices };
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -510,7 +531,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|b| blockers.iter().position(|bl| bl == b))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -542,7 +563,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .position(|(id, _)| id == blocker_id)
                 .unwrap_or(0);
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, None);
         }
 
         result
@@ -571,7 +592,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             // Find the index of the chosen blocker in remaining_blockers
             let idx = remaining_blockers.iter().position(|id| id == blocker_id).unwrap_or(0);
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, None);
         }
 
         result
@@ -599,7 +620,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|d| hand.iter().position(|h| h == d))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -681,6 +702,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             hash,
             debug,
             None,
+            None,
         );
 
         // Wait for ChoiceAccepted to confirm the server processed our choice
@@ -744,7 +766,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| valid_permanents.iter().position(|p| p == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -773,7 +795,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .filter_map(|s| may_not_untap_permanents.iter().position(|p| p == s))
                 .collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result
@@ -803,7 +825,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         if let ChoiceResult::Ok(ref modes) = result {
             let indices: Vec<usize> = modes.iter().copied().collect();
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None);
+            self.send_choice(choice_seq, indices, server_action_count, hash, debug, None, None);
         }
 
         result

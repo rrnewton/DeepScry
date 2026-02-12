@@ -90,6 +90,8 @@ pub enum NetworkMessage {
         spell_ability: Option<crate::core::SpellAbility>,
         /// The CardId chosen for library search operations
         library_search_result: Option<CardId>,
+        /// Actual target CardIds (if this was a target choice)
+        target_card_ids: Option<Vec<CardId>>,
     },
     /// Game has ended
     GameEnded {
@@ -149,6 +151,7 @@ impl NetworkMessage {
                 description,
                 spell_ability,
                 library_search_result,
+                target_card_ids,
                 action_count,
                 ..
             } => Some(NetworkMessage::OpponentChoice {
@@ -157,6 +160,7 @@ impl NetworkMessage {
                 description,
                 spell_ability,
                 library_search_result,
+                target_card_ids,
             }),
             ServerMessage::GameEnded {
                 winner, action_count, ..
@@ -222,6 +226,8 @@ pub enum RemoteChoiceInfo {
         spell_ability: Option<crate::core::SpellAbility>,
         /// The CardId chosen for library search operations
         library_search_result: Option<CardId>,
+        /// Actual target CardIds (if this was a target choice)
+        target_card_ids: Option<Vec<CardId>>,
     },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
@@ -262,6 +268,7 @@ pub enum ChoiceInfo {
         indices: Vec<usize>,
         spell_ability: Option<crate::core::SpellAbility>,
         library_search_result: Option<CardId>,
+        target_card_ids: Option<Vec<CardId>>,
     },
     /// Game ended - exit the game loop
     Exit { winner: Option<PlayerId> },
@@ -519,12 +526,14 @@ impl SharedNetworkState {
                 indices,
                 spell_ability,
                 library_search_result,
+                target_card_ids,
             } => {
                 self.push_remote_choice(RemoteChoiceInfo::Opponent {
                     action_count,
                     indices,
                     spell_ability,
                     library_search_result,
+                    target_card_ids,
                 });
             }
             ChoiceInfo::Exit { winner } => {
@@ -1676,21 +1685,24 @@ async fn run_ws_reader_shared(
                                 description: _,
                                 spell_ability,
                                 library_search_result,
+                                target_card_ids,
                             } => {
                                 // Update tracked action count (for sync targeting)
                                 shared_state.update_server_action_count(action_count);
                                 // Push to REMOTE choice MVar (for RemoteController)
                                 log::debug!(
-                                    "WsReaderShared: OpponentChoice indices={:?} action={} lib_search={:?} -> remote_mvar",
+                                    "WsReaderShared: OpponentChoice indices={:?} action={} lib_search={:?} targets={:?} -> remote_mvar",
                                     choice_indices,
                                     action_count,
-                                    library_search_result
+                                    library_search_result,
+                                    target_card_ids
                                 );
                                 shared_state.push_remote_choice(RemoteChoiceInfo::Opponent {
                                     action_count,
                                     indices: choice_indices,
                                     spell_ability,
                                     library_search_result,
+                                    target_card_ids,
                                 });
                             }
                             NetworkMessage::GameEnded { winner, action_count } => {

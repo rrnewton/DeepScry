@@ -123,6 +123,9 @@ struct OpponentChoiceInfo {
     /// For LibrarySearchByName choices: the specific CardId that was chosen
     /// Allows client's shadow game to know which card moved to hand
     library_search_result: Option<CardId>,
+    /// Actual target CardIds for target choices
+    /// Client uses these directly instead of mapping indices
+    target_card_ids: Option<Vec<CardId>>,
 }
 
 /// Card reveal info to broadcast to a player
@@ -347,6 +350,8 @@ struct PendingChoice {
     client_debug_info: Option<crate::network::protocol::DebugSyncInfo>,
     /// The actual spell ability chosen (for Priority choices)
     spell_ability: Option<SpellAbility>,
+    /// Actual target CardIds for target choices
+    target_card_ids: Option<Vec<CardId>>,
 }
 
 /// Player connection with single-channel architecture.
@@ -1309,12 +1314,13 @@ async fn run_coordinator(
                                     choice_seq,
                                     player: PlayerId::new(0),
                                     choice_type,
-                                    choice_indices: response.choice_indices,
+                                    choice_indices: response.choice_indices.clone(),
                                     description: format!("P1 choice #{}", choice_seq),
                                     action_count,
                                     timestamp_ms: now_ms(),
                                     spell_ability,
                                     library_search_result,
+                                    target_card_ids: response.target_card_ids,
                                 };
                                 let _ = p2_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
                             }
@@ -1463,12 +1469,13 @@ async fn run_coordinator(
                                     choice_seq,
                                     player: PlayerId::new(1),
                                     choice_type,
-                                    choice_indices: response.choice_indices,
+                                    choice_indices: response.choice_indices.clone(),
                                     description: format!("P2 choice #{}", choice_seq),
                                     action_count,
                                     timestamp_ms: now_ms(),
                                     spell_ability,
                                     library_search_result,
+                                    target_card_ids: response.target_card_ids,
                                 };
                                 let _ = p1_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
                             }
@@ -1592,6 +1599,7 @@ async fn handle_player_websocket(
                                 choice_seq: pending.choice_seq,
                                 choice_indices: pending.choice_indices,
                                 spell_ability: pending.spell_ability,
+                                target_card_ids: pending.target_card_ids,
                             };
                             conn.game_tx.send(HandlerToGame::ChoiceResponse {
                                 response,
@@ -1675,6 +1683,7 @@ async fn handle_player_websocket(
                             state_hash_after: None,
                             debug_info: None,
                             library_search_result: info.library_search_result,
+                            target_card_ids: info.target_card_ids,
                         }).await?;
                     }
 
@@ -1767,17 +1776,18 @@ async fn handle_player_websocket(
                                 client_state_hash,
                                 debug_info,
                                 spell_ability,
+                                target_card_ids,
                                 ..
                             }) => {
                                 if waiting_for_choice.take().is_some() {
                                     // Normal case: we sent ChoiceRequest and client is responding
                                     log::debug!(
-                                        "Handler P{}: Received choice seq={} action_count={} spell_ability={:?}",
-                                        conn.player_id, choice_seq, action_count, spell_ability.as_ref().map(|a| format!("{:?}", a))
+                                        "Handler P{}: Received choice seq={} action_count={} spell_ability={:?} targets={:?}",
+                                        conn.player_id, choice_seq, action_count, spell_ability.as_ref().map(|a| format!("{:?}", a)), target_card_ids
                                     );
 
                                     // Send response to coordinator, including spell_ability for robust matching
-                                    let response = ChoiceResponse { choice_seq, choice_indices, spell_ability };
+                                    let response = ChoiceResponse { choice_seq, choice_indices, spell_ability, target_card_ids };
                                     conn.game_tx.send(HandlerToGame::ChoiceResponse {
                                         response,
                                         client_action_count: action_count,
@@ -1797,6 +1807,7 @@ async fn handle_player_websocket(
                                         client_state_hash,
                                         client_debug_info: debug_info,
                                         spell_ability,
+                                        target_card_ids,
                                     });
                                 }
                             }
