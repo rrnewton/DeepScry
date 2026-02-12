@@ -1202,6 +1202,10 @@ impl NetworkClient {
         // so their undo_logs contain the same RevealCard actions.
         game.set_skip_reveals(false);
 
+        // Mark as shadow game - tolerant of incomplete zone tracking for opponent's hidden zones.
+        // The server is authoritative; this client state is approximate.
+        game.set_shadow_game(true);
+
         // Initialize RNG from server's state for deterministic shuffles
         // This ensures subsequent shuffles (tutors, etc.) produce identical results
         if !rng_state.is_empty() {

@@ -157,6 +157,19 @@ pub struct GameState {
     /// across linked effects in a resolution chain.
     #[serde(default)]
     pub remembered_cards: smallvec::SmallVec<[CardId; 4]>,
+
+    /// Indicates this is a network client shadow game state.
+    ///
+    /// When `true`, zone tracking for opponent's hidden zones (library, hand)
+    /// may be incomplete. The game should be tolerant of zone operations
+    /// failing due to missing cards - the server is authoritative.
+    ///
+    /// This allows move_card to succeed even when a card isn't found in the
+    /// source zone, which happens when:
+    /// - Opponent's library cards are milled/exiled (client doesn't know contents)
+    /// - Cards are cast from exile (reveal timing issues)
+    #[serde(default)]
+    pub is_shadow_game: bool,
 }
 
 impl GameState {
@@ -230,6 +243,7 @@ impl GameState {
             persistent_effects: PersistentEffectStore::new(),
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
+            is_shadow_game: false, // Default: not a shadow game
         }
     }
 
@@ -252,6 +266,19 @@ impl GameState {
     #[inline]
     pub fn set_skip_reveals(&mut self, skip: bool) {
         self.skip_reveals = skip;
+    }
+
+    /// Mark this game state as a shadow game (network client).
+    ///
+    /// When `true`, the game is tolerant of zone operations failing due to
+    /// incomplete zone tracking. This is necessary because:
+    /// - Opponent's library contents are hidden
+    /// - Reveal timing may cause cards to not be in expected zones
+    ///
+    /// The server is authoritative - shadow game state is approximate.
+    #[inline]
+    pub fn set_shadow_game(&mut self, is_shadow: bool) {
+        self.is_shadow_game = is_shadow;
     }
 
     /// Get the action count (undo log length)
@@ -743,9 +770,21 @@ impl GameState {
         };
 
         if !removed {
-            return Err(crate::MtgError::InvalidAction(format!(
-                "Card {card_id} not found in source zone"
-            )));
+            if self.is_shadow_game {
+                // In shadow game mode, be tolerant of missing cards in source zones.
+                // This happens for opponent's hidden zones (library) where we don't
+                // have complete tracking. Log a warning but continue - server is authoritative.
+                log::debug!(
+                    target: "zone",
+                    "Shadow game: Card {} not found in source zone {:?}, proceeding anyway (server authoritative)",
+                    card_id,
+                    from
+                );
+            } else {
+                return Err(crate::MtgError::InvalidAction(format!(
+                    "Card {card_id} not found in source zone"
+                )));
+            }
         }
 
         // Add to destination zone
@@ -2707,6 +2746,7 @@ impl Clone for GameState {
             persistent_effects: self.persistent_effects.clone(),
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
+            is_shadow_game: self.is_shadow_game,
         }
     }
 }

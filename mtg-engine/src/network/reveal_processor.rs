@@ -259,15 +259,44 @@ pub fn process_card_reveal<P: CardDefProvider>(
                 );
             }
         }
-        _ => {
+        RevealReason::Effect | RevealReason::Targeting => {
+            // Effect reveals are used for cards moving to public zones (graveyard, exile)
+            // from hidden zones (library). Common cases:
+            // - Mill: library -> graveyard
+            // - Dig (Fire Lord Ozai): library -> exile
+            //
+            // For OUR cards: library is populated, game loop's move_card will find the card.
+            // For OPPONENT cards: we just instantiate the card entity. The shadow game's
+            // zone tracking for opponent's hidden zones (library) is inherently incomplete,
+            // so we don't try to add cards to their library. Zone move operations for
+            // opponent cards may fail silently, but that's acceptable since:
+            // 1. Server is authoritative for zone contents
+            // 2. State hash comparison catches real desync
+            //
+            // When casting from exile (Fire Lord Ozai's "may play"), the Played reveal
+            // will instantiate the card if needed before the cast operation.
+            let card_already_known = game.cards.get(card_id).is_ok();
             log::debug!(
-                "{}: Received {:?} reveal for {:?}: {} ({:?})",
+                "{} {:?}: {} (id={}) for {:?} card_already_known={}",
                 log_prefix,
                 reason,
-                owner,
                 reveal.name,
-                card_id
+                card_id.as_u32(),
+                owner,
+                card_already_known
             );
+
+            if !card_already_known {
+                let card_instance = card_def.instantiate(card_id, owner);
+                game.cards.insert(card_id, card_instance);
+                log::debug!(
+                    "{}: Instantiated effect-revealed card for {:?}: {} ({:?})",
+                    log_prefix,
+                    owner,
+                    reveal.name,
+                    card_id
+                );
+            }
         }
     }
 }
