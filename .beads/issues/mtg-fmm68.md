@@ -57,8 +57,7 @@ Key gaps affecting this deck:
 
 **Giant Koi (x1)** - 4UU 5/7 Fish
 - [x] Islandcycling {2} (VERIFIED 2026-01-19)
-- [x] Waterbend 3: Can't be blocked (AB$ Effect with Waterbend cost) **FIXED 2026-01-21** (via GrantCantBeBlocked)
-- GAP: Waterbend mana cost parsing (partial - the "can't be blocked" effect works, cost needs verification)
+- [x] Waterbend 3: Can't be blocked (AB$ Effect with Waterbend cost) **FULLY WORKING 2026-02-13** (params_to_effect_with_svars resolves StaticAbilities$ SVar to GrantCantBeBlocked)
 
 **Gran-Gran (x1)** - U 1/2 Legendary Human Peasant Ally
 - [x] Taps trigger: draw then discard (VERIFIED 2026-01-20)
@@ -127,7 +126,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (30/40 fully working)
+## Verified Cards Summary (31/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -139,20 +138,21 @@ Working cards:
 7. **Meteor Sword** - Equipment with ETB destroy, equip, +3/+3 bonus
 8. **Knowledge Seeker** - Vigilance + Dies trigger + Second draw trigger (FULLY WORKING 2026-01-19)
 9. **Messenger Hawk** - Flying + ETB Clue token + Count$YouDrewThisTurn pump **FULLY WORKING 2026-01-21**
-10. **Giant Koi** - Islandcycling + "can't be blocked" effect (partial - Waterbend cost parsing)
+10. **Giant Koi** - Islandcycling + Waterbend "can't be blocked" **FULLY WORKING 2026-02-13**
 11. **Elephant-Mandrill** - Reach + ETB Food + Count$Valid combat pump **FULLY WORKING 2026-01-21**
 12. **The Unagi** - Flash + Opponent Drawn trigger + Ward:Waterbend **FULLY WORKING 2026-01-21**
 13. **Otter-Penguin** - Second draw trigger for +1/+2 pump + "can't be blocked" **FULLY WORKING 2026-01-21**
-14. **Gran-Gran** - Taps trigger for draw/discard (partial - ReduceCost static needs work)
+14. **Gran-Gran** - Taps trigger + ReduceCost static for non-creature spells **FULLY WORKING 2026-02-13**
 15. **Avatar Kyoshi** - BeginCombat trigger + Earthbend + Untap + Conditional hexproof **FULLY WORKING 2026-01-21**
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
-19. **Gran-Gran** - Taps trigger + ReduceCost static for non-creature spells **FULLY WORKING 2026-02-13**
 
 ## Recent Fixes (2026-02-13)
 
 1. **S:Mode$ ReduceCost**: Implemented cost reduction static abilities. Added `StaticAbility::ReduceCost` variant with `CostReductionTarget` (NonCreature, AllSpells, Creature, Subtype) and `CostReductionCondition` (IsPresent filter, zone, min_count). Enhanced `calculate_effective_cost` in both GameState and GameLoop to query ReduceCost static abilities from controlled permanents. Added `count_cards_matching_filter` helper to check conditions like "3+ Lessons in graveyard". Gran-Gran now fully functional.
+
+2. **Giant Koi Waterbend ability**: Fixed activated ability parsing to use `params_to_effect_with_svars()` instead of `params_to_effect()`. This enables SVar resolution for `StaticAbilities$ Unblockable`, which resolves to `Mode$ CantBlockBy` and returns `Effect::GrantCantBeBlocked`. Giant Koi's Waterbend<3> ability now correctly grants "can't be blocked this turn".
 
 ## Recent Fixes (2026-02-10)
 

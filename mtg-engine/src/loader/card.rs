@@ -2346,13 +2346,13 @@ impl CardDefinition {
 
             // Parse effects using the tokenized converter
             use super::ability_parser::ApiType;
-            use super::effect_converter::params_to_effect;
+            use super::effect_converter::params_to_effect_with_svars;
 
             // Special handling for mana abilities (need is_mana_ability = true)
             let is_mana_ability = matches!(params.api_type, ApiType::Mana);
 
-            // Try to convert parameters to effects
-            let effects = if let Some(effect) = params_to_effect(&params) {
+            // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
+            let effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
                 vec![effect]
             } else {
                 // Fallback to old parsing for unsupported API types
@@ -3464,6 +3464,56 @@ Oracle:{T}: Prodigal Sorcerer deals 1 damage to any target.
             panic!("Expected DealDamage effect, got {:?}", ability.effects[0]);
         };
         assert_eq!(*amount, 1, "Should deal 1 damage");
+    }
+
+    #[test]
+    fn test_parse_waterbend_effect_ability() {
+        // Test parsing of Giant Koi's Waterbend ability with StaticAbilities$ SVar
+        // This requires params_to_effect_with_svars to resolve the SVar reference
+        let content = r#"
+Name:Giant Koi
+ManaCost:4 U U
+Types:Creature Fish
+PT:5/7
+K:TypeCycling:Island:2
+A:AB$ Effect | Cost$ Waterbend<3> | Defined$ Self | StaticAbilities$ Unblockable | AILogic$ Pump | SpellDescription$ This creature can't be blocked this turn.
+SVar:Unblockable:Mode$ CantBlockBy | ValidAttacker$ Card.EffectSource | Description$ This creature can't be blocked this turn.
+Oracle:Waterbend {3}: This creature can't be blocked this turn.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Giant Koi");
+        assert_eq!(def.mana_cost.generic, 4);
+        assert_eq!(def.mana_cost.blue, 2);
+        assert!(def.types.contains(&CardType::Creature));
+
+        // Check that the activated ability is parsed with SVar resolution
+        let abilities = def.parse_activated_abilities();
+        assert_eq!(
+            abilities.len(),
+            1,
+            "Giant Koi should have 1 activated ability (the Waterbend effect)"
+        );
+
+        let ability = &abilities[0];
+        // Check the Waterbend cost is parsed
+        use crate::core::costs::Cost;
+        assert!(
+            matches!(ability.cost, Cost::Waterbend { amount: 3 }),
+            "Should have Waterbend<3> cost, got {:?}",
+            ability.cost
+        );
+
+        // The effects list should NOT be empty - this was the bug we're fixing
+        assert_eq!(ability.effects.len(), 1, "Should have 1 effect (GrantCantBeBlocked)");
+
+        // Verify the effect is GrantCantBeBlocked
+        use crate::core::Effect;
+        assert!(
+            matches!(ability.effects[0], Effect::GrantCantBeBlocked { .. }),
+            "Expected GrantCantBeBlocked effect, got {:?}",
+            ability.effects[0]
+        );
     }
 
     #[test]
