@@ -179,12 +179,15 @@ impl PlayerController for RemoteController {
         } else if idx - 1 < available.len() {
             ChoiceResult::Ok(Some(available[idx - 1].clone()))
         } else {
-            log::warn!(
-                "RemoteController: invalid ability index {} (available={})",
+            // FATAL: Invalid index indicates client/server desync
+            let error_msg = format!(
+                "DESYNC: RemoteController received invalid ability index {} (only {} available). \
+                 This indicates client/server state divergence - a bug that must be fixed.",
                 idx,
                 available.len()
             );
-            ChoiceResult::Ok(None)
+            log::error!("{}", error_msg);
+            ChoiceResult::Error(error_msg)
         }
     }
 
@@ -351,16 +354,15 @@ impl PlayerController for RemoteController {
         if let Some((blocker_id, _)) = killable_blockers.get(idx) {
             ChoiceResult::Ok(*blocker_id)
         } else {
-            log::warn!(
-                "RemoteController: invalid blocker index {} (killable={})",
+            // FATAL: Invalid index indicates client/server desync
+            let error_msg = format!(
+                "DESYNC: RemoteController received invalid blocker index {} (only {} killable blockers). \
+                 This indicates client/server state divergence - a bug that must be fixed.",
                 idx,
                 killable_blockers.len()
             );
-            // Fallback to first blocker
-            killable_blockers
-                .first()
-                .map(|(id, _)| ChoiceResult::Ok(*id))
-                .unwrap_or_else(|| ChoiceResult::Error("No killable blockers".to_string()))
+            log::error!("{}", error_msg);
+            ChoiceResult::Error(error_msg)
         }
     }
 
@@ -384,16 +386,15 @@ impl PlayerController for RemoteController {
         if let Some(&blocker_id) = remaining_blockers.get(idx) {
             ChoiceResult::Ok(blocker_id)
         } else {
-            log::warn!(
-                "RemoteController: invalid remaining blocker index {} (remaining={})",
+            // FATAL: Invalid index indicates client/server desync
+            let error_msg = format!(
+                "DESYNC: RemoteController received invalid remaining blocker index {} (only {} remaining). \
+                 This indicates client/server state divergence - a bug that must be fixed.",
                 idx,
                 remaining_blockers.len()
             );
-            // Fallback to first blocker
-            remaining_blockers
-                .first()
-                .map(|&id| ChoiceResult::Ok(id))
-                .unwrap_or_else(|| ChoiceResult::Error("No remaining blockers".to_string()))
+            log::error!("{}", error_msg);
+            ChoiceResult::Error(error_msg)
         }
     }
 
